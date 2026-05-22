@@ -1,10 +1,9 @@
-//! Connection specs and DSN parsing.
+//! Connection specs, DSN parsing, and the live `tokio-postgres` connection.
 //!
-//! Only the pure `Dsn::parse` lives here for now. The real connection — async
-//! `tokio-postgres` + `deadpool-postgres` pool, applying the `safety` session
-//! settings (`default_transaction_read_only`, `statement_timeout`) on connect —
-//! is M0 (see BACKLOG.md).
+//! `Dsn::parse` is pure and tested. `connect_and_bootstrap` / `run_query` do
+//! the async I/O — kept thin. Plain TCP for now; TLS (RDS) is a follow-up.
 
+use crate::grid::Grid;
 use std::fmt;
 
 /// A parsed `postgres://` connection string.
@@ -141,6 +140,128 @@ fn opt(s: &str) -> Option<String> {
     } else {
         Some(s.to_string())
     }
+}
+
+/// A successful connection's bootstrap result: server version + first query.
+pub struct Booted {
+    pub server_version: String,
+    pub grid: Grid,
+}
+
+/// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
+/// and return its result.
+///
+/// Plain TCP (`NoTls`) — RDS, which requires TLS, is a follow-up (BACKLOG.md).
+pub async fn connect_and_bootstrap(
+    dsn: Dsn,
+    read_only: bool,
+    statement_timeout_ms: u64,
+    bootstrap_sql: String,
+) -> Result<Booted, String> {
+    let mut cfg = tokio_postgres::Config::new();
+    cfg.host(&dsn.host).port(dsn.port).dbname(&dsn.dbname);
+    if let Some(user) = &dsn.user {
+        cfg.user(user);
+    }
+    if let Some(password) = &dsn.password {
+        cfg.password(password);
+    }
+
+    let (client, connection) = cfg
+        .connect(tokio_postgres::NoTls)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Drive the connection in the background; it ends when `client` drops.
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            tracing::warn!("postgres connection closed: {e}");
+        }
+    });
+
+    // Safety session settings — applied before any query runs.
+    if read_only {
+        client
+            .batch_execute("SET default_transaction_read_only = on")
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    if statement_timeout_ms > 0 {
+        client
+            .batch_execute(&format!("SET statement_timeout = {statement_timeout_ms}"))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    let server_version = client
+        .query_one("SHOW server_version", &[])
+        .await
+        .ok()
+        .and_then(|row| row.try_get::<usize, String>(0).ok())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let grid = run_query(&client, &bootstrap_sql).await?;
+    Ok(Booted {
+        server_version,
+        grid,
+    })
+}
+
+/// Run `sql` and collect the result into a `Grid` (capped at `grid::MAX_ROWS`).
+pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
+    let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
+    let columns: Vec<String> = stmt
+        .columns()
+        .iter()
+        .map(|c| c.name().to_string())
+        .collect();
+    let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
+    let out_rows: Vec<Vec<String>> = rows
+        .iter()
+        .take(crate::grid::MAX_ROWS)
+        .map(|row| (0..row.len()).map(|i| cell_to_string(row, i)).collect())
+        .collect();
+    Ok(Grid {
+        columns,
+        rows: out_rows,
+    })
+}
+
+/// Render one cell as a display string. Handles common scalar types; SQL NULL
+/// renders empty, and a type we can't decode renders `?`.
+fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
+    use tokio_postgres::types::{FromSql, Type};
+
+    fn show<T>(row: &tokio_postgres::Row, i: usize) -> Option<String>
+    where
+        T: std::fmt::Display + for<'a> FromSql<'a>,
+    {
+        match row.try_get::<usize, Option<T>>(i) {
+            Ok(Some(v)) => Some(v.to_string()),
+            Ok(None) => Some(String::new()), // SQL NULL
+            Err(_) => None,                  // unsupported type / decode error
+        }
+    }
+
+    let ty = row.columns()[i].type_().clone();
+    let rendered = if ty == Type::BOOL {
+        show::<bool>(row, i)
+    } else if ty == Type::INT2 {
+        show::<i16>(row, i)
+    } else if ty == Type::INT4 {
+        show::<i32>(row, i)
+    } else if ty == Type::INT8 {
+        show::<i64>(row, i)
+    } else if ty == Type::OID {
+        show::<u32>(row, i)
+    } else if ty == Type::FLOAT4 {
+        show::<f32>(row, i)
+    } else if ty == Type::FLOAT8 {
+        show::<f64>(row, i)
+    } else {
+        // TEXT / VARCHAR / NAME / etc. decode as String; anything else errors.
+        show::<String>(row, i)
+    };
+    rendered.unwrap_or_else(|| "?".to_string())
 }
 
 #[cfg(test)]

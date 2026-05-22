@@ -1,87 +1,61 @@
-//! pgman binary entry point.
-//!
-//! Pre-v1 scaffold: parses args, sets up logging, and prints what it can
-//! resolve from the environment. The TUI event loop is M0 (see BACKLOG.md).
+//! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::{conn, creds, safety, splash, theme, util};
+use pgman::{app, conn, font_probe, safety, theme, tui, util};
 
 #[derive(Parser)]
 #[command(name = "pgman", version, about = "k9s-style Postgres TUI for Java/AWS shops")]
 struct Cli {
-    /// Connect using an explicit postgres:// DSN.
+    /// Connect using a postgres:// DSN.
     #[arg(long)]
     dsn: Option<String>,
-
-    /// Connect to an AWS RDS instance by identifier (v2 — not yet implemented).
-    #[arg(long)]
-    rds: Option<String>,
-
-    /// AWS profile to use with --rds (v2).
-    #[arg(long)]
-    profile: Option<String>,
 
     /// Colour theme: dark | light | high-contrast.
     #[arg(long, default_value = "dark")]
     theme: String,
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     init_logging();
     tracing::info!("pgman {} starting", env!("CARGO_PKG_VERSION"));
 
-    println!("{}", splash::frame(0));
-    println!(
-        "pgman {} — pre-v1 scaffold. The TUI event loop is M0 (see BACKLOG.md).\n",
-        env!("CARGO_PKG_VERSION")
-    );
-
-    let (theme, warn) = theme::Theme::resolve(&cli.theme);
-    if let Some(w) = warn {
-        eprintln!("warning: {w}");
+    // Probe the terminal font *before* entering the alternate screen.
+    let icons = font_probe::resolve_icons_setting("auto");
+    let (mut theme, theme_warn) = theme::Theme::resolve(&cli.theme);
+    theme.icons = match icons.as_str() {
+        "powerline" => theme::IconStyle::Powerline,
+        "ascii" => theme::IconStyle::Ascii,
+        _ => theme::IconStyle::Unicode,
+    };
+    if let Some(w) = theme_warn {
+        tracing::warn!("{w}");
     }
-    println!("theme:  {}", theme.name);
-    println!("config: {}", util::config_dir().display());
-    println!("log:    {}", util::cache_dir().join("pgman.log").display());
 
-    // Resolve a DSN if given, so the safety profile can key off the database.
     let dsn = match cli.dsn.as_deref() {
         Some(raw) => match conn::Dsn::parse(raw) {
-            Ok(d) => {
-                println!("dsn:    ok — {}", d.redacted());
-                Some(d)
-            }
+            Ok(d) => Some(d),
             Err(e) => {
-                eprintln!("error:  invalid --dsn: {e}");
+                eprintln!("invalid --dsn: {e}");
                 std::process::exit(2);
             }
         },
         None => None,
     };
 
-    // Safety profile preview for the target database.
+    // Resolve the safety profile for the target database.
     let safety_config = load_safety_config();
     let db = dsn.as_ref().map(|d| d.dbname.as_str()).unwrap_or("default");
     let profile = safety_config.profile_for(db);
-    println!(
-        "safety: db={db} read_only={} statement_timeout_ms={} auto_tx={}",
-        profile.read_only, profile.statement_timeout_ms, profile.auto_tx
-    );
+    let read_only = profile.read_only;
+    let statement_timeout_ms = profile.statement_timeout_ms;
 
-    // Spring auto-connect preview.
-    if let Ok(cwd) = std::env::current_dir() {
-        if creds::spring::detect_java_project(&cwd) {
-            println!("creds:  Java project detected — Spring auto-connect lands in M1.5");
-        }
-    }
-
-    if let Some(rds) = &cli.rds {
-        let prof = cli.profile.as_deref().unwrap_or("default");
-        println!("note:   --rds {rds} (aws profile {prof}) resolution is v2");
-    }
-
-    Ok(())
+    let mut application = app::App::new(theme, dsn, read_only, statement_timeout_ms);
+    let mut term = tui::Tui::enter()?;
+    let result = application.run(&mut term).await;
+    drop(term); // restore the terminal before surfacing any error
+    result
 }
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
