@@ -50,24 +50,42 @@ fn draw_splash(f: &mut Frame, app: &App) {
     // within its grid, so left-aligning the block keeps the elephant centred
     // while the trunk's curl stays intentionally off-centre.
     let grid = splash::frame(app.splash_tick);
-    let lines: Vec<Line> = grid
-        .iter()
-        .map(|row| {
-            Line::from(
-                row.iter()
-                    .map(|&px| match pixel_color(px, theme) {
-                        Some(c) => Span::styled("██", Style::default().fg(c)),
-                        None => Span::raw("  "),
-                    })
-                    .collect::<Vec<Span>>(),
-            )
-        })
-        .collect();
+    let rows_n = grid.len() as u16;
+    let cols_n = grid.iter().map(Vec::len).max().unwrap_or(0) as u16;
+    let area = f.area();
+
+    // Render at the largest integer scale (up to 3x) that fits the terminal,
+    // leaving room for the labels below — a bigger terminal gets a bigger
+    // elephant.
+    let mut scale: usize = 1;
+    for s in [3u16, 2] {
+        if rows_n * s + 4 <= area.height && cols_n * 2 * s <= area.width {
+            scale = s as usize;
+            break;
+        }
+    }
+
+    let pixel = "██".repeat(scale);
+    let gap = " ".repeat(scale * 2);
+    let mut lines: Vec<Line> = Vec::with_capacity(grid.len() * scale);
+    for row in &grid {
+        let spans: Vec<Span> = row
+            .iter()
+            .map(|&px| match pixel_color(px, theme) {
+                Some(c) => Span::styled(pixel.clone(), Style::default().fg(c)),
+                None => Span::raw(gap.clone()),
+            })
+            .collect();
+        let line = Line::from(spans);
+        for _ in 0..scale {
+            lines.push(line.clone());
+        }
+    }
     let art_h = lines.len() as u16;
-    let art_w = grid.iter().map(Vec::len).max().unwrap_or(0) as u16 * 2;
+    let art_w = cols_n * 2 * scale as u16;
 
     let width = art_w.max(13);
-    let block = centered(f.area(), width, art_h + 3);
+    let block = centered(area, width, art_h + 3);
     let rows = Layout::vertical([
         Constraint::Length(art_h),
         Constraint::Length(1),
