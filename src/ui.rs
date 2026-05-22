@@ -38,7 +38,8 @@ fn pixel_color(px: splash::Pixel, theme: &Theme) -> Option<Color> {
     use splash::Pixel;
     match px {
         Pixel::Empty => None,
-        Pixel::Outline | Pixel::Pupil => Some(theme.elephant_outline),
+        Pixel::Outline => Some(theme.elephant_rim),
+        Pixel::Pupil => Some(theme.elephant_outline),
         Pixel::Body => Some(theme.elephant_body),
         Pixel::EarShade => Some(theme.elephant_shade),
         Pixel::Eye => Some(theme.elephant_eye),
