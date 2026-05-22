@@ -1,9 +1,10 @@
-//! Animated startup splash — a pixel-art (8-bit style) elephant.
+//! Animated startup splash — a pixel-art elephant based on the PostgreSQL
+//! logo (Slonik): the three-bump top (two ears + the head dome), big ears,
+//! a trunk separated from the cheeks by gap-lines, tusks, and a curl.
 //!
 //! Sprites are authored as character templates; `frame` parses one into a grid
 //! of typed [`Pixel`]s. The renderer (`ui`) maps each pixel kind to a themed
-//! colour and draws it as a two-cell `██` block, so colour and layout stay
-//! the renderer's concern and this module stays pure and testable.
+//! colour and draws it as a two-cell `██` block.
 //!
 //! Template legend: `#` body · `o` eye · `T` tusk · space empty.
 
@@ -20,51 +21,81 @@ pub enum Pixel {
 const SPRITES: &[&str] = &[SPRITE_OPEN, SPRITE_BLINK, SPRITE_SWAY];
 
 const SPRITE_OPEN: &str = r#"
- ##    ##
-####  ####
-###########
-###########
-##o####o##
- #########
-   ######
-   T####T
-  T #### T
- T  ####  T
-    ####
-    #####
-      ###
+          ####
+   ###    ####    ###
+  #####  ######  #####
+ ######################
+########################
+########################
+########################
+########o######o########
+########################
+########################
+ ######## #### ########
+ ######## #### ########
+  ####### #### #######
+   ###### #### ######
+    ##### #### #####
+     #### #### ####
+      ### #### ###
+         T####T
+        T #### T
+       T  ####  T
+         ###
+        ###
+        ##
 "#;
 
 const SPRITE_BLINK: &str = r#"
- ##    ##
-####  ####
-###########
-###########
-##########
- #########
-   ######
-   T####T
-  T #### T
- T  ####  T
-    ####
-    #####
-      ###
+          ####
+   ###    ####    ###
+  #####  ######  #####
+ ######################
+########################
+########################
+########################
+########################
+########################
+########################
+ ######## #### ########
+ ######## #### ########
+  ####### #### #######
+   ###### #### ######
+    ##### #### #####
+     #### #### ####
+      ### #### ###
+         T####T
+        T #### T
+       T  ####  T
+         ###
+        ###
+        ##
 "#;
 
 const SPRITE_SWAY: &str = r#"
- ##    ##
-####  ####
-###########
-###########
-##o####o##
- #########
-   ######
-   T####T
-  T #### T
- T  ####  T
-    ####
-   #####
-   ###
+          ####
+   ###    ####    ###
+  #####  ######  #####
+ ######################
+########################
+########################
+########################
+########o######o########
+########################
+########################
+ ######## #### ########
+ ######## #### ########
+  ####### #### #######
+   ###### #### ######
+    ##### #### #####
+     #### #### ####
+      ### #### ###
+         T####T
+        T #### T
+       T  ####  T
+            ###
+             ###
+              ##
 "#;
 
 /// The sprite grid for animation tick `tick`, cycling through the frames.
