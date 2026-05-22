@@ -4,10 +4,15 @@
 //! `main.rs` is a thin binary. See `CLAUDE.md` for working rules and
 //! `BACKLOG.md` for the milestone plan.
 
+pub mod app;
 pub mod conn;
 pub mod creds;
+pub mod font_probe;
+pub mod grid;
 pub mod query;
 pub mod safety;
 pub mod splash;
 pub mod theme;
+pub mod tui;
+pub mod ui;
 pub mod util;

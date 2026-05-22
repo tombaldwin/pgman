@@ -19,13 +19,37 @@ Ship: "paste a log or open me in a Spring project → runnable SQL → run it,
 safely." Nothing else.
 
 ### M0 — shell + connection
-- TUI event loop: `app.rs`, `app/msg.rs`, `ui.rs`. One frame clock with
-  animation sources (splash / loading).
-- `splash.rs`: animate the elephant; dismiss on keypress or connection-ready.
-- `conn.rs`: real connection via `tokio-postgres` + `deadpool-postgres`.
-  Apply safety session settings on connect (`default_transaction_read_only`,
-  `statement_timeout`).
-- Results grid for an arbitrary query (cap rows; reuse ebman's view-cache shape).
+- TUI event loop: `app.rs`, `app/msg.rs`, `ui.rs`, `tui.rs`. One frame clock,
+  gated on splash/loading — DONE.
+- `splash.rs`: animated elephant, dismissed on keypress or connect — DONE.
+- `font_probe.rs`: lifted from ebman; resolves `auto` → IconStyle — DONE.
+- `conn.rs`: real connection via `tokio-postgres`; applies safety session
+  settings (`default_transaction_read_only`, `statement_timeout`) — DONE.
+- `grid.rs`: results grid type + column-width / truncation helpers — DONE.
+- Follow-ups: TLS (`tokio-postgres-rustls`) — RDS needs it; `deadpool`
+  pooling once interactive queries land (M2); panic hook to restore the
+  terminal; `NUMERIC` / unknown-type cell rendering in `conn::cell_to_string`.
+
+### Reuse from ebman (`/Users/tom/git/ebman/src/`)
+Survey done — lift as the milestones reach them:
+- **`shell.rs`** — PTY wrapper + key→bytes; verbatim. Use for `psql` /
+  `pg_dump` / `claude` handoff (M2 / advisor / snapshots).
+- **`font_probe.rs`** — DONE (lifted at M0).
+- Toast stack, Braille spinner, pill-chain widgets (`ui.rs`) — lift as chrome
+  is built out.
+- **`state.rs`** — line-oriented persisted state; adapt for saved connections
+  / query history (M2).
+- **`mode_action.rs`** — `ConfirmModal` + countdown state machine; adapt for
+  `safety::Guard::Confirm` prompts and backup/restore (M2 / v2).
+- **`commands.rs`** — `:command` registry feeding help + Ctrl-K palette;
+  rewrite entries for Postgres.
+- **`form.rs`** — multi-field modal; connection editor + safety.toml editor.
+- **`mode_detail.rs`** — tabbed drill-down pattern.
+- Smaller: `keys.rs`, `plugins.rs`, `update_check.rs`, `control.rs`,
+  `cost_cache.rs` (→ schema/plan cache), `report_bug.rs` (PII scrubber).
+- Skip (AWS-specific): `profiles.rs`, `sso.rs`, `aws.rs`.
+- Note: adopt ebman's splash *rendering* technique but NOT its 3s minimum
+  duration — overlap the splash with connect, keep it instantly dismissable.
 
 ### M1 — query reconstruction (the hero)
 - `query/reconstruct.rs`: shared types — DONE.
