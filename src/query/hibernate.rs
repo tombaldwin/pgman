@@ -1,23 +1,165 @@
 //! Reconstruct runnable SQL from application-side Hibernate logs.
 //!
-//! Stub — M1 (see BACKLOG.md). The parser must handle:
-//!   - SQL lines from logger `org.hibernate.SQL` (`?` placeholders).
-//!   - Bind lines, Hibernate 5: `org.hibernate.type.descriptor.sql.BasicBinder`
-//!     — `binding parameter [1] as [INTEGER] - [42]`.
-//!   - Bind lines, Hibernate 6: `org.hibernate.orm.jdbc.bind`
-//!     — `binding parameter (1:INTEGER) <- [42]`.
-//!   - Thread interleaving: group lines by thread token, pair each SQL line
-//!     with the binds that follow it on the same thread.
+//! Pairs SQL statements (logger `org.hibernate.SQL`) with the bind parameters
+//! logged separately. Both Hibernate generations are supported:
+//!   - Hibernate 5: `binding parameter [1] as [INTEGER] - [42]`
+//!     (logger `org.hibernate.type.descriptor.sql.BasicBinder`).
+//!   - Hibernate 6: `binding parameter (1:INTEGER) <- [42]`
+//!     (logger `org.hibernate.orm.jdbc.bind`).
 //!
-//! Note: bind lines are logged at TRACE and are often absent in production
-//! logs; the parser must still emit the `?`-form statement when binds are
-//! missing. `pglog` is the more reliable reconstruction source.
+//! Lines are grouped by thread token (the first `[…]` group, before the
+//! logger) so interleaved requests pair correctly. Each SQL line opens a
+//! statement for its thread; subsequent bind lines on that thread attach to it
+//! until the next SQL line.
+//!
+//! Bind values are logged untyped-but-with-a-type-name, so substitution quotes
+//! them by type (`VARCHAR` → quoted, `INTEGER` → bare).
+//!
+//! Known limitations (see BACKLOG.md): only single-line SQL is supported —
+//! `hibernate.format_sql=true` multi-line output is not yet reassembled; bind
+//! lines are logged at `TRACE` and are often absent in production, in which
+//! case the `?`-form statement is still emitted, just unsubstituted.
 
-use crate::query::reconstruct::ReconstructedQuery;
+use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
+use crate::query::subst::{self, PlaceholderStyle};
+use std::collections::HashMap;
 
 /// Parse a Hibernate log into reconstructed queries.
-pub fn parse(_log: &str) -> Vec<ReconstructedQuery> {
-    Vec::new()
+pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
+    // thread -> (sql, src_line) for the statement currently open on that thread.
+    let mut current: HashMap<String, (String, usize)> = HashMap::new();
+    // thread -> binds accumulated for the open statement.
+    let mut binds: HashMap<String, Vec<BoundParam>> = HashMap::new();
+    let mut out: Vec<ReconstructedQuery> = Vec::new();
+
+    for (idx, line) in log.lines().enumerate() {
+        let line_no = idx + 1;
+
+        if let Some(bind_pos) = line.find("binding parameter") {
+            let thread = extract_thread(&line[..bind_pos]);
+            // Orphan binds (no open statement on the thread) are ignored.
+            if current.contains_key(&thread) {
+                if let Some(bp) = parse_bind(&line[bind_pos..]) {
+                    binds.entry(thread).or_default().push(bp);
+                }
+            }
+            continue;
+        }
+
+        if let Some((logger_pos, msg)) = sql_message(line) {
+            let thread = extract_thread(&line[..logger_pos]);
+            if let Some((sql, sline)) = current.remove(&thread) {
+                let params = binds.remove(&thread).unwrap_or_default();
+                finalize(sql, sline, params, &mut out);
+            }
+            let sql = msg.trim();
+            if !sql.is_empty() {
+                current.insert(thread, (sql.to_string(), line_no));
+            }
+        }
+    }
+
+    for (thread, (sql, sline)) in current {
+        let params = binds.remove(&thread).unwrap_or_default();
+        finalize(sql, sline, params, &mut out);
+    }
+    out.sort_by_key(|q| q.src_line);
+    out
+}
+
+fn finalize(
+    raw_sql: String,
+    src_line: usize,
+    mut params: Vec<BoundParam>,
+    out: &mut Vec<ReconstructedQuery>,
+) {
+    params.sort_by_key(|p| p.index);
+    let runnable_sql = if params.is_empty() {
+        raw_sql.clone()
+    } else {
+        subst::apply(&raw_sql, &params, PlaceholderStyle::QuestionMark)
+            .unwrap_or_else(|_| raw_sql.clone())
+    };
+    out.push(ReconstructedQuery {
+        raw_sql,
+        params,
+        runnable_sql,
+        source: Source::HibernateLog,
+        src_line,
+    });
+}
+
+/// The thread token — the first `[…]` group in `prefix` (the text before the
+/// logger / message). Empty when the log pattern carries no thread.
+fn extract_thread(prefix: &str) -> String {
+    if let Some(start) = prefix.find('[') {
+        if let Some(rel_end) = prefix[start + 1..].find(']') {
+            return prefix[start + 1..start + 1 + rel_end].trim().to_string();
+        }
+    }
+    String::new()
+}
+
+/// If `line` is a `org.hibernate.SQL` line, return `(logger_position, message)`.
+fn sql_message(line: &str) -> Option<(usize, &str)> {
+    const MARKERS: &[&str] = &["org.hibernate.SQL", "o.h.SQL"];
+    let (marker_pos, marker_len) = MARKERS.iter().find_map(|m| {
+        let i = line.find(m)?;
+        // Reject `org.hibernate.SQL_SLOW` and the like.
+        match line.as_bytes().get(i + m.len()) {
+            Some(&c) if c == b'_' || c.is_ascii_alphanumeric() => None,
+            _ => Some((i, m.len())),
+        }
+    })?;
+    let after = &line[marker_pos + marker_len..];
+    let colon = after.find(':')?;
+    Some((marker_pos, after[colon + 1..].trim()))
+}
+
+/// Parse a `binding parameter …` message (Hibernate 5 or 6 form).
+fn parse_bind(msg: &str) -> Option<BoundParam> {
+    let rest = msg.strip_prefix("binding parameter")?.trim_start();
+
+    if let Some(r) = rest.strip_prefix('[') {
+        // Hibernate 5: `[idx] as [TYPE] - [value]`
+        let (idx, r) = r.split_once(']')?;
+        let index = idx.trim().parse::<usize>().ok()?;
+        let r = r.trim_start().strip_prefix("as")?.trim_start();
+        let (sql_type, r) = r.strip_prefix('[')?.split_once(']')?;
+        let value = bracketed_value(r)?;
+        Some(BoundParam {
+            index,
+            sql_type: sql_type.trim().to_string(),
+            value,
+        })
+    } else if let Some(r) = rest.strip_prefix('(') {
+        // Hibernate 6: `(idx:TYPE) <- [value]`
+        let (inside, r) = r.split_once(')')?;
+        let (idx, sql_type) = inside.split_once(':')?;
+        let index = idx.trim().parse::<usize>().ok()?;
+        let value = bracketed_value(r)?;
+        Some(BoundParam {
+            index,
+            sql_type: sql_type.trim().to_string(),
+            value,
+        })
+    } else {
+        None
+    }
+}
+
+/// Extract the value from the last `[…]` group in `s` (Hibernate logs the bound
+/// value last; `[null]` is the literal null).
+fn bracketed_value(s: &str) -> Option<ParamValue> {
+    let open = s.find('[')?;
+    let inner = &s[open + 1..];
+    let close = inner.rfind(']')?;
+    let raw = &inner[..close];
+    if raw.trim().eq_ignore_ascii_case("null") {
+        Some(ParamValue::Null)
+    } else {
+        Some(ParamValue::Literal(raw.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -27,5 +169,87 @@ mod tests {
     #[test]
     fn empty_log_yields_nothing() {
         assert!(parse("").is_empty());
+    }
+
+    #[test]
+    fn hibernate5_sql_and_bind_reconstruct() {
+        let log = "\
+2024-01-15 10:00:00.123 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select c.id from customer c where c.id=?
+2024-01-15 10:00:00.124 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].raw_sql, "select c.id from customer c where c.id=?");
+        assert_eq!(q[0].runnable_sql, "select c.id from customer c where c.id=42");
+        assert_eq!(q[0].source, Source::HibernateLog);
+    }
+
+    #[test]
+    fn hibernate6_bind_form_reconstructs_and_quotes_by_type() {
+        let log = "\
+2024-01-15 DEBUG --- [main] org.hibernate.SQL : select id from person where name=?
+2024-01-15 TRACE --- [main] org.hibernate.orm.jdbc.bind : binding parameter (1:VARCHAR) <- [alice]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1);
+        // VARCHAR is quoted; the value carries no quotes in the log.
+        assert_eq!(q[0].runnable_sql, "select id from person where name='alice'");
+    }
+
+    #[test]
+    fn null_bind_becomes_unquoted_null() {
+        let log = "\
+[main] org.hibernate.SQL : update t set note=? where id=?
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [null]
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [2] as [INTEGER] - [7]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].runnable_sql, "update t set note=NULL where id=7");
+    }
+
+    #[test]
+    fn sql_without_binds_keeps_placeholders() {
+        // TRACE bind logging off — the statement is still recovered.
+        let log = "[main] org.hibernate.SQL : select * from t where id=?";
+        let q = parse(log);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].params.is_empty());
+        assert_eq!(q[0].runnable_sql, "select * from t where id=?");
+    }
+
+    #[test]
+    fn interleaved_threads_pair_their_own_binds() {
+        let log = "\
+[exec-1] org.hibernate.SQL : select * from a where id=?
+[exec-2] org.hibernate.SQL : select * from b where id=?
+[exec-2] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [2]
+[exec-1] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [1]";
+        let q = parse(log);
+        assert_eq!(q.len(), 2);
+        // Sorted by src_line: the `a` query (line 1) then the `b` query.
+        assert_eq!(q[0].runnable_sql, "select * from a where id=1");
+        assert_eq!(q[1].runnable_sql, "select * from b where id=2");
+    }
+
+    #[test]
+    fn multiple_binds_substitute_in_index_order() {
+        let log = "\
+[main] org.hibernate.SQL : select * from t where a=? and b=? and c=?
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [3] as [INTEGER] - [30]
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [10]
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [2] as [INTEGER] - [20]";
+        let q = parse(log);
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].runnable_sql, "select * from t where a=10 and b=20 and c=30");
+    }
+
+    #[test]
+    fn orphan_bind_without_a_statement_is_ignored() {
+        let log = "[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]";
+        assert!(parse(log).is_empty());
+    }
+
+    #[test]
+    fn sql_slow_logger_lines_are_not_treated_as_statements() {
+        let log = "[main] org.hibernate.SQL_SLOW : SlowQuery: 2000 milliseconds. SQL: 'select 1'";
+        assert!(parse(log).is_empty());
     }
 }
