@@ -27,6 +27,12 @@ pub struct Theme {
     pub text: Color,
     pub accent: Color,
 
+    // Splash elephant palette (PostgreSQL-logo blues, dark → light)
+    pub elephant_outline: Color,
+    pub elephant_shadow: Color,
+    pub elephant_body: Color,
+    pub elephant_light: Color,
+
     // Backgrounds
     pub row_alt_bg: Color,
     pub row_red_bg: Color,
@@ -75,6 +81,11 @@ impl Theme {
             muted: Color::Rgb(150, 155, 170),
             text: Color::Rgb(220, 222, 230),
             accent: Color::Rgb(255, 200, 120),
+
+            elephant_outline: Color::Rgb(20, 38, 64),
+            elephant_shadow: Color::Rgb(42, 78, 116),
+            elephant_body: Color::Rgb(72, 122, 166),
+            elephant_light: Color::Rgb(126, 178, 216),
 
             row_alt_bg: Color::Rgb(18, 22, 28),
             row_red_bg: Color::Rgb(48, 18, 22),
@@ -126,6 +137,11 @@ impl Theme {
             text: Color::Rgb(30, 32, 40),
             accent: Color::Rgb(180, 90, 0),
 
+            elephant_outline: Color::Rgb(20, 38, 64),
+            elephant_shadow: Color::Rgb(40, 75, 110),
+            elephant_body: Color::Rgb(70, 118, 160),
+            elephant_light: Color::Rgb(120, 168, 208),
+
             row_alt_bg: Color::Rgb(238, 240, 244),
             row_red_bg: Color::Rgb(250, 220, 220),
             row_yellow_bg: Color::Rgb(252, 240, 200),
@@ -175,6 +191,11 @@ impl Theme {
             muted: Color::Rgb(220, 220, 220),
             text: Color::Rgb(255, 255, 255),
             accent: Color::Rgb(255, 180, 0),
+
+            elephant_outline: Color::Rgb(0, 0, 0),
+            elephant_shadow: Color::Rgb(35, 85, 150),
+            elephant_body: Color::Rgb(70, 140, 220),
+            elephant_light: Color::Rgb(150, 205, 255),
 
             row_alt_bg: Color::Rgb(20, 20, 20),
             row_red_bg: Color::Rgb(80, 0, 0),

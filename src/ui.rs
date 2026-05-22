@@ -35,11 +35,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 /// Theme colour for a sprite pixel — `None` for empty (transparent).
 fn pixel_color(px: splash::Pixel, theme: &Theme) -> Option<Color> {
+    use splash::Pixel;
     match px {
-        splash::Pixel::Empty => None,
-        splash::Pixel::Body => Some(theme.title),  // a blue elephant — Postgres
-        splash::Pixel::Eye => Some(theme.accent),  // bright amber eye
-        splash::Pixel::Tusk => Some(theme.text),   // near-white ivory
+        Pixel::Empty => None,
+        Pixel::Outline => Some(theme.elephant_outline),
+        Pixel::Shadow => Some(theme.elephant_shadow),
+        Pixel::Body => Some(theme.elephant_body),
+        Pixel::Light => Some(theme.elephant_light),
+        Pixel::Eye => Some(theme.accent), // bright amber eye
+        Pixel::Tusk => Some(theme.text),  // near-white ivory
     }
 }
 
@@ -49,7 +53,7 @@ fn draw_splash(f: &mut Frame, app: &App) {
     // centred rect so it keeps its shape. Each sprite row is authored centred
     // within its grid, so left-aligning the block keeps the elephant centred
     // while the trunk's curl stays intentionally off-centre.
-    let grid = splash::frame(app.splash_tick);
+    let grid = splash::frame();
     let rows_n = grid.len() as u16;
     let cols_n = grid.iter().map(Vec::len).max().unwrap_or(0) as u16;
     let area = f.area();
@@ -126,7 +130,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             ("disconnected".to_string(), Style::default().fg(theme.muted))
         }
         ConnState::Connecting => {
-            let sp = SPINNER[app.splash_tick % SPINNER.len()];
+            let sp = SPINNER[app.anim_tick % SPINNER.len()];
             (
                 format!("{sp} connecting"),
                 Style::default().fg(theme.health_yellow),
