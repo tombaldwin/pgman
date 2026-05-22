@@ -29,6 +29,7 @@ pub struct Theme {
 
     // Splash elephant palette
     pub elephant_outline: Color,
+    pub elephant_rim: Color,
     pub elephant_body: Color,
     pub elephant_shade: Color,
     pub elephant_eye: Color,
@@ -84,6 +85,7 @@ impl Theme {
             accent: Color::Rgb(255, 200, 120),
 
             elephant_outline: Color::Rgb(28, 28, 58),
+            elephant_rim: Color::Rgb(64, 82, 140),
             elephant_body: Color::Rgb(124, 144, 200),
             elephant_shade: Color::Rgb(96, 112, 168),
             elephant_eye: Color::Rgb(244, 245, 250),
@@ -140,6 +142,7 @@ impl Theme {
             accent: Color::Rgb(180, 90, 0),
 
             elephant_outline: Color::Rgb(28, 28, 58),
+            elephant_rim: Color::Rgb(52, 68, 122),
             elephant_body: Color::Rgb(108, 128, 188),
             elephant_shade: Color::Rgb(84, 100, 154),
             elephant_eye: Color::Rgb(248, 248, 252),
@@ -196,6 +199,7 @@ impl Theme {
             accent: Color::Rgb(255, 180, 0),
 
             elephant_outline: Color::Rgb(0, 0, 0),
+            elephant_rim: Color::Rgb(30, 50, 110),
             elephant_body: Color::Rgb(120, 150, 230),
             elephant_shade: Color::Rgb(70, 95, 175),
             elephant_eye: Color::Rgb(255, 255, 255),
