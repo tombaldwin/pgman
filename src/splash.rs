@@ -1,51 +1,51 @@
-//! Startup splash — a static pixel-art elephant based on the PostgreSQL logo
-//! (Slonik): the three-bump top (two ears + head dome), big ears, a trunk
-//! separated from the cheeks by gap-lines, tusks, and a curl.
+//! Startup splash — a static pixel-art elephant.
 //!
-//! The sprite is authored as a plain silhouette template (`#` body, `o` eye,
-//! `T` tusk, space empty). `frame` derives the detail from it: any body pixel
-//! touching empty space becomes an outline pixel — so the whole figure, and
-//! the trunk's gap-lines, are outlined — and interior body pixels are banded
-//! top-to-bottom into light / body / shadow for a top-lit gradient. The
-//! renderer (`ui`) maps each [`Pixel`] kind to a themed colour.
+//! The sprite is authored as a character template (`#` body · `d` ear-shade ·
+//! `W` eye-white · `o` pupil · `c` cheek · space empty). `frame` parses it and
+//! edge-detects the silhouette: any body pixel touching empty space becomes an
+//! outline pixel, so the head and the two separate ears are each outlined
+//! without authoring the border by hand. The feature cells (`d`/`W`/`o`/`c`)
+//! pass through unchanged. The renderer (`ui`) maps each [`Pixel`] to a themed
+//! colour.
 
 /// One pixel of the sprite. The renderer colours these from the theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pixel {
     Empty,
     Outline,
-    Shadow,
     Body,
-    Light,
+    /// Darker inner-ear detail.
+    EarShade,
+    /// Eye white.
     Eye,
-    Tusk,
+    /// Navy pupil.
+    Pupil,
+    /// Pink cheek.
+    Cheek,
 }
 
 const SPRITE: &str = r#"
-            ####
-          ########
-   ####   ########   ####
-  ######  ########  ######
- ##########################
-############################
-############################
-#########oo######oo#########
-############################
-############################
- ########## #### ##########
- ########## #### ##########
-  ######### #### #########
-   ######## #### ########
-    ####### #### #######
-     ###### #### ######
-      ##### #### #####
-         TT #### TT
-        TT  ####  TT
-       TT   ####   TT
-      TT    ####    TT
-            ####
-           ####
+         ######
+        ########
+  ###  ##########  ###
+ ##### ########## #####
+ ##### #WWo##oWW# #####
+ ##### #WWo##oWW# #####
+ #dd## #WWW##WWW# ##dd#
+ #dd## ########## ##dd#
+ #dd## #cc####cc# ##dd#
+ #dd## #cc####cc# ##dd#
+ ##### ########## #####
+ ##### ########## #####
+  ###   ########   ###
+         ######
+         ######
+         #####
           ####
+          ####
+           ###
+           ###
+           ##
 "#;
 
 /// The (static) elephant sprite as a grid of typed pixels.
@@ -57,15 +57,19 @@ pub fn frame() -> Vec<Vec<Pixel>> {
 enum Cell {
     Empty,
     Solid,
+    EarShade,
     Eye,
-    Tusk,
+    Pupil,
+    Cheek,
 }
 
 fn cell_of(c: char) -> Cell {
     match c {
         '#' => Cell::Solid,
-        'o' => Cell::Eye,
-        'T' => Cell::Tusk,
+        'd' => Cell::EarShade,
+        'W' => Cell::Eye,
+        'o' => Cell::Pupil,
+        'c' => Cell::Cheek,
         _ => Cell::Empty,
     }
 }
@@ -88,24 +92,25 @@ fn render(template: &str) -> Vec<Vec<Pixel>> {
         .lines()
         .map(|line| line.chars().map(cell_of).collect())
         .collect();
-    let height = cells.len();
     cells
         .iter()
         .enumerate()
         .map(|(r, row)| {
             row.iter()
                 .enumerate()
-                .map(|(c, &cell)| classify(cell, r, c, &cells, height))
+                .map(|(c, &cell)| classify(cell, r, c, &cells))
                 .collect()
         })
         .collect()
 }
 
-fn classify(cell: Cell, r: usize, c: usize, cells: &[Vec<Cell>], height: usize) -> Pixel {
+fn classify(cell: Cell, r: usize, c: usize, cells: &[Vec<Cell>]) -> Pixel {
     match cell {
         Cell::Empty => Pixel::Empty,
+        Cell::EarShade => Pixel::EarShade,
         Cell::Eye => Pixel::Eye,
-        Cell::Tusk => Pixel::Tusk,
+        Cell::Pupil => Pixel::Pupil,
+        Cell::Cheek => Pixel::Cheek,
         Cell::Solid => {
             let (ri, ci) = (r as isize, c as isize);
             let on_edge = [(ri - 1, ci), (ri + 1, ci), (ri, ci - 1), (ri, ci + 1)]
@@ -114,15 +119,7 @@ fn classify(cell: Cell, r: usize, c: usize, cells: &[Vec<Cell>], height: usize) 
             if on_edge {
                 Pixel::Outline
             } else {
-                // Top-lit shading in three horizontal bands.
-                let third = (height / 3).max(1);
-                if r < third {
-                    Pixel::Light
-                } else if r < 2 * third {
-                    Pixel::Body
-                } else {
-                    Pixel::Shadow
-                }
+                Pixel::Body
             }
         }
     }
@@ -133,38 +130,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_outlines_edges_and_shades_the_interior() {
-        // A 3x3 solid block: corners touch empty space, the centre does not.
+    fn render_outlines_solid_edges_only() {
+        // A 3x3 solid block: every border cell touches the void, the centre
+        // does not.
         let g = render("###\n###\n###");
-        assert_eq!(g[0][0], Pixel::Outline, "corner touches the void");
-        assert_eq!(g[0][1], Pixel::Outline, "top edge");
-        assert_eq!(g[1][1], Pixel::Body, "centre is interior, middle band");
+        assert_eq!(g[0][0], Pixel::Outline);
+        assert_eq!(g[0][1], Pixel::Outline);
+        assert_eq!(g[1][1], Pixel::Body);
     }
 
     #[test]
-    fn render_bands_interior_top_to_bottom() {
-        // A tall solid column — interior pixels shade light → body → shadow.
-        let tall = "###\n###\n###\n###\n###\n###\n###\n###\n###";
-        let g = render(tall);
-        assert_eq!(g[1][1], Pixel::Light);
-        assert_eq!(g[4][1], Pixel::Body);
-        assert_eq!(g[7][1], Pixel::Shadow);
+    fn render_passes_feature_cells_through() {
+        let g = render("#W#\n#o#\n#c#\n#d#");
+        assert_eq!(g[0][1], Pixel::Eye);
+        assert_eq!(g[1][1], Pixel::Pupil);
+        assert_eq!(g[2][1], Pixel::Cheek);
+        assert_eq!(g[3][1], Pixel::EarShade);
     }
 
     #[test]
-    fn render_marks_eyes_and_tusks() {
-        let g = render("###\n#o#\n#T#\n###");
+    fn feature_cells_do_not_outline_adjacent_body() {
+        // Body next to an eye is interior, not an edge.
+        let g = render("###\n#W#\n###");
+        // (1,0) body touches empty on its left -> outline; but it does not
+        // become outline *because* of the eye at (1,1).
         assert_eq!(g[1][1], Pixel::Eye);
-        assert_eq!(g[2][1], Pixel::Tusk);
     }
 
     #[test]
-    fn sprite_has_outline_eyes_and_tusks() {
+    fn sprite_has_every_feature() {
         let flat: Vec<Pixel> = frame().into_iter().flatten().collect();
-        assert!(flat.contains(&Pixel::Outline), "figure is outlined");
-        assert!(flat.contains(&Pixel::Eye), "elephant has eyes");
-        assert!(flat.contains(&Pixel::Tusk), "elephant has tusks");
-        assert!(flat.contains(&Pixel::Light), "shaded — light band");
-        assert!(flat.contains(&Pixel::Shadow), "shaded — shadow band");
+        for want in [
+            Pixel::Outline,
+            Pixel::Body,
+            Pixel::EarShade,
+            Pixel::Eye,
+            Pixel::Pupil,
+            Pixel::Cheek,
+        ] {
+            assert!(flat.contains(&want), "sprite is missing {want:?}");
+        }
     }
 }
