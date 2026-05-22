@@ -6,7 +6,7 @@ use crate::splash;
 use crate::theme::Theme;
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
@@ -33,20 +33,38 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
+/// Theme colour for a sprite pixel — `None` for empty (transparent).
+fn pixel_color(px: splash::Pixel, theme: &Theme) -> Option<Color> {
+    match px {
+        splash::Pixel::Empty => None,
+        splash::Pixel::Body => Some(theme.title),  // a blue elephant — Postgres
+        splash::Pixel::Eye => Some(theme.accent),  // bright amber eye
+        splash::Pixel::Tusk => Some(theme.text),   // near-white ivory
+    }
+}
+
 fn draw_splash(f: &mut Frame, app: &App) {
     let theme = &app.theme;
     // The pixel sprite is a fixed-shape block: render it left-aligned inside a
     // centred rect so it keeps its shape. Each sprite row is authored centred
     // within its grid, so left-aligning the block keeps the elephant centred
     // while the trunk's curl stays intentionally off-centre.
-    let art = splash::frame(app.splash_tick);
-    let art = art.trim_matches('\n');
-    let art_w = art.lines().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
-    let lines: Vec<Line> = art
-        .lines()
-        .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(theme.title))))
+    let grid = splash::frame(app.splash_tick);
+    let lines: Vec<Line> = grid
+        .iter()
+        .map(|row| {
+            Line::from(
+                row.iter()
+                    .map(|&px| match pixel_color(px, theme) {
+                        Some(c) => Span::styled("██", Style::default().fg(c)),
+                        None => Span::raw("  "),
+                    })
+                    .collect::<Vec<Span>>(),
+            )
+        })
         .collect();
     let art_h = lines.len() as u16;
+    let art_w = grid.iter().map(Vec::len).max().unwrap_or(0) as u16 * 2;
 
     let width = art_w.max(13);
     let block = centered(f.area(), width, art_h + 3);
