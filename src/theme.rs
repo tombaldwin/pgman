@@ -27,11 +27,12 @@ pub struct Theme {
     pub text: Color,
     pub accent: Color,
 
-    // Splash elephant palette (PostgreSQL-logo blues, dark → light)
+    // Splash elephant palette
     pub elephant_outline: Color,
-    pub elephant_shadow: Color,
     pub elephant_body: Color,
-    pub elephant_light: Color,
+    pub elephant_shade: Color,
+    pub elephant_eye: Color,
+    pub elephant_cheek: Color,
 
     // Backgrounds
     pub row_alt_bg: Color,
@@ -82,10 +83,11 @@ impl Theme {
             text: Color::Rgb(220, 222, 230),
             accent: Color::Rgb(255, 200, 120),
 
-            elephant_outline: Color::Rgb(20, 38, 64),
-            elephant_shadow: Color::Rgb(42, 78, 116),
-            elephant_body: Color::Rgb(72, 122, 166),
-            elephant_light: Color::Rgb(126, 178, 216),
+            elephant_outline: Color::Rgb(28, 28, 58),
+            elephant_body: Color::Rgb(124, 144, 200),
+            elephant_shade: Color::Rgb(96, 112, 168),
+            elephant_eye: Color::Rgb(244, 245, 250),
+            elephant_cheek: Color::Rgb(232, 142, 166),
 
             row_alt_bg: Color::Rgb(18, 22, 28),
             row_red_bg: Color::Rgb(48, 18, 22),
@@ -137,10 +139,11 @@ impl Theme {
             text: Color::Rgb(30, 32, 40),
             accent: Color::Rgb(180, 90, 0),
 
-            elephant_outline: Color::Rgb(20, 38, 64),
-            elephant_shadow: Color::Rgb(40, 75, 110),
-            elephant_body: Color::Rgb(70, 118, 160),
-            elephant_light: Color::Rgb(120, 168, 208),
+            elephant_outline: Color::Rgb(28, 28, 58),
+            elephant_body: Color::Rgb(108, 128, 188),
+            elephant_shade: Color::Rgb(84, 100, 154),
+            elephant_eye: Color::Rgb(248, 248, 252),
+            elephant_cheek: Color::Rgb(224, 130, 156),
 
             row_alt_bg: Color::Rgb(238, 240, 244),
             row_red_bg: Color::Rgb(250, 220, 220),
@@ -193,9 +196,10 @@ impl Theme {
             accent: Color::Rgb(255, 180, 0),
 
             elephant_outline: Color::Rgb(0, 0, 0),
-            elephant_shadow: Color::Rgb(35, 85, 150),
-            elephant_body: Color::Rgb(70, 140, 220),
-            elephant_light: Color::Rgb(150, 205, 255),
+            elephant_body: Color::Rgb(120, 150, 230),
+            elephant_shade: Color::Rgb(70, 95, 175),
+            elephant_eye: Color::Rgb(255, 255, 255),
+            elephant_cheek: Color::Rgb(255, 150, 180),
 
             row_alt_bg: Color::Rgb(20, 20, 20),
             row_red_bg: Color::Rgb(80, 0, 0),
