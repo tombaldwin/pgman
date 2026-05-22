@@ -1,0 +1,179 @@
+//! N+1 detection — cluster reconstructed queries by shape.
+//!
+//! A loop that issues the same statement many times (a missing `JOIN FETCH`,
+//! a lazy collection walked in application code) shows up as one query *shape*
+//! repeated in a tight burst. `fingerprint` reduces a statement to that shape;
+//! `detect` groups by it.
+//!
+//! Future refinement (BACKLOG.md): a time-window heuristic once
+//! `ReconstructedQuery` carries timestamps — repetition across a whole day
+//! isn't an N+1, repetition within 100ms is.
+
+use crate::query::reconstruct::ReconstructedQuery;
+use std::collections::HashMap;
+
+/// Reduce a statement to a shape fingerprint: lowercased, whitespace collapsed,
+/// and literals / placeholders replaced with `?`. Two statements with the same
+/// fingerprint are the "same query" for N+1 purposes.
+pub fn fingerprint(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    // Last source char seen — distinguishes a numeric literal (`= 1`) from a
+    // digit inside an identifier (`col1`).
+    let mut prev = ' ';
+    let mut pending_space = false;
+
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            pending_space = true;
+            prev = ' ';
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+
+        if c == '\'' {
+            // String literal — skip to the closing quote ('' escapes).
+            while let Some(cc) = chars.next() {
+                if cc == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            out.push('?');
+            prev = '?';
+            continue;
+        }
+        if c == '$' && chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+            while chars.peek().is_some_and(|d| d.is_ascii_digit()) {
+                chars.next();
+            }
+            out.push('?');
+            prev = '?';
+            continue;
+        }
+        if c == '?' {
+            out.push('?');
+            prev = '?';
+            continue;
+        }
+        if c.is_ascii_digit() && !(prev.is_ascii_alphanumeric() || prev == '_') {
+            // Numeric literal — collapse digits and dots to one `?`.
+            while chars.peek().is_some_and(|d| d.is_ascii_digit() || *d == '.') {
+                chars.next();
+            }
+            out.push('?');
+            prev = '?';
+            continue;
+        }
+        for lc in c.to_lowercase() {
+            out.push(lc);
+        }
+        prev = c;
+    }
+    out
+}
+
+/// A group of reconstructed queries sharing a fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cluster {
+    pub fingerprint: String,
+    pub count: usize,
+    /// One representative statement from the cluster.
+    pub example: String,
+}
+
+/// Cluster reconstructed queries by fingerprint. Only clusters seen 2+ times
+/// are returned, most-repeated first — a repeated shape is the N+1 signature.
+pub fn detect(queries: &[ReconstructedQuery]) -> Vec<Cluster> {
+    let mut groups: HashMap<String, (usize, String)> = HashMap::new();
+    for q in queries {
+        let fp = fingerprint(&q.raw_sql);
+        let entry = groups.entry(fp).or_insert((0, q.raw_sql.clone()));
+        entry.0 += 1;
+    }
+    let mut clusters: Vec<Cluster> = groups
+        .into_iter()
+        .filter(|(_, (count, _))| *count >= 2)
+        .map(|(fingerprint, (count, example))| Cluster {
+            fingerprint,
+            count,
+            example,
+        })
+        .collect();
+    // Most-repeated first; fingerprint as a stable tiebreak for deterministic
+    // output.
+    clusters.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
+    });
+    clusters
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::reconstruct::Source;
+
+    fn rq(raw_sql: &str) -> ReconstructedQuery {
+        ReconstructedQuery {
+            raw_sql: raw_sql.to_string(),
+            params: Vec::new(),
+            runnable_sql: raw_sql.to_string(),
+            source: Source::HibernateLog,
+            src_line: 0,
+        }
+    }
+
+    #[test]
+    fn fingerprint_normalises_whitespace_and_case() {
+        assert_eq!(
+            fingerprint("SELECT  *  FROM   Users"),
+            fingerprint("select * from users")
+        );
+    }
+
+    #[test]
+    fn fingerprint_collapses_literals_and_placeholders() {
+        let a = fingerprint("select * from t where id = 5 and name = 'alice'");
+        let b = fingerprint("select * from t where id = 99 and name = 'bob'");
+        let c = fingerprint("select * from t where id = $1 and name = ?");
+        assert_eq!(a, b);
+        assert_eq!(a, c);
+    }
+
+    #[test]
+    fn fingerprint_keeps_digits_inside_identifiers() {
+        // `col1` is an identifier, not `col` followed by a literal.
+        let fp = fingerprint("select col1 from t2");
+        assert!(fp.contains("col1"), "got {fp:?}");
+        assert!(fp.contains("t2"), "got {fp:?}");
+    }
+
+    #[test]
+    fn detect_flags_repeated_shapes() {
+        let queries = vec![
+            rq("select * from item where order_id = 1"),
+            rq("select * from item where order_id = 2"),
+            rq("select * from item where order_id = 3"),
+            rq("select * from orders where id = 1"),
+        ];
+        let clusters = detect(&queries);
+        // The order-line lookup repeats 3×; the single orders lookup does not.
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].count, 3);
+        assert!(clusters[0].fingerprint.contains("from item"));
+    }
+
+    #[test]
+    fn detect_ignores_one_off_queries() {
+        let queries = vec![rq("select 1"), rq("select 2 from t")];
+        assert!(detect(&queries).is_empty());
+    }
+}

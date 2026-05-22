@@ -1,0 +1,31 @@
+[package]
+name = "pgman"
+version = "0.0.1"
+edition = "2021"
+authors = ["Tom Baldwin <tom@polymorphism.co.uk>"]
+description = "k9s-style Postgres TUI for Java/AWS shops"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+ratatui = "0.29"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Deferred — added as the milestones that need them land (see BACKLOG.md):
+#   M0  crossterm, tokio                       — TUI event loop + async runtime
+#   M0  tokio-postgres, deadpool-postgres      — conn.rs real connection + pool
+#   M1.5 serde_yaml                            — creds/spring.rs application.yml
+#   v2  aws-config, aws-sdk-rds,               — discover_aws.rs, rds_logs.rs,
+#       aws-sdk-cloudwatch, aws-sdk-cloudwatchlogs, mode_params.rs, mode_dashboard.rs
+#       aws-sdk-ssm, aws-sdk-secretsmanager    — creds/{ssm,secrets}.rs
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
