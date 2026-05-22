@@ -44,7 +44,8 @@ pub struct App {
     pub grid: Grid,
     pub grid_state: TableState,
     pub splash_visible: bool,
-    pub splash_tick: usize,
+    /// Drives the header connecting-spinner. The splash itself is static.
+    pub anim_tick: usize,
     pub generation: u64,
     pub should_quit: bool,
 
@@ -65,7 +66,7 @@ impl App {
             grid: Grid::default(),
             grid_state: TableState::default(),
             splash_visible: true,
-            splash_tick: 0,
+            anim_tick: 0,
             generation: 0,
             should_quit: false,
             read_only,
@@ -102,7 +103,7 @@ impl App {
                     }
                 }
                 _ = frame.tick(), if animate => {
-                    self.splash_tick = self.splash_tick.wrapping_add(1);
+                    self.anim_tick = self.anim_tick.wrapping_add(1);
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
@@ -112,9 +113,10 @@ impl App {
         Ok(())
     }
 
-    /// Whether the frame clock should keep ticking.
+    /// Whether the frame clock should keep ticking. The splash is static now,
+    /// so only the connecting-spinner needs it.
     fn wants_animation(&self) -> bool {
-        self.splash_visible || matches!(self.conn_state, ConnState::Connecting)
+        matches!(self.conn_state, ConnState::Connecting)
     }
 
     /// Spawn the connect + bootstrap-query task. The result returns as an
