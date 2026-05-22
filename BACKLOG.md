@@ -7,8 +7,11 @@
   `safety` (statement classification + per-DB guards), `query::subst`
   (placeholder substitution), `query::nplus1` (fingerprint + clustering),
   `query::reconstruct` (shared types), `conn` (DSN parsing),
-  `creds::spring` (`.properties` parsing + Java-project detection).
-  Stub modules with TODO markers: `query::{hibernate,pglog,jdbc}`, `splash`.
+  `creds::spring` (`.properties` parsing + Java-project detection), `splash`.
+- **Query reconstruction parsers.** `query::pglog` (Postgres / RDS server
+  logs — `statement` / `parse`-`bind`-`execute`, parameters paired by pid)
+  and `query::hibernate` (Hibernate 5 & 6 logs — SQL paired with binds by
+  thread). Both pure and tested. Stub module remaining: `query::jdbc`.
 
 ## v1 — the wedge
 
@@ -25,16 +28,17 @@ safely." Nothing else.
 - Results grid for an arbitrary query (cap rows; reuse ebman's view-cache shape).
 
 ### M1 — query reconstruction (the hero)
-- `query/reconstruct.rs`: shared types — DONE (scaffold).
-- `query/subst.rs`: `?` + `$N` substitution — DONE (scaffold).
-- `query/hibernate.rs`: parse `org.hibernate.SQL` + bind lines (HB5 `BasicBinder`
-  and HB6 `jdbc.bind`); group by thread; pair SQL with following binds.
-- `query/pglog.rs`: parse Postgres/RDS `log_statement` output + `DETAIL:
-  parameters:` lines. **Treat as the primary source** — it needs no app redeploy.
-- `query/jdbc.rs`: two-pane paste (SQL + typed params).
-- `query/nplus1.rs`: fingerprint + clustering — DONE (scaffold); add a
-  time-window heuristic once `ReconstructedQuery` carries timestamps.
-- `mode_hibernate.rs`: log-import view feeding hibernate + pglog parsers.
+- `query/reconstruct.rs`: shared types — DONE.
+- `query/subst.rs`: `?` + `$N` substitution — DONE.
+- `query/hibernate.rs`: HB5 + HB6 log parsing, thread-grouped — DONE.
+  Follow-ups: reassemble `hibernate.format_sql=true` multi-line SQL.
+- `query/pglog.rs`: Postgres / RDS log parsing — DONE. Follow-ups: a SQL line
+  containing a log-level token still confuses line-splitting.
+- `query/nplus1.rs`: fingerprint + clustering — DONE. Follow-up: time-window
+  heuristic once `ReconstructedQuery` carries timestamps.
+- `query/jdbc.rs`: two-pane paste (SQL + typed params) — pending.
+- `mode_hibernate.rs`: log-import view feeding hibernate + pglog parsers —
+  pending (needs the M0 TUI).
 
 ### M1.5 — Spring auto-connect
 - `creds/spring.rs`: `.properties` parsing + Java detection — DONE (scaffold).
@@ -65,8 +69,31 @@ safely." Nothing else.
 - `advisor.rs` + `mode_advisor.rs` — health-snapshot → `claude` CLI review;
   interactive handoff via `handoff.rs`. Snapshot must be scrubbable (egress).
 
+## v2 — local DB sync & backups (not started)
+
+Pull a remote database down for local testing; keep tagged backups.
+
+- `snapshot.rs` — snapshot store under `util::data_dir()`: each snapshot is a
+  `pg_dump` artifact (custom format) plus a metadata record (source DSN
+  redacted, timestamp, size, db version, tag, pinned flag). A TOML/JSON index
+  lists them.
+- `mode_snapshots.rs` — list / create / restore / tag / pin / delete.
+  - Create: `pg_dump` a remote DB → store. Capture the server major version.
+  - Restore: `pg_restore` (or `psql`) into a chosen local target DB, with a
+    confirm step (restore is destructive to the target).
+  - Pin protects a snapshot from prune; tags group them (`pre-migration`,
+    `prod-2026-05`, …).
+- Version skew: `pg_dump` / `pg_restore` must be ≥ the server major version —
+  detect and warn, or locate a matching client binary.
+- Retention: optional prune of un-pinned snapshots past a count/age limit.
+- Future (v3+): on-restore redaction / anonymisation of sensitive columns —
+  a per-table/column rule set applied during restore. Listed below.
+
 ## v3+ — deferred
 
+- **Redaction / anonymisation** on snapshot restore — declarative rules
+  (`null` a column, fake an email, hash an id) applied as data lands locally,
+  so local testing never holds real PII.
 - `catalog/` — version-aware catalog trait; EPAS support.
 - JPA entity ↔ table mapping.
 - Migration safety linter (lock-heavy operations).
