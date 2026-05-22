@@ -127,7 +127,9 @@ fn apply_numbered(sql: &str, params: &[BoundParam]) -> Result<String, SubstError
                 }
             }
             let n = digits.parse::<usize>().unwrap_or(usize::MAX);
-            match n.checked_sub(1).and_then(|i| params.get(i)) {
+            // Resolve by the parameter's logged `index`, not slice position —
+            // `$N` placeholders need not be dense, ordered, or 1-based.
+            match params.iter().find(|p| p.index == n) {
                 Some(p) => out.push_str(&quote(p)),
                 None => return Err(SubstError::MissingParam(n)),
             }
@@ -242,6 +244,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "SELECT 5 WHERE a = 'x' OR b = 5");
+    }
+
+    #[test]
+    fn numbered_resolves_by_logged_index_not_slice_position() {
+        // Params supplied in reverse order — $1/$2 must still resolve right.
+        let params = [p(2, "TEXT", "two"), p(1, "INTEGER", "1")];
+        let out = apply("select $1, $2", &params, PlaceholderStyle::Numbered).unwrap();
+        assert_eq!(out, "select 1, 'two'");
     }
 
     #[test]
