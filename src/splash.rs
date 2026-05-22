@@ -1,55 +1,66 @@
 //! Animated startup splash — an elephant, the Postgres mascot.
 //!
-//! Pure frame data. The animation is driven by the shared frame clock (see
-//! CLAUDE.md "one frame clock, multiple animation sources"); the splash only
-//! supplies `frame(tick)` and is dismissed on keypress or connection-ready.
-//!
-//! M0 wires this into the TUI; for now `main.rs` prints a single static frame.
+//! Pure frame data. The animation is driven by the shared frame clock; the
+//! splash supplies `frame(tick)` and is dismissed on keypress or
+//! connection-ready. Frames are a fixed-width art block — the renderer places
+//! the whole block in a centred rect and draws it left-aligned, so the lines
+//! must keep their relative columns (do not centre lines individually).
 
-/// Each frame blinks the eyes and sways the trunk. Frames are printed
-/// line-by-line, so they need not be equal width.
-pub const FRAMES: &[&str] = &[FRAME_OPEN_LEFT, FRAME_BLINK, FRAME_OPEN_RIGHT];
+/// Frames cycle: eyes open, eyes blink, trunk sways.
+pub const FRAMES: &[&str] = &[FRAME_OPEN, FRAME_BLINK, FRAME_SWAY];
 
-const FRAME_OPEN_LEFT: &str = r#"
-        _____         _____
-      ,'     `.     ,'     `.
-     /         `---'         \
-    |          pgman          |
-    |     (o)         (o)     |
-     \         _____         /
-      `.      /     \      ,'
-        `----|  ___  |----'
-            | /   \ |
-            |/     \|
-            '       '
+const FRAME_OPEN: &str = r#"
+       ___                       ___
+      /   \                     /   \
+     /     \___________________/     \
+    |                                 |
+    |   (o)       pgman       (o)      |
+     \                               /
+      \            ___              /
+       \__________|   |____________/
+                  |   |
+                  |   |
+                  |   |
+                  |    \____
+                   \        \
+                    \____    |
+                         \__/
 "#;
 
 const FRAME_BLINK: &str = r#"
-        _____         _____
-      ,'     `.     ,'     `.
-     /         `---'         \
-    |          pgman          |
-    |     (-)         (-)     |
-     \         _____         /
-      `.      /     \      ,'
-        `----|  ___  |----'
-             | /   \ |
-             |/     \|
-             '       '
+       ___                       ___
+      /   \                     /   \
+     /     \___________________/     \
+    |                                 |
+    |   (-)       pgman       (-)      |
+     \                               /
+      \            ___              /
+       \__________|   |____________/
+                  |   |
+                  |   |
+                  |   |
+                  |    \____
+                   \        \
+                    \____    |
+                         \__/
 "#;
 
-const FRAME_OPEN_RIGHT: &str = r#"
-        _____         _____
-      ,'     `.     ,'     `.
-     /         `---'         \
-    |          pgman          |
-    |     (o)         (o)     |
-     \         _____         /
-      `.      /     \      ,'
-        `----|  ___  |----'
-              | /   \ |
-              |/     \|
-              '       '
+const FRAME_SWAY: &str = r#"
+       ___                       ___
+      /   \                     /   \
+     /     \___________________/     \
+    |                                 |
+    |   (o)       pgman       (o)      |
+     \                               /
+      \            ___              /
+       \__________|   |____________/
+                  |   |
+                  |   |
+                  |   |
+              ____/    |
+             /        /
+            |    ____/
+             \__/
 "#;
 
 /// Frame for animation tick `tick`, cycling through `FRAMES`.
@@ -66,7 +77,6 @@ mod tests {
         assert_eq!(frame(0), FRAMES[0]);
         assert_eq!(frame(1), FRAMES[1]);
         assert_eq!(frame(2), FRAMES[2]);
-        // Wraps.
         assert_eq!(frame(3), FRAMES[0]);
         assert_eq!(frame(FRAMES.len() * 99 + 1), FRAMES[1]);
     }
@@ -75,6 +85,15 @@ mod tests {
     fn every_frame_is_branded() {
         for f in FRAMES {
             assert!(f.contains("pgman"), "frame should carry the brand");
+        }
+    }
+
+    #[test]
+    fn frames_share_a_line_count() {
+        // The renderer assumes a stable block height across frames.
+        let h = FRAMES[0].trim_matches('\n').lines().count();
+        for f in FRAMES {
+            assert_eq!(f.trim_matches('\n').lines().count(), h);
         }
     }
 }
