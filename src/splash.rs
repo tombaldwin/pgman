@@ -1,71 +1,93 @@
-//! Animated startup splash — an elephant, the Postgres mascot.
+//! Animated startup splash — a pixel-art (8-bit style) elephant.
 //!
-//! Pure frame data. The animation is driven by the shared frame clock; the
-//! splash supplies `frame(tick)` and is dismissed on keypress or
-//! connection-ready. Frames are a fixed-width art block — the renderer places
-//! the whole block in a centred rect and draws it left-aligned, so the lines
-//! must keep their relative columns (do not centre lines individually).
+//! Sprites are authored as `#` (filled pixel) / space (empty) templates.
+//! `expand` blows each pixel up to a two-cell block (`██`) so it renders
+//! roughly square in a terminal. The renderer places the block in a centred
+//! rect, left-aligned — each template line's leading spaces do the centring.
 
-/// Frames cycle: eyes open, eyes blink, trunk sways.
-pub const FRAMES: &[&str] = &[FRAME_OPEN, FRAME_BLINK, FRAME_SWAY];
+/// Sprite frames: eyes open, eyes blink, trunk swayed.
+const SPRITES: &[&str] = &[SPRITE_OPEN, SPRITE_BLINK, SPRITE_SWAY];
 
-const FRAME_OPEN: &str = r#"
-       ___                       ___
-      /   \                     /   \
-     /     \___________________/     \
-    |                                 |
-    |   (o)       pgman       (o)      |
-     \                               /
-      \            ___              /
-       \__________|   |____________/
-                  |   |
-                  |   |
-                  |   |
-                  |    \____
-                   \        \
-                    \____    |
-                         \__/
+const SPRITE_OPEN: &str = r#"
+     ####
+   ########
+ ############
+##############
+##############
+### ###### ###
+##############
+##############
+ ############
+  ##########
+   ########
+    ######
+     ####
+     ####
+     ####
+     #####
+       ####
+        ###
 "#;
 
-const FRAME_BLINK: &str = r#"
-       ___                       ___
-      /   \                     /   \
-     /     \___________________/     \
-    |                                 |
-    |   (-)       pgman       (-)      |
-     \                               /
-      \            ___              /
-       \__________|   |____________/
-                  |   |
-                  |   |
-                  |   |
-                  |    \____
-                   \        \
-                    \____    |
-                         \__/
+const SPRITE_BLINK: &str = r#"
+     ####
+   ########
+ ############
+##############
+##############
+##############
+##############
+##############
+ ############
+  ##########
+   ########
+    ######
+     ####
+     ####
+     ####
+     #####
+       ####
+        ###
 "#;
 
-const FRAME_SWAY: &str = r#"
-       ___                       ___
-      /   \                     /   \
-     /     \___________________/     \
-    |                                 |
-    |   (o)       pgman       (o)      |
-     \                               /
-      \            ___              /
-       \__________|   |____________/
-                  |   |
-                  |   |
-                  |   |
-              ____/    |
-             /        /
-            |    ____/
-             \__/
+const SPRITE_SWAY: &str = r#"
+     ####
+   ########
+ ############
+##############
+##############
+### ###### ###
+##############
+##############
+ ############
+  ##########
+   ########
+    ######
+     ####
+     ####
+     ####
+    #####
+   ####
+   ###
 "#;
 
-/// Frame for animation tick `tick`, cycling through `FRAMES`.
-pub fn frame(tick: usize) -> &'static str {
-    FRAMES[tick % FRAMES.len()]
+/// Block-art frame for animation tick `tick`, cycling through the sprites.
+pub fn frame(tick: usize) -> String {
+    expand(SPRITES[tick % SPRITES.len()].trim_matches('\n'))
+}
+
+/// Expand a `#`/space pixel template to block art — each pixel becomes a
+/// two-cell `██` square (empty pixels become two spaces).
+fn expand(template: &str) -> String {
+    template
+        .lines()
+        .map(|line| {
+            line.chars()
+                .map(|c| if c == '#' { "██" } else { "  " })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -74,26 +96,28 @@ mod tests {
 
     #[test]
     fn frame_cycles_through_all() {
-        assert_eq!(frame(0), FRAMES[0]);
-        assert_eq!(frame(1), FRAMES[1]);
-        assert_eq!(frame(2), FRAMES[2]);
-        assert_eq!(frame(3), FRAMES[0]);
-        assert_eq!(frame(FRAMES.len() * 99 + 1), FRAMES[1]);
+        assert_eq!(frame(0), frame(SPRITES.len()));
+        assert_eq!(frame(1), frame(SPRITES.len() + 1));
+        // The open and blink sprites must differ (the eyes).
+        assert_ne!(frame(0), frame(1));
     }
 
     #[test]
-    fn every_frame_is_branded() {
-        for f in FRAMES {
-            assert!(f.contains("pgman"), "frame should carry the brand");
-        }
+    fn expand_maps_pixels_to_blocks() {
+        assert_eq!(expand("#.#\n.#."), "██  ██\n  ██  ");
     }
 
     #[test]
-    fn frames_share_a_line_count() {
+    fn expanded_frame_contains_block_glyphs() {
+        assert!(frame(0).contains('█'));
+    }
+
+    #[test]
+    fn sprites_share_a_line_count() {
         // The renderer assumes a stable block height across frames.
-        let h = FRAMES[0].trim_matches('\n').lines().count();
-        for f in FRAMES {
-            assert_eq!(f.trim_matches('\n').lines().count(), h);
+        let h = SPRITES[0].trim_matches('\n').lines().count();
+        for s in SPRITES {
+            assert_eq!(s.trim_matches('\n').lines().count(), h);
         }
     }
 }
