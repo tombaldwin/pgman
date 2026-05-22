@@ -35,9 +35,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
 fn draw_splash(f: &mut Frame, app: &App) {
     let theme = &app.theme;
-    // The art is a fixed-shape block: render it left-aligned inside a centred
-    // rect so the lines keep their relative columns (centring each line
-    // independently would skew the drawing).
+    // The pixel sprite is a fixed-shape block: render it left-aligned inside a
+    // centred rect so it keeps its shape. Each sprite row is authored centred
+    // within its grid, so left-aligning the block keeps the elephant centred
+    // while the trunk's curl stays intentionally off-centre.
     let art = splash::frame(app.splash_tick);
     let art = art.trim_matches('\n');
     let art_w = art.lines().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
@@ -47,9 +48,11 @@ fn draw_splash(f: &mut Frame, app: &App) {
         .collect();
     let art_h = lines.len() as u16;
 
-    let block = centered(f.area(), art_w, art_h + 2);
+    let width = art_w.max(13);
+    let block = centered(f.area(), width, art_h + 3);
     let rows = Layout::vertical([
         Constraint::Length(art_h),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
@@ -57,11 +60,21 @@ fn draw_splash(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)), rows[0]);
     f.render_widget(
         Paragraph::new(Span::styled(
+            "pgman",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+        rows[2],
+    );
+    f.render_widget(
+        Paragraph::new(Span::styled(
             "press any key",
             Style::default().fg(theme.muted),
         ))
         .alignment(Alignment::Center),
-        rows[2],
+        rows[3],
     );
 }
 
