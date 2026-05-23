@@ -5,6 +5,7 @@ pub mod msg;
 use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
 use crate::grid::Grid;
+use crate::query::{self, reconstruct::ReconstructedQuery};
 use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
 use crate::tui::Tui;
@@ -33,6 +34,10 @@ pub enum Mode {
     Editor,
     /// Confirmation modal for a guarded statement.
     Confirm,
+    /// An auto-tx write just succeeded; awaiting commit/rollback.
+    TxDecision,
+    /// Picking a reconstructed query from a parsed log.
+    LogPick,
 }
 
 /// Connection lifecycle state.
@@ -96,6 +101,14 @@ pub struct App {
     pub history_pos: Option<usize>,
     /// A guarded run waiting on confirmation.
     pub pending_run: Option<PendingRun>,
+    /// True while an explicit transaction is open (auto_tx write succeeded —
+    /// waiting on the user to commit or rollback).
+    pub tx_open: bool,
+    /// Reconstructed queries from the most recent log-import; `Mode::LogPick`
+    /// browses these.
+    pub log_picks: Vec<ReconstructedQuery>,
+    /// Selected entry in `log_picks`.
+    pub log_pick_index: usize,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
     pub last_status: Option<String>,
     /// A query / safety error to surface to the user.
@@ -142,6 +155,9 @@ impl App {
             history_pos: None,
             history_draft: String::new(),
             pending_run: None,
+            tx_open: false,
+            log_picks: Vec::new(),
+            log_pick_index: 0,
             last_status: None,
             last_error: None,
             query_running: false,
@@ -254,19 +270,49 @@ impl App {
                 self.splash_visible = false;
             }
             AppMsg::QueryOk {
-                grid, kind_label, ..
+                grid,
+                kind_label,
+                tx_open_after,
+                ..
             } => {
                 self.grid = grid;
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
                 self.query_running = false;
                 self.last_error = None;
-                self.last_status = Some(format!("{kind_label} ok · {} row(s)", self.grid.row_count()));
+                self.last_status = Some(format!(
+                    "{kind_label} ok · {} row(s)",
+                    self.grid.row_count()
+                ));
+                if tx_open_after {
+                    self.tx_open = true;
+                    self.mode = Mode::TxDecision;
+                }
             }
             AppMsg::QueryFailed { error, .. } => {
                 self.query_running = false;
                 self.last_status = None;
                 self.last_error = Some(error);
+            }
+            AppMsg::TxClosed {
+                committed, error, ..
+            } => {
+                self.tx_open = false;
+                self.query_running = false;
+                self.mode = Mode::Editor;
+                match error {
+                    Some(e) => self.last_error = Some(format!("tx close failed: {e}")),
+                    None => {
+                        self.last_status = Some(
+                            if committed {
+                                "committed"
+                            } else {
+                                "rolled back"
+                            }
+                            .to_string(),
+                        );
+                    }
+                }
             }
         }
     }
@@ -298,6 +344,8 @@ impl App {
                 }
             }
             Mode::Confirm => self.on_confirm_key(key),
+            Mode::TxDecision => self.on_tx_decision_key(key),
+            Mode::LogPick => self.on_log_pick_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -328,6 +376,7 @@ impl App {
             KeyCode::F(5) => self.request_run(RunKind::Run),
             KeyCode::F(6) => self.request_run(RunKind::Explain),
             KeyCode::F(7) => self.request_run(RunKind::ExplainAnalyze),
+            KeyCode::F(8) => self.start_log_import(),
 
             // History navigation (guarded arms come first).
             KeyCode::Char('p') if ctrl => self.history_prev(),
@@ -454,6 +503,100 @@ impl App {
         }
     }
 
+    /// Tx-open prompt: `y` commits, `n` / `esc` rolls back.
+    fn on_tx_decision_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.close_tx(true),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => self.close_tx(false),
+            _ => {}
+        }
+    }
+
+    /// Spawn a `COMMIT` or `ROLLBACK` of the open transaction.
+    fn close_tx(&mut self, commit: bool) {
+        let Some(client) = self.client.clone() else {
+            self.tx_open = false;
+            self.mode = Mode::Editor;
+            return;
+        };
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        self.query_running = true;
+        self.last_status = Some(if commit {
+            "committing…".to_string()
+        } else {
+            "rolling back…".to_string()
+        });
+        tokio::spawn(async move {
+            let result = if commit {
+                conn::tx_commit(&client).await
+            } else {
+                conn::tx_rollback(&client).await
+            };
+            let _ = tx.send(AppMsg::TxClosed {
+                generation,
+                committed: commit,
+                error: result.err(),
+            });
+        });
+    }
+
+    /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
+    /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
+    fn start_log_import(&mut self) {
+        let log = &self.editor_buffer;
+        let mut picks: Vec<ReconstructedQuery> = Vec::new();
+        picks.extend(query::hibernate::parse(log));
+        picks.extend(query::pglog::parse(log));
+        if picks.is_empty() {
+            self.last_error = Some(
+                "no queries found (paste a Hibernate or Postgres log into the editor first)"
+                    .to_string(),
+            );
+            return;
+        }
+        self.last_error = None;
+        self.last_status = Some(format!("{} pick(s) found", picks.len()));
+        self.log_picks = picks;
+        self.log_pick_index = 0;
+        self.mode = Mode::LogPick;
+    }
+
+    /// Log-pick browser: j/k navigate, Enter loads the selection into the
+    /// editor, Esc cancels.
+    fn on_log_pick_key(&mut self, key: KeyEvent) {
+        let last = self.log_picks.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.log_picks.clear();
+                self.mode = Mode::Editor;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.log_pick_index = (self.log_pick_index + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.log_pick_index = self.log_pick_index.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.log_pick_index = 0,
+            KeyCode::Char('G') | KeyCode::End => self.log_pick_index = last,
+            KeyCode::Enter => {
+                if let Some(pick) = self.log_picks.get(self.log_pick_index) {
+                    self.editor_buffer = pick.runnable_sql.clone();
+                    self.editor_cursor = self.editor_buffer.len();
+                    self.editor_preferred_col = None;
+                    self.history_pos = None;
+                    self.last_status = Some(format!(
+                        "loaded query · {} char(s)",
+                        self.editor_buffer.len()
+                    ));
+                }
+                self.log_picks.clear();
+                self.mode = Mode::Editor;
+            }
+            _ => {}
+        }
+    }
+
     // -- run dispatch --
 
     /// User requested a run. Classify, evaluate safety, and either run, prompt,
@@ -519,16 +662,22 @@ impl App {
         self.history_pos = None;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
+        let wrap_in_tx = decision.wrap_in_tx;
+        let is_run = matches!(kind, RunKind::Run);
         self.query_running = true;
         self.last_error = None;
         self.last_status = Some(format!("running {}…", kind.label()));
         tokio::spawn(async move {
             let result = execute(&client, &sql, kind, &decision).await;
+            // Run + wrap_in_tx leaves the transaction open on success — the
+            // caller will need to commit or rollback.
+            let tx_open_after = is_run && wrap_in_tx && result.is_ok();
             let msg = match result {
                 Ok(grid) => AppMsg::QueryOk {
                     generation,
                     grid,
                     kind_label: kind.label().to_string(),
+                    tx_open_after,
                 },
                 Err(error) => AppMsg::QueryFailed { generation, error },
             };
@@ -709,7 +858,9 @@ async fn execute(
     match kind {
         RunKind::Run => {
             if decision.wrap_in_tx {
-                conn::run_in_tx_commit(client, sql).await
+                // BEGIN + run; transaction is LEFT OPEN on success so the
+                // app's commit/rollback prompt can decide what happens next.
+                conn::run_in_tx_open(client, sql).await
             } else {
                 conn::run_statement(client, sql).await
             }

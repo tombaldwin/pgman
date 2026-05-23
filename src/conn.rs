@@ -244,17 +244,38 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
     }
 }
 
-/// Run `sql` inside an explicit transaction. Commits on success, rolls back on
-/// any error so a failed DML doesn't leave the session in an aborted state.
-pub async fn run_in_tx_commit(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
+/// Open a transaction and run `sql`. On success the transaction is **left
+/// open** — the caller (usually the App's commit/rollback prompt) decides
+/// `COMMIT` or `ROLLBACK`. On error the transaction is rolled back immediately
+/// so the session doesn't sit aborted.
+pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
     client
         .batch_execute("BEGIN")
         .await
         .map_err(|e| e.to_string())?;
-    let result = run_statement(client, sql).await;
-    let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-    let _ = client.batch_execute(end).await;
-    result
+    match run_statement(client, sql).await {
+        Ok(grid) => Ok(grid),
+        Err(e) => {
+            let _ = client.batch_execute("ROLLBACK").await;
+            Err(e)
+        }
+    }
+}
+
+/// Commit an open transaction.
+pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute("COMMIT")
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Roll back an open transaction.
+pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute("ROLLBACK")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Run `sql` inside an explicit transaction that is *always* rolled back —

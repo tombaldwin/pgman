@@ -91,10 +91,17 @@ Survey done — lift as the milestones reach them:
 - Query history: every run is pushed to a 50-entry ring buffer
   (consecutive duplicates skipped); Ctrl-P / Ctrl-N navigate; the live
   draft is preserved and restored on Ctrl-N past the newest entry — DONE.
-- Follow-ups: pasting Hibernate / Postgres logs via `mode_hibernate`;
-  saved queries; N+1 cluster view; commit/rollback prompt instead of
-  auto-commit for `auto_tx`; bracketed paste; very tall buffers
-  (>10 lines) currently clip — add scrolling.
+- Commit / rollback prompt for `auto_tx` writes: `conn::run_in_tx_open`
+  leaves the transaction open on success; `Mode::TxDecision` (header
+  badge + footer prompt) blocks input until `y` commits or `n`/`esc`
+  rolls back. `conn::tx_commit` / `tx_rollback` finish via a
+  `TxClosed` message — DONE.
+- Log import: `F8` in the editor parses the buffer through
+  `query::hibernate::parse` and `query::pglog::parse`; `Mode::LogPick`
+  shows a list of reconstructed queries; Enter loads the selection's
+  `runnable_sql` into the editor — DONE.
+- Follow-ups: saved queries; N+1 cluster view; bracketed paste; very
+  tall buffers (>10 lines) currently clip — add scrolling.
 
 ## v2 — AWS (not started)
 
