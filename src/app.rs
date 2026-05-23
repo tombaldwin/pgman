@@ -1143,6 +1143,30 @@ impl App {
             return;
         }
 
+        // Exact-match fast path: the typed prefix already IS one of the
+        // candidates (case-insensitively). The operator typed the full
+        // name; commit and dismiss the popup. Without this, a name
+        // like `user` against [user, users, user_logs] would just show
+        // the popup with no auto-commit, forcing another Tab.
+        // Honours the candidate's stored case (e.g. `users` from the
+        // cache, not the operator's `USERS`).
+        if let Some(exact) = cands
+            .iter()
+            .find(|c| c.insert.eq_ignore_ascii_case(&id.prefix))
+        {
+            let cand = exact.clone();
+            self.editor_buffer
+                .replace_range(prefix_start..replace_end, &cand.insert);
+            let new_end = prefix_start + cand.insert.len();
+            self.editor_cursor = new_end;
+            self.last_status =
+                Some(format!("completion · exact match · {}", cand.kind.label()));
+            // No cycle stored — the operator's typing already
+            // disambiguated; popup would be noise.
+            self.completion = None;
+            return;
+        }
+
         // Multi-match: compute the longest common prefix (case-
         // insensitive) of all candidate inserts. If it extends past
         // what the operator already typed, advance the buffer to that
@@ -1890,5 +1914,88 @@ mod tests {
         // cursor at last char
         assert_eq!(line_start_byte(buf, 8), 7);
         assert_eq!(line_end_byte(buf, 8), 8);
+    }
+
+    // ---- editor_complete (UI glue) -----------------------------------------
+
+    use crate::query::schema::{SchemaCache, TableMeta};
+    use crate::safety::SafetyConfig;
+    use crate::theme::Theme;
+
+    fn test_app_with_cache(tables: &[(&str, &[&str])]) -> App {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        let mut cache = SchemaCache::default();
+        for (name, cols) in tables {
+            cache.tables.push(TableMeta {
+                schema: "public".into(),
+                name: (*name).into(),
+            });
+            cache
+                .columns_by_table
+                .insert(("public".into(), (*name).into()), cols.iter().map(|s| s.to_string()).collect());
+        }
+        cache.schemas.push("public".into());
+        a.schema_cache = cache;
+        a
+    }
+
+    fn set_editor(a: &mut App, text: &str) {
+        a.editor_buffer = text.into();
+        a.editor_cursor = a.editor_buffer.len();
+    }
+
+    #[test]
+    fn exact_match_commits_and_dismisses_popup() {
+        // Cache has `user`, `users`, `user_logs`. Operator types
+        // `FROM user` and Tab: the exact match commits, no popup.
+        let mut a = test_app_with_cache(&[
+            ("user", &["id"]),
+            ("users", &["id"]),
+            ("user_logs", &["id"]),
+        ]);
+        set_editor(&mut a, "SELECT * FROM user");
+        a.editor_complete();
+        assert_eq!(a.editor_buffer, "SELECT * FROM user");
+        assert!(
+            a.completion.is_none(),
+            "exact match should dismiss the popup; got {:?}",
+            a.completion.as_ref().map(|c| c.candidates.len())
+        );
+    }
+
+    #[test]
+    fn exact_match_is_case_insensitive_and_canonicalises_case() {
+        // Operator typed `USERS`, cache has `users`, plus a sibling that
+        // doesn't share the LCP `users` so the exact-match branch (not
+        // single-match) is exercised.
+        let mut a = test_app_with_cache(&[
+            ("users", &["id"]),
+            ("users_archived", &["id"]),
+        ]);
+        set_editor(&mut a, "SELECT * FROM USERS");
+        a.editor_complete();
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        assert!(
+            a.completion.is_none(),
+            "exact match should dismiss the popup"
+        );
+    }
+
+    #[test]
+    fn lcp_expands_when_no_exact_match() {
+        // Two tables, `user_logs` and `user_roles`. Typing `user` Tab
+        // expands to the LCP `user_` (no exact match to short-circuit).
+        let mut a = test_app_with_cache(&[
+            ("user_logs", &["id"]),
+            ("user_roles", &["id"]),
+        ]);
+        set_editor(&mut a, "SELECT * FROM user");
+        a.editor_complete();
+        assert_eq!(a.editor_buffer, "SELECT * FROM user_");
+        // Cycle is in the LCP-expanded state — popup visible, nothing
+        // selected yet.
+        let cycle = a.completion.as_ref().expect("cycle should be alive");
+        assert!(cycle.selected.is_none());
+        assert_eq!(cycle.candidates.len(), 2);
     }
 }
