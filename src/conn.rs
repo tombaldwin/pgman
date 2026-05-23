@@ -5,6 +5,7 @@
 
 use crate::grid::Grid;
 use std::fmt;
+use std::sync::Arc;
 
 /// A parsed `postgres://` connection string.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,10 +143,13 @@ fn opt(s: &str) -> Option<String> {
     }
 }
 
-/// A successful connection's bootstrap result: server version + first query.
+/// A successful connection's bootstrap result.
 pub struct Booted {
     pub server_version: String,
     pub grid: Grid,
+    /// The live client — handed to `App` so subsequent queries run on the
+    /// same session (and the read-only / statement-timeout settings stick).
+    pub client: Arc<tokio_postgres::Client>,
 }
 
 /// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
@@ -171,7 +175,8 @@ pub async fn connect_and_bootstrap(
         .connect(tokio_postgres::NoTls)
         .await
         .map_err(|e| e.to_string())?;
-    // Drive the connection in the background; it ends when `client` drops.
+    // Drive the connection in the background; it ends when the last `Arc<Client>`
+    // drops (which is when App finishes).
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             tracing::warn!("postgres connection closed: {e}");
@@ -199,11 +204,72 @@ pub async fn connect_and_bootstrap(
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
 
+    let client = Arc::new(client);
     let grid = run_query(&client, &bootstrap_sql).await?;
     Ok(Booted {
         server_version,
         grid,
+        client,
     })
+}
+
+/// Run `sql` and collect the result into a `Grid`, handling both row-returning
+/// statements (`SELECT`, `EXPLAIN`, `SHOW`, …) and non-row-returning ones
+/// (`UPDATE`, `DELETE`, DDL). Non-row statements yield a single-cell grid with
+/// the affected-row count.
+pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
+    let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
+    let columns = stmt.columns();
+    if columns.is_empty() {
+        let affected = client
+            .execute(&stmt, &[])
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(Grid {
+            columns: vec!["status".to_string()],
+            rows: vec![vec![format!("{affected} row(s) affected")]],
+        })
+    } else {
+        let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
+        let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
+        let out_rows: Vec<Vec<String>> = rows
+            .iter()
+            .take(crate::grid::MAX_ROWS)
+            .map(|row| (0..row.len()).map(|i| cell_to_string(row, i)).collect())
+            .collect();
+        Ok(Grid {
+            columns: column_names,
+            rows: out_rows,
+        })
+    }
+}
+
+/// Run `sql` inside an explicit transaction. Commits on success, rolls back on
+/// any error so a failed DML doesn't leave the session in an aborted state.
+pub async fn run_in_tx_commit(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(|e| e.to_string())?;
+    let result = run_statement(client, sql).await;
+    let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+    let _ = client.batch_execute(end).await;
+    result
+}
+
+/// Run `sql` inside an explicit transaction that is *always* rolled back —
+/// used for `EXPLAIN ANALYZE` on DML so the mutation never lands.
+pub async fn run_in_tx_rollback(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<Grid, String> {
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(|e| e.to_string())?;
+    let result = run_statement(client, sql).await;
+    let _ = client.batch_execute("ROLLBACK").await;
+    result
 }
 
 /// Run `sql` and collect the result into a `Grid` (capped at `grid::MAX_ROWS`).
