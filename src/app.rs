@@ -674,7 +674,9 @@ impl App {
     fn on_conn_pick_key(&mut self, key: KeyEvent) {
         let last = self.data_source_picks.len().saturating_sub(1);
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => self.should_quit = true,
+            // q (and Ctrl-C) quit; Esc is a no-op so a reflex press
+            // can't abandon the picker by accident.
+            KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
                 self.data_source_pick_index = (self.data_source_pick_index + 1).min(last);
             }
@@ -761,7 +763,12 @@ impl App {
             }
         }
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            // q (and Ctrl-C) are the only quit keys. Esc used to also
+            // quit, but a reflex Esc shouldn't ever lose the session —
+            // overlays bind Esc to "close me", and in Normal mode Esc
+            // is a no-op so an extra press from inside a closed overlay
+            // is harmless.
+            KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('e') | KeyCode::Char('i') | KeyCode::Tab => {
                 self.mode = Mode::Editor;

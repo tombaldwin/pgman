@@ -491,7 +491,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "tab complete · ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
-                Mode::ConnPick => "↑↓ / j/k navigate · enter connect · esc / q quit",
+                Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
             Mode::RowDetail => "↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close",
             Mode::CellDetail => "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back",
             Mode::About => "esc / enter / A close",
@@ -1297,7 +1297,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         )),
         Line::from(""),
         Line::from(Span::styled("  grid", Style::default().fg(theme.accent))),
-        Line::from("    q / esc       quit"),
+        Line::from("    q             quit (esc is a no-op here so a reflex press doesn't lose your session)"),
         Line::from("    ?             toggle this help"),
         Line::from("    e / i / tab   focus editor"),
         Line::from("    j / k  ↑ ↓    move selection"),
