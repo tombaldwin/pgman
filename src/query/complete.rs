@@ -18,6 +18,10 @@
 use crate::query::clause::{classify_at, extract_cte_names, ClauseContext, QualifiedTable};
 use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
 use crate::query::schema::SchemaCache;
+use crate::query::vocabulary::{
+    AGGREGATE_FUNCTIONS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS,
+    WINDOW_FUNCTIONS,
+};
 
 /// The partial identifier the cursor is inside (or immediately after).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,26 +70,9 @@ impl CandidateKind {
     }
 }
 
-/// The SQL verbs / clause keywords pgman offers at statement-start.
-/// Kept short and focused on what an operator actually types at the
-/// editor prompt — DDL (`CREATE` / `ALTER` / `DROP`) and TX control
-/// can grow this list as those workflows land.
-const STATEMENT_KEYWORDS: &[&str] = &[
-    "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "EXPLAIN",
-    "BEGIN", "COMMIT", "ROLLBACK", "SHOW", "VACUUM", "ANALYZE",
-    "TRUNCATE", "VALUES",
-];
-
-/// SQL aggregates / common scalar functions surfaced in SELECT-list /
-/// RETURNING contexts. Inserted as bare names (no `(...)`) so the
-/// operator's caret lands right where they'd type the argument.
-const AGGREGATE_FUNCTIONS: &[&str] = &[
-    "COUNT", "SUM", "AVG", "MIN", "MAX",
-    "ARRAY_AGG", "STRING_AGG", "BOOL_AND", "BOOL_OR",
-    "JSON_AGG", "JSONB_AGG", "JSON_OBJECT_AGG",
-    "COALESCE", "NULLIF", "GREATEST", "LEAST",
-    "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE",
-];
+// Vocabulary lives in `query::vocabulary` so adding a function or
+// operator is a one-line change in one file. Each list below maps to
+// a specific clause context — see `candidates_for_in_context`.
 
 /// One completion the user can land on. `insert` is the text to substitute
 /// for `prefix`; `display` is what the picker (footer hint) shows.
@@ -313,7 +300,18 @@ fn candidates_for_in_context(
                 out
             }
         },
-        ClauseContext::Predicate | ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
+        ClauseContext::Predicate => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => {
+                let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
+                // Predicate position — also surface word-shaped
+                // operators (LIKE, IN, IS NULL, …). They land after the
+                // column candidates so the cycle prioritises identifiers.
+                out.extend(candidates_predicate_operators(&id.prefix));
+                out
+            }
+        },
+        ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
             None => candidates_columns_only(&id.prefix, in_scope, schema),
         },
@@ -348,14 +346,39 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
         .collect()
 }
 
+/// Function candidates — aggregates + scalar + window functions, all
+/// inserted as `NAME(` so the cursor lands inside the parens ready for
+/// the operator's first argument. `display` stays as the bare name so
+/// the popup row reads cleanly.
 fn candidates_functions(prefix: &str) -> Vec<Candidate> {
-    AGGREGATE_FUNCTIONS
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen: std::collections::BTreeSet<&'static str> =
+        std::collections::BTreeSet::new();
+    for source in [AGGREGATE_FUNCTIONS, SCALAR_FUNCTIONS, WINDOW_FUNCTIONS] {
+        for fname in source {
+            if seen.insert(fname) && starts_with_ci(fname, prefix) {
+                out.push(Candidate {
+                    display: (*fname).to_string(),
+                    insert: format!("{fname}("),
+                    kind: CandidateKind::Function,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Word-shaped predicate operators (LIKE, IN, IS NULL, …). Symbolic
+/// operators (`=`, `>`) are omitted by design — see the vocabulary
+/// module for the rationale.
+fn candidates_predicate_operators(prefix: &str) -> Vec<Candidate> {
+    PREDICATE_OPERATORS
         .iter()
-        .filter(|fname| starts_with_ci(fname, prefix))
-        .map(|fname| Candidate {
-            display: (*fname).to_string(),
-            insert: (*fname).to_string(),
-            kind: CandidateKind::Function,
+        .filter(|op| starts_with_ci(op, prefix))
+        .map(|op| Candidate {
+            display: (*op).to_string(),
+            insert: (*op).to_string(),
+            kind: CandidateKind::Keyword,
         })
         .collect()
 }
@@ -959,6 +982,78 @@ mod tests {
     }
 
     #[test]
+    fn function_candidates_insert_with_open_paren() {
+        // Display stays as the bare name so the popup row is clean;
+        // insert ends with `(` so the cursor lands ready for the first
+        // argument.
+        let cache = build_cache();
+        let cands = candidates_for("SELECT COU FROM users", 10, &cache);
+        let count = cands
+            .iter()
+            .find(|c| c.display == "COUNT")
+            .expect("COUNT should be a candidate");
+        assert_eq!(count.display, "COUNT");
+        assert_eq!(count.insert, "COUNT(");
+        assert_eq!(count.kind, CandidateKind::Function);
+    }
+
+    #[test]
+    fn predicate_position_offers_word_operators() {
+        let cache = build_cache();
+        // After WHERE col, the operator (`LIKE` / `IN` / `IS NULL` etc)
+        // is a natural next token.
+        let buf = "SELECT * FROM users WHERE email LI";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"LIKE"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn predicate_offers_is_null_as_one_phrase() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users WHERE email IS";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.contains(&"IS NULL"),
+            "multi-word phrases should appear: {labels:?}"
+        );
+        assert!(labels.contains(&"IS NOT NULL"));
+    }
+
+    #[test]
+    fn predicate_columns_rank_before_operators() {
+        // When typing in a WHERE clause, columns should appear before
+        // operators (the cycle prioritises identifiers — operators are
+        // a fallback for the rest of the alphabet).
+        let cache = build_cache();
+        let buf = "SELECT * FROM users WHERE i";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        let id_pos = labels.iter().position(|l| *l == "id");
+        let in_pos = labels.iter().position(|l| *l == "IN");
+        let is_null_pos = labels.iter().position(|l| *l == "IS NULL");
+        match (id_pos, in_pos.or(is_null_pos)) {
+            (Some(i), Some(op)) => {
+                assert!(i < op, "`id` column should rank before operators: {labels:?}");
+            }
+            (Some(_), None) => {} // operators not present — fine
+            (None, _) => panic!("expected `id` to appear: {labels:?}"),
+        }
+    }
+
+    #[test]
+    fn scalar_and_window_functions_also_surface() {
+        let cache = build_cache();
+        // COALESCE is a scalar function.
+        let cands = candidates_for("SELECT COA FROM users", 10, &cache);
+        assert!(cands.iter().any(|c| c.display == "COALESCE"));
+        // ROW_NUMBER is a window function.
+        let cands = candidates_for("SELECT ROW FROM users", 10, &cache);
+        assert!(cands.iter().any(|c| c.display == "ROW_NUMBER"));
+    }
+
+    #[test]
     fn select_list_offers_aggregate_functions() {
         let cache = build_cache();
         // After FROM exists, SELECT-list completion offers both columns
@@ -1023,8 +1118,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_cache_yields_empty_candidates() {
+    fn empty_cache_still_offers_vocabulary_suggestions() {
+        // With no schema connected, identifier suggestions (columns,
+        // tables, aliases) are empty — but the SQL vocabulary (functions
+        // in SELECT, operators in WHERE, keywords at statement start)
+        // doesn't depend on a cache, so those still appear.
         let cache = SchemaCache::default();
-        assert!(candidates_for("SELECT u", 8, &cache).is_empty());
+        let cands = candidates_for("SELECT UP", 9, &cache);
+        // `UPPER` is a scalar function in our vocabulary.
+        assert!(cands.iter().any(|c| c.display == "UPPER"));
+        // Statement-start keywords also work without a cache.
+        let cands = candidates_for("SE", 2, &cache);
+        assert!(cands.iter().any(|c| c.display == "SELECT"));
     }
 }
