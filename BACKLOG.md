@@ -142,10 +142,14 @@ Survey done — lift as the milestones reach them:
 
 ### M1.5 — Spring auto-connect
 - `creds/spring.rs`: `.properties` parsing + Java detection — DONE (scaffold).
-- Add `application.yml` parsing (profiles, `${}` placeholders) — needs
-  `serde_yaml`. **Verify real Spring/SSM/1Password mechanics before building
-  placeholder resolution** — the `${op://}`-as-property-source assumption is
-  unconfirmed.
+- `application.yml` / `application.yaml` parsing via a focused YAML →
+  dot-notation flattener (handles nested mappings, comments, quoted
+  scalars; skips lists / anchors that don't appear in datasource
+  blocks). Pipes through `parse_properties_all` so both file shapes
+  surface the same `SpringDatasourceEntry` — DONE. Follow-ups:
+  profile-specific overrides, `${...}` placeholder resolution
+  (verify real Spring/SSM/1Password mechanics first — the
+  `${op://}`-as-property-source assumption is still unconfirmed).
 - Auto-detect on launch; show provenance; **require a keypress to confirm** the
   resolved target before connecting.
 

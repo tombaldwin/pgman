@@ -136,6 +136,116 @@ pub fn parse_yaml(_text: &str) -> SpringDatasource {
     SpringDatasource::default()
 }
 
+/// Flatten a Spring-style `application.yml` to dot-notation property
+/// lines, then run it through `parse_properties_all`. Same output type
+/// so `discover_spring_datasources` can treat both file types uniformly.
+///
+/// The flattener handles the subset Spring config files use in
+/// practice: nested mappings, `key: value` leaves, `#` comments, and
+/// quoted string values. YAML lists / multi-line strings / anchors are
+/// out of scope — those lines are skipped rather than crashing, which
+/// is safe because they never appear in a datasource block.
+pub fn parse_yaml_all(text: &str) -> Vec<SpringDatasourceEntry> {
+    let flattened = flatten_yaml(text);
+    parse_properties_all(&flattened)
+}
+
+/// Walk a YAML body line-by-line, tracking indent-based nesting, and
+/// emit one `path.to.key=value` line per scalar leaf. Pure / testable.
+pub fn flatten_yaml(text: &str) -> String {
+    // Stack of (indent_cols, key) pairs we've descended into.
+    let mut path: Vec<(usize, String)> = Vec::new();
+    let mut out = String::new();
+    for raw in text.lines() {
+        // Strip an inline `# comment`. Per YAML, a `#` starts a comment
+        // only when preceded by whitespace (or it's the first char) AND
+        // not inside a quoted string.
+        let line = strip_yaml_comment(raw);
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip list items / anchors / aliases / unsupported constructs —
+        // they don't appear inside the keys we care about.
+        let first_non_ws = trimmed.trim_start();
+        if first_non_ws.starts_with('-')
+            || first_non_ws.starts_with('&')
+            || first_non_ws.starts_with('*')
+        {
+            continue;
+        }
+        let indent = trimmed.len() - first_non_ws.len();
+        // Pop any path components whose indent is >= ours — we've
+        // dedented past them.
+        while path.last().map(|(d, _)| *d >= indent).unwrap_or(false) {
+            path.pop();
+        }
+        // Find the colon that separates key from value. YAML accepts
+        // `key:` (no value, opens a child) and `key: value` (leaf).
+        let Some(colon) = first_non_ws.find(':') else {
+            continue;
+        };
+        let key = first_non_ws[..colon].trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        let value_part = first_non_ws[colon + 1..].trim();
+        if value_part.is_empty() {
+            // Opens a child map. Push and move on.
+            path.push((indent, key));
+            continue;
+        }
+        // Leaf. Build the dotted path and emit a property line.
+        let mut dotted = String::new();
+        for (_, segment) in &path {
+            dotted.push_str(segment);
+            dotted.push('.');
+        }
+        dotted.push_str(&key);
+        // Strip surrounding quotes from the value.
+        let value = unquote_yaml_scalar(value_part);
+        out.push_str(&dotted);
+        out.push('=');
+        out.push_str(value);
+        out.push('\n');
+    }
+    out
+}
+
+/// Strip an inline `# comment` from a YAML line. Honours quotes and
+/// requires the `#` to be preceded by whitespace (or sit at the start).
+fn strip_yaml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'\'' if !in_double => in_single = !in_single,
+            b'"' if !in_single => in_double = !in_double,
+            b'#' if !in_single && !in_double => {
+                let preceded_by_ws = i == 0 || bytes[i - 1].is_ascii_whitespace();
+                if preceded_by_ws {
+                    return &line[..i];
+                }
+            }
+            _ => {}
+        }
+    }
+    line
+}
+
+fn unquote_yaml_scalar(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            return &s[1..s.len() - 1];
+        }
+    }
+    s
+}
+
 /// Append the body of each `${...}` placeholder found in `value` to `into`.
 fn extract_placeholders(value: &str, into: &mut Vec<String>) {
     let mut rest = value;
@@ -257,6 +367,85 @@ mailSender.password=secret
 dataSource.url=jdbc:postgresql://h/x
 ";
         let entries = parse_properties_all(text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].prefix, "dataSource");
+    }
+
+    #[test]
+    fn flatten_yaml_handles_spring_datasource_block() {
+        let yaml = "\
+spring:
+  datasource:
+    url: jdbc:postgresql://h:5432/db
+    username: alice
+    password: s3cret
+  profiles:
+    active: dev
+";
+        let flat = flatten_yaml(yaml);
+        assert!(flat.contains("spring.datasource.url=jdbc:postgresql://h:5432/db"));
+        assert!(flat.contains("spring.datasource.username=alice"));
+        assert!(flat.contains("spring.datasource.password=s3cret"));
+        assert!(flat.contains("spring.profiles.active=dev"));
+    }
+
+    #[test]
+    fn flatten_yaml_strips_inline_comments_and_quotes() {
+        let yaml = "\
+# top-level comment
+spring:
+  datasource:
+    url: \"jdbc:postgresql://h/db\"  # the url
+    username: 'alice'
+";
+        let flat = flatten_yaml(yaml);
+        assert!(flat.contains("spring.datasource.url=jdbc:postgresql://h/db"));
+        assert!(flat.contains("spring.datasource.username=alice"));
+    }
+
+    #[test]
+    fn flatten_yaml_skips_lists_and_anchors_without_crashing() {
+        // List items and anchors aren't supported but mustn't break the
+        // surrounding leaves.
+        let yaml = "\
+spring:
+  profiles:
+    - dev
+    - test
+  datasource:
+    url: jdbc:postgresql://h/db
+";
+        let flat = flatten_yaml(yaml);
+        assert!(flat.contains("spring.datasource.url=jdbc:postgresql://h/db"));
+    }
+
+    #[test]
+    fn parse_yaml_all_returns_a_datasource_entry() {
+        let yaml = "\
+spring:
+  datasource:
+    url: jdbc:postgresql://h/db
+    username: alice
+    password: secret
+";
+        let entries = parse_yaml_all(yaml);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].prefix, "spring.datasource");
+        assert_eq!(entries[0].username.as_deref(), Some("alice"));
+        assert!(entries[0].url.contains("postgresql"));
+    }
+
+    #[test]
+    fn parse_yaml_all_finds_non_spring_prefix() {
+        // Some Spring apps put the connection straight under top-level
+        // `dataSource:` (mirroring the .properties shape).
+        let yaml = "\
+dataSource:
+  url: jdbc:postgresql://localhost:5432/shop
+  username: shop
+  password: ignored
+";
+        let entries = parse_yaml_all(yaml);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].prefix, "dataSource");
     }
