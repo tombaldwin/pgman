@@ -213,10 +213,13 @@ impl App {
         Ok(())
     }
 
-    /// Whether the frame clock should keep ticking — for the connecting and
-    /// running spinners.
+    /// Whether the frame clock should keep ticking — for the splash trunk /
+    /// blink animation, the connecting spinner, and the in-flight-query
+    /// spinner.
     fn wants_animation(&self) -> bool {
-        self.query_running || matches!(self.conn_state, ConnState::Connecting)
+        self.splash_visible
+            || self.query_running
+            || matches!(self.conn_state, ConnState::Connecting)
     }
 
     /// Spawn the connect + bootstrap-query task. The result returns as an

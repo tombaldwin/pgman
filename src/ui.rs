@@ -66,7 +66,7 @@ fn draw_splash(f: &mut Frame, app: &App) {
     // centred rect so it keeps its shape. Each sprite row is authored centred
     // within its grid, so left-aligning the block keeps the elephant centred
     // while the trunk's curl stays intentionally off-centre.
-    let grid = splash::frame();
+    let grid = splash::frame(app.anim_tick);
     let rows_n = grid.len() as u16;
     let cols_n = grid.iter().map(Vec::len).max().unwrap_or(0) as u16;
     let area = f.area();
