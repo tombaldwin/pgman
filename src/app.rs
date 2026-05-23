@@ -800,7 +800,16 @@ impl App {
         }
         // Any other editor key abandons an in-progress completion cycle
         // so a typo-then-keep-typing reverts the editor to a clean
-        // draft state (next Tab starts fresh from the new cursor).
+        // draft state (next Tab starts fresh from the new cursor). Also
+        // wipe a stale `completion N/M …` status the footer was showing,
+        // so it doesn't linger past the cycle it described.
+        if self.completion.is_some() {
+            if let Some(s) = &self.last_status {
+                if s.starts_with("completion") {
+                    self.last_status = None;
+                }
+            }
+        }
         self.completion = None;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
