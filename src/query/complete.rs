@@ -21,8 +21,8 @@ use crate::query::clause::{
 use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
-    continuations, AGGREGATE_FUNCTIONS, EXPLAIN_OPTIONS, JOIN_VARIANTS, PREDICATE_OPERATORS,
-    SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
+    continuations, AGGREGATE_FUNCTIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS, JOIN_VARIANTS,
+    PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -361,6 +361,17 @@ fn candidates_for_in_context(
 
         // EXPLAIN (|  → the documented options.
         ClauseContext::ExplainOptions => candidates_from_list(&id.prefix, EXPLAIN_OPTIONS),
+
+        // SHOW | / SET |  → GUC parameter names.
+        ClauseContext::GucParameter => GUC_PARAMETERS
+            .iter()
+            .filter(|p| starts_with_ci(p, &id.prefix))
+            .map(|p| Candidate {
+                display: (*p).to_string(),
+                insert: (*p).to_string(),
+                kind: CandidateKind::Keyword,
+            })
+            .collect(),
 
         // UPDATE foo SET |  → columns of `foo`, plus continuations
         // (WHERE, RETURNING) once the operator's finished the
@@ -1427,6 +1438,24 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         // Unknown schema → silent (no fall-through to ambiguous lookup).
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn show_offers_guc_parameter_names() {
+        let cache = build_cache();
+        let cands = candidates_for("SHOW sear", 9, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"search_path"), "got: {labels:?}");
+        // Must NOT offer tables / columns.
+        assert!(!labels.contains(&"users"));
+    }
+
+    #[test]
+    fn set_offers_guc_parameter_names() {
+        let cache = build_cache();
+        let cands = candidates_for("SET time", 8, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"timezone"));
     }
 
     #[test]

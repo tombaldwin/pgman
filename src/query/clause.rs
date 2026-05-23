@@ -44,6 +44,11 @@ pub enum ClauseContext {
     /// Inside `EXPLAIN (...)` — option-name position. Wants tokens like
     /// `ANALYZE`, `BUFFERS`, etc.
     ExplainOptions,
+    /// `SHOW |` or `SET |` — the operator is naming a GUC parameter.
+    /// We don't distinguish SHOW vs SET because the candidate set is
+    /// the same (parameter names) and the right-hand side of SET
+    /// (`= value`) needs per-parameter value vocab that's out of scope.
+    GucParameter,
     /// After `UPDATE <table> SET` — wants the columns of that table.
     UpdateAssign(QualifiedTable),
     /// Inside `VALUES (...)` — literals, no useful identifier completion.
@@ -325,6 +330,11 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 // to whatever clause follows.
                 scope.expecting_explain_paren = true;
             }
+            // `SHOW <param>` / `SET <param> = …` — after either, the
+            // operator is naming a GUC. The value-side of SET isn't
+            // classified specifically; once `=` appears the ctx falls
+            // back to Unknown (which yields vocabulary fallbacks).
+            "SHOW" | "SET" => scope.ctx = GucParameter,
             _ => {}
         }
         i += 1;
@@ -1050,6 +1060,18 @@ mod tests {
     fn explain_paren_enters_explain_options() {
         assert_eq!(classify("EXPLAIN ("), ClauseContext::ExplainOptions);
         assert_eq!(classify("EXPLAIN (AN"), ClauseContext::ExplainOptions);
+    }
+
+    #[test]
+    fn show_enters_guc_parameter() {
+        assert_eq!(classify("SHOW "), ClauseContext::GucParameter);
+        assert_eq!(classify("SHOW sea"), ClauseContext::GucParameter);
+    }
+
+    #[test]
+    fn set_enters_guc_parameter_until_equals() {
+        assert_eq!(classify("SET "), ClauseContext::GucParameter);
+        assert_eq!(classify("SET time"), ClauseContext::GucParameter);
     }
 
     #[test]
