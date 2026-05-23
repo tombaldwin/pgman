@@ -111,6 +111,16 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
     "SIMILAR TO",
 ];
 
+/// Keywords that complete a `DROP TABLE foo | …` / `DROP VIEW v | …`
+/// statement. `IF EXISTS` actually goes BEFORE the name; the others
+/// come after. Surfaced in `ClauseContext::DropTarget` alongside
+/// table / schema names.
+pub const DROP_CONTINUATIONS: &[&str] = &[
+    "IF EXISTS",
+    "CASCADE",
+    "RESTRICT",
+];
+
 /// Postgres SQL type names — surfaced inside `CAST(expr AS |)` and
 /// DDL column-type positions. Covers the common built-in types; add
 /// to this list when you find yourself typing a missing one. Lowercase
@@ -267,6 +277,7 @@ mod tests {
             PREDICATE_OPERATORS,
             JOIN_VARIANTS,
             EXPLAIN_OPTIONS,
+            DROP_CONTINUATIONS,
             continuations::AFTER_SELECT_LIST,
             continuations::AFTER_TABLE_REF,
             continuations::AFTER_PREDICATE,
@@ -316,6 +327,7 @@ mod tests {
             ("PREDICATE_OPERATORS", PREDICATE_OPERATORS),
             ("JOIN_VARIANTS", JOIN_VARIANTS),
             ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
+            ("DROP_CONTINUATIONS", DROP_CONTINUATIONS),
             ("GUC_PARAMETERS", GUC_PARAMETERS),
             ("TYPE_NAMES", TYPE_NAMES),
             ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
