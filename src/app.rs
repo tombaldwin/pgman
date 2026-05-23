@@ -350,17 +350,27 @@ impl App {
         Ok(())
     }
 
-    /// Auto-dismiss the splash once its minimum-display deadline has passed.
-    /// Cheap to call every loop iteration — it's a single `Instant::now`.
+    /// Auto-dismiss the splash either when its 3-second minimum has
+    /// elapsed OR as soon as the connection resolves (Connected or
+    /// Failed) — otherwise a fast failure / fast bootstrap would be
+    /// hidden behind the elephant for up to 3s. The picker / disconnected
+    /// idle state still gets its full 3s of splash because `conn_state`
+    /// is `Disconnected` there, so the early-dismiss branch doesn't fire.
+    /// Cheap to call every loop iteration — a single `Instant::now`.
     fn tick_splash(&mut self) {
         if !self.splash_visible {
             return;
         }
-        if let Some(until) = self.splash_until {
-            if Instant::now() >= until {
-                self.splash_visible = false;
-                self.splash_until = None;
-            }
+        let Some(until) = self.splash_until else {
+            return;
+        };
+        let connection_resolved = matches!(
+            self.conn_state,
+            ConnState::Connected { .. } | ConnState::Failed(_)
+        );
+        if Instant::now() >= until || connection_resolved {
+            self.splash_visible = false;
+            self.splash_until = None;
         }
     }
 
