@@ -17,7 +17,23 @@
 //! a human looking at this SELECT could tell what the output column
 //! is named, so can we" — nothing more.
 
-use crate::query::from_parse::{tokenize, Tok};
+use crate::query::from_parse::{parse_from_tables, tokenize, Tok};
+use crate::query::schema::SchemaCache;
+
+/// One item in a SELECT list. The structured form lets callers expand
+/// `*` against the FROM clause + schema cache; `extract_select_columns`
+/// is a convenience that drops the unnamed shapes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectItem {
+    /// `col`, `tab.col`, `expr AS alias`, etc. — anything that yields
+    /// a single output name.
+    Named(String),
+    /// Bare `*` — expand against all FROM tables.
+    Star,
+    /// `qualifier.*` (e.g. `u.*`) — expand against the matching
+    /// in-scope table.
+    StarOf(String),
+}
 
 /// Walk the FIRST top-level SELECT in `sql` and return each item's
 /// output column name, in order. Items whose name can't be determined
@@ -30,12 +46,74 @@ use crate::query::from_parse::{tokenize, Tok};
 /// - `SELECT id, COUNT(*) AS n FROM t`  → `["id", "n"]`
 /// - `SELECT 1 + 1 FROM t`              → `[]` (no name)
 /// - `SELECT *`                         → `[]` (caller can expand)
+/// Convenience: just the named items. `*` and `tab.*` shapes are
+/// dropped. Use [`extract_select_items`] + [`resolve_select_columns`]
+/// when you want `*` expansion against a schema cache.
 pub fn extract_select_columns(sql: &str) -> Vec<String> {
+    extract_select_items(sql)
+        .into_iter()
+        .filter_map(|item| match item {
+            SelectItem::Named(n) => Some(n),
+            SelectItem::Star | SelectItem::StarOf(_) => None,
+        })
+        .collect()
+}
+
+/// Structured variant — keeps `*` / `tab.*` so the caller can decide
+/// how to expand them. Stops at the next clause keyword (`FROM`,
+/// `WHERE`, …) so a UNION's later arm doesn't leak into the result.
+pub fn extract_select_items(sql: &str) -> Vec<SelectItem> {
     let tokens = tokenize(sql);
     let Some(start) = first_select(&tokens) else {
         return Vec::new();
     };
     walk_select_list(&tokens, start)
+}
+
+/// Resolve a SELECT's output columns against a schema cache.
+/// `Named` items pass through; `Star` expands against every table in
+/// the SELECT's own FROM clause; `StarOf(qual)` expands against the
+/// in-scope table matching `qual`. For subquery aliases / CTE refs in
+/// the FROM clause, `virtual_columns` win over the catalog.
+pub fn resolve_select_columns(sql: &str, schema: &SchemaCache) -> Vec<String> {
+    let items = extract_select_items(sql);
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let from = parse_from_tables(sql);
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        match item {
+            SelectItem::Named(n) => out.push(n),
+            SelectItem::Star => {
+                for t in &from {
+                    if let Some(v) = &t.virtual_columns {
+                        out.extend(v.iter().cloned());
+                    } else if let Some(cols) =
+                        schema.columns_for(t.schema.as_deref(), &t.name)
+                    {
+                        out.extend(cols.iter().cloned());
+                    }
+                }
+            }
+            SelectItem::StarOf(qual) => {
+                let q_lower = qual.to_ascii_lowercase();
+                for t in &from {
+                    if t.match_key() == q_lower {
+                        if let Some(v) = &t.virtual_columns {
+                            out.extend(v.iter().cloned());
+                        } else if let Some(cols) =
+                            schema.columns_for(t.schema.as_deref(), &t.name)
+                        {
+                            out.extend(cols.iter().cloned());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 fn first_select(tokens: &[Tok<'_>]) -> Option<usize> {
@@ -49,12 +127,12 @@ fn first_select(tokens: &[Tok<'_>]) -> Option<usize> {
 
 /// Walk the comma-separated SELECT list starting at `start`, stopping
 /// at the next clause keyword (FROM / WHERE / ORDER / etc).
-fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<String> {
+fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<SelectItem> {
     let stop_words: &[&str] = &[
         "FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
         "FETCH", "RETURNING", "UNION", "INTERSECT", "EXCEPT", "INTO",
     ];
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<SelectItem> = Vec::new();
     let mut chunk: Vec<&Tok> = Vec::new();
     let mut paren_depth = 0i32;
     let mut i = start;
@@ -93,8 +171,8 @@ fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<String> {
                 break;
             }
             if tok.text == "," {
-                if let Some(name) = chunk_to_name(&chunk) {
-                    out.push(name);
+                if let Some(item) = chunk_to_item(&chunk) {
+                    out.push(item);
                 }
                 chunk.clear();
                 i += 1;
@@ -112,8 +190,8 @@ fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<String> {
         chunk.push(tok);
         i += 1;
     }
-    if let Some(name) = chunk_to_name(&chunk) {
-        out.push(name);
+    if let Some(item) = chunk_to_item(&chunk) {
+        out.push(item);
     }
     out
 }
@@ -126,9 +204,21 @@ fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<String> {
 /// - `schema.tab.name`                            → name
 /// - `expr AS alias`                              → alias  (anywhere)
 /// - `*`, `tab.*`, anonymous expressions          → None
-fn chunk_to_name(chunk: &[&Tok<'_>]) -> Option<String> {
+fn chunk_to_item(chunk: &[&Tok<'_>]) -> Option<SelectItem> {
     if chunk.is_empty() {
         return None;
+    }
+    // Bare `*` — Star.
+    if chunk.len() == 1 && chunk[0].text == "*" {
+        return Some(SelectItem::Star);
+    }
+    // `qualifier.*` — StarOf(qualifier).
+    if chunk.len() == 3
+        && chunk[1].text == "."
+        && chunk[2].text == "*"
+        && is_identifier_like(chunk[0].text)
+    {
+        return Some(SelectItem::StarOf(chunk[0].text.to_string()));
     }
     // Strict `AS alias` first — it's the most authoritative signal,
     // and a SELECT-list `AS` is always at the top level (paren-depth 0
@@ -143,14 +233,14 @@ fn chunk_to_name(chunk: &[&Tok<'_>]) -> Option<String> {
         if depth == 0 && tok.text.eq_ignore_ascii_case("AS") {
             if let Some(next) = chunk.get(idx + 1) {
                 if is_identifier_like(next.text) {
-                    return Some(next.text.to_string());
+                    return Some(SelectItem::Named(next.text.to_string()));
                 }
             }
         }
     }
     // Plain ident.
     if chunk.len() == 1 && is_identifier_like(chunk[0].text) {
-        return Some(chunk[0].text.to_string());
+        return Some(SelectItem::Named(chunk[0].text.to_string()));
     }
     // tab.col / schema.tab.col — last segment is the output name.
     if chunk.len() == 3
@@ -158,7 +248,7 @@ fn chunk_to_name(chunk: &[&Tok<'_>]) -> Option<String> {
         && is_identifier_like(chunk[0].text)
         && is_identifier_like(chunk[2].text)
     {
-        return Some(chunk[2].text.to_string());
+        return Some(SelectItem::Named(chunk[2].text.to_string()));
     }
     if chunk.len() == 5
         && chunk[1].text == "."
@@ -167,7 +257,7 @@ fn chunk_to_name(chunk: &[&Tok<'_>]) -> Option<String> {
         && is_identifier_like(chunk[2].text)
         && is_identifier_like(chunk[4].text)
     {
-        return Some(chunk[4].text.to_string());
+        return Some(SelectItem::Named(chunk[4].text.to_string()));
     }
     None
 }
@@ -278,5 +368,88 @@ mod tests {
     fn no_select_keyword_returns_empty() {
         assert!(extract_select_columns("FROM t").is_empty());
         assert!(extract_select_columns("").is_empty());
+    }
+
+    #[test]
+    fn extract_items_recognises_star() {
+        let items = extract_select_items("SELECT * FROM users");
+        assert_eq!(items, vec![SelectItem::Star]);
+    }
+
+    #[test]
+    fn extract_items_recognises_qualified_star() {
+        let items = extract_select_items("SELECT u.*, o.id FROM users u, orders o");
+        assert_eq!(
+            items,
+            vec![
+                SelectItem::StarOf("u".into()),
+                SelectItem::Named("id".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_items_mixes_named_and_star() {
+        let items = extract_select_items("SELECT id, *, name AS n FROM users");
+        assert_eq!(
+            items,
+            vec![
+                SelectItem::Named("id".into()),
+                SelectItem::Star,
+                SelectItem::Named("n".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_select_columns_expands_bare_star_against_catalog() {
+        let mut cache = SchemaCache::default();
+        cache.tables.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "users".into(),
+        });
+        cache.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into()],
+        );
+        let cols = resolve_select_columns("SELECT * FROM users", &cache);
+        assert_eq!(cols, vec!["id", "email"]);
+    }
+
+    #[test]
+    fn resolve_select_columns_expands_qualified_star() {
+        let mut cache = SchemaCache::default();
+        cache.tables.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "users".into(),
+        });
+        cache.tables.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "orders".into(),
+        });
+        cache.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into()],
+        );
+        cache.columns_by_table.insert(
+            ("public".into(), "orders".into()),
+            vec!["order_id".into(), "total".into()],
+        );
+        let cols = resolve_select_columns(
+            "SELECT u.*, o.total FROM users u, orders o",
+            &cache,
+        );
+        assert_eq!(cols, vec!["id", "email", "total"]);
+    }
+
+    #[test]
+    fn union_first_arm_wins_for_column_inference() {
+        // The extractor stops at UNION, so only the first arm's
+        // columns surface — matches SQL semantics (union result
+        // columns come from the first arm).
+        assert_eq!(
+            extract_select_columns("SELECT a, b FROM x UNION SELECT c, d FROM y"),
+            vec!["a", "b"]
+        );
     }
 }
