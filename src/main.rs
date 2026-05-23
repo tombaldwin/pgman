@@ -44,14 +44,8 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
 
-    // Resolve the safety profile for the target database.
     let safety_config = load_safety_config();
-    let db = dsn.as_ref().map(|d| d.dbname.as_str()).unwrap_or("default");
-    let profile = safety_config.profile_for(db);
-    let read_only = profile.read_only;
-    let statement_timeout_ms = profile.statement_timeout_ms;
-
-    let mut application = app::App::new(theme, dsn, read_only, statement_timeout_ms);
+    let mut application = app::App::new(theme, dsn, safety_config);
     let mut term = tui::Tui::enter()?;
     let result = application.run(&mut term).await;
     drop(term); // restore the terminal before surfacing any error

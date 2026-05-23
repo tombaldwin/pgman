@@ -60,9 +60,9 @@ Survey done — lift as the milestones reach them:
   containing a log-level token still confuses line-splitting.
 - `query/nplus1.rs`: fingerprint + clustering — DONE. Follow-up: time-window
   heuristic once `ReconstructedQuery` carries timestamps.
-- `query/jdbc.rs`: two-pane paste (SQL + typed params) — pending.
+- `query/jdbc.rs`: parse pasted SQL + `TYPE:value` parameter lines — DONE.
 - `mode_hibernate.rs`: log-import view feeding hibernate + pglog parsers —
-  pending (needs the M0 TUI).
+  pending (not wired into the editor yet).
 
 ### M1.5 — Spring auto-connect
 - `creds/spring.rs`: `.properties` parsing + Java detection — DONE (scaffold).
@@ -74,9 +74,20 @@ Survey done — lift as the milestones reach them:
   resolved target before connecting.
 
 ### M2 — editor
-- `mode_editor.rs`: run statements + `EXPLAIN` / `EXPLAIN ANALYZE`.
-- DML-aware EXPLAIN: never `ANALYZE` a mutation outside a rollback transaction.
-- Every run routes through `safety::evaluate`.
+- SQL editor mode (single-line buffer with cursor; multi-byte safe) — DONE.
+- F5 / Enter to run, F6 EXPLAIN, F7 EXPLAIN ANALYZE — DONE.
+- Persistent `tokio-postgres` client held by `App` (subsequent queries reuse
+  the same session) — DONE.
+- Every run routes through `safety::evaluate`; `Block` rejects, `Confirm`
+  opens a modal, `Allow` runs. `auto_tx` wraps DML in `BEGIN`/`COMMIT` — DONE.
+- DML-aware `EXPLAIN ANALYZE`: writes wrap in `BEGIN`/`ROLLBACK` so the
+  mutation never lands — DONE.
+- Non-row-returning statements (UPDATE/DELETE/DDL) render an affected-row
+  count via the unified `conn::run_statement` — DONE.
+- Follow-ups: multi-line editor with newline insertion; query history;
+  pasting Hibernate / Postgres logs via `mode_hibernate`; saved queries;
+  N+1 cluster view; commit/rollback prompt instead of auto-commit for
+  `auto_tx`.
 
 ## v2 — AWS (not started)
 
