@@ -22,9 +22,13 @@ use crate::query::schema::SchemaCache;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identifier {
     /// Byte offset where the identifier begins (start of `qualifier`, or
-    /// start of `prefix` when there's no qualifier). The Tab handler
-    /// replaces `[start, cursor)` with the chosen completion.
+    /// start of `prefix` when there's no qualifier).
     pub start: usize,
+    /// Byte offset where the identifier ENDS — walks forward from the
+    /// cursor over any trailing identifier characters so Tab inside an
+    /// existing word (`SELECT user|_id`) replaces the WHOLE word, not
+    /// just the prefix-up-to-cursor (which would leave `_id` glued on).
+    pub end: usize,
     /// Text before the dot — usually a table alias or table name.
     /// `None` when the user is typing an unqualified identifier.
     pub qualifier: Option<String>,
@@ -84,6 +88,19 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
             break;
         }
     }
+    // Walk forward over identifier chars (no dots — we only honour the
+    // qualifier the user already typed) so `SELECT user|_id` + Tab
+    // replaces the whole `user_id`, not just `user`.
+    let mut end = cursor;
+    while end < bytes.len() {
+        let c = bytes[end];
+        if c.is_ascii_alphanumeric() || c == b'_' {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+
     if start == cursor {
         // Nothing identifier-shaped immediately behind the cursor.
         // Still useful: return an empty identifier so completion can
@@ -99,6 +116,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
             None => {
                 return Some(Identifier {
                     start: cursor,
+                    end,
                     qualifier: None,
                     prefix: String::new(),
                 });
@@ -106,6 +124,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
             Some(c) if c.is_ascii_whitespace() => {
                 return Some(Identifier {
                     start: cursor,
+                    end,
                     qualifier: None,
                     prefix: String::new(),
                 });
@@ -127,12 +146,14 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
         };
         Some(Identifier {
             start,
+            end,
             qualifier: Some(qualifier),
             prefix,
         })
     } else {
         Some(Identifier {
             start,
+            end,
             qualifier: None,
             prefix: raw.to_string(),
         })
@@ -425,6 +446,22 @@ mod tests {
     fn extract_identifier_returns_none_after_random_punctuation() {
         // Punctuation that isn't a dot or whitespace shouldn't trigger.
         assert!(extract_identifier("SELECT *;", 9).is_none());
+    }
+
+    #[test]
+    fn extract_identifier_walks_forward_over_trailing_word_chars() {
+        // Cursor in the middle of `user_id`. The replace-range needs to
+        // span the WHOLE word so Tab doesn't leave `_id` glued on.
+        let id = extract_identifier("SELECT user_id", 11).unwrap(); // cursor right after `user`
+        assert_eq!(id.prefix, "user");
+        assert_eq!(id.start, 7);
+        assert_eq!(id.end, 14, "end should walk past `_id`: {id:?}");
+    }
+
+    #[test]
+    fn extract_identifier_end_equals_cursor_when_at_word_boundary() {
+        let id = extract_identifier("SELECT users ", 12).unwrap();
+        assert_eq!(id.end, 12);
     }
 
     // -- candidates_for: unqualified --
