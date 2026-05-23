@@ -324,6 +324,14 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             "INSERT" => {
                 in_write_stmt = true;
             }
+            // COPY tab (col1, col2) FROM '/path/to/file' — the column
+            // list after the table reuses InsertColumns semantics.
+            // TRUNCATE tab — just a table reference, no column list.
+            "COPY" | "TRUNCATE" => {
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
+                in_write_stmt = true;
+            }
             "EXPLAIN" => {
                 // The very next `(` opens the options list. Anything
                 // else (a bare `EXPLAIN SELECT …`) just falls through
@@ -727,13 +735,14 @@ fn skip_parenthesised(tokens: &[crate::query::from_parse::Tok<'_>], i: usize) ->
     j
 }
 
-/// Heuristic: did `INSERT INTO` appear earlier in this token stream?
-/// We only care because `INSERT INTO foo (` should switch to
-/// InsertColumns, but `UPDATE foo (...)` (unusual) shouldn't.
+/// Heuristic: did `INSERT INTO` or `COPY` appear earlier in this token
+/// stream? Both shape `<verb> <table> (col_list)` the same way; the
+/// `(` after the table opens a column list. `UPDATE foo (...)` is
+/// unusual (function-shape, not a column list) so it stays out.
 fn in_insert_path(tokens: &[crate::query::from_parse::Tok<'_>], up_to: usize) -> bool {
     tokens[..up_to]
         .iter()
-        .any(|t| t.text.eq_ignore_ascii_case("INSERT"))
+        .any(|t| t.text.eq_ignore_ascii_case("INSERT") || t.text.eq_ignore_ascii_case("COPY"))
 }
 
 #[cfg(test)]
@@ -1060,6 +1069,34 @@ mod tests {
     fn explain_paren_enters_explain_options() {
         assert_eq!(classify("EXPLAIN ("), ClauseContext::ExplainOptions);
         assert_eq!(classify("EXPLAIN (AN"), ClauseContext::ExplainOptions);
+    }
+
+    #[test]
+    fn truncate_enters_table_ref() {
+        assert_eq!(classify("TRUNCATE "), ClauseContext::TableRef);
+        assert_eq!(classify("TRUNCATE us"), ClauseContext::TableRef);
+    }
+
+    #[test]
+    fn copy_table_then_paren_enters_insert_columns() {
+        let ctx = classify("COPY users (");
+        match ctx {
+            ClauseContext::InsertColumns(t) => assert_eq!(t.name, "users"),
+            other => panic!("expected InsertColumns(users), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn copy_table_without_paren_stays_table_ref() {
+        // `COPY users FROM '/tmp/u.csv'` — no column list.
+        assert_eq!(
+            classify("COPY users FROM '/tmp/u.csv'"),
+            // Once `FROM` fires, ctx moves to TableRef (FROM rebinds);
+            // the operator is now choosing where the data lives, which
+            // is technically a file path. We don't classify file paths,
+            // but the surrounding behaviour mustn't regress.
+            ClauseContext::TableRef
+        );
     }
 
     #[test]
