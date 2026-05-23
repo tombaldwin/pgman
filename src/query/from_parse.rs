@@ -39,6 +39,87 @@ impl TableRefInQuery {
 /// Scan `sql` and return the list of table references in its FROM / JOIN
 /// clauses. Tolerant: unterminated strings stop the scan; unknown tokens
 /// are skipped; multiple FROM-clauses (subqueries) all contribute.
+/// Like `parse_from_tables` but expands `SELECT *` inside subquery
+/// bodies against the schema cache, so `FROM (SELECT * FROM users)
+/// sub` lands with users' columns on the synthetic entry. Use this
+/// from the completion engine; the pure `parse_from_tables` stays for
+/// tests / callers without a cache.
+pub fn parse_from_tables_resolved(
+    sql: &str,
+    schema: &crate::query::schema::SchemaCache,
+) -> Vec<TableRefInQuery> {
+    let mut out = parse_from_tables(sql);
+    for t in &mut out {
+        if t.virtual_columns.is_none() {
+            continue;
+        }
+    }
+    // Re-walk the buffer for any subquery synthetic entries whose
+    // virtual_columns came back empty / star-only; re-extract using
+    // resolve_select_columns. Cheapest correct approach without
+    // re-architecting the parser: per-entry, find the corresponding
+    // subquery body and re-run.
+    let tokens = tokenize(sql);
+    let mut entry_idx = 0;
+    let mut i = 0;
+    while i < tokens.len() && entry_idx < out.len() {
+        let upper = tokens[i].text.to_ascii_uppercase();
+        if upper == "FROM" || upper == "JOIN" {
+            i += 1;
+            loop {
+                if let Some(close) = peek_subquery_close(&tokens, i) {
+                    // Body tokens between i+1 and close-1.
+                    let body_tokens = &tokens[i + 1..close - 1];
+                    let body_text: String = body_tokens
+                        .iter()
+                        .map(|t| t.text)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if let Some(entry) = out.get_mut(entry_idx) {
+                        let cols = crate::query::select_list::resolve_select_columns(
+                            &body_text, schema,
+                        );
+                        if !cols.is_empty() {
+                            entry.virtual_columns = Some(cols);
+                        }
+                    }
+                    entry_idx += 1;
+                    // Skip past alias.
+                    let alias_idx = if tokens
+                        .get(close)
+                        .map(|t| t.text.eq_ignore_ascii_case("AS"))
+                        .unwrap_or(false)
+                    {
+                        close + 1
+                    } else {
+                        close
+                    };
+                    i = alias_idx + 1;
+                } else {
+                    // Plain table — already in `out`. Skip past it +
+                    // optional alias.
+                    if let Some((_, j)) = take_table_ref(&tokens, i) {
+                        i = j;
+                        let (_, j) = take_alias(&tokens, i);
+                        i = j;
+                        entry_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if i < tokens.len() && tokens[i].text == "," {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
     let tokens = tokenize(sql);
     let mut out: Vec<TableRefInQuery> = Vec::new();

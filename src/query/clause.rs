@@ -29,9 +29,13 @@ pub enum ClauseContext {
     /// Position where a table reference is expected: after FROM, JOIN,
     /// `INSERT INTO`, `UPDATE`, `DELETE FROM`. Never columns.
     TableRef,
-    /// Predicate position: after WHERE, HAVING, or JOIN … ON. Wants
-    /// columns + comparison operators.
+    /// Predicate position after WHERE / JOIN … ON. Wants columns +
+    /// comparison operators. (HAVING is its own variant because
+    /// Postgres lets it reference SELECT-list aliases that WHERE can't.)
     Predicate,
+    /// HAVING predicate — like `Predicate` plus access to the SELECT
+    /// list's output column aliases.
+    HavingPredicate,
     /// After ORDER BY / GROUP BY — wants columns.
     OrderOrGroup,
     /// Inside the `(...)` column list of `INSERT INTO <table> (...)` —
@@ -287,7 +291,8 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 scope.ctx = TableRef;
                 in_write_stmt = true;
             }
-            "WHERE" | "HAVING" | "ON" => scope.ctx = Predicate,
+            "WHERE" | "ON" => scope.ctx = Predicate,
+            "HAVING" => scope.ctx = HavingPredicate,
             "ORDER" | "GROUP" => scope.pending_by = true,
             "RETURNING" => scope.ctx = SelectList,
             "VALUES" => {
@@ -376,7 +381,10 @@ pub struct CteDef {
 /// body still produces an entry for the name.
 ///
 /// Columns: explicit `WITH cte(a, b) AS (...)` lists win; otherwise
-/// pulled from the body's SELECT list via `select_list::extract_select_columns`.
+/// pulled from the body's SELECT list via
+/// `select_list::extract_select_columns` (no `*` expansion).
+/// Use `extract_ctes_resolved` to get `SELECT * FROM …` expanded
+/// against a schema cache.
 pub fn extract_ctes(buf: &str) -> Vec<CteDef> {
     let tokens = tokenize(buf);
     let mut out: Vec<CteDef> = Vec::new();
@@ -445,6 +453,73 @@ pub fn extract_ctes(buf: &str) -> Vec<CteDef> {
 /// `extract_ctes` so we don't break older consumers in one go.
 pub fn extract_cte_names(buf: &str) -> Vec<String> {
     extract_ctes(buf).into_iter().map(|c| c.name).collect()
+}
+
+/// Like `extract_ctes` but expands `SELECT *` against the schema
+/// cache. Use this from the completion engine — `extract_ctes` stays
+/// pure for tests / future callers that don't have a cache.
+pub fn extract_ctes_resolved(
+    buf: &str,
+    schema: &crate::query::schema::SchemaCache,
+) -> Vec<CteDef> {
+    let tokens = tokenize(buf);
+    let mut out: Vec<CteDef> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i].text.eq_ignore_ascii_case("WITH") {
+            i += 1;
+            if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("RECURSIVE") {
+                i += 1;
+            }
+            loop {
+                if i >= tokens.len() || !is_identifier_like(tokens[i].text) {
+                    break;
+                }
+                let name = tokens[i].text.to_string();
+                i += 1;
+                let mut explicit_columns: Vec<String> = Vec::new();
+                if i < tokens.len() && tokens[i].text == "(" {
+                    explicit_columns = read_paren_ident_list(&tokens, i);
+                    i = skip_parenthesised(&tokens, i);
+                }
+                if i >= tokens.len() || !tokens[i].text.eq_ignore_ascii_case("AS") {
+                    break;
+                }
+                i += 1;
+                if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("NOT") {
+                    i += 1;
+                }
+                if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("MATERIALIZED") {
+                    i += 1;
+                }
+                let body_text = extract_paren_body(buf, &tokens, i);
+                let body_columns = if !explicit_columns.is_empty() {
+                    explicit_columns
+                } else {
+                    body_text
+                        .map(|body| {
+                            crate::query::select_list::resolve_select_columns(body, schema)
+                        })
+                        .unwrap_or_default()
+                };
+                out.push(CteDef {
+                    name,
+                    columns: body_columns,
+                });
+                if i < tokens.len() && tokens[i].text == "(" {
+                    i = skip_parenthesised(&tokens, i);
+                }
+                if i < tokens.len() && tokens[i].text == "," {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Read identifier names from a `( a, b, c )` group starting at

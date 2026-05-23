@@ -15,8 +15,10 @@
 //! The Tab handler in `app.rs` is the only consumer; everything in this
 //! module is pure and unit-tested.
 
-use crate::query::clause::{classify_at, extract_ctes, ClauseContext, CteDef, QualifiedTable};
-use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
+use crate::query::clause::{
+    classify_at, extract_ctes_resolved, ClauseContext, CteDef, QualifiedTable,
+};
+use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
     continuations, AGGREGATE_FUNCTIONS, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS,
@@ -220,9 +222,9 @@ pub fn candidates_for(
     // `SELECT u.| FROM users u` case (FROM is *after* the cursor) and
     // the `SELECT u FROM users u WHERE u.|` case working.
     let cursor = cursor.min(buf.len());
-    let before = parse_from_tables(&buf[..id.start]);
+    let before = parse_from_tables_resolved(&buf[..id.start], schema);
     let after = if cursor < buf.len() {
-        parse_from_tables(&buf[cursor..])
+        parse_from_tables_resolved(&buf[cursor..], schema)
     } else {
         Vec::new()
     };
@@ -243,9 +245,66 @@ pub fn candidates_for(
         });
     }
 
-    let ctes = extract_ctes(buf);
+    let ctes = extract_ctes_resolved(buf, schema);
+    // The current statement's SELECT-list output names. Used by
+    // HavingPredicate completion since Postgres lets HAVING reference
+    // SELECT-list aliases that WHERE can't see. Pulled from the
+    // statement that contains the cursor (split on `;`).
+    let stmt = current_statement(buf, cursor);
+    let select_aliases = crate::query::select_list::resolve_select_columns(stmt, schema);
 
-    candidates_for_in_context(&id, &classification.ctx, &in_scope, &ctes, schema)
+    candidates_for_in_context(
+        &id,
+        &classification.ctx,
+        &in_scope,
+        &ctes,
+        &select_aliases,
+        schema,
+    )
+}
+
+/// Slice of the buffer holding the current statement (everything since
+/// the last unquoted `;` up through `cursor` and on to the next `;`).
+/// Used to pin SELECT-list extraction to the right statement when the
+/// buffer contains multiple `;`-separated commands.
+fn current_statement(buf: &str, cursor: usize) -> &str {
+    let cursor = cursor.min(buf.len());
+    let bytes = buf.as_bytes();
+    // Walk back from cursor for the previous `;` (outside strings —
+    // approximated; see clause::statement_start for the careful
+    // version). For SELECT-list extraction the approximation is fine.
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let mut in_str = false;
+    while i < cursor {
+        let b = bytes[i];
+        if b == b'\'' {
+            in_str = !in_str;
+        }
+        if !in_str && b == b';' {
+            start = i + 1;
+        }
+        i += 1;
+    }
+    // Walk forward from cursor for the next `;`.
+    let mut end = bytes.len();
+    let mut j = cursor;
+    let mut in_str = false;
+    while j < bytes.len() {
+        let b = bytes[j];
+        if b == b'\'' {
+            in_str = !in_str;
+        }
+        if !in_str && b == b';' {
+            end = j;
+            break;
+        }
+        j += 1;
+    }
+    if !buf.is_char_boundary(start) || !buf.is_char_boundary(end) {
+        return "";
+    }
+    &buf[start..end]
 }
 
 /// Branch on clause context to keep candidates relevant to what the
@@ -256,6 +315,7 @@ fn candidates_for_in_context(
     ctx: &ClauseContext,
     in_scope: &[TableRefInQuery],
     ctes: &[CteDef],
+    select_aliases: &[String],
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
     // 3-segment `schema.table.col|` — always resolves to columns of
@@ -363,6 +423,29 @@ fn candidates_for_in_context(
                 // after the column candidates so the cycle prioritises
                 // identifiers; clause continuations (GROUP BY, ORDER BY,
                 // LIMIT) come after those.
+                out.extend(candidates_predicate_operators(&id.prefix));
+                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_PREDICATE));
+                out
+            }
+        },
+        // HAVING behaves like Predicate but also offers SELECT-list
+        // output aliases — Postgres uniquely allows
+        // `SELECT COUNT(*) AS n … HAVING n > 1`. The aliases are
+        // pre-computed at the top level and passed in via
+        // `select_aliases`.
+        ClauseContext::HavingPredicate => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => {
+                let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
+                for alias in select_aliases {
+                    if starts_with_ci(alias, &id.prefix) {
+                        out.push(Candidate {
+                            display: alias.clone(),
+                            insert: alias.clone(),
+                            kind: CandidateKind::Alias,
+                        });
+                    }
+                }
                 out.extend(candidates_predicate_operators(&id.prefix));
                 out.extend(candidates_from_list(&id.prefix, continuations::AFTER_PREDICATE));
                 out
@@ -1341,6 +1424,58 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         // Unknown schema → silent (no fall-through to ambiguous lookup).
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn having_surfaces_select_list_aliases() {
+        // `SELECT COUNT(*) AS n FROM users GROUP BY id HAVING n|`
+        // Postgres lets HAVING reference the SELECT-list alias `n`.
+        // WHERE doesn't — that's why HAVING is its own ctx.
+        let cache = build_cache();
+        let buf = "SELECT COUNT(*) AS n FROM users GROUP BY id HAVING n";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"n"), "got: {labels:?}");
+        let n = cands.iter().find(|c| c.display == "n").unwrap();
+        assert_eq!(n.kind, CandidateKind::Alias);
+    }
+
+    #[test]
+    fn where_does_not_surface_select_list_aliases() {
+        // Reverse of the above: WHERE doesn't get aliases.
+        let cache = build_cache();
+        let buf = "SELECT COUNT(*) AS n FROM users WHERE n";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            !labels.contains(&"n"),
+            "WHERE shouldn't see SELECT-list aliases: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn cte_select_star_expands_against_catalog() {
+        // `WITH foo AS (SELECT * FROM users)` should make `foo.id`,
+        // `foo.email`, `foo.name` available.
+        let cache = build_cache();
+        let buf = "WITH foo AS (SELECT * FROM users) SELECT * FROM foo WHERE foo.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // users' columns: id, email, name.
+        assert!(labels.contains(&"id"));
+        assert!(labels.contains(&"email"));
+        assert!(labels.contains(&"name"));
+    }
+
+    #[test]
+    fn subquery_select_star_expands_against_catalog() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM (SELECT * FROM users) sub WHERE sub.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"id"));
+        assert!(labels.contains(&"email"));
+        assert!(labels.contains(&"name"));
     }
 
     #[test]
