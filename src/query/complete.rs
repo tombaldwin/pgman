@@ -82,11 +82,15 @@ impl CandidateKind {
 
 /// One completion the user can land on. `insert` is the text to substitute
 /// for `prefix`; `display` is what the picker (footer hint) shows.
+/// `context` carries a disambiguating origin for the popup — typically the
+/// owning table for Column candidates (`email (column · users)`). `None`
+/// keeps the popup row terse (`FROM (keyword)`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     pub display: String,
     pub insert: String,
     pub kind: CandidateKind,
+    pub context: Option<String>,
 }
 
 /// Walk back from `cursor` over identifier-ish characters (letters,
@@ -392,6 +396,7 @@ fn candidates_for_in_context(
                 display: (*p).to_string(),
                 insert: (*p).to_string(),
                 kind: CandidateKind::Keyword,
+                context: None,
             })
             .collect(),
 
@@ -403,6 +408,7 @@ fn candidates_for_in_context(
                 display: (*v).to_string(),
                 insert: (*v).to_string(),
                 kind: CandidateKind::Keyword,
+                context: None,
             })
             .collect(),
 
@@ -429,6 +435,7 @@ fn candidates_for_in_context(
                     display: c.name.clone(),
                     insert: c.name.clone(),
                     kind: CandidateKind::Table,
+                    context: None,
                 })
                 .collect()
         }
@@ -442,6 +449,7 @@ fn candidates_for_in_context(
                 display: (*t).to_string(),
                 insert: (*t).to_string(),
                 kind: CandidateKind::Keyword,
+                context: None,
             })
             .collect(),
 
@@ -472,6 +480,7 @@ fn candidates_for_in_context(
                             display: n.clone(),
                             insert: n,
                             kind: CandidateKind::Table,
+                            context: None,
                         })
                         .collect()
                 }
@@ -486,6 +495,7 @@ fn candidates_for_in_context(
                                 display: t.name.clone(),
                                 insert: t.name.clone(),
                                 kind: CandidateKind::Table,
+                                context: None,
                             });
                         }
                     }
@@ -497,6 +507,7 @@ fn candidates_for_in_context(
                                 display: s.clone(),
                                 insert: s.clone(),
                                 kind: CandidateKind::Schema,
+                                context: None,
                             });
                         }
                     }
@@ -540,6 +551,7 @@ fn candidates_for_in_context(
                         display: c.name.clone(),
                         insert: c.name.clone(),
                         kind: CandidateKind::Table,
+                        context: None,
                     })
                     .collect();
                 out.extend(candidates_tables_and_schemas(&id.prefix, schema));
@@ -593,6 +605,7 @@ fn candidates_for_in_context(
                             display: alias.clone(),
                             insert: alias.clone(),
                             kind: CandidateKind::Alias,
+                            context: None,
                         });
                     }
                 }
@@ -638,6 +651,7 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
                 display: text.clone(),
                 insert: text,
                 kind: CandidateKind::Keyword,
+                context: None,
             }
         })
         .collect()
@@ -659,6 +673,7 @@ fn candidates_functions(prefix: &str) -> Vec<Candidate> {
                     display: text.clone(),
                     insert: format!("{text}("),
                     kind: CandidateKind::Function,
+                    context: None,
                 });
             }
         }
@@ -679,6 +694,7 @@ fn candidates_predicate_operators(prefix: &str) -> Vec<Candidate> {
                 display: text.clone(),
                 insert: text,
                 kind: CandidateKind::Keyword,
+                context: None,
             }
         })
         .collect()
@@ -698,6 +714,7 @@ fn candidates_from_list(prefix: &str, list: &[&str]) -> Vec<Candidate> {
                 display: text.clone(),
                 insert: text,
                 kind: CandidateKind::Keyword,
+                context: None,
             }
         })
         .collect()
@@ -713,6 +730,7 @@ fn candidates_tables_and_schemas(prefix: &str, schema: &SchemaCache) -> Vec<Cand
                 display: t.name.clone(),
                 insert: t.name.clone(),
                 kind: CandidateKind::Table,
+                context: None,
             });
         }
     }
@@ -722,6 +740,7 @@ fn candidates_tables_and_schemas(prefix: &str, schema: &SchemaCache) -> Vec<Cand
                 display: s.clone(),
                 insert: s.clone(),
                 kind: CandidateKind::Schema,
+                context: None,
             });
         }
     }
@@ -766,6 +785,12 @@ fn candidates_columns_only(
                         display: c.clone(),
                         insert: c.clone(),
                         kind: CandidateKind::Column,
+                        // Disambiguates same-named columns across joined
+                        // tables (e.g. two `id` columns). Use the alias
+                        // when present — it's the shorter, more familiar
+                        // label and matches what the operator would type
+                        // for qualified access.
+                        context: Some(t.alias.clone().unwrap_or_else(|| t.name.clone())),
                     });
                 }
             }
@@ -780,6 +805,9 @@ fn candidates_columns_only(
                     display: alias.clone(),
                     insert: alias.clone(),
                     kind: CandidateKind::Alias,
+                    // The aliased table — so the popup shows
+                    // `u (alias · users)`.
+                    context: Some(t.name.clone()),
                 });
             }
         }
@@ -796,6 +824,7 @@ fn candidates_columns_only(
                     display: t.name.clone(),
                     insert: t.name.clone(),
                     kind: CandidateKind::Table,
+                    context: None,
                 });
             }
         }
@@ -819,7 +848,15 @@ fn candidates_for_qualified(
                 .columns_for(table.schema.as_deref(), &table.name)
                 .cloned()
                 .unwrap_or_default();
-            return matches_for(&cols, prefix, CandidateKind::Column);
+            let mut out = matches_for(&cols, prefix, CandidateKind::Column);
+            // Context = the underlying table name (so `u.|` against
+            // `users u` shows `email (column · users)` — the qualifier
+            // the operator already typed is just an alias, the table
+            // name is the disambiguating info).
+            for c in &mut out {
+                c.context = Some(table.name.clone());
+            }
+            return out;
         }
     }
 
@@ -835,13 +872,21 @@ fn candidates_for_qualified(
             .filter(|t| t.schema.eq_ignore_ascii_case(qualifier))
             .map(|t| t.name.clone())
             .collect();
-        return matches_for(&names, prefix, CandidateKind::Table);
+        let mut out = matches_for(&names, prefix, CandidateKind::Table);
+        for c in &mut out {
+            c.context = Some(qualifier.to_string());
+        }
+        return out;
     }
 
     // 3) qualifier might be a table name with no FROM scope yet (e.g.
     //    `SELECT users.|`). Offer its columns.
     if let Some(cols) = schema.columns_for(None, qualifier) {
-        return matches_for(cols, prefix, CandidateKind::Column);
+        let mut out = matches_for(cols, prefix, CandidateKind::Column);
+        for c in &mut out {
+            c.context = Some(qualifier.to_string());
+        }
+        return out;
     }
 
     Vec::new()
@@ -876,6 +921,9 @@ fn candidates_for_unqualified(
                         display: c.clone(),
                         insert: c.clone(),
                         kind: CandidateKind::Column,
+                        context: Some(
+                            table.alias.clone().unwrap_or_else(|| table.name.clone()),
+                        ),
                     });
                 }
             }
@@ -892,6 +940,7 @@ fn candidates_for_unqualified(
                     display: alias.clone(),
                     insert: alias.clone(),
                     kind: CandidateKind::Alias,
+                    context: Some(table.name.clone()),
                 });
             }
         }
@@ -906,19 +955,28 @@ fn candidates_for_unqualified(
                 display: table.name.clone(),
                 insert: table.name.clone(),
                 kind: CandidateKind::Table,
+                context: None,
             });
         }
     }
 
-    // Tier 4: every other table.
+    // Tier 4: every other table. Non-public schemas surface as context
+    // so the popup shows `events (table · analytics)` and the operator
+    // knows they'll need to qualify the name.
     for table in &schema.tables {
         if starts_with_ci(&table.name, prefix)
             && seen.insert((CandidateKind::Table, table.name.clone()))
         {
+            let ctx = if table.schema.eq_ignore_ascii_case("public") {
+                None
+            } else {
+                Some(table.schema.clone())
+            };
             out.push(Candidate {
                 display: table.name.clone(),
                 insert: table.name.clone(),
                 kind: CandidateKind::Table,
+                context: ctx,
             });
         }
     }
@@ -932,6 +990,7 @@ fn candidates_for_unqualified(
                 display: col.clone(),
                 insert: col.clone(),
                 kind: CandidateKind::Column,
+                context: None,
             });
         }
     }
@@ -945,6 +1004,7 @@ fn candidates_for_unqualified(
                 display: s.clone(),
                 insert: s.clone(),
                 kind: CandidateKind::Schema,
+                context: None,
             });
         }
     }
@@ -961,6 +1021,7 @@ fn matches_for(names: &[String], prefix: &str, kind: CandidateKind) -> Vec<Candi
             display: n.clone(),
             insert: n.clone(),
             kind,
+            context: None,
         })
         .collect()
 }
@@ -2116,7 +2177,7 @@ mod tests {
     // -- continuation ranking --
 
     #[test]
-    fn select_then_F_prefers_from_over_format() {
+    fn select_then_f_prefers_from_over_format() {
         let cache = build_cache();
         let cands = candidates_for("SELECT * F", 10, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
@@ -2127,6 +2188,56 @@ mod tests {
             (Some(_), None) => {} // fine, FORMAT not offered
             (None, _) => panic!("FROM should appear: {labels:?}"),
         }
+    }
+
+    #[test]
+    fn column_candidates_carry_their_table_as_context() {
+        let cache = build_cache();
+        // SELECT-list, two tables in scope sharing `id`. Both `id`
+        // candidates should carry the table name as context.
+        let cands = candidates_for("SELECT i FROM users u JOIN orders o ON true", 8, &cache);
+        let id_contexts: Vec<&str> = cands
+            .iter()
+            .filter(|c| c.display == "id" && c.kind == CandidateKind::Column)
+            .filter_map(|c| c.context.as_deref())
+            .collect();
+        // One `id` per table — the dedup is on column name, so we get
+        // the first occurrence (`u` since users comes first in FROM).
+        // The contract is: when context is set, it's the alias / table.
+        assert!(
+            id_contexts.iter().any(|c| *c == "u" || *c == "users"),
+            "expected an `id` candidate with context u/users, got {id_contexts:?}"
+        );
+    }
+
+    #[test]
+    fn qualified_columns_carry_table_context() {
+        let cache = build_cache();
+        // `u.|` — column candidates for users.
+        let cands = candidates_for("SELECT u. FROM users u", 9, &cache);
+        let cols: Vec<&Candidate> = cands
+            .iter()
+            .filter(|c| c.kind == CandidateKind::Column)
+            .collect();
+        assert!(!cols.is_empty(), "expected some column candidates");
+        for c in &cols {
+            assert_eq!(
+                c.context.as_deref(),
+                Some("users"),
+                "alias.col completion should set context to underlying table: {c:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn keywords_have_no_context() {
+        let cache = build_cache();
+        let cands = candidates_for("SE", 2, &cache);
+        let select = cands
+            .iter()
+            .find(|c| c.display.eq_ignore_ascii_case("SELECT"))
+            .expect("SELECT keyword");
+        assert!(select.context.is_none());
     }
 
     #[test]

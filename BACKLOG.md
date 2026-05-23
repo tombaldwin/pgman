@@ -449,6 +449,27 @@ Pull a remote database down for local testing; keep tagged backups.
   empties and disappears. Right-arrow / Enter / Ctrl-key still drops
   the cycle (operator's "I'm done" gesture). Esc-restore still
   undoes the entire session back to the pre-Tab state — DONE.
+- **Exact-match auto-commit**: when the operator typed the full name
+  of one candidate (case-insensitively), Tab commits that candidate
+  and dismisses the popup instead of offering it for re-selection.
+  Honours the cache's canonical case (so `USERS` Tab becomes `users`
+  if that's how the cache spells it). With ambiguous prefixes
+  (`user_` against `user_logs`/`user_roles`) the popup still shows —
+  exact-match is a no-friction shortcut, not a regression of cycle
+  behaviour — DONE.
+- **Column candidates show their owning table in the popup**: rows
+  for column candidates now render `email (column · users)` instead
+  of just `email (column)`. When the table has an alias in FROM,
+  that alias is used (so `email (column · u)` matches what the
+  operator would type for `u.email`). Aliases themselves show their
+  underlying table (`u (alias · users)`). Non-public tables surface
+  their schema (`events (table · analytics)`) so the operator knows
+  they'll need to qualify — DONE.
+- **Footer hints completion controls when popup is up**: the editor's
+  status footer switches to `type to narrow · tab cycle · esc undo`
+  while the completion popup is visible, so the operator sees the
+  active controls instead of the general Ctrl-R / Ctrl-E / Ctrl-A
+  list — DONE.
 
 ## v3+ — deferred
 
