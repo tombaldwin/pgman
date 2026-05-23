@@ -748,7 +748,11 @@ impl App {
                     }
                     return;
                 }
-                KeyCode::Char('p') if !self.data_source_picks.is_empty() => {
+                // Only offer "change connection" when there are at least
+                // two candidates — otherwise the picker would just show
+                // the same DSN that just failed, and Enter would retry it
+                // (already on `r`).
+                KeyCode::Char('p') if self.data_source_picks.len() >= 2 => {
                     self.mode = Mode::ConnPick;
                     self.data_source_pick_index = 0;
                     return;
