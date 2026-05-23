@@ -157,6 +157,14 @@ pub fn flatten_yaml(text: &str) -> String {
     let mut path: Vec<(usize, String)> = Vec::new();
     let mut out = String::new();
     for raw in text.lines() {
+        // YAML document separator `---` ends the current document and
+        // starts a fresh one. Reset the path stack so a later
+        // `spring.datasource.url` in a sibling doc doesn't overwrite an
+        // earlier one via the flattened-namespace merge.
+        if raw.trim() == "---" || raw.trim() == "..." {
+            path.clear();
+            continue;
+        }
         // Strip an inline `# comment`. Per YAML, a `#` starts a comment
         // only when preceded by whitespace (or it's the first char) AND
         // not inside a quoted string.
@@ -191,7 +199,24 @@ pub fn flatten_yaml(text: &str) -> String {
         }
         let value_part = first_non_ws[colon + 1..].trim();
         if value_part.is_empty() {
-            // Opens a child map. Push and move on.
+            // YAML ambiguity: `key:` with nothing after is either an
+            // empty-string leaf (deliberate blank) or opens a child
+            // map. We can't disambiguate without look-ahead, so do
+            // BOTH — emit `path.key=` as an empty leaf AND push onto
+            // the path stack so any actually-nested children below
+            // still resolve as `path.key.child=…`. Downstream
+            // (`parse_properties_all`) drops triples without a JDBC
+            // URL, so the spurious empty leaf is harmless and the
+            // blank password / username case is no longer silently
+            // dropped.
+            let mut dotted = String::new();
+            for (_, segment) in &path {
+                dotted.push_str(segment);
+                dotted.push('.');
+            }
+            dotted.push_str(&key);
+            out.push_str(&dotted);
+            out.push_str("=\n");
             path.push((indent, key));
             continue;
         }
@@ -218,8 +243,15 @@ fn strip_yaml_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
     let mut in_single = false;
     let mut in_double = false;
-    for (i, &b) in bytes.iter().enumerate() {
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
         match b {
+            // Inside a double-quoted string, `\X` escapes the next char
+            // — including `\"`. Skip the pair so the quote-state
+            // doesn't flip mid-string and a later ` #` doesn't get
+            // mis-read as a comment.
+            b'\\' if in_double && i + 1 < bytes.len() => i += 1,
             b'\'' if !in_double => in_single = !in_single,
             b'"' if !in_single => in_double = !in_double,
             b'#' if !in_single && !in_double => {
@@ -230,6 +262,7 @@ fn strip_yaml_comment(line: &str) -> &str {
             }
             _ => {}
         }
+        i += 1;
     }
     line
 }
@@ -433,6 +466,69 @@ spring:
         assert_eq!(entries[0].prefix, "spring.datasource");
         assert_eq!(entries[0].username.as_deref(), Some("alice"));
         assert!(entries[0].url.contains("postgresql"));
+    }
+
+    #[test]
+    fn flatten_yaml_resets_path_on_document_separator() {
+        // Multi-doc Spring profile files: `---` ends one doc and starts
+        // another. Without resetting, the second doc's keys merged with
+        // the first via the flat namespace.
+        let yaml = "\
+spring:
+  datasource:
+    url: jdbc:postgresql://prod/db
+---
+spring:
+  datasource:
+    url: jdbc:postgresql://dev/db
+";
+        let flat = flatten_yaml(yaml);
+        // Both URLs survive as distinct property lines in the flattened
+        // output (parse_properties_all then HashMap-merges by prefix —
+        // that's a different concern; the flattener's job is to not
+        // lose either).
+        assert!(flat.contains("prod"), "prod URL missing: {flat:?}");
+        assert!(flat.contains("dev"), "dev URL missing: {flat:?}");
+    }
+
+    #[test]
+    fn flatten_yaml_honours_backslash_escape_in_double_quotes() {
+        // Escaped `\"` inside a double-quoted string used to flip the
+        // comment-stripper's quote state, truncating the value.
+        let yaml = r#"
+spring:
+  datasource:
+    password: "a\"b #c"
+"#;
+        let flat = flatten_yaml(yaml);
+        // The value isn't unquoted (mismatched outer quotes after the
+        // escape) — that's fine. The KEY POINT is that the full
+        // quoted-string body, including the ` #c`, is preserved.
+        assert!(
+            flat.contains("#c"),
+            "comment-stripper truncated inside an escaped quote: {flat:?}"
+        );
+    }
+
+    #[test]
+    fn flatten_yaml_emits_empty_leaf_for_blank_value() {
+        // `password:` (deliberately blank) used to be silently dropped
+        // because the empty value was always interpreted as opening a
+        // child map. Now we emit an empty leaf AND push the path so
+        // both interpretations work.
+        let yaml = "\
+spring:
+  datasource:
+    url: jdbc:postgresql://h/db
+    password:
+    username: alice
+";
+        let flat = flatten_yaml(yaml);
+        assert!(
+            flat.contains("spring.datasource.password="),
+            "blank password not emitted: {flat:?}"
+        );
+        assert!(flat.contains("spring.datasource.username=alice"));
     }
 
     #[test]
