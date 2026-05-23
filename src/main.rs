@@ -219,7 +219,9 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                 .and_then(|n| n.to_str())
                 .map(|n| {
                     n.starts_with("application")
-                        && (n.ends_with(".properties") || n.ends_with(".yml"))
+                        && (n.ends_with(".properties")
+                            || n.ends_with(".yml")
+                            || n.ends_with(".yaml"))
                 })
                 .unwrap_or(false)
         })
@@ -229,11 +231,12 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
-        // YAML parsing is a stub; ignore .yml until that's real.
-        if path.extension().and_then(|e| e.to_str()) != Some("properties") {
-            continue;
-        }
-        let entries = creds::spring::parse_properties_all(&text);
+        let ext = path.extension().and_then(|e| e.to_str());
+        let entries = match ext {
+            Some("properties") => creds::spring::parse_properties_all(&text),
+            Some("yml") | Some("yaml") => creds::spring::parse_yaml_all(&text),
+            _ => continue,
+        };
         if entries.is_empty() {
             continue;
         }
