@@ -858,6 +858,10 @@ pub(crate) fn wrap_value(s: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     let lines: Vec<&str> = s.split('\n').collect();
     for raw in lines {
+        // Strip the trailing `\r` from CRLF inputs — otherwise the bare
+        // CR character makes crossterm jump to column 0 on render,
+        // overwriting the label and producing a corrupted popup.
+        let raw = raw.strip_suffix('\r').unwrap_or(raw);
         let chars: Vec<char> = raw.chars().collect();
         if chars.is_empty() {
             out.push(String::new());
@@ -1476,6 +1480,14 @@ mod tests {
         // Falling back to one line keeps render functions from panicking on
         // `chunks(0)`.
         assert_eq!(wrap_value("hello", 0), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_value_strips_carriage_returns_in_crlf_input() {
+        // CRLF must not leak raw `\r` into the output — crossterm would
+        // jump the cursor to column 0 and corrupt the row.
+        let got = wrap_value("a\r\nb\r\nc", 80);
+        assert_eq!(got, vec!["a", "b", "c"]);
     }
 
     #[test]
