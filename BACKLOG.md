@@ -198,7 +198,12 @@ Survey done — lift as the milestones reach them:
   + 2 border) but long buffers now follow the cursor — `clamp_editor_scroll`
   computes the offset each frame to keep the cursor visible. Title shows
   `line N/M` once the buffer exceeds the pane — DONE.
-- Follow-ups: saved queries; N+1 cluster view; bracketed paste;
+- Bracketed paste: terminal wraps pasted text in escape codes; crossterm
+  delivers a single `Event::Paste(String)` instead of streaming each
+  character through `Event::Key`. Pasted into the editor at the cursor,
+  CRLF / CR normalised to LF. Best-effort — older terminals ignore the
+  enable sequence and the char-by-char path still works — DONE.
+- Follow-ups: saved queries; N+1 cluster view;
   connection picker that uses IntelliJ
   data sources at startup; capture-current-state → write a fixture (the
   reverse of apply); per-database `CleanMode` config; `dataSources.local.xml`
