@@ -57,6 +57,11 @@ pub enum ClauseContext {
     /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
     /// Wants entries from `vocabulary::TYPE_NAMES`.
     TypeName,
+    /// `ON CONFLICT ON CONSTRAINT | …` — the operator is naming a
+    /// unique / primary-key constraint on the INSERT target. The
+    /// completion engine filters `SchemaCache::constraints` by the
+    /// write target's table name.
+    ConstraintName,
     /// `DROP <kind> | …` — the operator is naming the relation to drop.
     /// `kind` selects which catalog set to suggest (tables / sequences
     /// / indexes / …). All variants get `IF EXISTS` / `CASCADE` /
@@ -446,6 +451,11 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             "CONFLICT" => {
                 scope.expecting_insert_paren = true;
                 scope.in_on_conflict = true;
+            }
+            // `ON CONFLICT ON CONSTRAINT <name>` — the operator is
+            // naming a unique / primary-key constraint on the target.
+            "CONSTRAINT" if scope.in_on_conflict => {
+                scope.ctx = ConstraintName;
             }
             "EXPLAIN" => {
                 // The very next `(` opens the options list. Anything
@@ -1274,6 +1284,23 @@ mod tests {
         // pending_drop_kind set, but no TABLE/VIEW follows; ctx stays
         // at the current value (StatementStart in this case).
         assert_eq!(classify("DROP "), ClauseContext::StatementStart);
+    }
+
+    #[test]
+    fn constraint_keyword_inside_on_conflict_enters_constraint_name() {
+        let c = classify_at(
+            "INSERT INTO foo (a) VALUES (1) ON CONFLICT ON CONSTRAINT ",
+            56,
+        );
+        assert_eq!(c.ctx, ClauseContext::ConstraintName);
+    }
+
+    #[test]
+    fn constraint_keyword_outside_on_conflict_does_nothing() {
+        // CONSTRAINT outside an ON CONFLICT (e.g. inside CREATE TABLE)
+        // shouldn't flip to ConstraintName.
+        let c = classify_at("CREATE TABLE t (id INT CONSTRAINT ", 32);
+        assert_ne!(c.ctx, ClauseContext::ConstraintName);
     }
 
     #[test]
