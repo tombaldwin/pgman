@@ -41,6 +41,9 @@ pub enum ClauseContext {
     /// Inside the `(...)` column list of `INSERT INTO <table> (...)` —
     /// wants the columns of that specific table.
     InsertColumns(QualifiedTable),
+    /// Inside `EXPLAIN (...)` — option-name position. Wants tokens like
+    /// `ANALYZE`, `BUFFERS`, etc.
+    ExplainOptions,
     /// After `UPDATE <table> SET` — wants the columns of that table.
     UpdateAssign(QualifiedTable),
     /// Inside `VALUES (...)` — literals, no useful identifier completion.
@@ -167,9 +170,11 @@ struct ScopeState {
     pending_table_ref: bool,
     /// Expecting `BY` after `ORDER` / `GROUP`.
     pending_by: bool,
-    /// `INSERT INTO <table>` seen at this scope; the next `(` opens its
-    /// column list.
+    /// `INSERT INTO <table>` (or `COPY <table>`) seen at this scope;
+    /// the next `(` opens the column list.
     expecting_insert_paren: bool,
+    /// `EXPLAIN` seen; the next `(` opens its option list.
+    expecting_explain_paren: bool,
 }
 
 impl ScopeState {
@@ -180,6 +185,7 @@ impl ScopeState {
             pending_table_ref: false,
             pending_by: false,
             expecting_insert_paren: false,
+            expecting_explain_paren: false,
         }
     }
 }
@@ -204,7 +210,9 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
         if tok.text == "(" {
             // Decide what context the new scope starts in.
             let parent = scopes.last().expect("scope stack invariant");
-            let new_ctx = if parent.expecting_insert_paren {
+            let new_ctx = if parent.expecting_explain_paren {
+                ExplainOptions
+            } else if parent.expecting_insert_paren {
                 InsertColumns(parent.active_table.clone().unwrap_or(QualifiedTable {
                     schema: None,
                     name: String::new(),
@@ -221,6 +229,7 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             // any pending intent.
             let parent_mut = scopes.last_mut().unwrap();
             parent_mut.expecting_insert_paren = false;
+            parent_mut.expecting_explain_paren = false;
             parent_mut.pending_table_ref = false;
             parent_mut.pending_by = false;
             entered_via_values = matches!(new_ctx, Values);
@@ -309,6 +318,12 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             }
             "INSERT" => {
                 in_write_stmt = true;
+            }
+            "EXPLAIN" => {
+                // The very next `(` opens the options list. Anything
+                // else (a bare `EXPLAIN SELECT …`) just falls through
+                // to whatever clause follows.
+                scope.expecting_explain_paren = true;
             }
             _ => {}
         }
@@ -1029,6 +1044,19 @@ mod tests {
         let got = extract_ctes("WITH foo AS (SELECT * FROM users) SELECT * FROM foo");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].columns, Vec::<String>::new());
+    }
+
+    #[test]
+    fn explain_paren_enters_explain_options() {
+        assert_eq!(classify("EXPLAIN ("), ClauseContext::ExplainOptions);
+        assert_eq!(classify("EXPLAIN (AN"), ClauseContext::ExplainOptions);
+    }
+
+    #[test]
+    fn explain_without_paren_does_not_enter_explain_options() {
+        // `EXPLAIN SELECT …` — no parens, the next clause is what
+        // matters. SELECT-list should fire normally.
+        assert_eq!(classify("EXPLAIN SELECT "), ClauseContext::SelectList);
     }
 
     #[test]

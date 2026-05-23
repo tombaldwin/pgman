@@ -111,6 +111,20 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
     "SIMILAR TO",
 ];
 
+/// Postgres `EXPLAIN (option, option, ...)` flags. Surfaced inside
+/// the `EXPLAIN (...)` paren group via `ClauseContext::ExplainOptions`.
+/// Each appears as a bare word; the operator follows with the value
+/// (`ON` / `OFF` / `TEXT` / `JSON` etc.).
+///
+/// Refresh when Postgres adds a new EXPLAIN option (rare —
+/// `pg_explain_options` doesn't exist, but Postgres release notes
+/// flag any addition to this list).
+pub const EXPLAIN_OPTIONS: &[&str] = &[
+    "ANALYZE", "VERBOSE", "COSTS", "SETTINGS", "BUFFERS",
+    "WAL", "TIMING", "SUMMARY", "FORMAT", "GENERIC_PLAN",
+    "SERIALIZE", "MEMORY",
+];
+
 /// JOIN variants surfaced as multi-word completions in `TableRef`
 /// continuations. Tab once gets the whole shape (`LEFT OUTER JOIN`)
 /// so the operator doesn't have to type the verb-of-art.
@@ -181,6 +195,7 @@ mod tests {
             WINDOW_FUNCTIONS,
             PREDICATE_OPERATORS,
             JOIN_VARIANTS,
+            EXPLAIN_OPTIONS,
             continuations::AFTER_SELECT_LIST,
             continuations::AFTER_TABLE_REF,
             continuations::AFTER_PREDICATE,
@@ -211,6 +226,7 @@ mod tests {
             ("WINDOW_FUNCTIONS", WINDOW_FUNCTIONS),
             ("PREDICATE_OPERATORS", PREDICATE_OPERATORS),
             ("JOIN_VARIANTS", JOIN_VARIANTS),
+            ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
             ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
             ("AFTER_TABLE_REF", continuations::AFTER_TABLE_REF),
             ("AFTER_PREDICATE", continuations::AFTER_PREDICATE),

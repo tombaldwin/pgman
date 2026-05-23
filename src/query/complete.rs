@@ -21,8 +21,8 @@ use crate::query::clause::{
 use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
-    continuations, AGGREGATE_FUNCTIONS, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS,
-    STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
+    continuations, AGGREGATE_FUNCTIONS, EXPLAIN_OPTIONS, JOIN_VARIANTS, PREDICATE_OPERATORS,
+    SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -358,6 +358,9 @@ fn candidates_for_in_context(
 
         // INSERT INTO foo (|  → columns of `foo` (specifically).
         ClauseContext::InsertColumns(t) => columns_of(t, &id.prefix, schema),
+
+        // EXPLAIN (|  → the documented options.
+        ClauseContext::ExplainOptions => candidates_from_list(&id.prefix, EXPLAIN_OPTIONS),
 
         // UPDATE foo SET |  → columns of `foo`, plus continuations
         // (WHERE, RETURNING) once the operator's finished the
@@ -1424,6 +1427,17 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         // Unknown schema → silent (no fall-through to ambiguous lookup).
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn explain_paren_offers_explain_options() {
+        let cache = build_cache();
+        let cands = candidates_for("EXPLAIN (AN", 11, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"ANALYZE"));
+        // Must NOT offer columns / tables from the cache.
+        assert!(!labels.contains(&"id"));
+        assert!(!labels.contains(&"users"));
     }
 
     #[test]
