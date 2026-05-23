@@ -16,4 +16,5 @@ pub mod splash;
 pub mod theme;
 pub mod tui;
 pub mod ui;
+pub mod upgrade;
 pub mod util;
