@@ -274,7 +274,7 @@ pub fn candidates_for(
     let stmt = current_statement(buf, cursor);
     let select_aliases = crate::query::select_list::resolve_select_columns(stmt, schema);
 
-    candidates_for_in_context(
+    let cands = candidates_for_in_context(
         &id,
         &classification.ctx,
         classification.write_target.as_ref(),
@@ -282,7 +282,231 @@ pub fn candidates_for(
         &ctes,
         &select_aliases,
         schema,
-    )
+    );
+    if !cands.is_empty() {
+        return cands;
+    }
+    // Fuzzy fallback: prefix-anchored matching turned up nothing, but
+    // the operator typed enough chars to be specific. Try a subsequence
+    // match across identifiers in scope — `usr` → `users`,
+    // `user_logs`, `user_roles`; `idnt_ld` → `identity_load`. Keyed off
+    // a 3-char threshold so single letters / pairs don't fan out to
+    // every identifier in the schema.
+    let prefix_chars = id.prefix.chars().count();
+    if prefix_chars >= 3 {
+        return candidates_fuzzy(&id, &in_scope, &ctes, schema);
+    }
+    cands
+}
+
+/// Subsequence-match score for fuzzy completion. Lower = better.
+/// Returns None when `needle` isn't a subsequence of `haystack` (after
+/// ASCII case folding). The score combines three factors so tighter
+/// matches rank above looser ones:
+///   - match SPAN (last_matched - first_matched + 1) — contiguous
+///     matches beat strung-out ones,
+///   - position of the FIRST matched char — matches near the start
+///     beat matches deep in the candidate,
+///   - candidate LENGTH — shorter beats longer when the rest is a tie.
+pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let needle_lc: Vec<char> = needle.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let haystack_lc: Vec<char> = haystack.chars().map(|c| c.to_ascii_lowercase()).collect();
+    if needle_lc.len() > haystack_lc.len() {
+        return None;
+    }
+    let mut ni = 0usize;
+    let mut first_match: Option<usize> = None;
+    let mut last_match: usize = 0;
+    for (i, &hc) in haystack_lc.iter().enumerate() {
+        if ni < needle_lc.len() && hc == needle_lc[ni] {
+            if first_match.is_none() {
+                first_match = Some(i);
+            }
+            last_match = i;
+            ni += 1;
+        }
+    }
+    if ni < needle_lc.len() {
+        return None;
+    }
+    let first = first_match.unwrap_or(0);
+    let span = last_match - first + 1;
+    // Weights chosen so SPAN dominates (100×), then first position
+    // (10×), then length is the tiebreaker. Concrete numbers don't
+    // matter as long as the ordering matches the intent.
+    Some(span * 100 + first * 10 + haystack_lc.len())
+}
+
+/// Fuzzy-fallback candidate set. Scans every name we could plausibly
+/// surface — in-scope tables/aliases/CTEs and the full schema cache —
+/// scores each with `fuzzy_score`, and returns the top results sorted
+/// by score (tightest match first). Skips keywords / operators /
+/// functions: those are short and the operator usually remembers
+/// them; bulking the fuzzy result with `FROM` for `usr` would just be
+/// noise.
+fn candidates_fuzzy(
+    id: &Identifier,
+    in_scope: &[TableRefInQuery],
+    ctes: &[crate::query::clause::CteDef],
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let prefix = &id.prefix;
+    let mut scored: Vec<(usize, Candidate)> = Vec::new();
+    let mut seen: std::collections::BTreeSet<(CandidateKind, String)> =
+        std::collections::BTreeSet::new();
+
+    let push = |scored: &mut Vec<(usize, Candidate)>,
+                    seen: &mut std::collections::BTreeSet<(CandidateKind, String)>,
+                    name: &str,
+                    kind: CandidateKind,
+                    context: Option<String>| {
+        if let Some(score) = fuzzy_score(name, prefix) {
+            if seen.insert((kind, name.to_string())) {
+                scored.push((
+                    score,
+                    Candidate {
+                        display: name.to_string(),
+                        insert: name.to_string(),
+                        kind,
+                        context,
+                    },
+                ));
+            }
+        }
+    };
+
+    // Qualified fuzzy (`alias.usr` / `schema.usr`) — narrow the scan
+    // to the qualifier's children only. The operator typed the
+    // qualifier intentionally; broadening to the whole cache would
+    // ignore that signal.
+    if let Some(q) = &id.qualifier {
+        let q_lower = q.to_ascii_lowercase();
+        // Alias / table-in-scope qualifier → its columns.
+        for t in in_scope {
+            if t.match_key() == q_lower {
+                let cols_owned: Option<Vec<String>> = if let Some(v) = &t.virtual_columns {
+                    Some(v.clone())
+                } else {
+                    schema.columns_for(t.schema.as_deref(), &t.name).cloned()
+                };
+                if let Some(cols) = cols_owned {
+                    for c in &cols {
+                        push(
+                            &mut scored,
+                            &mut seen,
+                            c,
+                            CandidateKind::Column,
+                            Some(t.name.clone()),
+                        );
+                    }
+                }
+                scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
+                const MAX_FUZZY_RESULTS: usize = 30;
+                return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+            }
+        }
+        // Schema qualifier → its tables.
+        if schema.schemas.iter().any(|s| s.eq_ignore_ascii_case(q)) {
+            for t in &schema.tables {
+                if t.schema.eq_ignore_ascii_case(q) {
+                    push(
+                        &mut scored,
+                        &mut seen,
+                        &t.name,
+                        CandidateKind::Table,
+                        Some(q.clone()),
+                    );
+                }
+            }
+            scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
+            const MAX_FUZZY_RESULTS: usize = 30;
+            return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+        }
+        // Bare table-name qualifier with no FROM scope → its columns.
+        if let Some(cols) = schema.columns_for(None, q) {
+            for c in cols {
+                push(
+                    &mut scored,
+                    &mut seen,
+                    c,
+                    CandidateKind::Column,
+                    Some(q.clone()),
+                );
+            }
+            scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
+            const MAX_FUZZY_RESULTS: usize = 30;
+            return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+        }
+        // Unrecognised qualifier — nothing to fuzz over.
+        return Vec::new();
+    }
+
+    // Unqualified fuzzy — broad scan across everything in scope plus
+    // the cache.
+
+    // Columns of in-scope tables (virtual_columns wins, like everywhere
+    // else, so CTE / subquery columns participate).
+    for t in in_scope {
+        let cols_owned: Option<Vec<String>> = if let Some(v) = &t.virtual_columns {
+            Some(v.clone())
+        } else {
+            schema.columns_for(t.schema.as_deref(), &t.name).cloned()
+        };
+        if let Some(cols) = cols_owned {
+            let ctx = t.alias.clone().unwrap_or_else(|| t.name.clone());
+            for c in &cols {
+                push(&mut scored, &mut seen, c, CandidateKind::Column, Some(ctx.clone()));
+            }
+        }
+    }
+    // Aliases bound by the FROM clause.
+    for t in in_scope {
+        if let Some(alias) = &t.alias {
+            push(
+                &mut scored,
+                &mut seen,
+                alias,
+                CandidateKind::Alias,
+                Some(t.name.clone()),
+            );
+        }
+    }
+    // CTE names.
+    for c in ctes {
+        push(&mut scored, &mut seen, &c.name, CandidateKind::Table, None);
+    }
+    // All tables in the cache.
+    for t in &schema.tables {
+        let ctx = if t.schema.eq_ignore_ascii_case("public") {
+            None
+        } else {
+            Some(t.schema.clone())
+        };
+        push(&mut scored, &mut seen, &t.name, CandidateKind::Table, ctx);
+    }
+    // All schemas.
+    for s in &schema.schemas {
+        push(&mut scored, &mut seen, s, CandidateKind::Schema, None);
+    }
+    // Every column anywhere (no per-table context here — could be
+    // ambiguous; the fuzzy fallback is exploratory anyway).
+    for col in schema.all_column_names() {
+        push(&mut scored, &mut seen, &col, CandidateKind::Column, None);
+    }
+
+    // Sort ascending by score (tightest match first). Cap the visible
+    // result list so a 3-char prefix that subsequence-matches half the
+    // schema doesn't drown the popup.
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
+    const MAX_FUZZY_RESULTS: usize = 30;
+    scored
+        .into_iter()
+        .take(MAX_FUZZY_RESULTS)
+        .map(|(_, c)| c)
+        .collect()
 }
 
 /// Slice of the buffer holding the current statement (everything since
@@ -2238,6 +2462,100 @@ mod tests {
             .find(|c| c.display.eq_ignore_ascii_case("SELECT"))
             .expect("SELECT keyword");
         assert!(select.context.is_none());
+    }
+
+    // --- fuzzy fallback ---
+
+    #[test]
+    fn fuzzy_score_subsequence_matches_with_relative_ranking() {
+        // `usr` is a subsequence of all three; the tighter match
+        // (`users`: matched chars 0..3 within length 5) should score
+        // lower than the looser one (`user_logs`: matched chars 0..3
+        // within length 9).
+        let users = fuzzy_score("users", "usr").expect("users matches usr");
+        let user_logs = fuzzy_score("user_logs", "usr").expect("user_logs matches usr");
+        let user_login_session_records =
+            fuzzy_score("user_login_session_records", "usr").expect("matches");
+        assert!(users < user_logs);
+        assert!(user_logs < user_login_session_records);
+
+        // Anchored at start beats anchored deeper: `users` (u at 0)
+        // beats `housing_users` (u at 0 too actually — let me use a
+        // clearer pair).
+        let start = fuzzy_score("abc_target", "abc").expect("starts-with-like");
+        let deep = fuzzy_score("xy_abc_target", "abc").expect("contains");
+        assert!(start < deep, "earlier match should beat later: {start} vs {deep}");
+
+        // Non-match: needle has char not in haystack.
+        assert!(fuzzy_score("users", "xyz").is_none());
+        // Non-match: order matters (`s` before `u` in haystack rules
+        // it out).
+        assert!(fuzzy_score("ab", "ba").is_none());
+        // Empty needle is rejected.
+        assert!(fuzzy_score("users", "").is_none());
+    }
+
+    #[test]
+    fn fuzzy_fallback_kicks_in_when_starts_with_returns_nothing() {
+        let cache = build_cache();
+        // `usr` doesn't prefix-match anything in build_cache(), but
+        // `users` is a subsequence — fallback should surface it.
+        let cands = candidates_for("SELECT * FROM usr", 17, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "users"),
+            "fuzzy should surface `users` for prefix `usr`; got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn fuzzy_threshold_does_not_fire_for_short_prefixes() {
+        let cache = build_cache();
+        // Two chars `xz` — no prefix-match. Should NOT fall back to
+        // fuzzy (would otherwise scan everything containing x and z).
+        let cands = candidates_for("SELECT * FROM xz", 16, &cache);
+        // Result: empty (or only continuations not matching `xz`).
+        // The contract we test: no table whose name contains x and z
+        // in order should appear here.
+        let table_hits: Vec<&str> = cands
+            .iter()
+            .filter(|c| c.kind == CandidateKind::Table)
+            .map(|c| c.display.as_str())
+            .collect();
+        assert!(
+            table_hits.is_empty(),
+            "fuzzy must not fire below the 3-char threshold; got {table_hits:?}"
+        );
+    }
+
+    #[test]
+    fn fuzzy_respects_alias_qualifier() {
+        let cache = build_cache();
+        // `u.nme` (typo of name) — no starts-with against users
+        // columns. Fuzzy fallback should ONLY scan `u`'s columns,
+        // not the whole cache. So `actor` (from audit.events) must
+        // NOT appear, but `name` (from users) should.
+        let cands = candidates_for("SELECT u.nme FROM users u", 12, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "name"),
+            "expected fuzzy-`nmm` to surface `name` from users; got {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|l| *l == "actor"),
+            "qualifier `u` should bound fuzzy scan to users' columns, not all tables; got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn fuzzy_skips_when_starts_with_already_has_matches() {
+        let cache = build_cache();
+        // `use` prefix-matches `users` directly — fuzzy should NOT
+        // be invoked, so we still get the standard starts-with
+        // result set (including continuation keywords like JOIN).
+        let cands = candidates_for("SELECT * FROM use", 17, &cache);
+        let displays: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(displays.iter().any(|l| *l == "users"));
     }
 
     #[test]

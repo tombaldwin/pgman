@@ -491,6 +491,15 @@ Pull a remote database down for local testing; keep tagged backups.
   the operator types a space immediately after one of those. Other
   spaces (`x = 5 `, after parens / commas / literals) stay quiet to
   avoid mid-expression noise — DONE.
+- **Fuzzy / subsequence fallback**: when prefix-anchored matching
+  returns nothing and the typed prefix is ≥3 chars, fall back to
+  subsequence matching across in-scope columns / aliases / CTEs and
+  the whole schema cache. `usr` → `users`, `user_logs`,
+  `user_login_session_records`; `idnt_ld` → `identity_load`. Ranked
+  by match tightness (span + first-position + length), capped at 30
+  results, so the tightest hit lands first. Qualified prefixes
+  (`u.nme`) narrow the scan to the qualifier's children only — the
+  operator's qualifier is treated as intentional — DONE.
 - **Tab on whitespace opens context-aware popup**: pressing Tab when
   the cursor is on whitespace (or in an empty buffer) opens the
   popup with candidates for the surrounding clause — statement
