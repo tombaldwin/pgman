@@ -191,6 +191,10 @@ struct ScopeState {
     /// This scope sits inside the parens of a `CAST(...)`. Set by the
     /// `(` handler when the parent was `expecting_cast_paren`.
     is_cast_scope: bool,
+    /// We've passed an `ON CONFLICT` in this scope. Set on `CONFLICT`
+    /// so that a subsequent `DO UPDATE` doesn't reset the classifier
+    /// state as if it were the start of an UPDATE statement.
+    in_on_conflict: bool,
 }
 
 impl ScopeState {
@@ -204,6 +208,7 @@ impl ScopeState {
             expecting_explain_paren: false,
             expecting_cast_paren: false,
             is_cast_scope: false,
+            in_on_conflict: false,
         }
     }
 }
@@ -313,10 +318,17 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 scope.pending_table_ref = true;
                 in_write_stmt = true;
             }
-            "UPDATE" => {
+            // `UPDATE` normally starts a statement. Inside an
+            // `ON CONFLICT DO UPDATE` clause it's a continuation —
+            // don't reset state (especially pending_table_ref, which
+            // would consume the next keyword `SET` as a table name).
+            "UPDATE" if !scope.in_on_conflict => {
                 scope.ctx = TableRef;
                 scope.pending_table_ref = true;
                 in_write_stmt = true;
+            }
+            "UPDATE" => {
+                // ON CONFLICT DO UPDATE — no-op; SET will rebind ctx.
             }
             "DELETE" => {
                 scope.ctx = TableRef;
@@ -338,6 +350,16 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                     scope.ctx = UpdateAssign(t);
                 }
             }
+            // ON CONFLICT DO UPDATE SET col = … — the SET keyword
+            // arrives long after the TableRef phase ended. Use the
+            // write target so the assignment-list completion still
+            // finds the right columns. Must check BEFORE the
+            // SHOW/SET → GucParameter arm below.
+            "SET" if scope.in_on_conflict && write_target.is_some() => {
+                if let Some(t) = write_target.clone() {
+                    scope.ctx = UpdateAssign(t);
+                }
+            }
             "INSERT" => {
                 in_write_stmt = true;
             }
@@ -348,6 +370,14 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 scope.ctx = TableRef;
                 scope.pending_table_ref = true;
                 in_write_stmt = true;
+            }
+            // ON CONFLICT … — the optional `(col_list)` after CONFLICT
+            // names columns of the INSERT target, same shape as the
+            // INSERT column list. Set the same flag the next `(`
+            // consumes.
+            "CONFLICT" => {
+                scope.expecting_insert_paren = true;
+                scope.in_on_conflict = true;
             }
             "EXPLAIN" => {
                 // The very next `(` opens the options list. Anything
@@ -1089,6 +1119,26 @@ mod tests {
         let got = extract_ctes("WITH foo AS (SELECT * FROM users) SELECT * FROM foo");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].columns, Vec::<String>::new());
+    }
+
+    #[test]
+    fn on_conflict_paren_enters_insert_columns_of_target() {
+        let ctx = classify("INSERT INTO foo (a) VALUES (1) ON CONFLICT (");
+        match ctx {
+            ClauseContext::InsertColumns(t) => assert_eq!(t.name, "foo"),
+            other => panic!("expected InsertColumns(foo), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn on_conflict_do_update_set_enters_update_assign_of_target() {
+        let ctx = classify(
+            "INSERT INTO foo (a) VALUES (1) ON CONFLICT (id) DO UPDATE SET ",
+        );
+        match ctx {
+            ClauseContext::UpdateAssign(t) => assert_eq!(t.name, "foo"),
+            other => panic!("expected UpdateAssign(foo), got {other:?}"),
+        }
     }
 
     #[test]
