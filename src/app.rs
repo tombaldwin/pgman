@@ -372,13 +372,18 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
-            // Run keys — Enter no longer runs (it inserts a newline now).
+            // Run keys (Ctrl-* primary; F-keys are aliases for full-keyboard
+            // users — F-keys on a MacBook need fn+). Enter inserts a newline.
+            KeyCode::Char('r') if ctrl => self.request_run(RunKind::Run),
+            KeyCode::Char('e') if ctrl => self.request_run(RunKind::Explain),
+            KeyCode::Char('a') if ctrl => self.request_run(RunKind::ExplainAnalyze),
+            KeyCode::Char('l') if ctrl => self.start_log_import(),
             KeyCode::F(5) => self.request_run(RunKind::Run),
             KeyCode::F(6) => self.request_run(RunKind::Explain),
             KeyCode::F(7) => self.request_run(RunKind::ExplainAnalyze),
             KeyCode::F(8) => self.start_log_import(),
 
-            // History navigation (guarded arms come first).
+            // History navigation.
             KeyCode::Char('p') if ctrl => self.history_prev(),
             KeyCode::Char('n') if ctrl => self.history_next(),
             KeyCode::Char('u') if ctrl => {
