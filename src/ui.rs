@@ -731,6 +731,25 @@ fn draw_completion_popup(
         .fg(theme.text)
         .bg(theme.row_selected_bg)
         .add_modifier(Modifier::BOLD);
+    // Style for the prefix portion — bolded so the operator sees at a
+    // glance what they've already typed vs. what auto-completion would
+    // add. Inherits the row's bg when the row is focused.
+    let prefix_style = Style::default()
+        .fg(theme.title)
+        .add_modifier(Modifier::BOLD);
+    let prefix_focus_style = focus_style.fg(theme.title);
+
+    // How many leading chars of each candidate's display correspond to
+    // the prefix actually in the buffer. The cycle's [start..end) is
+    // always the live prefix (LCP-expanded, single-match-inserted, or
+    // narrowed-via-typing — refresh_completion / editor_complete
+    // maintain this invariant). Char count, not byte count, since
+    // ratatui span positions are char-indexed.
+    let prefix_char_count: usize = app
+        .editor_buffer
+        .get(cycle.start..cycle.end)
+        .map(|s| s.chars().count())
+        .unwrap_or(0);
 
     let inner_w = popup.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::with_capacity(visible);
@@ -745,22 +764,31 @@ fn draw_completion_popup(
         // one (after the second Tab). Before that, render all rows
         // neutrally — the popup is informational.
         let is_focus = cycle.selected == Some(i);
-        let prefix = if is_focus { "▶ " } else { "  " };
+        let marker = if is_focus { "▶ " } else { "  " };
         let display = &cand.display;
-        // Pad so the row's bg-highlight spans the full popup width.
-        let body = format!("{prefix}{display}");
-        let body_w = body.chars().count();
+        let display_chars: Vec<char> = display.chars().collect();
+        // Split the display into [prefix-matched, rest]. We rely on
+        // candidates_for's starts_with_ci filter — the first N chars
+        // ARE the prefix (up to case). Clamp to avoid panicking on a
+        // candidate shorter than the typed prefix (rare, but possible
+        // in test fixtures).
+        let split_at = prefix_char_count.min(display_chars.len());
+        let head: String = display_chars[..split_at].iter().collect();
+        let tail: String = display_chars[split_at..].iter().collect();
         let kind_text = tail_of(cand);
         let kind_w = kind_text.chars().count();
+        let body_w = marker.chars().count() + display_chars.len();
         let pad_after = inner_w.saturating_sub(body_w).saturating_sub(kind_w);
         let pad = " ".repeat(pad_after);
-        let (l_style, k_style) = if is_focus {
-            (focus_style, focus_style)
+        let (l_style, k_style, p_style) = if is_focus {
+            (focus_style, focus_style, prefix_focus_style)
         } else {
-            (label_style, kind_style)
+            (label_style, kind_style, prefix_style)
         };
         lines.push(Line::from(vec![
-            Span::styled(body, l_style),
+            Span::styled(marker.to_string(), l_style),
+            Span::styled(head, p_style),
+            Span::styled(tail, l_style),
             Span::styled(pad, l_style),
             Span::styled(kind_text, k_style),
         ]));

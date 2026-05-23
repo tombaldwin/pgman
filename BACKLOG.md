@@ -470,6 +470,26 @@ Pull a remote database down for local testing; keep tagged backups.
   while the completion popup is visible, so the operator sees the
   active controls instead of the general Ctrl-R / Ctrl-E / Ctrl-A
   list — DONE.
+- **Auto-trigger after `.`**: typing `.` immediately after an
+  identifier-like char opens the popup with the qualified-completion
+  candidates (so `users.|` shows the columns without needing Tab).
+  Numeric literals like `3.14` are excluded by checking the byte
+  before the `.`. Silent on failure (no schema cache, no matches) —
+  the prior status message is restored — DONE.
+- **Bold the matched prefix in popup rows**: the chars the operator
+  has already typed (i.e. what's at `[cycle.start..cycle.end)` in the
+  buffer) render in bold/accent inside each candidate. Auto-completed
+  trailing chars stay neutral so the operator can see at a glance
+  what Tab would add — DONE.
+- **Tab on whitespace opens context-aware popup**: pressing Tab when
+  the cursor is on whitespace (or in an empty buffer) opens the
+  popup with candidates for the surrounding clause — statement
+  keywords in an empty buffer, tables after `FROM `, columns +
+  functions after `SELECT `, etc. Replaces the old
+  `"type a prefix first"` no-op. Narrowing via Backspace down to an
+  empty prefix now also keeps the popup alive instead of dropping
+  it, so backspacing through `FROM user|` back to `FROM ` keeps the
+  full table list available — DONE.
 
 ## v3+ — deferred
 
