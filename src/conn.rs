@@ -262,6 +262,44 @@ pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Resul
     }
 }
 
+/// Run a multi-statement script (`;`-separated) via the simple query
+/// protocol. Returns a single-row "status" grid since `batch_execute` does
+/// not yield row sets.
+pub async fn run_batch(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
+    client
+        .batch_execute(sql)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(status_grid("batch executed"))
+}
+
+/// Run a multi-statement script inside an explicit transaction that is
+/// **left open** on success (caller commits or rolls back). On error in the
+/// batch, rolls back immediately.
+pub async fn run_batch_in_tx_open(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<Grid, String> {
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(|e| e.to_string())?;
+    match client.batch_execute(sql).await {
+        Ok(()) => Ok(status_grid("batch ran — awaiting commit/rollback")),
+        Err(e) => {
+            let _ = client.batch_execute("ROLLBACK").await;
+            Err(e.to_string())
+        }
+    }
+}
+
+fn status_grid(msg: &str) -> Grid {
+    Grid {
+        columns: vec!["status".to_string()],
+        rows: vec![vec![msg.to_string()]],
+    }
+}
+
 /// Commit an open transaction.
 pub async fn tx_commit(client: &tokio_postgres::Client) -> Result<(), String> {
     client

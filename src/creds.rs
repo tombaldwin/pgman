@@ -8,4 +8,5 @@
 //! Hard rule: resolved credentials must never reach `tracing` or the UI. Show
 //! *provenance* instead (see CLAUDE.md).
 
+pub mod intellij;
 pub mod spring;

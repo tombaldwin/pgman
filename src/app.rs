@@ -73,6 +73,12 @@ pub struct PendingRun {
     pub sql: String,
     pub kind: RunKind,
     pub decision: Decision,
+    /// True when `sql` is a multi-statement script — run via
+    /// `client.batch_execute` rather than the single-statement path.
+    pub is_batch: bool,
+    /// For multi-statement runs, a human summary shown in the confirm modal
+    /// in place of the (less useful for batches) classification.
+    pub summary: Option<String>,
 }
 
 pub struct App {
@@ -378,10 +384,12 @@ impl App {
             KeyCode::Char('e') if ctrl => self.request_run(RunKind::Explain),
             KeyCode::Char('a') if ctrl => self.request_run(RunKind::ExplainAnalyze),
             KeyCode::Char('l') if ctrl => self.start_log_import(),
+            KeyCode::Char('d') if ctrl => self.load_dbunit_fixture(),
             KeyCode::F(5) => self.request_run(RunKind::Run),
             KeyCode::F(6) => self.request_run(RunKind::Explain),
             KeyCode::F(7) => self.request_run(RunKind::ExplainAnalyze),
             KeyCode::F(8) => self.start_log_import(),
+            KeyCode::F(9) => self.load_dbunit_fixture(),
 
             // History navigation.
             KeyCode::Char('p') if ctrl => self.history_prev(),
@@ -495,7 +503,12 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(pending) = self.pending_run.take() {
-                    self.spawn_run(pending.sql, pending.kind, pending.decision);
+                    self.spawn_run(
+                        pending.sql,
+                        pending.kind,
+                        pending.decision,
+                        pending.is_batch,
+                    );
                 }
                 self.mode = Mode::Editor;
             }
@@ -605,7 +618,8 @@ impl App {
     // -- run dispatch --
 
     /// User requested a run. Classify, evaluate safety, and either run, prompt,
-    /// or reject.
+    /// or reject. Multi-statement buffers (e.g. DBUnit scripts) take the batch
+    /// path.
     fn request_run(&mut self, kind: RunKind) {
         let sql = self.editor_buffer.trim().to_string();
         if sql.is_empty() {
@@ -622,12 +636,20 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
+
+        // Multi-statement script (DBUnit apply, hand-written batch, …) — take
+        // the batch path which uses `batch_execute` and classifies each part.
+        let statements = safety::split_statements(&sql);
+        if statements.len() > 1 {
+            return self.request_run_batch(sql, statements, kind, db.to_string());
+        }
+
         let decision = safety::evaluate(&self.safety_config, db, &sql);
 
         // EXPLAIN (without ANALYZE) never executes the inner statement — bypass
         // guards entirely.
         if kind == RunKind::Explain {
-            self.spawn_run(sql, kind, decision);
+            self.spawn_run(sql, kind, decision, false);
             return;
         }
 
@@ -645,14 +667,116 @@ impl App {
                     sql,
                     kind,
                     decision,
+                    is_batch: false,
+                    summary: None,
                 });
                 self.mode = Mode::Confirm;
             }
-            Guard::Allow => self.spawn_run(sql, kind, decision),
+            Guard::Allow => self.spawn_run(sql, kind, decision, false),
         }
     }
 
-    fn spawn_run(&mut self, sql: String, kind: RunKind, decision: Decision) {
+    /// Multi-statement run: classify each piece, take the most-restrictive
+    /// guard, and either reject, prompt with a summary, or batch-execute.
+    fn request_run_batch(
+        &mut self,
+        sql: String,
+        statements: Vec<String>,
+        kind: RunKind,
+        db: String,
+    ) {
+        if !matches!(kind, RunKind::Run) {
+            self.last_error = Some(format!(
+                "{} not supported for multi-statement scripts",
+                kind.label()
+            ));
+            return;
+        }
+        let decisions: Vec<Decision> = statements
+            .iter()
+            .map(|s| safety::evaluate(&self.safety_config, &db, s))
+            .collect();
+        let max_guard = decisions
+            .iter()
+            .map(|d| d.guard)
+            .fold(Guard::Allow, |acc, g| match (acc, g) {
+                (Guard::Block, _) | (_, Guard::Block) => Guard::Block,
+                (Guard::Confirm, _) | (_, Guard::Confirm) => Guard::Confirm,
+                _ => Guard::Allow,
+            });
+        let kinds: Vec<safety::StatementKind> = decisions.iter().map(|d| d.kind).collect();
+        let summary = batch_summary(&kinds);
+        let synthesized = Decision {
+            kind: safety::StatementKind::Other,
+            guard: max_guard,
+            wrap_in_tx: decisions.iter().any(|d| d.wrap_in_tx),
+            blocked_by_read_only: decisions.iter().any(|d| d.blocked_by_read_only),
+        };
+
+        match max_guard {
+            Guard::Block => {
+                self.last_error =
+                    Some(format!("batch blocked by safety: {summary}"));
+            }
+            Guard::Confirm => {
+                self.pending_run = Some(PendingRun {
+                    sql,
+                    kind,
+                    decision: synthesized,
+                    is_batch: true,
+                    summary: Some(summary),
+                });
+                self.mode = Mode::Confirm;
+            }
+            Guard::Allow => self.spawn_run(sql, kind, synthesized, true),
+        }
+    }
+
+    /// Load the editor buffer as a path to a DBUnit FlatXmlDataSet, replace
+    /// the buffer with the generated clean+insert script. The user reviews,
+    /// then runs via Ctrl-R (which takes the multi-statement batch path).
+    fn load_dbunit_fixture(&mut self) {
+        use crate::dbunit;
+        let path_str = self.editor_buffer.trim().to_string();
+        if path_str.is_empty() {
+            self.last_error = Some(
+                "editor is empty — type a fixture file path then ctrl-d".to_string(),
+            );
+            return;
+        }
+        let path = std::path::PathBuf::from(&path_str);
+        let xml = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.last_error = Some(format!("fixture read failed: {e}"));
+                return;
+            }
+        };
+        let fixture = match dbunit::parse_flat_xml(&xml) {
+            Ok(f) => f,
+            Err(e) => {
+                self.last_error = Some(format!("fixture parse failed: {e}"));
+                return;
+            }
+        };
+        if fixture.rows.is_empty() {
+            self.last_error = Some("fixture has no rows".to_string());
+            return;
+        }
+        let row_count = fixture.rows.len();
+        let table_count = fixture.tables().len();
+        self.editor_buffer =
+            dbunit::generate_apply_script(&fixture, dbunit::CleanMode::Truncate);
+        self.editor_cursor = 0;
+        self.editor_preferred_col = None;
+        self.history_pos = None;
+        self.last_error = None;
+        self.last_status = Some(format!(
+            "fixture loaded · {row_count} row(s), {table_count} table(s) · ctrl-r to apply"
+        ));
+    }
+
+    fn spawn_run(&mut self, sql: String, kind: RunKind, decision: Decision, is_batch: bool) {
         let Some(client) = self.client.clone() else {
             self.last_error = Some("not connected".to_string());
             return;
@@ -673,7 +797,7 @@ impl App {
         self.last_error = None;
         self.last_status = Some(format!("running {}…", kind.label()));
         tokio::spawn(async move {
-            let result = execute(&client, &sql, kind, &decision).await;
+            let result = execute(&client, &sql, kind, &decision, is_batch).await;
             // Run + wrap_in_tx leaves the transaction open on success — the
             // caller will need to commit or rollback.
             let tx_open_after = is_run && wrap_in_tx && result.is_ok();
@@ -709,6 +833,29 @@ impl App {
         }
         self.grid_state.select(Some(idx.min(count - 1)));
     }
+}
+
+/// One-line summary of a multi-statement batch, used in the confirm modal.
+/// Example: `"7 statements · Truncate ×2, Insert ×5"`.
+fn batch_summary(kinds: &[safety::StatementKind]) -> String {
+    use safety::StatementKind as SK;
+    let mut counts: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    for k in kinds {
+        let label = match k {
+            SK::Select => "Select",
+            SK::Insert => "Insert",
+            SK::Update { .. } => "Update",
+            SK::Delete { .. } => "Delete",
+            SK::Truncate => "Truncate",
+            SK::Drop => "Drop",
+            SK::AlterDdl => "DDL",
+            SK::Other => "Other",
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    let parts: Vec<String> = counts.iter().map(|(k, n)| format!("{k} ×{n}")).collect();
+    format!("{} statements · {}", kinds.len(), parts.join(", "))
 }
 
 // -- editor buffer ops (pure; tested) --
@@ -854,12 +1001,28 @@ fn line_end_byte(buffer: &str, cursor: usize) -> usize {
 }
 
 /// Build and run the effective SQL for `kind`, honouring the safety decision.
+/// `is_batch` routes through `client.batch_execute` for multi-statement runs.
 async fn execute(
     client: &tokio_postgres::Client,
     sql: &str,
     kind: RunKind,
     decision: &Decision,
+    is_batch: bool,
 ) -> Result<Grid, String> {
+    if is_batch {
+        // Only plain Run makes sense for a multi-statement script.
+        if !matches!(kind, RunKind::Run) {
+            return Err(format!(
+                "{} not supported for multi-statement scripts",
+                kind.label()
+            ));
+        }
+        return if decision.wrap_in_tx {
+            conn::run_batch_in_tx_open(client, sql).await
+        } else {
+            conn::run_batch(client, sql).await
+        };
+    }
     match kind {
         RunKind::Run => {
             if decision.wrap_in_tx {

@@ -223,6 +223,49 @@ pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     }
 }
 
+/// Split a SQL script on `;` outside string literals and SQL comments. Returns
+/// the trimmed, non-empty statements in order. Used by the editor's
+/// multi-statement run path (DBUnit scripts, hand-written batches).
+pub fn split_statements(sql: &str) -> Vec<String> {
+    let stripped = strip_sql_comments(sql);
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut in_string = false;
+    let mut chars = stripped.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            current.push(c);
+            if c == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    current.push(chars.next().unwrap()); // '' escape — still in string
+                } else {
+                    in_string = false;
+                }
+            }
+            continue;
+        }
+        match c {
+            '\'' => {
+                in_string = true;
+                current.push(c);
+            }
+            ';' => {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() {
+                    result.push(trimmed);
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        result.push(trimmed);
+    }
+    result
+}
+
 /// Remove `-- line` and `/* block */` comments, leaving string literals intact.
 fn strip_sql_comments(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
@@ -416,6 +459,24 @@ mod tests {
         assert!(!s.wrap_in_tx);
         assert!(!s.blocked_by_read_only);
         assert_eq!(s.guard, Guard::Allow);
+    }
+
+    #[test]
+    fn split_statements_separates_on_semicolons_outside_strings() {
+        let sql = "begin; insert into t values ('a;b'); update t set x = 1; commit";
+        let parts = split_statements(sql);
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "begin");
+        assert_eq!(parts[1], "insert into t values ('a;b')");
+        assert_eq!(parts[2], "update t set x = 1");
+        assert_eq!(parts[3], "commit");
+    }
+
+    #[test]
+    fn split_statements_skips_comments_and_empty_segments() {
+        let sql = "-- header\nselect 1;\n\n/* block */\nselect 2;;;";
+        let parts = split_statements(sql);
+        assert_eq!(parts, vec!["select 1".to_string(), "select 2".to_string()]);
     }
 
     #[test]

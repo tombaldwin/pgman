@@ -1,7 +1,7 @@
 //! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::{app, conn, font_probe, safety, theme, tui, util};
+use pgman::{app, conn, creds, font_probe, safety, theme, tui, util};
 
 #[derive(Parser)]
 #[command(name = "pgman", version, about = "k9s-style Postgres TUI for Java/AWS shops")]
@@ -43,6 +43,33 @@ async fn main() -> anyhow::Result<()> {
         },
         None => None,
     };
+
+    // Log a few startup-context bits before the TUI takes over the screen.
+    if let Ok(cwd) = std::env::current_dir() {
+        if creds::spring::detect_java_project(&cwd) {
+            tracing::info!("Java project detected at {}", cwd.display());
+        }
+        if creds::intellij::detect_intellij_project(&cwd) {
+            let ds_path = cwd.join(".idea/dataSources.xml");
+            if let Ok(xml) = std::fs::read_to_string(&ds_path) {
+                let sources = creds::intellij::parse(&xml);
+                if !sources.is_empty() {
+                    tracing::info!(
+                        "IntelliJ project: {} data source(s) in {}",
+                        sources.len(),
+                        ds_path.display()
+                    );
+                    for s in &sources {
+                        tracing::info!(
+                            "  {} → {}",
+                            s.name,
+                            s.jdbc_url.as_deref().unwrap_or("(no jdbc-url)")
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     let safety_config = load_safety_config();
     let mut application = app::App::new(theme, dsn, safety_config);

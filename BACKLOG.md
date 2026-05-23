@@ -100,8 +100,29 @@ Survey done — lift as the milestones reach them:
   `query::hibernate::parse` and `query::pglog::parse`; `Mode::LogPick`
   shows a list of reconstructed queries; Enter loads the selection's
   `runnable_sql` into the editor — DONE.
-- Follow-ups: saved queries; N+1 cluster view; bracketed paste; very
-  tall buffers (>10 lines) currently clip — add scrolling.
+- IntelliJ integration: `creds::intellij` parses `.idea/dataSources.xml`,
+  yields data sources with name / jdbc-url / user; `detect_intellij_project`
+  + `jdbc_to_dsn`. Startup logs the discovered sources to `pgman.log`
+  alongside the existing Spring detection — DONE. Follow-up: wire into a
+  connection picker (currently just informational; `--rds`-style handoff
+  with `--intellij <name>` would close the loop).
+- DBUnit fixtures: `dbunit::parse_flat_xml` reads a FlatXmlDataSet;
+  `generate_clean` / `generate_inserts` / `generate_apply_script`
+  produce a `TRUNCATE` (or `DELETE FROM`) + `INSERT` script in correct
+  FK order. `Ctrl-D` / `F9` in the editor reads the buffer as a fixture
+  path and replaces it with the apply script — DONE.
+- Multi-statement run: `safety::split_statements` splits on `;` outside
+  string literals/comments. The editor's run path detects multi-statement
+  buffers, classifies each piece, takes the most-restrictive guard, and
+  routes through `conn::run_batch` / `run_batch_in_tx_open` (the
+  `auto_tx` + commit/rollback prompt still wraps the whole batch). The
+  confirm modal shows a kind-tagged summary instead of the (less useful
+  for batches) single-statement classification — DONE.
+- Follow-ups: saved queries; N+1 cluster view; bracketed paste; editor
+  scrolling for >10-line buffers; connection picker that uses IntelliJ
+  data sources at startup; capture-current-state → write a fixture (the
+  reverse of apply); per-database `CleanMode` config; `dataSources.local.xml`
+  password integration.
 
 ## v2 — AWS (not started)
 
