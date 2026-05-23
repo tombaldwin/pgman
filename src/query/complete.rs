@@ -68,7 +68,7 @@ impl CandidateKind {
 const STATEMENT_KEYWORDS: &[&str] = &[
     "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "EXPLAIN",
     "BEGIN", "COMMIT", "ROLLBACK", "SHOW", "VACUUM", "ANALYZE",
-    "TRUNCATE",
+    "TRUNCATE", "VALUES",
 ];
 
 /// One completion the user can land on. `insert` is the text to substitute
@@ -389,16 +389,18 @@ fn candidates_columns_only(
             }
         }
     }
-    // If there's no FROM at all (in_scope empty), fall back to every
-    // column across the cache — better than dead silence when the
-    // operator hasn't typed a FROM yet.
+    // If there's no FROM at all (in_scope empty), offer TABLES so the
+    // operator can pick a target and add the FROM clause. Falling back
+    // to "every column in the cache" was misleading: it inserted a
+    // column name without the surrounding FROM table, often producing
+    // nonsense like `SELECT email` against an unrelated `users` cache.
     if in_scope.is_empty() {
-        for col in schema.all_column_names() {
-            if starts_with_ci(&col, prefix) && seen.insert(col.clone()) {
+        for t in &schema.tables {
+            if starts_with_ci(&t.name, prefix) && seen.insert(t.name.clone()) {
                 out.push(Candidate {
-                    display: col.clone(),
-                    insert: col.clone(),
-                    kind: CandidateKind::Column,
+                    display: t.name.clone(),
+                    insert: t.name.clone(),
+                    kind: CandidateKind::Table,
                 });
             }
         }
@@ -776,9 +778,12 @@ mod tests {
 
     #[test]
     fn matching_is_case_insensitive() {
+        // Grammar-aware: SELECT-list with FROM in scope, mixed-case
+        // prefix must still hit the cached column.
         let cache = build_cache();
-        let buf = "SELECT EM";
-        let cands = candidates_for(buf, buf.len(), &cache);
+        let buf = "SELECT EM FROM users";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
         assert!(cands.iter().any(|c| c.display == "email"));
     }
 
@@ -899,6 +904,30 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert_eq!(labels, vec!["email", "id", "name"]);
+    }
+
+    #[test]
+    fn select_list_with_no_from_offers_tables_not_random_columns() {
+        // Regression: SELECT-list without a FROM used to fall back to
+        // `all_column_names`, suggesting columns from any table in the
+        // cache — even though without a FROM there's nowhere to bind
+        // them. Tables are the useful candidates here.
+        let cache = build_cache();
+        let buf = "SELECT us";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users"), "got: {labels:?}");
+        // The `user_id` column from `orders` is no longer offered.
+        assert!(!labels.contains(&"user_id"));
+    }
+
+    #[test]
+    fn values_keyword_appears_in_statement_start() {
+        // After `INSERT INTO foo (a, b) ` the operator types VALUES;
+        // it should appear in the statement-start keyword list.
+        let cache = build_cache();
+        let cands = candidates_for("VAL", 3, &cache);
+        assert!(cands.iter().any(|c| c.display == "VALUES"));
     }
 
     #[test]
