@@ -82,10 +82,18 @@ pub struct App {
     pub generation: u64,
     pub should_quit: bool,
 
-    /// SQL editor buffer (single line for v1; multi-line is a follow-up).
+    /// SQL editor buffer; `\n` separates lines.
     pub editor_buffer: String,
     /// Byte offset of the cursor within `editor_buffer`.
     pub editor_cursor: usize,
+    /// Remembered char-column for vertical motion (Up/Down). `None` outside a
+    /// vertical-motion run; cleared by any other edit or horizontal move.
+    pub editor_preferred_col: Option<usize>,
+    /// Past run statements, newest at the end.
+    pub history: Vec<String>,
+    /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
+    /// editing the live draft.
+    pub history_pos: Option<usize>,
     /// A guarded run waiting on confirmation.
     pub pending_run: Option<PendingRun>,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
@@ -95,6 +103,9 @@ pub struct App {
     /// True while a query is in flight (drives the spinner).
     pub query_running: bool,
 
+    /// Saved working buffer while navigating history (restored on Ctrl-N past
+    /// the newest entry).
+    history_draft: String,
     client: Option<Arc<tokio_postgres::Client>>,
     safety_config: SafetyConfig,
     read_only: bool,
@@ -126,6 +137,10 @@ impl App {
             should_quit: false,
             editor_buffer: String::new(),
             editor_cursor: 0,
+            editor_preferred_col: None,
+            history: Vec::new(),
+            history_pos: None,
+            history_draft: String::new(),
             pending_run: None,
             last_status: None,
             last_error: None,
@@ -306,36 +321,120 @@ impl App {
     }
 
     fn on_editor_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
-            KeyCode::F(5) | KeyCode::Enter => self.request_run(RunKind::Run),
+            // Run keys — Enter no longer runs (it inserts a newline now).
+            KeyCode::F(5) => self.request_run(RunKind::Run),
             KeyCode::F(6) => self.request_run(RunKind::Explain),
             KeyCode::F(7) => self.request_run(RunKind::ExplainAnalyze),
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+
+            // History navigation (guarded arms come first).
+            KeyCode::Char('p') if ctrl => self.history_prev(),
+            KeyCode::Char('n') if ctrl => self.history_next(),
+            KeyCode::Char('u') if ctrl => {
                 self.editor_buffer.clear();
                 self.editor_cursor = 0;
+                self.editor_dirty();
             }
-            // Only insert plain typing — ignore Ctrl-* / Alt-* combos so they
-            // don't drop a character into the buffer.
+
+            // Plain typing — only when no Ctrl/Alt.
             KeyCode::Char(c)
                 if !key
                     .modifiers
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
+                self.editor_dirty();
                 editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, c);
             }
+            KeyCode::Enter => {
+                self.editor_dirty();
+                editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, '\n');
+            }
             KeyCode::Backspace => {
+                self.editor_dirty();
                 editor_backspace(&mut self.editor_buffer, &mut self.editor_cursor);
             }
             KeyCode::Delete => {
+                self.editor_dirty();
                 editor_delete(&mut self.editor_buffer, &mut self.editor_cursor);
             }
-            KeyCode::Left => editor_move_left(&self.editor_buffer, &mut self.editor_cursor),
-            KeyCode::Right => editor_move_right(&self.editor_buffer, &mut self.editor_cursor),
-            KeyCode::Home => self.editor_cursor = 0,
-            KeyCode::End => self.editor_cursor = self.editor_buffer.len(),
+            KeyCode::Left => {
+                self.editor_preferred_col = None;
+                editor_move_left(&self.editor_buffer, &mut self.editor_cursor);
+            }
+            KeyCode::Right => {
+                self.editor_preferred_col = None;
+                editor_move_right(&self.editor_buffer, &mut self.editor_cursor);
+            }
+            KeyCode::Up => {
+                editor_move_up(
+                    &self.editor_buffer,
+                    &mut self.editor_cursor,
+                    &mut self.editor_preferred_col,
+                );
+            }
+            KeyCode::Down => {
+                editor_move_down(
+                    &self.editor_buffer,
+                    &mut self.editor_cursor,
+                    &mut self.editor_preferred_col,
+                );
+            }
+            KeyCode::Home => {
+                self.editor_preferred_col = None;
+                self.editor_cursor = line_start_byte(&self.editor_buffer, self.editor_cursor);
+            }
+            KeyCode::End => {
+                self.editor_preferred_col = None;
+                self.editor_cursor = line_end_byte(&self.editor_buffer, self.editor_cursor);
+            }
             _ => {}
         }
+    }
+
+    /// Any edit / non-vertical motion exits history navigation and resets
+    /// preferred-column tracking.
+    fn editor_dirty(&mut self) {
+        self.history_pos = None;
+        self.editor_preferred_col = None;
+    }
+
+    /// Step back into older history (Ctrl-P). The first step saves the live
+    /// draft so Ctrl-N past the newest entry can restore it.
+    fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let new_pos = match self.history_pos {
+            None => {
+                self.history_draft = self.editor_buffer.clone();
+                self.history.len() - 1
+            }
+            Some(i) if i > 0 => i - 1,
+            Some(_) => return,
+        };
+        self.history_pos = Some(new_pos);
+        self.editor_buffer = self.history[new_pos].clone();
+        self.editor_cursor = self.editor_buffer.len();
+        self.editor_preferred_col = None;
+    }
+
+    /// Step forward into newer history (Ctrl-N). Past the newest entry,
+    /// restores the saved draft.
+    fn history_next(&mut self) {
+        let Some(pos) = self.history_pos else {
+            return;
+        };
+        if pos + 1 < self.history.len() {
+            self.history_pos = Some(pos + 1);
+            self.editor_buffer = self.history[pos + 1].clone();
+        } else {
+            self.editor_buffer = std::mem::take(&mut self.history_draft);
+            self.history_pos = None;
+        }
+        self.editor_cursor = self.editor_buffer.len();
+        self.editor_preferred_col = None;
     }
 
     fn on_confirm_key(&mut self, key: KeyEvent) {
@@ -410,6 +509,14 @@ impl App {
             self.last_error = Some("not connected".to_string());
             return;
         };
+        // Push to history (skip consecutive duplicates, cap at 50 entries).
+        if self.history.last() != Some(&sql) {
+            self.history.push(sql.clone());
+            if self.history.len() > 50 {
+                self.history.remove(0);
+            }
+        }
+        self.history_pos = None;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         self.query_running = true;
@@ -508,6 +615,90 @@ fn editor_move_right(buffer: &str, cursor: &mut usize) {
     *cursor = next;
 }
 
+/// Move the cursor up one line, preserving the preferred char-column.
+fn editor_move_up(buffer: &str, cursor: &mut usize, preferred_col: &mut Option<usize>) {
+    let (line, col) = cursor_position(buffer, *cursor);
+    if line == 0 {
+        return;
+    }
+    let target = preferred_col.unwrap_or(col);
+    *preferred_col = Some(target);
+    *cursor = byte_offset_at_line_col(buffer, line - 1, target);
+}
+
+/// Move the cursor down one line, preserving the preferred char-column.
+fn editor_move_down(buffer: &str, cursor: &mut usize, preferred_col: &mut Option<usize>) {
+    let (line, col) = cursor_position(buffer, *cursor);
+    let total_lines = buffer.matches('\n').count() + 1;
+    if line + 1 >= total_lines {
+        return;
+    }
+    let target = preferred_col.unwrap_or(col);
+    *preferred_col = Some(target);
+    *cursor = byte_offset_at_line_col(buffer, line + 1, target);
+}
+
+/// `(line_index, char_column)` of `cursor` within `buffer`.
+pub(crate) fn cursor_position(buffer: &str, cursor: usize) -> (usize, usize) {
+    let prefix = &buffer[..cursor.min(buffer.len())];
+    let mut line = 0;
+    let mut col = 0;
+    for c in prefix.chars() {
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Byte offset for `(line, char_col)`. Clamps to line end / buffer end if the
+/// position is past the line / past the buffer.
+fn byte_offset_at_line_col(buffer: &str, line: usize, col: usize) -> usize {
+    let mut current_line = 0;
+    let mut line_start = 0;
+    if line > 0 {
+        for (i, c) in buffer.char_indices() {
+            if c == '\n' {
+                current_line += 1;
+                if current_line == line {
+                    line_start = i + 1;
+                    break;
+                }
+            }
+        }
+        if current_line < line {
+            return buffer.len();
+        }
+    }
+    for (count, (i, c)) in buffer[line_start..].char_indices().enumerate() {
+        if c == '\n' || count == col {
+            return line_start + i;
+        }
+    }
+    buffer.len()
+}
+
+/// Byte offset of the start of the line containing `cursor`.
+fn line_start_byte(buffer: &str, cursor: usize) -> usize {
+    let mut i = cursor.min(buffer.len());
+    while i > 0 && buffer.as_bytes()[i - 1] != b'\n' {
+        i -= 1;
+    }
+    i
+}
+
+/// Byte offset of the end of the line containing `cursor` (before the `\n`).
+fn line_end_byte(buffer: &str, cursor: usize) -> usize {
+    let mut i = cursor.min(buffer.len());
+    while i < buffer.len() && buffer.as_bytes()[i] != b'\n' {
+        i += 1;
+    }
+    i
+}
+
 /// Build and run the effective SQL for `kind`, honouring the safety decision.
 async fn execute(
     client: &tokio_postgres::Client,
@@ -604,5 +795,63 @@ mod tests {
         assert_eq!(cur, 1);
         editor_move_right(&buf, &mut cur);
         assert_eq!(cur, 3); // past 'é'
+    }
+
+    #[test]
+    fn cursor_position_walks_newlines() {
+        assert_eq!(cursor_position("hello", 3), (0, 3));
+        let buf = "abc\nde\nf";
+        assert_eq!(cursor_position(buf, 0), (0, 0));
+        assert_eq!(cursor_position(buf, 3), (0, 3));
+        assert_eq!(cursor_position(buf, 4), (1, 0));
+        assert_eq!(cursor_position(buf, 6), (1, 2));
+        assert_eq!(cursor_position(buf, 7), (2, 0));
+        assert_eq!(cursor_position(buf, 8), (2, 1));
+    }
+
+    #[test]
+    fn byte_offset_at_line_col_clamps_past_line_end() {
+        let buf = "abc\nde\nf";
+        assert_eq!(byte_offset_at_line_col(buf, 0, 0), 0);
+        assert_eq!(byte_offset_at_line_col(buf, 0, 3), 3);
+        assert_eq!(byte_offset_at_line_col(buf, 1, 0), 4);
+        assert_eq!(byte_offset_at_line_col(buf, 1, 99), 6); // clamps to line end
+        assert_eq!(byte_offset_at_line_col(buf, 2, 0), 7);
+        assert_eq!(byte_offset_at_line_col(buf, 5, 0), 8); // line out of range
+    }
+
+    #[test]
+    fn editor_move_up_down_track_preferred_column() {
+        let buf = String::from("abc\nde\nfgh");
+        // Start at end of "fgh" (line 2, col 3).
+        let mut cur = buf.len();
+        let mut pref = None;
+        editor_move_up(&buf, &mut cur, &mut pref);
+        // Line 1 is "de" — only 2 cols, so cursor clamps to its end.
+        assert_eq!(cur, 6);
+        assert_eq!(pref, Some(3));
+        editor_move_up(&buf, &mut cur, &mut pref);
+        // Line 0 is "abc" — 3 cols, preferred 3 lands at the end.
+        assert_eq!(cur, 3);
+        editor_move_down(&buf, &mut cur, &mut pref);
+        assert_eq!(cur, 6); // back to "de" end, preferred still 3
+        editor_move_down(&buf, &mut cur, &mut pref);
+        assert_eq!(cur, buf.len()); // "fgh" end (col 3)
+        editor_move_down(&buf, &mut cur, &mut pref);
+        assert_eq!(cur, buf.len()); // no further down — no change
+    }
+
+    #[test]
+    fn line_start_and_end_bytes_find_line_edges() {
+        let buf = "abc\nde\nf";
+        // cursor in the middle of "de" (byte 5)
+        assert_eq!(line_start_byte(buf, 5), 4);
+        assert_eq!(line_end_byte(buf, 5), 6);
+        // cursor on line 0
+        assert_eq!(line_start_byte(buf, 2), 0);
+        assert_eq!(line_end_byte(buf, 2), 3);
+        // cursor at last char
+        assert_eq!(line_start_byte(buf, 8), 7);
+        assert_eq!(line_end_byte(buf, 8), 8);
     }
 }

@@ -84,10 +84,17 @@ Survey done — lift as the milestones reach them:
   mutation never lands — DONE.
 - Non-row-returning statements (UPDATE/DELETE/DDL) render an affected-row
   count via the unified `conn::run_statement` — DONE.
-- Follow-ups: multi-line editor with newline insertion; query history;
-  pasting Hibernate / Postgres logs via `mode_hibernate`; saved queries;
-  N+1 cluster view; commit/rollback prompt instead of auto-commit for
-  `auto_tx`.
+- Multi-line editor: `Enter` inserts a newline, `F5` runs; Up/Down move
+  the cursor across lines preserving the preferred char-column;
+  Home/End act per line; editor pane grows dynamically with the buffer
+  (3-row min, 12-row cap) — DONE.
+- Query history: every run is pushed to a 50-entry ring buffer
+  (consecutive duplicates skipped); Ctrl-P / Ctrl-N navigate; the live
+  draft is preserved and restored on Ctrl-N past the newest entry — DONE.
+- Follow-ups: pasting Hibernate / Postgres logs via `mode_hibernate`;
+  saved queries; N+1 cluster view; commit/rollback prompt instead of
+  auto-commit for `auto_tx`; bracketed paste; very tall buffers
+  (>10 lines) currently clip — add scrolling.
 
 ## v2 — AWS (not started)
 
