@@ -16,7 +16,7 @@
 //! module is pure and unit-tested.
 
 use crate::query::clause::{
-    classify_at, extract_ctes_resolved, ClauseContext, CteDef, QualifiedTable,
+    classify_at, extract_ctes_resolved, ClauseContext, CteDef, DropKind, QualifiedTable,
 };
 use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
@@ -413,17 +413,66 @@ fn candidates_for_in_context(
             })
             .collect(),
 
-        // DROP TABLE | / DROP VIEW |  → catalog tables + schemas +
-        // DROP-specific keywords. No JOIN variants or SELECT-style
-        // continuations — those would just be noise in this position.
-        ClauseContext::DropTarget => match id.qualifier.as_deref() {
-            Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
-            None => {
-                let mut out = candidates_tables_and_schemas(&id.prefix, schema);
-                out.extend(candidates_from_list(&id.prefix, DROP_CONTINUATIONS));
-                out
+        // DROP <kind> |  → catalog set selected by `kind`, plus
+        // DROP-specific continuations. NOT JOIN variants / WHERE etc.
+        ClauseContext::DropTarget(kind) => {
+            let names: &[crate::query::schema::TableMeta] = match kind {
+                DropKind::Table => &schema.tables,
+                DropKind::Index => &schema.indexes,
+                DropKind::Sequence => &schema.sequences,
+            };
+            match id.qualifier.as_deref() {
+                Some(q) => {
+                    // schema-qualified — filter to that schema.
+                    if !schema.schemas.iter().any(|s| s.eq_ignore_ascii_case(q)) {
+                        return Vec::new();
+                    }
+                    let mut hits: Vec<String> = names
+                        .iter()
+                        .filter(|t| t.schema.eq_ignore_ascii_case(q))
+                        .map(|t| t.name.clone())
+                        .collect();
+                    hits.sort();
+                    hits.dedup();
+                    hits.into_iter()
+                        .filter(|n| starts_with_ci(n, &id.prefix))
+                        .map(|n| Candidate {
+                            display: n.clone(),
+                            insert: n,
+                            kind: CandidateKind::Table,
+                        })
+                        .collect()
+                }
+                None => {
+                    let mut out: Vec<Candidate> = Vec::new();
+                    let mut seen = std::collections::BTreeSet::new();
+                    for t in names {
+                        if starts_with_ci(&t.name, &id.prefix)
+                            && seen.insert(t.name.clone())
+                        {
+                            out.push(Candidate {
+                                display: t.name.clone(),
+                                insert: t.name.clone(),
+                                kind: CandidateKind::Table,
+                            });
+                        }
+                    }
+                    // Schemas are useful regardless of kind (operator
+                    // may want to qualify).
+                    for s in &schema.schemas {
+                        if starts_with_ci(s, &id.prefix) {
+                            out.push(Candidate {
+                                display: s.clone(),
+                                insert: s.clone(),
+                                kind: CandidateKind::Schema,
+                            });
+                        }
+                    }
+                    out.extend(candidates_from_list(&id.prefix, DROP_CONTINUATIONS));
+                    out
+                }
             }
-        },
+        }
 
         // UPDATE foo SET |  → columns of `foo`, plus continuations
         // (WHERE, RETURNING) once the operator's finished the
@@ -1576,6 +1625,38 @@ mod tests {
         let cands = candidates_for("DROP TABLE users CAS", 20, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"CASCADE"));
+    }
+
+    #[test]
+    fn drop_index_offers_index_names_not_tables() {
+        let mut cache = build_cache();
+        cache.indexes.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "users_email_idx".into(),
+        });
+        cache.indexes.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "orders_user_id_idx".into(),
+        });
+        let cands = candidates_for("DROP INDEX users_", 17, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users_email_idx"), "got: {labels:?}");
+        // Tables must NOT appear when dropping an index.
+        assert!(!labels.contains(&"users"));
+        assert!(!labels.contains(&"orders"));
+    }
+
+    #[test]
+    fn drop_sequence_offers_sequence_names_not_tables() {
+        let mut cache = build_cache();
+        cache.sequences.push(crate::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "user_id_seq".into(),
+        });
+        let cands = candidates_for("DROP SEQUENCE user_", 19, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"user_id_seq"));
+        assert!(!labels.contains(&"users")); // table shouldn't leak
     }
 
     #[test]
