@@ -52,6 +52,11 @@ pub enum ClauseContext {
     /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
     /// Wants entries from `vocabulary::TYPE_NAMES`.
     TypeName,
+    /// `DROP TABLE | …` / `DROP VIEW | …` / etc. — the operator is
+    /// naming the relation to drop. Wants tables + schemas (no JOIN
+    /// variants / WHERE / etc. — those would just be noise here),
+    /// plus `IF EXISTS` / `CASCADE` / `RESTRICT`.
+    DropTarget,
     /// After `UPDATE <table> SET` — wants the columns of that table.
     UpdateAssign(QualifiedTable),
     /// Inside `VALUES (...)` — literals, no useful identifier completion.
@@ -195,6 +200,13 @@ struct ScopeState {
     /// so that a subsequent `DO UPDATE` doesn't reset the classifier
     /// state as if it were the start of an UPDATE statement.
     in_on_conflict: bool,
+    /// `DROP` seen; the next keyword (TABLE / VIEW / MATERIALIZED /
+    /// SCHEMA / …) selects which kind of object the operator's
+    /// naming. We only have tables / views / matviews in the schema
+    /// cache, so for those we flip ctx to `DropTarget`. INDEX /
+    /// SEQUENCE / FUNCTION / TYPE / DATABASE / ROLE etc. leave the
+    /// ctx unchanged (no useful candidates from the current cache).
+    pending_drop_kind: bool,
 }
 
 impl ScopeState {
@@ -209,6 +221,7 @@ impl ScopeState {
             expecting_cast_paren: false,
             is_cast_scope: false,
             in_on_conflict: false,
+            pending_drop_kind: false,
         }
     }
 }
@@ -384,6 +397,23 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 // else (a bare `EXPLAIN SELECT …`) just falls through
                 // to whatever clause follows.
                 scope.expecting_explain_paren = true;
+            }
+            "DROP" => {
+                scope.pending_drop_kind = true;
+            }
+            // After DROP, the kind keyword tells us what to suggest.
+            // We have tables / views / matviews in the cache so those
+            // route through DropTarget. INDEX / SEQUENCE etc. would
+            // need the cache extending — leave ctx alone (vocab
+            // continuations + nothing else) so we don't suggest
+            // misleading table names there.
+            "TABLE" | "VIEW" if scope.pending_drop_kind => {
+                scope.ctx = DropTarget;
+                scope.pending_drop_kind = false;
+            }
+            "MATERIALIZED" if scope.pending_drop_kind => {
+                // `DROP MATERIALIZED VIEW name` — wait for the VIEW
+                // token to flip ctx. Keep the pending flag.
             }
             "CAST" => {
                 // The next `(` opens CAST's argument scope. Inside,
@@ -1119,6 +1149,33 @@ mod tests {
         let got = extract_ctes("WITH foo AS (SELECT * FROM users) SELECT * FROM foo");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].columns, Vec::<String>::new());
+    }
+
+    #[test]
+    fn drop_table_enters_drop_target() {
+        assert_eq!(classify("DROP TABLE "), ClauseContext::DropTarget);
+        assert_eq!(classify("DROP TABLE us"), ClauseContext::DropTarget);
+    }
+
+    #[test]
+    fn drop_view_enters_drop_target() {
+        assert_eq!(classify("DROP VIEW "), ClauseContext::DropTarget);
+    }
+
+    #[test]
+    fn drop_materialized_view_enters_drop_target() {
+        assert_eq!(
+            classify("DROP MATERIALIZED VIEW "),
+            ClauseContext::DropTarget
+        );
+    }
+
+    #[test]
+    fn drop_without_kind_keyword_leaves_ctx_alone() {
+        // `DROP ` (no kind) — bare DROP shouldn't presume.
+        // pending_drop_kind set, but no TABLE/VIEW follows; ctx stays
+        // at the current value (StatementStart in this case).
+        assert_eq!(classify("DROP "), ClauseContext::StatementStart);
     }
 
     #[test]

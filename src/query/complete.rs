@@ -21,8 +21,9 @@ use crate::query::clause::{
 use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
-    continuations, AGGREGATE_FUNCTIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS, JOIN_VARIANTS,
-    PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, TYPE_NAMES, WINDOW_FUNCTIONS,
+    continuations, AGGREGATE_FUNCTIONS, DROP_CONTINUATIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS,
+    JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, TYPE_NAMES,
+    WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -400,6 +401,18 @@ fn candidates_for_in_context(
                 kind: CandidateKind::Keyword,
             })
             .collect(),
+
+        // DROP TABLE | / DROP VIEW |  → catalog tables + schemas +
+        // DROP-specific keywords. No JOIN variants or SELECT-style
+        // continuations — those would just be noise in this position.
+        ClauseContext::DropTarget => match id.qualifier.as_deref() {
+            Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
+            None => {
+                let mut out = candidates_tables_and_schemas(&id.prefix, schema);
+                out.extend(candidates_from_list(&id.prefix, DROP_CONTINUATIONS));
+                out
+            }
+        },
 
         // UPDATE foo SET |  → columns of `foo`, plus continuations
         // (WHERE, RETURNING) once the operator's finished the
@@ -1505,6 +1518,37 @@ mod tests {
         let cands = candidates_for("SET time", 8, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"timezone"));
+    }
+
+    #[test]
+    fn drop_table_offers_table_names_and_drop_keywords() {
+        let cache = build_cache();
+        let cands = candidates_for("DROP TABLE us", 13, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users"));
+        // IF EXISTS / CASCADE / RESTRICT are drop-specific continuations.
+        // (None match "us" so they don't appear here; they appear when
+        // the prefix matches — covered by the next test.)
+        assert!(!labels.contains(&"id")); // no column leakage
+    }
+
+    #[test]
+    fn drop_table_offers_drop_continuations_with_matching_prefix() {
+        let cache = build_cache();
+        let cands = candidates_for("DROP TABLE users CAS", 20, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"CASCADE"));
+    }
+
+    #[test]
+    fn drop_table_does_not_leak_join_or_where_continuations() {
+        // Sanity: TableRef offers JOIN variants + WHERE etc. We DON'T
+        // want those in DropTarget — they'd just clutter the popup.
+        let cache = build_cache();
+        let cands = candidates_for("DROP TABLE users WH", 19, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(!labels.contains(&"WHERE"));
+        assert!(!labels.contains(&"LEFT JOIN"));
     }
 
     #[test]
