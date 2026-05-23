@@ -282,9 +282,23 @@ Pull a remote database down for local testing; keep tagged backups.
   longer leaks into the outer ctx after `)`; `WITH cte AS (SELECT em`
   classifies correctly inside the CTE body — DONE (via post-review
   refactor).
-- Follow-ups: comparison operators (`=`, `>`, `LIKE`, `IN`) in
-  Predicate; column lookup honouring `verify-ca` hostname-skip in TLS
-  (needs custom rustls verifier); Spring bootstrap.yml discovery.
+- Vocabulary module (`query::vocabulary`) — single source of truth for
+  the SQL words pgman knows. Adding a new aggregate / scalar / window
+  function or a new predicate operator is a one-line append to the
+  matching `&[&str]` slice. Module-level tests assert "all entries
+  uppercase, no dups" so the contract holds as the lists grow — DONE.
+- Function completions insert `NAME(` so the cursor lands inside the
+  parens ready for the first argument; popup row still shows the bare
+  name — DONE.
+- Predicate operators — `LIKE`, `ILIKE`, `IN`, `BETWEEN`, `IS NULL`,
+  `IS NOT NULL`, `NOT IN`, `AND`, `OR`, `NOT`, `EXISTS`, `IS DISTINCT
+  FROM`, `SIMILAR TO` — surface in WHERE / HAVING / ON. Multi-word
+  phrases land as a single Tab candidate. Symbolic operators (`=`,
+  `>`) deliberately omitted — too short to be worth a completion
+  cycle — DONE.
+- Follow-ups: column lookup honouring `verify-ca` hostname-skip in TLS
+  (needs custom rustls verifier); Spring bootstrap.yml discovery;
+  WITH ... GROUP BY HAVING list across the OrderOrGroup context.
 
 ## v3+ — deferred
 
