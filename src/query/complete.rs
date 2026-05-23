@@ -26,19 +26,22 @@ use crate::query::vocabulary::{
 /// The partial identifier the cursor is inside (or immediately after).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identifier {
-    /// Byte offset where the identifier begins (start of `qualifier`, or
-    /// start of `prefix` when there's no qualifier).
+    /// Byte offset where the identifier begins (start of the first
+    /// segment, whether that's `schema`, `qualifier`, or `prefix`).
     pub start: usize,
     /// Byte offset where the identifier ENDS — walks forward from the
     /// cursor over any trailing identifier characters so Tab inside an
     /// existing word (`SELECT user|_id`) replaces the WHOLE word, not
     /// just the prefix-up-to-cursor (which would leave `_id` glued on).
     pub end: usize,
-    /// Text before the dot — usually a table alias or table name.
-    /// `None` when the user is typing an unqualified identifier.
+    /// The schema segment when the user typed a 3-part name
+    /// (`schema.table.col`). `None` for 1- or 2-part names.
+    pub schema: Option<String>,
+    /// The middle / table-or-alias segment. For `audit.users.email` this
+    /// is `users`. For `u.email` it's `u`. `None` for a bare identifier.
     pub qualifier: Option<String>,
-    /// Text after the dot (or the whole word when `qualifier` is None).
-    /// May be empty (cursor immediately after a `.` or in fresh space).
+    /// The right-most segment under the cursor. May be empty (cursor
+    /// immediately after a `.` or in fresh space).
     pub prefix: String,
 }
 
@@ -133,6 +136,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
                 return Some(Identifier {
                     start: cursor,
                     end,
+                    schema: None,
                     qualifier: None,
                     prefix: String::new(),
                 });
@@ -141,6 +145,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
                 return Some(Identifier {
                     start: cursor,
                     end,
+                    schema: None,
                     qualifier: None,
                     prefix: String::new(),
                 });
@@ -157,31 +162,36 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
         }
     }
     let raw = &buf[start..cursor];
-    if let Some(dot_idx) = raw.rfind('.') {
-        let qualifier = raw[..dot_idx].to_string();
-        let prefix = raw[dot_idx + 1..].to_string();
-        // Disallow nested dots in the qualifier (we don't yet support
-        // schema.table.col). Caller can still try; nothing breaks.
-        let qualifier = if qualifier.contains('.') {
-            // Keep only the last segment as the effective qualifier.
-            qualifier.rsplit('.').next().unwrap_or("").to_string()
-        } else {
-            qualifier
-        };
-        Some(Identifier {
-            start,
-            end,
-            qualifier: Some(qualifier),
-            prefix,
-        })
-    } else {
-        Some(Identifier {
-            start,
-            end,
-            qualifier: None,
-            prefix: raw.to_string(),
-        })
-    }
+    // Split into at most 3 segments by `.` — schema.table.col.
+    // Anything beyond 3 collapses extra segments into the qualifier so
+    // `a.b.c.d` reads as qualifier=`b.c`, prefix=`d` (unusual but at
+    // least non-lossy).
+    let segments: Vec<&str> = raw.split('.').collect();
+    let (schema, qualifier, prefix) = match segments.as_slice() {
+        [] | [_] => (None, None, raw.to_string()),
+        [q, p] => (None, Some(q.to_string()), p.to_string()),
+        [s, q, p] => (Some(s.to_string()), Some(q.to_string()), p.to_string()),
+        all => {
+            // Keep `schema = first`, prefix = last, qualifier =
+            // everything in the middle joined by `.` (an unusual
+            // shape, but preserves what the operator typed).
+            let last = all.last().unwrap();
+            let first = all[0];
+            let middle = all[1..all.len() - 1].join(".");
+            (
+                Some(first.to_string()),
+                Some(middle),
+                last.to_string(),
+            )
+        }
+    };
+    Some(Identifier {
+        start,
+        end,
+        schema,
+        qualifier,
+        prefix,
+    })
 }
 
 /// Compute the ordered candidate list for the cursor position. The Tab
@@ -247,6 +257,17 @@ fn candidates_for_in_context(
     cte_names: &[String],
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
+    // 3-segment `schema.table.col|` — always resolves to columns of
+    // the exact named table in the named schema, regardless of clause
+    // context. Returns empty when the schema/table pair isn't in the
+    // cache (a typo gets dead silence rather than wrong columns).
+    if let (Some(s), Some(t)) = (&id.schema, &id.qualifier) {
+        let cols = schema
+            .columns_for(Some(s), t)
+            .cloned()
+            .unwrap_or_default();
+        return matches_for(&cols, &id.prefix, CandidateKind::Column);
+    }
     match ctx {
         // Inside a `VALUES (...)` literal list — operator is typing
         // constants, no identifier completion. After the closing `)`
@@ -784,6 +805,30 @@ mod tests {
     }
 
     #[test]
+    fn extract_identifier_captures_three_segments() {
+        let id = extract_identifier("SELECT audit.users.email", 24).unwrap();
+        assert_eq!(id.schema.as_deref(), Some("audit"));
+        assert_eq!(id.qualifier.as_deref(), Some("users"));
+        assert_eq!(id.prefix, "email");
+    }
+
+    #[test]
+    fn extract_identifier_three_segments_with_empty_prefix() {
+        let id = extract_identifier("SELECT audit.users.", 19).unwrap();
+        assert_eq!(id.schema.as_deref(), Some("audit"));
+        assert_eq!(id.qualifier.as_deref(), Some("users"));
+        assert_eq!(id.prefix, "");
+    }
+
+    #[test]
+    fn extract_identifier_two_segments_has_no_schema() {
+        let id = extract_identifier("SELECT u.email", 14).unwrap();
+        assert!(id.schema.is_none());
+        assert_eq!(id.qualifier.as_deref(), Some("u"));
+        assert_eq!(id.prefix, "email");
+    }
+
+    #[test]
     fn extract_identifier_rejects_numeric_literals() {
         // `1.5` looks identifier-shaped (digits + dot) but mustn't be
         // mis-parsed as qualifier="1" / prefix="5".
@@ -1222,6 +1267,53 @@ mod tests {
         // should be offered.
         assert!(labels.contains(&"SET"));
         assert!(labels.contains(&"SELECT"));
+    }
+
+    #[test]
+    fn three_segment_disambiguates_same_named_tables_across_schemas() {
+        // build_cache has BOTH public.users (id, email, name) and
+        // audit.users would NOT exist — but build_cache only has the
+        // 3 tables listed. Let me construct a richer cache here.
+        let mut cache = SchemaCache::default();
+        cache.schemas = vec!["audit".into(), "public".into()];
+        cache.tables = vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "users".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "audit".into(),
+                name: "users".into(),
+            },
+        ];
+        cache.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into()],
+        );
+        cache.columns_by_table.insert(
+            ("audit".into(), "users".into()),
+            vec!["id".into(), "actor".into(), "kind".into()],
+        );
+        // 3-segment: must resolve to audit.users, NOT public.users.
+        let buf = "SELECT audit.users.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"actor"), "got: {labels:?}");
+        assert!(labels.contains(&"kind"));
+        // public.users' `email` column must NOT appear.
+        assert!(
+            !labels.contains(&"email"),
+            "should not leak public.users columns: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn three_segment_unknown_schema_yields_no_candidates() {
+        let cache = build_cache();
+        let buf = "SELECT nope.users.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        // Unknown schema → silent (no fall-through to ambiguous lookup).
+        assert!(cands.is_empty());
     }
 
     #[test]
