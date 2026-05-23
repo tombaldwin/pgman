@@ -930,6 +930,15 @@ impl App {
         else {
             return;
         };
+        // Refuse to start a cycle when the user hasn't typed anything to
+        // match against — otherwise an empty prefix matches every name
+        // in the cache and inserts a random identifier at the cursor.
+        // Qualified-empty (`u.|`) is still allowed: the qualifier IS the
+        // anchor.
+        if id.qualifier.is_none() && id.prefix.is_empty() {
+            self.last_status = Some("completion: type a prefix first".to_string());
+            return;
+        }
         let cands = complete_q::candidates_for(
             &self.editor_buffer,
             self.editor_cursor,
