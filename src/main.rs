@@ -215,13 +215,19 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
         .filter_map(|r| r.ok())
         .map(|e| e.path())
         .filter(|p| {
+            // `application[-profile].(properties|yml|yaml)` is standard
+            // Spring Boot; `bootstrap[-profile].(yml|yaml)` is Spring
+            // Cloud's pre-context config (often carries the datasource
+            // block too).
             p.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| {
-                    n.starts_with("application")
-                        && (n.ends_with(".properties")
-                            || n.ends_with(".yml")
-                            || n.ends_with(".yaml"))
+                    let known_prefix =
+                        n.starts_with("application") || n.starts_with("bootstrap");
+                    let known_ext = n.ends_with(".properties")
+                        || n.ends_with(".yml")
+                        || n.ends_with(".yaml");
+                    known_prefix && known_ext
                 })
                 .unwrap_or(false)
         })

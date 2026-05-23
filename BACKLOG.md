@@ -404,12 +404,25 @@ Pull a remote database down for local testing; keep tagged backups.
   longer captures `LATERAL` as a phantom table. The inner FROM-list
   loop skips a leading LATERAL keyword so the next iteration handles
   the following `(...)` as a normal subquery — DONE.
-- `ON CONFLICT ON CONSTRAINT name` — the second `ON` no longer
-  flips ctx to Predicate (would offer columns where constraint names
-  belong). Constraint names aren't in the cache yet, so the
-  completion is empty there rather than wrong; future work would
-  fetch constraint names via `pg_constraint` — DONE (the negative
-  case).
+- `ON CONFLICT ON CONSTRAINT name` — second `ON` no longer flips
+  ctx to Predicate, and the CONSTRAINT keyword now opens
+  `ClauseContext::ConstraintName`. New `pg_constraint` fetch
+  (CONSTRAINTS_SQL, separate query so a permission gap on
+  pg_constraint doesn't kill the main cache) populates
+  `cache.constraints: Vec<ConstraintMeta>`. Completion scopes to
+  the write target's table so `INSERT INTO users … CONSTRAINT |`
+  offers users' constraints, not orders' — DONE.
+- `VACUUM (FULL, VERBOSE, ANALYZE) tab` / `ANALYZE (VERBOSE) tab` —
+  new `ClauseContext::VacuumOptions` + `VACUUM_OPTIONS` vocab (FULL
+  / FREEZE / VERBOSE / DISABLE_PAGE_SKIPPING / SKIP_LOCKED /
+  INDEX_CLEANUP / PROCESS_TOAST / TRUNCATE / PARALLEL /
+  BUFFER_USAGE_LIMIT / etc.). Reuses the EXPLAIN paren-flag
+  machinery (`expecting_vacuum_paren`); ANALYZE's standalone form
+  shares the same option set so one vocab list serves both — DONE.
+- Spring Cloud `bootstrap.yml` / `bootstrap-*.yml` discovery —
+  `discover_spring_datasources` now accepts files starting with
+  either `application` or `bootstrap`. Spring Cloud apps that put
+  datasource config in bootstrap.yml are now auto-detected — DONE.
 
 ## v3+ — deferred
 
