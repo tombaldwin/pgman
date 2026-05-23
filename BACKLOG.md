@@ -390,6 +390,26 @@ Pull a remote database down for local testing; keep tagged backups.
   keyword-match arm entirely so `SET timezone = on` doesn't
   accidentally re-fire ON as the Predicate-introducing SQL keyword
   — DONE.
+- Sequences + indexes in `SchemaCache`. The pg_catalog fetch now
+  selects `relkind` and shards rows into `cache.sequences` (relkind=S)
+  / `cache.indexes` (relkind=i) / `cache.tables` (r,v,m,p,f). Used by
+  `DROP INDEX|REINDEX INDEX` (cache.indexes) and `DROP SEQUENCE`
+  (cache.sequences). `DropTarget` is parameterised as
+  `DropTarget(DropKind::{Table|Index|Sequence})` and the completion arm
+  picks the matching cache field — DONE.
+- `REINDEX <kind> name` — reuses the DROP `pending_drop_kind`
+  machinery; REINDEX INDEX / REINDEX TABLE / REINDEX SCHEMA all
+  route to the right candidates — DONE.
+- `LATERAL` subquery — `FROM users u, LATERAL (SELECT ...) sub` no
+  longer captures `LATERAL` as a phantom table. The inner FROM-list
+  loop skips a leading LATERAL keyword so the next iteration handles
+  the following `(...)` as a normal subquery — DONE.
+- `ON CONFLICT ON CONSTRAINT name` — the second `ON` no longer
+  flips ctx to Predicate (would offer columns where constraint names
+  belong). Constraint names aren't in the cache yet, so the
+  completion is empty there rather than wrong; future work would
+  fetch constraint names via `pg_constraint` — DONE (the negative
+  case).
 
 ## v3+ — deferred
 
