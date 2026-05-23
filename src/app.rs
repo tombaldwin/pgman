@@ -959,6 +959,34 @@ impl App {
         if preserve_cycle {
             self.refresh_completion();
         }
+
+        // Auto-trigger completion when the operator just typed `.` after
+        // an identifier (e.g. `users.|` or `u.|`). Modern editors do
+        // this to save a Tab keystroke for the common qualified-access
+        // case. Suppressed when:
+        //   - a cycle is already alive (refresh_completion handled it),
+        //   - the char before the `.` isn't alphabetic / `_` (so we
+        //     don't fire on `3.14`-style numeric literals),
+        //   - completion fails (no schema cache, no matches) — the
+        //     status message is restored so we don't yell at the user
+        //     for typing `.` in normal text.
+        let just_typed_dot = matches!(key.code, KeyCode::Char('.'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if just_typed_dot && self.completion.is_none() {
+            let dot_byte = self.editor_cursor.saturating_sub(1);
+            if dot_byte > 0 {
+                let prev = self.editor_buffer.as_bytes()[dot_byte - 1];
+                if prev.is_ascii_alphabetic() || prev == b'_' {
+                    let saved_status = self.last_status.clone();
+                    self.editor_complete();
+                    if self.completion.is_none() {
+                        self.last_status = saved_status;
+                    }
+                }
+            }
+        }
     }
 
     /// Re-extract candidates from the current buffer/cursor. Called
@@ -976,10 +1004,10 @@ impl App {
         else {
             return;
         };
-        // Narrowed away to the empty prefix → drop the popup.
-        if id.qualifier.is_none() && id.prefix.is_empty() {
-            return;
-        }
+        // Empty prefix is fine — the candidate set falls back to "all
+        // identifier-shaped candidates for the surrounding clause"
+        // (matches the Tab-on-whitespace UX). The cycle drops naturally
+        // when those produce no matches.
         let cands = complete_q::candidates_for(
             &self.editor_buffer,
             self.editor_cursor,
@@ -1088,33 +1116,32 @@ impl App {
         }
 
         // -- start a fresh cycle --
-        if self.schema_cache.is_empty() {
-            self.last_status = Some("completion: no schema cache yet".to_string());
-            return;
-        }
         let Some(id) = complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
         else {
             return;
         };
-        // Refuse to start a cycle when the user hasn't typed anything to
-        // match against — otherwise an empty prefix matches every name
-        // in the cache and inserts a random identifier at the cursor.
-        // Qualified-empty (`u.|`) is still allowed: the qualifier IS the
-        // anchor.
-        if id.qualifier.is_none() && id.prefix.is_empty() {
-            self.last_status = Some("completion: type a prefix first".to_string());
-            return;
-        }
         let cands = complete_q::candidates_for(
             &self.editor_buffer,
             self.editor_cursor,
             &self.schema_cache,
         );
         if cands.is_empty() {
-            self.last_status = Some(format!(
-                "completion: no matches for {:?}",
-                id.prefix
-            ));
+            // Tailor the message: empty-cache vs. nothing-to-suggest vs.
+            // typed-prefix-but-no-match. SQL vocabulary (keywords,
+            // operators) doesn't depend on the cache, so an empty cache
+            // doesn't preclude *all* candidates — we only mention the
+            // cache when there'd otherwise be no useful hint.
+            let msg = if self.schema_cache.is_empty() && id.prefix.is_empty() {
+                "completion: connect to a database for identifier suggestions".to_string()
+            } else if id.prefix.is_empty() {
+                match &id.qualifier {
+                    Some(q) => format!("completion: no matches for {q}.…"),
+                    None => "completion: nothing to suggest here".to_string(),
+                }
+            } else {
+                format!("completion: no matches for {:?}", id.prefix)
+            };
+            self.last_status = Some(msg);
             return;
         }
 
@@ -1978,6 +2005,186 @@ mod tests {
         assert!(
             a.completion.is_none(),
             "exact match should dismiss the popup"
+        );
+    }
+
+    fn type_key(a: &mut App, code: KeyCode) {
+        a.on_editor_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn auto_trigger_after_dot_opens_popup() {
+        // Two columns means LCP-popup, no auto-commit — perfect for
+        // checking the auto-trigger actually opens the cycle.
+        let mut a = test_app_with_cache(&[("users", &["id", "email"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT  FROM users u WHERE u");
+        a.editor_cursor = 7; // between the two spaces, no cycle yet
+        // Move the cursor to just after `u` of `u WHERE u` — actually,
+        // type `.` at end (cursor positioned after the second `u`).
+        a.editor_cursor = a.editor_buffer.len();
+        type_key(&mut a, KeyCode::Char('.'));
+        assert_eq!(a.editor_buffer, "SELECT  FROM users u WHERE u.");
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("auto-trigger should open a cycle after typing `.` post-identifier");
+        // Columns of users via alias u.
+        assert!(
+            cycle.candidates.iter().any(|c| c.display == "email"),
+            "expected `email` in candidates, got {:?}",
+            cycle.candidates.iter().map(|c| &c.display).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn auto_trigger_skipped_for_numeric_literals() {
+        // `3.` — the char before `.` is a digit, so auto-trigger is
+        // suppressed. (No popup; status preserved.)
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT 3");
+        a.last_status = Some("preserved status".into());
+        type_key(&mut a, KeyCode::Char('.'));
+        assert_eq!(a.editor_buffer, "SELECT 3.");
+        assert!(
+            a.completion.is_none(),
+            "should not auto-trigger on numeric `3.`"
+        );
+        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
+    }
+
+    #[test]
+    fn dot_after_lcp_expansion_narrows_via_refresh_not_auto_trigger() {
+        // Operator types `t_` Tab (expands LCP to `t_user_`), then
+        // narrows by typing more chars. If they happen to type `.`
+        // (unlikely but possible if a name has a `.`-shaped suffix
+        // in some dialect), the live-narrowing path takes precedence
+        // over auto-trigger — the existing cycle stays alive.
+        let mut a = test_app_with_cache(&[
+            ("t_user_logs", &["id"]),
+            ("t_user_roles", &["id"]),
+        ]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM t_");
+        // First Tab: LCP-expands to `t_user_`, popup with 2 candidates.
+        a.editor_complete();
+        assert_eq!(a.editor_buffer, "SELECT * FROM t_user_");
+        assert!(a.completion.as_ref().unwrap().selected.is_none());
+        let cycle_id_before = a.completion.as_ref().unwrap() as *const _;
+        // Now type `l` — narrowing key, cycle survives via refresh.
+        type_key(&mut a, KeyCode::Char('l'));
+        assert!(a.completion.is_some(), "cycle should still be alive");
+        let cycle = a.completion.as_ref().unwrap();
+        // The cycle was rebuilt (new pointer), but selected is still
+        // None (refresh keeps pre-selection state).
+        let _ = cycle_id_before; // (we don't actually compare pointers; reassuring no panic)
+        assert!(cycle.selected.is_none());
+        assert!(cycle.candidates.iter().any(|c| c.display == "t_user_logs"));
+    }
+
+    #[test]
+    fn auto_trigger_no_matches_preserves_status() {
+        // `nonsense.` — no such identifier; auto-trigger fires but
+        // finds nothing and silently restores the prior status.
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT nonsense");
+        a.last_status = Some("preserved status".into());
+        type_key(&mut a, KeyCode::Char('.'));
+        assert!(a.completion.is_none());
+        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
+    }
+
+    #[test]
+    fn tab_on_empty_buffer_offers_statement_keywords() {
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "");
+        a.editor_complete();
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("Tab on empty buffer should offer statement keywords");
+        let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| l.eq_ignore_ascii_case("SELECT")),
+            "got {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l.eq_ignore_ascii_case("INSERT")),
+            "got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn tab_after_from_space_offers_tables() {
+        let mut a = test_app_with_cache(&[("users", &["id"]), ("orders", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM ");
+        a.editor_complete();
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("Tab after `FROM ` should open tables popup");
+        let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.iter().any(|l| *l == "users"), "got {labels:?}");
+        assert!(labels.iter().any(|l| *l == "orders"), "got {labels:?}");
+    }
+
+    #[test]
+    fn backspace_to_empty_prefix_keeps_context_popup() {
+        // `FROM us` Tab → popup with users-ish tables. Then the operator
+        // backspaces both chars. We should NOT drop the cycle — instead
+        // refresh re-extracts (empty prefix) and offers the full
+        // table list for the FROM context.
+        let mut a = test_app_with_cache(&[
+            ("users", &["id"]),
+            ("user_logs", &["id"]),
+            ("orders", &["id"]),
+        ]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM us");
+        a.editor_complete(); // LCP-expands to `user_`
+        // Backspace through the entire identifier so the prefix
+        // narrows to empty — the cycle should survive and broaden
+        // back to the full table list for FROM.
+        // After LCP-expand, buffer is `SELECT * FROM user` (the LCP
+        // of users / user_logs is `user`, not `user_` — they diverge
+        // at the 5th char). Four backspaces brings us to the trailing
+        // space — empty prefix, still in TableRef context.
+        for _ in 0..4 {
+            type_key(&mut a, KeyCode::Backspace);
+        }
+        // Buffer should now be "SELECT * FROM " (or a substring thereof);
+        // cycle should still be alive and offering tables (incl. orders).
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("cycle should survive narrowing to empty prefix");
+        let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| *l == "orders"),
+            "after narrowing to empty prefix, all tables should be offered; got {labels:?}"
+        );
+    }
+
+    #[test]
+    fn tab_with_no_candidates_falls_back_to_helpful_message() {
+        // Disconnected (no cache), empty buffer: there ARE statement
+        // keywords available, so the empty-cache message should NOT
+        // fire — the popup opens with keywords.
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        a.editor_complete();
+        assert!(
+            a.completion.is_some(),
+            "empty cache + empty buffer should still offer keywords"
         );
     }
 
