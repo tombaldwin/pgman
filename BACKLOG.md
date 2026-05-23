@@ -485,6 +485,12 @@ Pull a remote database down for local testing; keep tagged backups.
   "open completion popup" shortcut now opens / advances the cycle
   just like Tab. Lets muscle-memory IDE users hit the popup without
   thinking about Tab's role — DONE.
+- **Auto-trigger after identifier-introducing keywords + space**: a
+  conservative keyword list (`FROM`, `JOIN` + variants, `INTO`,
+  `WHERE`, `AND`, `OR`, `ON`) automatically opens the popup when
+  the operator types a space immediately after one of those. Other
+  spaces (`x = 5 `, after parens / commas / literals) stay quiet to
+  avoid mid-expression noise — DONE.
 - **Tab on whitespace opens context-aware popup**: pressing Tab when
   the cursor is on whitespace (or in an empty buffer) opens the
   popup with candidates for the surrounding clause — statement

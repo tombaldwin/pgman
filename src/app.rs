@@ -1001,6 +1001,48 @@ impl App {
                 }
             }
         }
+
+        // Auto-trigger completion when the operator just typed a space
+        // immediately after an identifier-introducing keyword. Keeps
+        // the list of trigger keywords short and conservative so we
+        // only fire where the popup is unambiguously useful — typing
+        // `FROM <Tab>` saves one keystroke, but firing on every space
+        // in `WHERE x = 5 ` would be noise. Skipped when a cycle is
+        // already alive (which means `refresh_completion` is handling
+        // the keystroke).
+        const TRIGGER_KEYWORDS: &[&str] = &[
+            "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS",
+            "INTO", "WHERE", "AND", "OR", "ON",
+        ];
+        let just_typed_space = matches!(key.code, KeyCode::Char(' '))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if just_typed_space && self.completion.is_none() {
+            // The just-typed space is at `editor_cursor - 1`. Strip it
+            // and any further trailing whitespace, then read back the
+            // last alphanumeric / `_` word. rfind on byte-indexed chars
+            // is fine here because the boundary chars we look for
+            // (space, comma, paren, `;`) are ASCII.
+            let before_space = &self.editor_buffer[..self.editor_cursor.saturating_sub(1)];
+            let trimmed = before_space.trim_end();
+            let word_start = trimmed
+                .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let last_word = &trimmed[word_start..];
+            if !last_word.is_empty()
+                && TRIGGER_KEYWORDS
+                    .iter()
+                    .any(|k| k.eq_ignore_ascii_case(last_word))
+            {
+                let saved_status = self.last_status.clone();
+                self.editor_complete();
+                if self.completion.is_none() {
+                    self.last_status = saved_status;
+                }
+            }
+        }
     }
 
     /// Re-extract candidates from the current buffer/cursor. Called
@@ -2182,6 +2224,53 @@ mod tests {
         let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.iter().any(|l| *l == "users"), "got {labels:?}");
         assert!(labels.iter().any(|l| *l == "orders"), "got {labels:?}");
+    }
+
+    #[test]
+    fn auto_trigger_after_from_space_opens_tables() {
+        let mut a = test_app_with_cache(&[("users", &["id"]), ("orders", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM");
+        type_key(&mut a, KeyCode::Char(' '));
+        assert_eq!(a.editor_buffer, "SELECT * FROM ");
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("auto-trigger should pop after `FROM `");
+        let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.iter().any(|l| *l == "users"));
+        assert!(labels.iter().any(|l| *l == "orders"));
+    }
+
+    #[test]
+    fn auto_trigger_after_and_space_opens_columns() {
+        let mut a = test_app_with_cache(&[("users", &["id", "email", "name"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM users WHERE id = 1 AND");
+        type_key(&mut a, KeyCode::Char(' '));
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("auto-trigger should pop after `AND `");
+        let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.iter().any(|l| *l == "email" || *l == "name"));
+    }
+
+    #[test]
+    fn auto_trigger_does_not_fire_after_arbitrary_space() {
+        // After typing `5 ` (a literal followed by space), the auto-
+        // trigger should NOT fire — operator is probably mid-expression
+        // and a popup would be noise.
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM users WHERE id = 5");
+        a.last_status = Some("preserved status".into());
+        type_key(&mut a, KeyCode::Char(' '));
+        assert!(
+            a.completion.is_none(),
+            "auto-trigger should be silent after `5 `"
+        );
+        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
     }
 
     #[test]
