@@ -983,9 +983,14 @@ fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
     let layout = build_field_layout(&app.grid.columns, &row, label_width, value_width);
     // Update the field-cursor bound so the key handler can clamp against
-    // what's actually rendered.
+    // what's actually rendered. Also push the clamped focus *back* to
+    // app state — otherwise after the grid shrinks (e.g. QueryOk replaces
+    // a wide row with a narrow one while RowDetail is open) the visual
+    // highlight clamps but `yank_focused_field` / `open_cell_detail`
+    // still see the pre-clamp index, silently no-op-ing.
     app.row_detail_field_count = layout.len();
     let focus = app.row_detail_field.min(layout.len().saturating_sub(1));
+    app.row_detail_field = focus;
 
     let label_style = Style::default()
         .fg(theme.accent)
