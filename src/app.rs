@@ -509,12 +509,14 @@ impl App {
             self.should_quit = true;
             return;
         }
-        // Any key dismisses the splash and is otherwise consumed — gives
-        // snappy users an instant skip past the 3s minimum.
+        // Any key dismisses the splash — but the key then flows through
+        // to the mode dispatcher rather than being consumed. Snappy
+        // users press a key to skip the elephant AND have that key do
+        // its normal job in one go.
         if self.splash_visible {
             self.splash_visible = false;
             self.splash_until = None;
-            return;
+            // fall through so the key reaches the active mode's handler
         }
 
         match self.mode {
