@@ -299,6 +299,33 @@ Pull a remote database down for local testing; keep tagged backups.
 - Follow-ups: column lookup honouring `verify-ca` hostname-skip in TLS
   (needs custom rustls verifier); Spring bootstrap.yml discovery;
   WITH ... GROUP BY HAVING list across the OrderOrGroup context.
+- Per-clause continuation keywords — `vocabulary::continuations` lists
+  what naturally follows each ClauseContext (`AFTER_TABLE_REF`,
+  `AFTER_PREDICATE`, etc.). Surfaced as Keyword candidates AFTER the
+  identifier list in every relevant arm, so the cycle prioritises
+  columns/tables/aliases — DONE.
+- JOIN variants — `INNER JOIN`, `LEFT JOIN`, `LEFT OUTER JOIN`, `FULL
+  OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN`, `LATERAL JOIN`, … all
+  surface as multi-word completions in TableRef position. One Tab
+  press inserts the whole shape — DONE.
+- Vocabulary expansion: DDL verbs (CREATE / ALTER / DROP / TRUNCATE /
+  COMMENT / REINDEX / CLUSTER), session (SET / RESET / SAVEPOINT /
+  RELEASE / END), perms (GRANT / REVOKE), Postgres catalog helpers
+  (PG_RELATION_SIZE / PG_SIZE_PRETTY / PG_DATABASE_SIZE / VERSION /
+  CURRENT_DATABASE / PG_TYPEOF / TXID_CURRENT), string / numeric /
+  array / JSON families — DONE.
+- 3-segment qualified completion (`schema.table.col`) — `Identifier`
+  gained a `schema` field; `extract_identifier` splits on `.` up to 3
+  segments. The completion engine short-circuits 3-segment names
+  through `columns_for(Some(schema), table)` so a table-name
+  collision across schemas resolves to the correct one. Returns
+  silently empty for an unknown schema rather than guessing — DONE.
+- Subquery alias as in-scope table — `FROM (SELECT ...) sub` registers
+  `sub` as an alias in `parse_from_tables` so it surfaces in unqualified
+  completion (typing `su` matches it). Subquery body's columns aren't
+  type-checked yet — `sub.|` returns empty rather than wrong columns —
+  DONE. Follow-up: type-check the subquery body so `sub.|` offers
+  the subquery's SELECT list as columns.
 
 ## v3+ — deferred
 

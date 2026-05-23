@@ -43,20 +43,56 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
         let upper = tok.text.to_ascii_uppercase();
         if upper == "FROM" || upper == "JOIN" {
             i += 1;
-            // Pull one table ref, then zero-or-one alias. Loop continues
-            // across `,`-separated lists after FROM.
+            // Pull one table ref (or subquery), then zero-or-one alias.
+            // Loop continues across `,`-separated lists after FROM.
             loop {
-                let Some((table, j)) = take_table_ref(&tokens, i) else {
-                    break;
-                };
-                i = j;
-                let (alias, j) = take_alias(&tokens, i);
-                i = j;
-                out.push(TableRefInQuery {
-                    schema: table.schema,
-                    name: table.name,
-                    alias,
-                });
+                // Subquery: `( ... ) [AS] alias` — capture the alias as
+                // a synthetic table entry so it shows up in_scope. We
+                // don't type-check the subquery body (would need a
+                // mini-engine), so columns of `sub` aren't known —
+                // but typing `sub` itself completes via the alias path.
+                if let Some(close) = peek_subquery_close(&tokens, i) {
+                    let alias_idx = if tokens
+                        .get(close)
+                        .map(|t| t.text.eq_ignore_ascii_case("AS"))
+                        .unwrap_or(false)
+                    {
+                        close + 1
+                    } else {
+                        close
+                    };
+                    let alias_text = tokens
+                        .get(alias_idx)
+                        .map(|t| t.text)
+                        .filter(|t| is_identifier_like(t));
+                    if let Some(name) = alias_text {
+                        out.push(TableRefInQuery {
+                            schema: None,
+                            name: name.to_string(),
+                            // alias = name so the synthetic entry
+                            // surfaces in both the alias and the
+                            // qualified-lookup paths of completion.
+                            alias: Some(name.to_string()),
+                        });
+                        i = alias_idx + 1;
+                    } else {
+                        // Anonymous subquery (rare, often a typo while
+                        // typing). Skip past it; nothing to add to scope.
+                        i = close;
+                    }
+                } else {
+                    let Some((table, j)) = take_table_ref(&tokens, i) else {
+                        break;
+                    };
+                    i = j;
+                    let (alias, j) = take_alias(&tokens, i);
+                    i = j;
+                    out.push(TableRefInQuery {
+                        schema: table.schema,
+                        name: table.name,
+                        alias,
+                    });
+                }
                 // After a comma, another table ref. Anything else ends
                 // the FROM list and we fall back to the outer scan.
                 if i < tokens.len() && tokens[i].text == "," {
@@ -70,6 +106,30 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
         }
     }
     out
+}
+
+/// If `tokens[i]` is `(`, return the index of the token AFTER its
+/// matching `)`. Returns `None` if it's not a paren or the parens
+/// don't close.
+fn peek_subquery_close(tokens: &[Tok], i: usize) -> Option<usize> {
+    if tokens.get(i).map(|t| t.text) != Some("(") {
+        return None;
+    }
+    let mut depth = 1i32;
+    let mut j = i + 1;
+    while j < tokens.len() && depth > 0 {
+        match tokens[j].text {
+            "(" => depth += 1,
+            ")" => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    if depth == 0 {
+        Some(j)
+    } else {
+        None
+    }
 }
 
 // -- internals --
@@ -389,6 +449,29 @@ mod tests {
             got.iter().any(|t| t.name == "orders"),
             "orders JOIN should still appear in scope: {got:?}"
         );
+    }
+
+    #[test]
+    fn subquery_alias_with_as_is_in_scope() {
+        let got = refs("SELECT * FROM (SELECT a FROM users) AS sub WHERE 1=1");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "sub");
+        assert_eq!(got[0].alias.as_deref(), Some("sub"));
+    }
+
+    #[test]
+    fn subquery_alias_without_as_is_in_scope() {
+        let got = refs("SELECT * FROM (SELECT a FROM users) sub JOIN orders o ON true");
+        assert!(got.iter().any(|t| t.name == "sub" && t.alias.as_deref() == Some("sub")));
+        assert!(got.iter().any(|t| t.name == "orders"));
+    }
+
+    #[test]
+    fn subquery_with_nested_parens_alias_still_captured() {
+        // Aggregations / sub-sub queries inside don't confuse the
+        // paren-depth scanner.
+        let got = refs("SELECT * FROM (SELECT COUNT(*) FROM (SELECT 1) x) sub");
+        assert!(got.iter().any(|t| t.name == "sub"));
     }
 
     #[test]

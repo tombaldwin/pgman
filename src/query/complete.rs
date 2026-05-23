@@ -1317,6 +1317,20 @@ mod tests {
     }
 
     #[test]
+    fn subquery_alias_appears_as_alias_candidate_in_where() {
+        // `FROM (SELECT * FROM users) sub` — the alias `sub` should
+        // come up in WHERE completion as an Alias kind.
+        let cache = build_cache();
+        let buf = "SELECT * FROM (SELECT * FROM users) sub WHERE su";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.contains(&"sub"),
+            "subquery alias should appear: {labels:?}"
+        );
+    }
+
+    #[test]
     fn select_offers_postgres_catalog_functions() {
         let cache = build_cache();
         let buf = "SELECT pg_s FROM users";
