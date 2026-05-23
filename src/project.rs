@@ -95,17 +95,22 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
             dsn.user = Some(u.clone());
         }
     }
+    // Precedence (most → least specific): connection.password_env env
+    // var, then $PGPASSWORD, then any password embedded in the URL.
+    // The env vars beat the URL so an operator can rotate credentials
+    // without editing the committed `pgman.toml`.
     let env_pw = c
         .password_env
         .as_deref()
-        .and_then(|var| std::env::var(var).ok());
-    let pg_pw = std::env::var("PGPASSWORD").ok();
-    if let Some(pw) = env_pw.filter(|s| !s.is_empty()) {
+        .and_then(|var| std::env::var(var).ok())
+        .filter(|s| !s.is_empty());
+    let pg_pw = std::env::var("PGPASSWORD")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if let Some(pw) = env_pw {
         dsn.password = Some(pw);
-    } else if dsn.password.is_none() {
-        if let Some(pw) = pg_pw.filter(|s| !s.is_empty()) {
-            dsn.password = Some(pw);
-        }
+    } else if let Some(pw) = pg_pw {
+        dsn.password = Some(pw);
     }
     Some(dsn)
 }
