@@ -4,6 +4,7 @@
 //! results whose generation is stale after a context switch (see CLAUDE.md).
 
 use crate::grid::Grid;
+use crate::query::schema::SchemaCache;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -16,6 +17,7 @@ pub enum AppMsg {
         server_version: String,
         grid: Grid,
         client: Arc<tokio_postgres::Client>,
+        schema_cache: SchemaCache,
     },
     /// Connection or the bootstrap query failed.
     BootFailed { generation: u64, error: String },

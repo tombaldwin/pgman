@@ -8,7 +8,7 @@ use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::Frame;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -34,14 +34,34 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_editor(f, chunks[1], app);
     draw_body(f, chunks[2], app);
     draw_footer(f, chunks[3], app);
+    // Completion popup sits over the top of the body, anchored just under
+    // the editor — only when a cycle is active in Editor mode.
+    if app.mode == Mode::Editor && app.completion.is_some() {
+        draw_completion_popup(f, chunks[1], chunks[2], app);
+    }
     if app.mode == Mode::Help {
-        draw_help(f, area, &app.theme);
+        draw_help(f, area, app);
     }
     if app.mode == Mode::Confirm {
         draw_confirm(f, area, app);
     }
     if app.mode == Mode::LogPick {
         draw_log_pick(f, area, app);
+    }
+    if app.mode == Mode::ConnPick {
+        draw_conn_pick(f, area, app);
+    }
+    if app.mode == Mode::RowDetail {
+        draw_row_detail(f, area, app);
+    }
+    if app.mode == Mode::CellDetail {
+        // RowDetail underneath stays drawn so the visual "zoom" reads
+        // like a nested overlay rather than a context switch.
+        draw_row_detail(f, area, app);
+        draw_cell_detail(f, area, app);
+    }
+    if app.mode == Mode::About {
+        draw_about(f, area, app);
     }
 }
 
@@ -131,6 +151,85 @@ fn draw_splash(f: &mut Frame, app: &App) {
     );
 }
 
+/// "About pgman" overlay — same info as the splash but reachable any time
+/// from Normal mode (`A`). Renders the elephant at scale 1 so the popup
+/// stays a compact card no matter the terminal size.
+fn draw_about(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let grid = splash::frame(app.anim_tick);
+    let rows_n = grid.len() as u16;
+    let cols_n = grid.iter().map(Vec::len).max().unwrap_or(0) as u16;
+    let art_w = cols_n * 2;
+
+    let pixel = "██";
+    let gap = "  ";
+    let mut art_lines: Vec<Line> = Vec::with_capacity(grid.len());
+    for row in &grid {
+        let spans: Vec<Span> = row
+            .iter()
+            .map(|&px| match pixel_color(px, theme) {
+                Some(c) => Span::styled(pixel, Style::default().fg(c)),
+                None => Span::raw(gap),
+            })
+            .collect();
+        art_lines.push(Line::from(spans));
+    }
+
+    let mut lines: Vec<Line> = art_lines;
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        Span::styled(
+            format!("pgman {}", env!("CARGO_PKG_VERSION")),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ));
+    lines.push(Line::from(Span::styled(
+        env!("CARGO_PKG_DESCRIPTION"),
+        Style::default().fg(theme.text),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "by Tom Baldwin / Polymorphism Ltd",
+        Style::default().fg(theme.muted),
+    )));
+    lines.push(Line::from(Span::styled(
+        "license: MIT OR Apache-2.0",
+        Style::default().fg(theme.muted),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "esc / enter / A to close",
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::ITALIC),
+    )));
+
+    // Card sized to fit the elephant art width plus a comfortable border /
+    // padding budget, and tall enough for all the text lines below it.
+    let _ = rows_n; // sprite already accounted for inside `lines`
+    let width = (art_w + 4).max(48).min(area.width);
+    let height = (lines.len() as u16 + 4).min(area.height);
+    let popup = centered(area, width, height);
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border_active))
+                    .padding(Padding::uniform(1))
+                    .title(Span::styled(
+                        " about ",
+                        Style::default().fg(theme.title),
+                    )),
+            ),
+        popup,
+    );
+}
+
 fn draw_header(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let db = app
@@ -182,12 +281,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
 
 fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
     match &app.conn_state {
-        ConnState::Failed(err) => {
-            let p = Paragraph::new(format!("connection failed:\n\n{err}"))
-                .style(Style::default().fg(app.theme.health_red))
-                .block(bordered(&app.theme, "error"));
-            f.render_widget(p, area);
-        }
+        ConnState::Failed(err) => draw_connection_failed(f, area, app, err),
         ConnState::Connecting => {
             f.render_widget(
                 Paragraph::new("connecting…")
@@ -217,6 +311,75 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
             }
         }
     }
+}
+
+/// Render the post-failure body: target DSN, where it came from, the full
+/// error chain, and an actionable hint when we recognise the failure mode.
+fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
+    let theme = &app.theme;
+    let label = Style::default().fg(theme.muted);
+    let value = Style::default().fg(theme.text);
+    let red = Style::default().fg(theme.health_red);
+
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        "connection failed",
+        Style::default()
+            .fg(theme.health_red)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    lines.push(Line::from(""));
+
+    if let Some(dsn) = &app.dsn {
+        lines.push(Line::from(vec![
+            Span::styled("  target  ", label),
+            Span::styled(dsn.redacted(), value),
+        ]));
+    }
+    if let Some(origin) = &app.dsn_origin {
+        lines.push(Line::from(vec![
+            Span::styled("  source  ", label),
+            Span::styled(origin.clone(), value),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled("  error", label)));
+    for chunk in err.split('\n') {
+        lines.push(Line::from(vec![
+            Span::styled("    ", label),
+            Span::styled(chunk.to_string(), red),
+        ]));
+    }
+
+    if let Some(dsn) = &app.dsn {
+        if let Some(hint) = crate::conn::connect_hint(err, dsn) {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  hint", label)));
+            lines.push(Line::from(vec![
+                Span::styled("    ", label),
+                Span::styled(
+                    hint,
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    let mut actions = String::from("  r retry");
+    if !app.data_source_picks.is_empty() {
+        actions.push_str(" · p change connection");
+    }
+    actions.push_str(" · q quit · logs in ~/.cache/pgman/pgman.log");
+    lines.push(Line::from(Span::styled(actions, label)));
+
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .block(bordered(theme, "connection")),
+        area,
+    );
 }
 
 fn draw_grid(
@@ -302,16 +465,33 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.health_green),
         ))
     } else {
-        let hints = match app.mode {
-            Mode::Help => "esc / ?  close help",
-            Mode::Editor => {
-                "ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
+        // While the connection is failed we override Normal-mode hints with
+        // recovery shortcuts so the operator sees them at the bottom of the
+        // screen too, not just on the failure card.
+        let failed_normal = app.mode == Mode::Normal
+            && matches!(app.conn_state, ConnState::Failed(_));
+        let hints: &str = if failed_normal {
+            if app.data_source_picks.is_empty() {
+                "r retry · q quit · ? help"
+            } else {
+                "r retry · p change connection · q quit · ? help"
             }
-            Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
-            // TxDecision is handled above with a return — this arm is unreachable.
-            Mode::TxDecision => "y = commit · n / esc = rollback",
-            Mode::Confirm => "y run · n / esc cancel",
-            Mode::Normal => "q quit · ? help · e editor · j/k scroll · g/G top/bottom",
+        } else {
+            match app.mode {
+                Mode::Help => "esc / ?  close help",
+                Mode::Editor => {
+                    "tab complete · ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
+                }
+                Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
+                Mode::ConnPick => "↑↓ / j/k navigate · enter connect · esc / q quit",
+            Mode::RowDetail => "↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close",
+            Mode::CellDetail => "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back",
+            Mode::About => "esc / enter / A close",
+                // TxDecision is handled above with a return — this arm is unreachable.
+                Mode::TxDecision => "y = commit · n / esc = rollback",
+                Mode::Confirm => "y run · n / esc cancel",
+                Mode::Normal => "q quit · ? help · e editor · j/k scroll · g/G top/bottom",
+            }
         };
         Line::from(Span::styled(
             format!(" {hints}"),
@@ -408,6 +588,119 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
     }
 
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Completion candidates popup. Anchored just under the editor pane,
+/// flush-left over the body area. Shows up to ~10 candidates with the
+/// active one highlighted; "↑ N more" / "↓ N more" markers when the
+/// list is longer than the popup. Only the active cycle is rendered;
+/// any non-Tab editor key dismisses (see `App::editor_key`).
+fn draw_completion_popup(
+    f: &mut Frame,
+    editor_area: Rect,
+    body_area: Rect,
+    app: &App,
+) {
+    let Some(cycle) = app.completion.as_ref() else {
+        return;
+    };
+    if cycle.candidates.is_empty() {
+        return;
+    }
+    let theme = &app.theme;
+    // Width = widest "display (kind)" plus padding, clamped to body area.
+    let kind_width = cycle
+        .candidates
+        .iter()
+        .map(|c| c.kind.label().len())
+        .max()
+        .unwrap_or(0);
+    let label_width = cycle
+        .candidates
+        .iter()
+        .map(|c| c.display.chars().count())
+        .max()
+        .unwrap_or(0);
+    let inner_width = (label_width + 1 + kind_width + 2 + 4) as u16;
+    let width = inner_width.min(body_area.width).max(20);
+
+    // Show at most VISIBLE rows; auto-scroll keeps the active row in view.
+    const VISIBLE: usize = 8;
+    let total = cycle.candidates.len();
+    let visible = total.min(VISIBLE);
+    let height = (visible as u16 + 2).min(body_area.height); // +2 = borders
+    if height < 3 {
+        return;
+    }
+    let scroll = if total <= VISIBLE {
+        0
+    } else if cycle.index >= total - VISIBLE / 2 {
+        total - VISIBLE
+    } else if cycle.index < VISIBLE / 2 {
+        0
+    } else {
+        cycle.index - VISIBLE / 2
+    };
+
+    // Anchor flush under the editor's bottom border, left-aligned.
+    let popup = Rect {
+        x: body_area.x,
+        y: editor_area.y + editor_area.height,
+        width,
+        height,
+    };
+
+    let label_style = Style::default().fg(theme.text);
+    let kind_style = Style::default().fg(theme.muted);
+    let focus_style = Style::default()
+        .fg(theme.text)
+        .bg(theme.row_selected_bg)
+        .add_modifier(Modifier::BOLD);
+
+    let inner_w = popup.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::with_capacity(visible);
+    for (i, cand) in cycle
+        .candidates
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(VISIBLE)
+    {
+        let is_focus = i == cycle.index;
+        let kind = cand.kind.label();
+        let prefix = if is_focus { "▶ " } else { "  " };
+        let display = &cand.display;
+        // Pad so the row's bg-highlight spans the full popup width.
+        let body = format!("{prefix}{display}");
+        let body_w = body.chars().count();
+        let pad_after = inner_w
+            .saturating_sub(body_w)
+            .saturating_sub(kind.len() + 2); // kind + " (" + ")"
+        let pad = " ".repeat(pad_after);
+        let kind_text = format!(" ({kind})");
+        let (l_style, k_style) = if is_focus {
+            (focus_style, focus_style)
+        } else {
+            (label_style, kind_style)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(body, l_style),
+            Span::styled(pad, l_style),
+            Span::styled(kind_text, k_style),
+        ]));
+    }
+
+    let title = format!(" {}/{} ", cycle.index + 1, total);
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border_active))
+                .title(Span::styled(title, Style::default().fg(theme.title))),
+        ),
+        popup,
+    );
 }
 
 /// Modal for a guarded run. Shows the statement, the safety classification,
@@ -552,7 +845,432 @@ fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
+/// Startup picker shown when multiple data sources were discovered (e.g. an
+/// IntelliJ project with several `.idea/dataSources.xml` entries). One row
+/// per candidate; Enter starts the connection.
+/// Wrap `s` to `width` columns, splitting on existing newlines first and
+/// then chunking by character. Returns an empty-string vector for an empty
+/// input so the caller still emits a visible row. Pure / testable.
+pub(crate) fn wrap_value(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![s.to_string()];
+    }
+    let mut out = Vec::new();
+    let lines: Vec<&str> = s.split('\n').collect();
+    for raw in lines {
+        let chars: Vec<char> = raw.chars().collect();
+        if chars.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        for chunk in chars.chunks(width) {
+            out.push(chunk.iter().collect());
+        }
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// One column's pre-wrapped contribution to the row-detail layout. Pure
+/// data: the label (already truncated + padded to `label_width`), the
+/// list of value lines, and a flag for "this value was empty" so the
+/// renderer can dim it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FieldLayout {
+    pub label: String,
+    pub values: Vec<String>,
+    pub is_empty: bool,
+}
+
+/// Pure layout: build one `FieldLayout` per column. Label is truncated to
+/// `label_width` chars and left-padded; value is wrapped via `wrap_value`.
+/// Extracted from the renderer so the field-cursor maths can be unit-tested.
+pub(crate) fn build_field_layout(
+    columns: &[String],
+    row: &[String],
+    label_width: usize,
+    value_width: usize,
+) -> Vec<FieldLayout> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(i, col)| {
+            let truncated: String = col.chars().take(label_width).collect();
+            let label = format!("{:<width$}", truncated, width = label_width);
+            let raw = row.get(i).map(|s| s.as_str()).unwrap_or("");
+            let is_empty = raw.is_empty();
+            let values = if is_empty {
+                vec!["(empty)".to_string()]
+            } else {
+                wrap_value(raw, value_width)
+            };
+            FieldLayout {
+                label,
+                values,
+                is_empty,
+            }
+        })
+        .collect()
+}
+
+/// Given the per-field line counts, where each field starts in the line
+/// stream and the desired scroll offset that keeps `focus_field` fully in
+/// view inside a `body_height`-row viewport. Pure / testable.
+pub(crate) fn auto_scroll_to_field(
+    field_line_counts: &[u16],
+    focus_field: usize,
+    current_scroll: u16,
+    body_height: u16,
+    max_scroll: u16,
+) -> u16 {
+    if field_line_counts.is_empty() || body_height == 0 {
+        return current_scroll.min(max_scroll);
+    }
+    let focus_field = focus_field.min(field_line_counts.len() - 1);
+    let field_top: u16 = field_line_counts[..focus_field].iter().sum();
+    let field_height = field_line_counts[focus_field];
+    let field_end = field_top.saturating_add(field_height);
+    let mut scroll = current_scroll;
+    // Scroll up so the field's first line is visible.
+    if field_top < scroll {
+        scroll = field_top;
+    }
+    // Scroll down so the field's last line is visible. When the field is
+    // taller than the viewport, prefer the top — partial view is still
+    // navigable with the `y` yank.
+    let visible_end = scroll.saturating_add(body_height);
+    if field_end > visible_end {
+        let needed = field_end.saturating_sub(body_height);
+        scroll = scroll.max(needed);
+    }
+    scroll.min(max_scroll)
+}
+
+/// Expanded view of the selected row — one labelled value per column, with
+/// long values wrapped to fit the popup width. Inspired by psql's `\x`
+/// expanded-display mode. j/k moves a field cursor; `y` yanks the focused
+/// value to the system clipboard.
+fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = &app.theme;
+    let Some(idx) = app.grid_state.selected() else {
+        return;
+    };
+    let Some(row) = app.grid.rows.get(idx).cloned() else {
+        return;
+    };
+
+    let popup = centered_pct(area, 80, 80);
+    // Inside the borders + uniform(1) padding.
+    let inner_width = popup.width.saturating_sub(4) as usize;
+    let inner_height = popup.height.saturating_sub(4);
+
+    // Label column = widest column name, capped so a runaway name doesn't
+    // squeeze the value column off-screen.
+    let label_max = 32usize;
+    let label_width = app
+        .grid
+        .columns
+        .iter()
+        .map(|c| c.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(label_max);
+    let sep = " │ ";
+    let label_plus_sep = label_width + sep.len();
+    let value_width = inner_width.saturating_sub(label_plus_sep).max(1);
+
+    let layout = build_field_layout(&app.grid.columns, &row, label_width, value_width);
+    // Update the field-cursor bound so the key handler can clamp against
+    // what's actually rendered.
+    app.row_detail_field_count = layout.len();
+    let focus = app.row_detail_field.min(layout.len().saturating_sub(1));
+
+    let label_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let sep_style = Style::default().fg(theme.border_idle);
+    let value_style = Style::default().fg(theme.text);
+    let null_style = Style::default()
+        .fg(theme.muted)
+        .add_modifier(Modifier::ITALIC);
+    let focus_bg = theme.row_selected_bg;
+
+    let mut lines: Vec<Line> = Vec::new();
+    let mut field_line_counts: Vec<u16> = Vec::with_capacity(layout.len());
+    for (field_idx, field) in layout.iter().enumerate() {
+        let is_focus = field_idx == focus;
+        let value_span_style_base = if field.is_empty { null_style } else { value_style };
+        let (label_style_eff, sep_style_eff, value_style_eff) = if is_focus {
+            (
+                label_style.bg(focus_bg),
+                sep_style.bg(focus_bg),
+                value_span_style_base.bg(focus_bg),
+            )
+        } else {
+            (label_style, sep_style, value_span_style_base)
+        };
+        let count = field.values.len() as u16;
+        field_line_counts.push(count);
+        for (i, vline) in field.values.iter().enumerate() {
+            let label_text = if i == 0 {
+                field.label.clone()
+            } else {
+                // Continuation rows: blank in the label column so the eye
+                // tracks values that wrap across multiple lines.
+                " ".repeat(label_width)
+            };
+            // Pad the value out to the full content width so the focus
+            // highlight extends across the whole row, not just the text.
+            let padded_value = format!("{:<width$}", vline, width = value_width);
+            lines.push(Line::from(vec![
+                Span::styled(label_text, label_style_eff),
+                Span::styled(sep, sep_style_eff),
+                Span::styled(padded_value, value_style_eff),
+            ]));
+        }
+    }
+
+    let total_lines = lines.len() as u16;
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    app.row_detail_max_scroll = max_scroll;
+    // Auto-scroll so the focused field is visible, then clamp.
+    let effective_scroll = auto_scroll_to_field(
+        &field_line_counts,
+        focus,
+        app.row_detail_scroll,
+        inner_height,
+        max_scroll,
+    );
+    app.row_detail_scroll = effective_scroll;
+
+    let title = format!(
+        " row {} of {} · field {}/{} ",
+        idx + 1,
+        app.grid.row_count(),
+        focus + 1,
+        layout.len().max(1)
+    );
+    f.render_widget(Clear, popup);
+    let body = Paragraph::new(Text::from(lines))
+        .scroll((effective_scroll, 0))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border_active))
+                .padding(Padding::uniform(1))
+                .title(Span::styled(title, Style::default().fg(theme.title))),
+        );
+    f.render_widget(body, popup);
+
+    // Same scroll-indicator pattern as draw_help — overlay the first/last
+    // visible body rows when content extends past the viewport.
+    let hint_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    if effective_scroll > 0 {
+        let row_rect = Rect {
+            x: popup.x + 2,
+            y: popup.y + 2,
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↑ {} more above", effective_scroll),
+                hint_style,
+            ))),
+            row_rect,
+        );
+    }
+    if effective_scroll < max_scroll {
+        let row_rect = Rect {
+            x: popup.x + 2,
+            y: popup.y + popup.height.saturating_sub(3),
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↓ {} more below", max_scroll - effective_scroll),
+                hint_style,
+            ))),
+            row_rect,
+        );
+    }
+}
+
+/// Per-cell zoom: a focused view of `(row_detail_field)` from the
+/// currently-selected row. Larger popup than RowDetail so a big JSON
+/// value gets actual space; scroll independently with j/k/g/G/PageUp/Down.
+fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = &app.theme;
+    let Some(idx) = app.grid_state.selected() else {
+        return;
+    };
+    let Some(row) = app.grid.rows.get(idx).cloned() else {
+        return;
+    };
+    let field = app.row_detail_field;
+    let column = app
+        .grid
+        .columns
+        .get(field)
+        .cloned()
+        .unwrap_or_default();
+    let value = row.get(field).cloned().unwrap_or_default();
+
+    // Nest inside the row-detail popup so the zoom reads as drilling in,
+    // not a new context. 90% of the screen so big JSON gets room.
+    let popup = centered_pct(area, 90, 90);
+    let inner_width = popup.width.saturating_sub(4) as usize; // borders + uniform(1) pad
+    let inner_height = popup.height.saturating_sub(4);
+    let is_empty = value.is_empty();
+    let body_lines: Vec<String> = if is_empty {
+        vec!["(empty)".to_string()]
+    } else {
+        wrap_value(&value, inner_width)
+    };
+
+    let total_lines = body_lines.len() as u16;
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    app.cell_detail_max_scroll = max_scroll;
+    let effective_scroll = app.cell_detail_scroll.min(max_scroll);
+
+    let value_style = if is_empty {
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::ITALIC)
+    } else {
+        Style::default().fg(theme.text)
+    };
+    let lines: Vec<Line> = body_lines
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), value_style)))
+        .collect();
+
+    let title = format!(
+        " {} · row {} of {} · field {}/{} ",
+        column,
+        idx + 1,
+        app.grid.row_count(),
+        field + 1,
+        app.row_detail_field_count.max(1)
+    );
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .scroll((effective_scroll, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border_active))
+                    .padding(Padding::uniform(1))
+                    .title(Span::styled(title, Style::default().fg(theme.title))),
+            ),
+        popup,
+    );
+    // Reuse the same up/down "more" indicators as the help / row-detail
+    // overlays for visual consistency.
+    let hint_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    if effective_scroll > 0 {
+        let row = Rect {
+            x: popup.x + 2,
+            y: popup.y + 2,
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↑ {} more above", effective_scroll),
+                hint_style,
+            ))),
+            row,
+        );
+    }
+    if effective_scroll < max_scroll {
+        let row = Rect {
+            x: popup.x + 2,
+            y: popup.y + popup.height.saturating_sub(3),
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↓ {} more below", max_scroll - effective_scroll),
+                hint_style,
+            ))),
+            row,
+        );
+    }
+}
+
+fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    // Find the widest origin tag so the DSN column lines up.
+    let origin_width = app
+        .data_source_picks
+        .iter()
+        .map(|p| p.origin.len())
+        .max()
+        .unwrap_or(0);
+    let lines: Vec<Line> = app
+        .data_source_picks
+        .iter()
+        .enumerate()
+        .map(|(i, pick)| {
+            let prefix = if i == app.data_source_pick_index { "▶ " } else { "  " };
+            let style = if i == app.data_source_pick_index {
+                Style::default()
+                    .bg(theme.row_selected_bg)
+                    .fg(theme.text)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            // Trailing space pads the row to the popup width so the row
+            // background fills the line for the selected entry.
+            let body = format!(
+                "{prefix}[{origin:>w$}] {name:<24} {dsn}",
+                origin = pick.origin,
+                w = origin_width,
+                name = pick.name,
+                dsn = pick.dsn.redacted(),
+            );
+            Line::from(Span::styled(body, style))
+        })
+        .collect();
+
+    let title = format!(
+        " pick a connection · {}/{} ",
+        app.data_source_pick_index + 1,
+        app.data_source_picks.len()
+    );
+    let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let w = 100u16.min(area.width.saturating_sub(2));
+    let popup = centered(area, w, h);
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border_active))
+                .style(Style::default().fg(theme.text))
+                .title(Span::styled(title, Style::default().fg(theme.title))),
+        ),
+        popup,
+    );
+}
+
+fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = &app.theme;
     let lines = vec![
         Line::from(Span::styled(
             "pgman — keys",
@@ -567,6 +1285,8 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    e / i / tab   focus editor"),
         Line::from("    j / k  ↑ ↓    move selection"),
         Line::from("    g / G         first / last row"),
+        Line::from("    enter         expand selected row (psql \\x style)"),
+        Line::from("    A             about pgman (version, credits)"),
         Line::from(""),
         Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
         Line::from("    ctrl-r / F5   run the statement (through safety guards)"),
@@ -574,6 +1294,8 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
         Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
         Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
+        Line::from("    tab           identifier completion (cycles on repeat tab)"),
+        Line::from("    esc           (in cycle) restore originally-typed prefix"),
         Line::from("    enter         insert newline"),
         Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
         Line::from("    home / end    start / end of current line"),
@@ -593,18 +1315,103 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    ↑ ↓ / j / k   navigate"),
         Line::from("    enter         load selected query into the editor"),
         Line::from("    esc / q       cancel"),
+        Line::from(""),
+        Line::from(Span::styled("  row detail", Style::default().fg(theme.accent))),
+        Line::from("    j / k  ↑ ↓    move to next / previous field"),
+        Line::from("    g / G         first / last field"),
+        Line::from("    PageUp/Down   jump 10 fields"),
+        Line::from("    enter         zoom into focused field (cell detail)"),
+        Line::from("    y             yank focused field value to clipboard"),
+        Line::from("    esc / q       close"),
+        Line::from(""),
+        Line::from(Span::styled("  cell detail (zoomed value)", Style::default().fg(theme.accent))),
+        Line::from("    j / k  ↑ ↓    scroll"),
+        Line::from("    g / G         top / bottom"),
+        Line::from("    PageUp/Down   scroll by 10"),
+        Line::from("    y             yank value to clipboard"),
+        Line::from("    esc / enter   back to row detail"),
+        Line::from(""),
+        Line::from(Span::styled("  help", Style::default().fg(theme.accent))),
+        Line::from("    j / k  ↑ ↓    scroll"),
+        Line::from("    g / G         jump to top / bottom"),
+        Line::from("    esc / ? / q   close"),
     ];
-    let popup = centered(area, 60, lines.len() as u16 + 2);
+    let popup = centered_pct(area, 70, 70);
     f.render_widget(Clear, popup);
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).block(
+    // Body height = popup height minus borders (top + bottom) minus padding
+    // (uniform(1) — top + bottom). That's the visible row budget for clamping
+    // the scroll offset.
+    let total_lines = lines.len() as u16;
+    let inner_height = popup.height.saturating_sub(4);
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    app.help_max_scroll = max_scroll;
+    let effective_scroll = app.help_scroll.min(max_scroll);
+
+    let help = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((effective_scroll, 0))
+        .style(Style::default().fg(theme.text))
+        .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.border_active))
-                .style(Style::default().fg(theme.text)),
-        ),
-        popup,
-    );
+                .padding(Padding::uniform(1)),
+        );
+    f.render_widget(help, popup);
+
+    // Scroll indicators: emit "↑ N more above" on the top inner row and
+    // "↓ N more below" on the bottom inner row when content extends past the
+    // viewport. Rendered AFTER the body so they overlay its first / last
+    // visible row.
+    let hint_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    if effective_scroll > 0 {
+        // Overlay the first visible body row: skip border + top padding.
+        let row = Rect {
+            x: popup.x + 2,
+            y: popup.y + 2,
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↑ {} more above", effective_scroll),
+                hint_style,
+            ))),
+            row,
+        );
+    }
+    if effective_scroll < max_scroll {
+        // Overlay the last visible body row: above bottom padding + border.
+        let row = Rect {
+            x: popup.x + 2,
+            y: popup.y + popup.height.saturating_sub(3),
+            width: popup.width.saturating_sub(4),
+            height: 1,
+        };
+        f.render_widget(Clear, row);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!("↓ {} more below", max_scroll - effective_scroll),
+                hint_style,
+            ))),
+            row,
+        );
+    }
+}
+
+/// A centred `w`%×`h`% rectangle within `area`.
+fn centered_pct(area: Rect, w: u16, h: u16) -> Rect {
+    let width = area.width * w / 100;
+    let height = area.height * h / 100;
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
 }
 
 /// A `width`×`height` rectangle centred within `area` (clamped to fit).
@@ -628,4 +1435,122 @@ fn bordered(theme: &Theme, title: &str) -> Block<'static> {
             format!(" {title} "),
             Style::default().fg(theme.title),
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_value_splits_on_existing_newlines() {
+        let got = wrap_value("a\nb\nc", 80);
+        assert_eq!(got, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn wrap_value_chunks_long_lines() {
+        let got = wrap_value("abcdefghij", 4);
+        assert_eq!(got, vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn wrap_value_handles_empty_string() {
+        // Empty value should still emit one line so the row stays visible.
+        assert_eq!(wrap_value("", 80), vec![""]);
+    }
+
+    #[test]
+    fn wrap_value_preserves_blank_lines() {
+        let got = wrap_value("a\n\nb", 80);
+        assert_eq!(got, vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn wrap_value_width_zero_returns_input_unchanged() {
+        // Defensive: a popup so narrow there's no room for the value column.
+        // Falling back to one line keeps render functions from panicking on
+        // `chunks(0)`.
+        assert_eq!(wrap_value("hello", 0), vec!["hello"]);
+    }
+
+    #[test]
+    fn wrap_value_handles_multibyte_chars_by_chars_not_bytes() {
+        // "café" is 4 chars / 5 bytes — chunk by chars so a slice doesn't
+        // land mid-codepoint.
+        let got = wrap_value("café", 2);
+        assert_eq!(got, vec!["ca", "fé"]);
+    }
+
+    #[test]
+    fn build_field_layout_pads_label_and_marks_empty() {
+        let cols = vec!["id".to_string(), "long_column_name".to_string()];
+        let row = vec!["42".to_string(), "".to_string()];
+        let got = build_field_layout(&cols, &row, 16, 40);
+        assert_eq!(got.len(), 2);
+        // Labels padded to label_width.
+        assert_eq!(got[0].label.chars().count(), 16);
+        assert!(got[0].label.starts_with("id"));
+        assert_eq!(got[0].is_empty, false);
+        assert_eq!(got[0].values, vec!["42"]);
+        // Empty cell rendered with "(empty)" sentinel.
+        assert_eq!(got[1].is_empty, true);
+        assert_eq!(got[1].values, vec!["(empty)"]);
+    }
+
+    #[test]
+    fn build_field_layout_truncates_oversized_labels() {
+        let cols = vec!["aaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]; // 25 chars
+        let row = vec!["v".to_string()];
+        let got = build_field_layout(&cols, &row, 8, 10);
+        assert_eq!(got[0].label.chars().count(), 8);
+        assert!(got[0].label.starts_with("aaaaaaaa"));
+    }
+
+    #[test]
+    fn build_field_layout_wraps_long_values() {
+        let cols = vec!["bio".to_string()];
+        let row = vec!["abcdefghij".to_string()];
+        let got = build_field_layout(&cols, &row, 4, 4);
+        assert_eq!(got[0].values, vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn auto_scroll_keeps_focused_field_in_view_when_moving_down() {
+        // Three fields, 2 lines each = 6 total lines. Viewport = 3 rows.
+        // max_scroll = 3. Focus field 2 (lines 4..6) — need scroll = 3.
+        let counts = vec![2u16, 2, 2];
+        let scroll = auto_scroll_to_field(&counts, 2, 0, 3, 3);
+        assert_eq!(scroll, 3);
+    }
+
+    #[test]
+    fn auto_scroll_scrolls_up_when_focus_moves_above_viewport() {
+        // Same shape; user had scrolled down to 3 (last field visible),
+        // then moves focus back to field 0. Scroll should snap to 0.
+        let counts = vec![2u16, 2, 2];
+        let scroll = auto_scroll_to_field(&counts, 0, 3, 3, 3);
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn auto_scroll_clamps_to_max_scroll() {
+        let counts = vec![2u16, 2];
+        let scroll = auto_scroll_to_field(&counts, 1, 999, 4, 0);
+        // max_scroll = 0 — everything fits — auto-scroll must clamp.
+        assert_eq!(scroll, 0);
+    }
+
+    #[test]
+    fn auto_scroll_handles_empty_field_list() {
+        let scroll = auto_scroll_to_field(&[], 0, 5, 4, 10);
+        assert_eq!(scroll, 5);
+    }
+
+    #[test]
+    fn auto_scroll_handles_zero_height_viewport() {
+        let counts = vec![1u16];
+        let scroll = auto_scroll_to_field(&counts, 0, 2, 0, 5);
+        // body_height=0 → no-op except for the max_scroll clamp.
+        assert_eq!(scroll, 2);
+    }
 }

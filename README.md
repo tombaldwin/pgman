@@ -18,6 +18,37 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 
 Run it inside a Spring project and it picks up `spring.datasource.*` to connect.
 
+## Project config (commit this)
+
+Drop a `.pgman/pgman.toml` at the root of your repo. pgman walks up from the
+current directory to find it, so launching `pgman` from any subdirectory of
+the project works.
+
+```toml
+# .pgman/pgman.toml — commit this. No passwords here.
+# Passwords come from PGPASSWORD or per-connection password_env.
+
+[[connections]]
+name = "local"
+url  = "postgres://postgres@localhost:5432/myapp"
+
+[[connections]]
+name = "staging"
+url  = "postgres://stg-db.internal:5432/myapp"
+user = "app"
+password_env = "STAGING_DB_PASSWORD"   # optional override of PGPASSWORD
+
+# Per-database safety overrides. Project values win on collision, so you can
+# commit just `[safety.databases.production]` and keep your personal
+# `~/.config/pgman/safety.toml` defaults for everything else.
+[safety.databases.production]
+read_only = true
+statement_timeout_ms = 5000
+```
+
+Project connections show up in the startup picker alongside any IntelliJ
+data sources found in `.idea/dataSources.xml`.
+
 ## Safety
 
 pgman connects to production databases. It opens read-only by default, enforces
