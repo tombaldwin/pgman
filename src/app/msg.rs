@@ -24,9 +24,18 @@ pub enum AppMsg {
         generation: u64,
         grid: Grid,
         kind_label: String,
+        /// True if the run wrapped the statement in a transaction that's still
+        /// open — the app should prompt for commit/rollback.
+        tx_open_after: bool,
     },
     /// A user-initiated query failed.
     QueryFailed { generation: u64, error: String },
+    /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
+    TxClosed {
+        generation: u64,
+        committed: bool,
+        error: Option<String>,
+    },
 }
 
 impl AppMsg {
@@ -36,7 +45,8 @@ impl AppMsg {
             AppMsg::Booted { generation, .. }
             | AppMsg::BootFailed { generation, .. }
             | AppMsg::QueryOk { generation, .. }
-            | AppMsg::QueryFailed { generation, .. } => *generation,
+            | AppMsg::QueryFailed { generation, .. }
+            | AppMsg::TxClosed { generation, .. } => *generation,
         }
     }
 }

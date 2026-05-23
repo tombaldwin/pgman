@@ -40,6 +40,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::Confirm {
         draw_confirm(f, area, app);
     }
+    if app.mode == Mode::LogPick {
+        draw_log_pick(f, area, app);
+    }
 }
 
 /// Theme colour for a sprite pixel — `None` for empty (transparent).
@@ -152,7 +155,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         ),
         ConnState::Failed(_) => ("connection failed".to_string(), Style::default().fg(theme.health_red)),
     };
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " pgman ",
             Style::default()
@@ -163,8 +166,18 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(db, Style::default().fg(theme.text)),
         Span::raw("  "),
         Span::styled(state, state_style),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
+    ];
+    if app.tx_open || app.mode == Mode::TxDecision {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            " TX ",
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
@@ -249,6 +262,28 @@ fn draw_grid(
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+    // TxDecision is its own prominent prompt — it pre-empts the normal
+    // status/error/hint priority because the user must answer.
+    if app.mode == Mode::TxDecision {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " TX OPEN ",
+                    Style::default()
+                        .bg(theme.health_yellow)
+                        .fg(theme.row_alt_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    "y = commit · n / esc = rollback",
+                    Style::default().fg(theme.health_yellow),
+                ),
+            ])),
+            area,
+        );
+        return;
+    }
     // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
     let line = if let Some(err) = &app.last_error {
         Line::from(vec![
@@ -270,8 +305,11 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let hints = match app.mode {
             Mode::Help => "esc / ?  close help",
             Mode::Editor => {
-                "F5 run · F6 EXPLAIN · F7 EXPLAIN ANALYZE · enter newline · ctrl-p/n history · esc"
+                "F5 run · F6 EXPLAIN · F7 EXPLAIN ANALYZE · F8 log-import · ctrl-p/n history · esc"
             }
+            Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
+            // TxDecision is handled above with a return — this arm is unreachable.
+            Mode::TxDecision => "y = commit · n / esc = rollback",
             Mode::Confirm => "y run · n / esc cancel",
             Mode::Normal => "q quit · ? help · e editor · j/k scroll · g/G top/bottom",
         };
@@ -429,6 +467,68 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// Log-import picker: lists reconstructed queries (`hibernate` / `pglog`
+/// sources), highlights the selection.
+fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
+    use crate::query::reconstruct::Source;
+    let theme = &app.theme;
+    let max_preview = 80usize;
+    let lines: Vec<Line> = app
+        .log_picks
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let source = match q.source {
+                Source::HibernateLog => "hibernate",
+                Source::PostgresLog => "pglog",
+                Source::JdbcPaste => "jdbc",
+            };
+            let mut preview: String = q
+                .runnable_sql
+                .chars()
+                .take(max_preview)
+                .collect::<String>()
+                .replace('\n', " ");
+            if q.runnable_sql.chars().count() > max_preview {
+                preview.push('…');
+            }
+            let prefix = if i == app.log_pick_index { "▶ " } else { "  " };
+            let style = if i == app.log_pick_index {
+                Style::default()
+                    .bg(theme.row_selected_bg)
+                    .fg(theme.text)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            Line::from(Span::styled(
+                format!("{prefix}[{source:>9}] {preview}"),
+                style,
+            ))
+        })
+        .collect();
+
+    let title = format!(
+        " log picks · {}/{} ",
+        app.log_pick_index + 1,
+        app.log_picks.len()
+    );
+    let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let w = 100u16.min(area.width.saturating_sub(2));
+    let popup = centered(area, w, h);
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border_active))
+                .style(Style::default().fg(theme.text))
+                .title(Span::styled(title, Style::default().fg(theme.title))),
+        ),
+        popup,
+    );
+}
+
 fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
     let lines = vec![
         Line::from(Span::styled(
@@ -449,6 +549,7 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    F5            run the statement (through safety guards)"),
         Line::from("    F6            EXPLAIN  (never executes)"),
         Line::from("    F7            EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
+        Line::from("    F8            parse buffer as log → pick a reconstructed query"),
         Line::from("    enter         insert newline"),
         Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
         Line::from("    home / end    start / end of current line"),
@@ -459,6 +560,15 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from(Span::styled("  confirm", Style::default().fg(theme.accent))),
         Line::from("    y             run the guarded statement"),
         Line::from("    n / esc       cancel"),
+        Line::from(""),
+        Line::from(Span::styled("  tx open", Style::default().fg(theme.accent))),
+        Line::from("    y             commit the transaction"),
+        Line::from("    n / esc       roll back"),
+        Line::from(""),
+        Line::from(Span::styled("  log pick", Style::default().fg(theme.accent))),
+        Line::from("    ↑ ↓ / j / k   navigate"),
+        Line::from("    enter         load selected query into the editor"),
+        Line::from("    esc / q       cancel"),
     ];
     let popup = centered(area, 60, lines.len() as u16 + 2);
     f.render_widget(Clear, popup);
