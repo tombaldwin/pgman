@@ -26,9 +26,81 @@ safely." Nothing else.
 - `conn.rs`: real connection via `tokio-postgres`; applies safety session
   settings (`default_transaction_read_only`, `statement_timeout`) — DONE.
 - `grid.rs`: results grid type + column-width / truncation helpers — DONE.
+- IntelliJ data-source discovery: pre-TUI scan of `.idea/dataSources.xml`;
+  one postgres source → auto-DSN; multiple → `Mode::ConnPick` picker;
+  `PGPASSWORD` fills passwords (IntelliJ keeps them in its keychain, not
+  the XML) — DONE.
+- Scrollable help overlay (j/k/g/G + PageUp/PageDown, "↑/↓ N more" hints) — DONE.
+- Diagnostic connection-failure view: target DSN, source/origin
+  ("--dsn flag" / "auto-picked IntelliJ data source 'x'"), full error
+  chain (walks `Error::source` so "Connection refused" actually appears),
+  and an actionable hint for known failure modes (refused / timeout /
+  DNS / auth / missing db / TLS-required). Plus `r` retry and `p`
+  re-open picker keys on the failure screen — DONE.
+- Project config at `.pgman/pgman.toml` (intended for git): named
+  `[[connections]]` feed the startup picker; `[safety]` overrides merge
+  with the global `~/.config/pgman/safety.toml` per-key so a team can
+  commit just the production rules. Discovery walks up from cwd to find
+  the file. Passwords come from `PGPASSWORD` / per-connection
+  `password_env`, never the file — DONE.
+- IntelliJ multifile parsing: `dataSources.local.xml` contributes
+  `<user-name>` and schema-mapping db names (the latter recovers the
+  real dbname when the committed `<jdbc-url>` has no path, e.g.
+  `localhost:5432/`). One pick emitted per database when schema-mapping
+  has multiple — DONE.
+- Spring properties discovery: scans `src/main/resources/application*.properties`
+  and emits one pick per `<prefix>.url` + `.username` + `.password` triple
+  (so `dataSource.*`, `logDataSource.*` etc. all surface). Non-JDBC URLs
+  filtered. Credentials are read from the file but only redacted DSNs
+  are logged. yml is still stubbed — DONE.
+- Row-detail modal (Enter on a grid row): psql `\x`-style expanded view,
+  one labelled value per column, values wrapped to popup width — DONE.
+- Row-detail field cursor: j/k navigate between fields with the
+  focused row highlighted and auto-scrolled into view; `y` yanks the
+  focused value to the system clipboard via `arboard` — DONE. Follow-ups:
+  per-cell zoom for very long values (e.g. JSON); NULL vs empty-string
+  disambiguation once the grid tracks NULL distinctly.
+- Splash 3s minimum + always-shown: brought back across the ConnPick
+  path (was being skipped when multiple data sources were discovered);
+  `Booted`/`BootFailed` no longer dismiss it early. Keypress still
+  skips. `A` opens an `:about`-style overlay with the same content
+  (elephant + version + credits) — DONE. Follow-up: real `:about`
+  command once a typed-command palette lands.
+- Identifier completion in the editor (Tab):
+  - Schema cache fetched at connect via `pg_catalog` (best-effort —
+    permission failure → empty cache → completion disabled cleanly).
+  - Pass 1 (dumb): Tab cycles through tables / columns / schemas /
+    aliases matching the partial identifier under the cursor.
+  - Pass 2 (FROM-aware): `alias.col` only offers columns of the
+    aliased table; `schema.|` only offers that schema's tables;
+    bare-identifier completion is biased toward columns of tables in
+    the current `FROM` / `JOIN` clauses (including subquery FROMs
+    after the cursor). A tolerant tokenizer handles partial / unfinished
+    SQL (`SELECT u.| FROM users u ...`).
+  - Cycle resets on any non-Tab editor keypress. Footer status shows
+    `completion N/M · kind` while cycling. — DONE.
+  - Candidates popup: small overlay anchored under the editor with
+    up to 8 visible rows; active row highlighted; auto-scrolls when
+    cycling past the visible window — DONE.
+  - Esc during a cycle restores the originally-typed prefix (so
+    you can back out of an unwanted match cleanly) — DONE.
+  - Follow-ups: SQL keyword completion; nested `schema.table.col`
+    qualification.
+- Panic hook restores the terminal (alt-screen + raw-mode off) before
+  the default hook prints the backtrace, so a crash leaves the trace
+  readable on the user's regular shell instead of buried in the alt
+  screen — DONE.
+- Per-cell zoom from RowDetail (`Enter` on a focused field) opens
+  `Mode::CellDetail` — a larger popup showing the single value wrapped
+  + scrollable so long JSON / text fits. `y` still yanks. `Esc`/
+  `Enter` pops back to the row view; `Esc` in RowDetail now closes
+  to Normal (Enter rebinds to zoom) — DONE.
 - Follow-ups: TLS (`tokio-postgres-rustls`) — RDS needs it; `deadpool`
   pooling once interactive queries land (M2); panic hook to restore the
-  terminal; `NUMERIC` / unknown-type cell rendering in `conn::cell_to_string`.
+  terminal; `NUMERIC` / unknown-type cell rendering in `conn::cell_to_string`;
+  IntelliJ `dataSources.local.xml` password parsing (the
+  `parse_local_passwords` referenced in `creds::intellij`'s doc comment
+  doesn't exist yet); Spring `application*.yml` parsing → picker entries.
 
 ### Reuse from ebman (`/Users/tom/git/ebman/src/`)
 Survey done — lift as the milestones reach them:
@@ -158,6 +230,24 @@ Pull a remote database down for local testing; keep tagged backups.
 - Retention: optional prune of un-pinned snapshots past a count/age limit.
 - Future (v3+): on-restore redaction / anonymisation of sensitive columns —
   a per-table/column rule set applied during restore. Listed below.
+
+### UX backlog
+
+- **Esc shouldn't quit** — `q` (and Ctrl-C) should be the only quit
+  keys. Today Esc quits from Normal mode and from the ConnPick picker.
+  Make Esc a no-op (or "close any overlay; otherwise no-op") so a
+  reflex Esc never loses the session.
+- **Grammar-aware completion** — current completion is a tolerant
+  tokenizer + FROM-clause heuristic. A real SQL grammar (or at least a
+  statement-position classifier: SELECT-list / FROM / WHERE / GROUP /
+  ORDER / RETURNING) would let us:
+  - in SELECT after `SELECT`: only columns of in-scope tables, plus
+    aggregations
+  - in FROM/JOIN position: only tables / schemas, never columns
+  - in WHERE: columns of in-scope tables; suggest comparison operators
+  - after `ORDER BY` / `GROUP BY`: in-scope columns
+  - inside `INSERT INTO foo (`: columns of `foo`
+  Probably reuse `sqlparser` crate rather than rolling our own.
 
 ## v3+ — deferred
 

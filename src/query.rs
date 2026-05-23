@@ -9,9 +9,12 @@
 //! [`subst`] does the type-aware placeholder substitution shared by all three.
 //! [`nplus1`] clusters reconstructed queries to surface N+1 selects.
 
+pub mod complete;
+pub mod from_parse;
 pub mod hibernate;
 pub mod jdbc;
 pub mod nplus1;
 pub mod pglog;
 pub mod reconstruct;
+pub mod schema;
 pub mod subst;

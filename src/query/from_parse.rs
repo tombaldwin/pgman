@@ -1,0 +1,365 @@
+//! Best-effort extraction of `(schema?, table, alias?)` triples from the
+//! `FROM` / `JOIN` clauses of a (possibly incomplete) SQL buffer.
+//!
+//! This is **not** a SQL parser. It scans tokens, finds `FROM` / `JOIN`
+//! keywords, then for each one captures the next identifier (optionally
+//! `schema.table`) and an optional alias (`AS x` or bare `x`). It stops
+//! at `WHERE` / `GROUP` / `HAVING` / `ORDER` / `LIMIT` / `;` so a partly-
+//! typed query like `SELECT u.| FROM users u JOIN orders` still works.
+//!
+//! Used by `query::complete` to scope qualified completion (`alias.col`)
+//! and biased unqualified completion (prefer columns of tables that
+//! appear in the current `FROM`).
+
+/// One table reference pulled from a `FROM` / `JOIN`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRefInQuery {
+    pub schema: Option<String>,
+    pub name: String,
+    pub alias: Option<String>,
+}
+
+impl TableRefInQuery {
+    /// The name the operator is most likely to type as a qualifier —
+    /// `alias` when present, otherwise `name`. Quoted/case-sensitive
+    /// concerns are punted: we lowercase before matching.
+    pub fn match_key(&self) -> String {
+        self.alias
+            .as_deref()
+            .unwrap_or(self.name.as_str())
+            .to_ascii_lowercase()
+    }
+}
+
+/// Scan `sql` and return the list of table references in its FROM / JOIN
+/// clauses. Tolerant: unterminated strings stop the scan; unknown tokens
+/// are skipped; multiple FROM-clauses (subqueries) all contribute.
+pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
+    let tokens = tokenize(sql);
+    let mut out: Vec<TableRefInQuery> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = &tokens[i];
+        let upper = tok.text.to_ascii_uppercase();
+        if upper == "FROM" || upper == "JOIN" {
+            i += 1;
+            // Pull one table ref, then zero-or-one alias. Loop continues
+            // across `,`-separated lists after FROM.
+            loop {
+                let Some((table, j)) = take_table_ref(&tokens, i) else {
+                    break;
+                };
+                i = j;
+                let (alias, j) = take_alias(&tokens, i);
+                i = j;
+                out.push(TableRefInQuery {
+                    schema: table.schema,
+                    name: table.name,
+                    alias,
+                });
+                // After a comma, another table ref. Anything else ends
+                // the FROM list and we fall back to the outer scan.
+                if i < tokens.len() && tokens[i].text == "," {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+// -- internals --
+
+#[derive(Debug, Clone)]
+struct Tok<'a> {
+    text: &'a str,
+}
+
+/// Lex a SQL fragment into identifier / punctuation / keyword tokens.
+/// Strings, comments, and whitespace are skipped. Stops on unterminated
+/// string / comment to keep the scan deterministic on partial input.
+fn tokenize(sql: &str) -> Vec<Tok<'_>> {
+    let bytes = sql.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        // Whitespace
+        if c.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        // -- line comment
+        if c == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // /* … */ block comment (no nesting)
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 >= bytes.len() {
+                break;
+            }
+            i += 2;
+            continue;
+        }
+        // '…' string literal
+        if c == b'\'' {
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'\'' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            i += 1;
+            continue;
+        }
+        // "…" quoted identifier — keep as one token (without the quotes)
+        if c == b'"' {
+            let start = i + 1;
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            if i >= bytes.len() {
+                break;
+            }
+            out.push(Tok {
+                text: &sql[start..i],
+            });
+            i += 1;
+            continue;
+        }
+        // Identifier / keyword
+        if c.is_ascii_alphabetic() || c == b'_' {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+            {
+                i += 1;
+            }
+            out.push(Tok {
+                text: &sql[start..i],
+            });
+            continue;
+        }
+        // Number — gather digits + dot + exponent; treated as one token
+        if c.is_ascii_digit() {
+            let start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_digit() || bytes[i] == b'.')
+            {
+                i += 1;
+            }
+            out.push(Tok {
+                text: &sql[start..i],
+            });
+            continue;
+        }
+        // Punctuation — emit as a single-char token so the caller can
+        // recognise `,` `.` `;` `(` `)` etc.
+        out.push(Tok {
+            text: &sql[i..i + 1],
+        });
+        i += 1;
+    }
+    out
+}
+
+struct TableName {
+    schema: Option<String>,
+    name: String,
+}
+
+/// Pull a `schema.name` or `name` table reference starting at `i`.
+/// Returns `(parsed, next_index)` or `None` if the next token isn't an
+/// identifier.
+fn take_table_ref(tokens: &[Tok], i: usize) -> Option<(TableName, usize)> {
+    let head = tokens.get(i)?;
+    if !is_identifier_like(head.text) {
+        return None;
+    }
+    // Schema.name?
+    if let (Some(dot), Some(tail)) = (tokens.get(i + 1), tokens.get(i + 2)) {
+        if dot.text == "." && is_identifier_like(tail.text) {
+            return Some((
+                TableName {
+                    schema: Some(head.text.to_string()),
+                    name: tail.text.to_string(),
+                },
+                i + 3,
+            ));
+        }
+    }
+    Some((
+        TableName {
+            schema: None,
+            name: head.text.to_string(),
+        },
+        i + 1,
+    ))
+}
+
+/// Pull an optional alias after a table ref. Honours `AS x` and bare `x`,
+/// but rejects words that introduce the next clause / next FROM-item.
+fn take_alias(tokens: &[Tok], i: usize) -> (Option<String>, usize) {
+    let stop_words = [
+        "ON", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "FETCH",
+        "OFFSET", "UNION", "INTERSECT", "EXCEPT", "JOIN", "INNER", "LEFT",
+        "RIGHT", "FULL", "CROSS", "OUTER", "USING", "AS", "RETURNING",
+    ];
+    if let Some(t) = tokens.get(i) {
+        let upper = t.text.to_ascii_uppercase();
+        if upper == "AS" {
+            if let Some(alias) = tokens.get(i + 1) {
+                if is_identifier_like(alias.text) {
+                    return (Some(alias.text.to_string()), i + 2);
+                }
+            }
+            return (None, i + 1);
+        }
+        if is_identifier_like(t.text) && !stop_words.contains(&upper.as_str()) {
+            return (Some(t.text.to_string()), i + 1);
+        }
+    }
+    (None, i)
+}
+
+fn is_identifier_like(s: &str) -> bool {
+    let mut chars = s.chars();
+    let first = match chars.next() {
+        Some(c) => c,
+        None => return false,
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refs(sql: &str) -> Vec<TableRefInQuery> {
+        parse_from_tables(sql)
+    }
+
+    #[test]
+    fn picks_up_simple_from() {
+        let got = refs("SELECT * FROM users");
+        assert_eq!(
+            got,
+            vec![TableRefInQuery {
+                schema: None,
+                name: "users".into(),
+                alias: None
+            }]
+        );
+    }
+
+    #[test]
+    fn captures_alias_with_as_and_without() {
+        let got = refs("SELECT u.id FROM users AS u JOIN orders o ON o.user_id = u.id");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "users");
+        assert_eq!(got[0].alias.as_deref(), Some("u"));
+        assert_eq!(got[1].name, "orders");
+        assert_eq!(got[1].alias.as_deref(), Some("o"));
+    }
+
+    #[test]
+    fn handles_schema_qualified_table() {
+        let got = refs("SELECT * FROM public.users u");
+        assert_eq!(got[0].schema.as_deref(), Some("public"));
+        assert_eq!(got[0].name, "users");
+        assert_eq!(got[0].alias.as_deref(), Some("u"));
+    }
+
+    #[test]
+    fn comma_separated_from_list() {
+        let got = refs("SELECT * FROM a, b AS bb, c");
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].name, "a");
+        assert_eq!(got[1].name, "b");
+        assert_eq!(got[1].alias.as_deref(), Some("bb"));
+        assert_eq!(got[2].name, "c");
+    }
+
+    #[test]
+    fn stops_alias_at_known_keywords() {
+        // `WHERE` immediately after the table — must NOT be taken as alias.
+        let got = refs("SELECT * FROM users WHERE id = 1");
+        assert_eq!(got.len(), 1);
+        assert!(got[0].alias.is_none());
+    }
+
+    #[test]
+    fn tolerates_incomplete_select_under_cursor() {
+        // User is mid-typing: the cursor is in the SELECT list after `u.`
+        let got = refs("SELECT u. FROM users u JOIN orders o ON o.user_id = u.id");
+        assert_eq!(got.len(), 2);
+    }
+
+    #[test]
+    fn skips_string_literals_and_comments() {
+        let got = refs(
+            "SELECT 'FROM hidden' /* FROM also-hidden */ -- FROM also\nFROM users u",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "users");
+    }
+
+    #[test]
+    fn quoted_identifier_keeps_case() {
+        let got = refs(r#"SELECT * FROM "MyTable" AS t"#);
+        assert_eq!(got[0].name, "MyTable");
+        assert_eq!(got[0].alias.as_deref(), Some("t"));
+    }
+
+    #[test]
+    fn picks_up_multiple_joins() {
+        let got = refs(
+            "SELECT * FROM a \
+             JOIN b ON a.id = b.a_id \
+             LEFT JOIN c cc ON cc.b_id = b.id",
+        );
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[2].alias.as_deref(), Some("cc"));
+    }
+
+    #[test]
+    fn empty_input_yields_empty_vec() {
+        assert!(refs("").is_empty());
+    }
+
+    #[test]
+    fn match_key_prefers_alias() {
+        let r = TableRefInQuery {
+            schema: None,
+            name: "Users".into(),
+            alias: Some("u".into()),
+        };
+        assert_eq!(r.match_key(), "u");
+        let r2 = TableRefInQuery {
+            schema: None,
+            name: "Users".into(),
+            alias: None,
+        };
+        assert_eq!(r2.match_key(), "users");
+    }
+}

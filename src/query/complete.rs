@@ -1,0 +1,536 @@
+//! SQL identifier completion.
+//!
+//! Two pure ops:
+//!
+//! - [`extract_identifier`] finds the partial identifier the user is
+//!   typing under the cursor — including a `qualifier.` prefix if there
+//!   is one. Returns enough info that the renderer can replace the
+//!   prefix without disturbing surrounding text.
+//! - [`candidates_for`] turns a cursor position + the schema cache into
+//!   an ordered list of [`Candidate`]s. FROM-aware: when the buffer
+//!   contains `FROM users u`, typing `u.|` only offers columns of `users`.
+//!   When the qualifier doesn't match an alias / table, falls back to
+//!   "anything starting with `prefix`".
+//!
+//! The Tab handler in `app.rs` is the only consumer; everything in this
+//! module is pure and unit-tested.
+
+use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
+use crate::query::schema::SchemaCache;
+
+/// The partial identifier the cursor is inside (or immediately after).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identifier {
+    /// Byte offset where the identifier begins (start of `qualifier`, or
+    /// start of `prefix` when there's no qualifier). The Tab handler
+    /// replaces `[start, cursor)` with the chosen completion.
+    pub start: usize,
+    /// Text before the dot — usually a table alias or table name.
+    /// `None` when the user is typing an unqualified identifier.
+    pub qualifier: Option<String>,
+    /// Text after the dot (or the whole word when `qualifier` is None).
+    /// May be empty (cursor immediately after a `.` or in fresh space).
+    pub prefix: String,
+}
+
+/// What kind of thing a `Candidate` points to. Drives the small hint
+/// shown in the footer alongside the cycle index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CandidateKind {
+    Schema,
+    Table,
+    Column,
+    Alias,
+}
+
+impl CandidateKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            CandidateKind::Schema => "schema",
+            CandidateKind::Table => "table",
+            CandidateKind::Column => "column",
+            CandidateKind::Alias => "alias",
+        }
+    }
+}
+
+/// One completion the user can land on. `insert` is the text to substitute
+/// for `prefix`; `display` is what the picker (footer hint) shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub display: String,
+    pub insert: String,
+    pub kind: CandidateKind,
+}
+
+/// Walk back from `cursor` over identifier-ish characters (letters,
+/// digits, `_`) plus at most one trailing `.` to find the partial
+/// identifier under the cursor. Returns `None` when the cursor isn't
+/// inside / immediately after an identifier.
+pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
+    // Clamp + snap to char boundary so byte-cursor arithmetic is safe.
+    let cursor = cursor.min(buf.len());
+    if !buf.is_char_boundary(cursor) {
+        return None;
+    }
+    let bytes = buf.as_bytes();
+    let mut start = cursor;
+    while start > 0 {
+        let prev = start - 1;
+        let c = bytes[prev];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' {
+            start = prev;
+        } else {
+            break;
+        }
+    }
+    if start == cursor {
+        // Nothing identifier-shaped immediately behind the cursor.
+        // Still useful: return an empty identifier so completion can
+        // start fresh from this position. We require the *previous*
+        // non-identifier char to have been a `.` or whitespace before
+        // emitting; otherwise punctuation like `;` shouldn't trigger.
+        let prev = if cursor == 0 {
+            None
+        } else {
+            Some(bytes[cursor - 1])
+        };
+        match prev {
+            None => {
+                return Some(Identifier {
+                    start: cursor,
+                    qualifier: None,
+                    prefix: String::new(),
+                });
+            }
+            Some(c) if c.is_ascii_whitespace() => {
+                return Some(Identifier {
+                    start: cursor,
+                    qualifier: None,
+                    prefix: String::new(),
+                });
+            }
+            _ => return None,
+        }
+    }
+    let raw = &buf[start..cursor];
+    if let Some(dot_idx) = raw.rfind('.') {
+        let qualifier = raw[..dot_idx].to_string();
+        let prefix = raw[dot_idx + 1..].to_string();
+        // Disallow nested dots in the qualifier (we don't yet support
+        // schema.table.col). Caller can still try; nothing breaks.
+        let qualifier = if qualifier.contains('.') {
+            // Keep only the last segment as the effective qualifier.
+            qualifier.rsplit('.').next().unwrap_or("").to_string()
+        } else {
+            qualifier
+        };
+        Some(Identifier {
+            start,
+            qualifier: Some(qualifier),
+            prefix,
+        })
+    } else {
+        Some(Identifier {
+            start,
+            qualifier: None,
+            prefix: raw.to_string(),
+        })
+    }
+}
+
+/// Compute the ordered candidate list for the cursor position. The Tab
+/// handler should drop the cycle and call this fresh on every new Tab
+/// press that starts (rather than continues) a cycle.
+///
+/// Ordering rules (deterministic, so cycling is stable):
+/// 1. Exact prefix matches (case-insensitive) before fuzzy / contains.
+/// 2. Within a tier, sort lexicographically.
+/// 3. When unqualified and a `FROM` is in scope: columns of FROM tables
+///    first, then aliases, then FROM-table names, then anything else.
+pub fn candidates_for(
+    buf: &str,
+    cursor: usize,
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let Some(id) = extract_identifier(buf, cursor) else {
+        return Vec::new();
+    };
+    // FROM-clause scope = everything before the partial PLUS everything
+    // after the cursor. The text *inside* `[id.start, cursor)` is the
+    // partial itself; if we passed the full buffer to the FROM parser it
+    // would mis-classify the partial as a phantom table (so `FROM us|`
+    // would conjure a "us" table in scope and crowd out the real
+    // "users" hit). Splitting around the cursor keeps both the
+    // `SELECT u.| FROM users u` case (FROM is *after* the cursor) and
+    // the `SELECT u FROM users u WHERE u.|` case working.
+    let cursor = cursor.min(buf.len());
+    let before = parse_from_tables(&buf[..id.start]);
+    let after = if cursor < buf.len() {
+        parse_from_tables(&buf[cursor..])
+    } else {
+        Vec::new()
+    };
+    let mut in_scope = before;
+    in_scope.extend(after);
+
+    match id.qualifier.as_deref() {
+        Some(q) => candidates_for_qualified(q, &id.prefix, &in_scope, schema),
+        None => candidates_for_unqualified(&id.prefix, &in_scope, schema),
+    }
+}
+
+fn candidates_for_qualified(
+    qualifier: &str,
+    prefix: &str,
+    in_scope: &[TableRefInQuery],
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let q_lower = qualifier.to_ascii_lowercase();
+
+    // 1) Match against an alias / table in the FROM scope (pass-2 logic).
+    for table in in_scope {
+        if table.match_key() == q_lower {
+            // We know which table this is — list its columns.
+            let cols = schema
+                .columns_for(table.schema.as_deref(), &table.name)
+                .cloned()
+                .unwrap_or_default();
+            return matches_for(&cols, prefix, CandidateKind::Column);
+        }
+    }
+
+    // 2) qualifier might be a schema name → offer its tables.
+    if schema
+        .schemas
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(qualifier))
+    {
+        let names: Vec<String> = schema
+            .tables
+            .iter()
+            .filter(|t| t.schema.eq_ignore_ascii_case(qualifier))
+            .map(|t| t.name.clone())
+            .collect();
+        return matches_for(&names, prefix, CandidateKind::Table);
+    }
+
+    // 3) qualifier might be a table name with no FROM scope yet (e.g.
+    //    `SELECT users.|`). Offer its columns.
+    if let Some(cols) = schema.columns_for(None, qualifier) {
+        return matches_for(cols, prefix, CandidateKind::Column);
+    }
+
+    Vec::new()
+}
+
+fn candidates_for_unqualified(
+    prefix: &str,
+    in_scope: &[TableRefInQuery],
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen: std::collections::BTreeSet<(CandidateKind, String)> =
+        std::collections::BTreeSet::new();
+
+    // Tier 1: columns of in-scope tables.
+    for table in in_scope {
+        if let Some(cols) = schema.columns_for(table.schema.as_deref(), &table.name) {
+            for c in cols {
+                if starts_with_ci(c, prefix)
+                    && seen.insert((CandidateKind::Column, c.clone()))
+                {
+                    out.push(Candidate {
+                        display: c.clone(),
+                        insert: c.clone(),
+                        kind: CandidateKind::Column,
+                    });
+                }
+            }
+        }
+    }
+
+    // Tier 2: aliases in scope (helpful when typing the alias itself).
+    for table in in_scope {
+        if let Some(alias) = &table.alias {
+            if starts_with_ci(alias, prefix)
+                && seen.insert((CandidateKind::Alias, alias.clone()))
+            {
+                out.push(Candidate {
+                    display: alias.clone(),
+                    insert: alias.clone(),
+                    kind: CandidateKind::Alias,
+                });
+            }
+        }
+    }
+
+    // Tier 3: table names of in-scope tables.
+    for table in in_scope {
+        if starts_with_ci(&table.name, prefix)
+            && seen.insert((CandidateKind::Table, table.name.clone()))
+        {
+            out.push(Candidate {
+                display: table.name.clone(),
+                insert: table.name.clone(),
+                kind: CandidateKind::Table,
+            });
+        }
+    }
+
+    // Tier 4: every other table.
+    for table in &schema.tables {
+        if starts_with_ci(&table.name, prefix)
+            && seen.insert((CandidateKind::Table, table.name.clone()))
+        {
+            out.push(Candidate {
+                display: table.name.clone(),
+                insert: table.name.clone(),
+                kind: CandidateKind::Table,
+            });
+        }
+    }
+
+    // Tier 5: every other column.
+    for col in schema.all_column_names() {
+        if starts_with_ci(&col, prefix)
+            && seen.insert((CandidateKind::Column, col.clone()))
+        {
+            out.push(Candidate {
+                display: col.clone(),
+                insert: col.clone(),
+                kind: CandidateKind::Column,
+            });
+        }
+    }
+
+    // Tier 6: schema names.
+    for s in &schema.schemas {
+        if starts_with_ci(s, prefix)
+            && seen.insert((CandidateKind::Schema, s.clone()))
+        {
+            out.push(Candidate {
+                display: s.clone(),
+                insert: s.clone(),
+                kind: CandidateKind::Schema,
+            });
+        }
+    }
+
+    out
+}
+
+fn matches_for(names: &[String], prefix: &str, kind: CandidateKind) -> Vec<Candidate> {
+    let mut hits: Vec<&String> = names.iter().filter(|n| starts_with_ci(n, prefix)).collect();
+    hits.sort();
+    hits.dedup();
+    hits.into_iter()
+        .map(|n| Candidate {
+            display: n.clone(),
+            insert: n.clone(),
+            kind,
+        })
+        .collect()
+}
+
+fn starts_with_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    haystack.len() >= needle.len()
+        && haystack[..needle.len()].eq_ignore_ascii_case(needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::schema::{SchemaCache, TableMeta};
+
+    fn build_cache() -> SchemaCache {
+        let mut c = SchemaCache::default();
+        c.schemas = vec!["audit".into(), "public".into()];
+        c.tables = vec![
+            TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+            TableMeta {
+                schema: "public".into(),
+                name: "users".into(),
+            },
+            TableMeta {
+                schema: "audit".into(),
+                name: "events".into(),
+            },
+        ];
+        c.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into(), "name".into()],
+        );
+        c.columns_by_table.insert(
+            ("public".into(), "orders".into()),
+            vec!["id".into(), "user_id".into(), "total".into()],
+        );
+        c.columns_by_table.insert(
+            ("audit".into(), "events".into()),
+            vec!["id".into(), "actor".into(), "kind".into()],
+        );
+        c
+    }
+
+    // -- extract_identifier --
+
+    #[test]
+    fn extract_identifier_finds_unqualified_prefix() {
+        let id = extract_identifier("SELECT em", 9).unwrap();
+        assert_eq!(id.qualifier, None);
+        assert_eq!(id.prefix, "em");
+        assert_eq!(id.start, 7);
+    }
+
+    #[test]
+    fn extract_identifier_splits_on_last_dot() {
+        let id = extract_identifier("SELECT u.em", 11).unwrap();
+        assert_eq!(id.qualifier.as_deref(), Some("u"));
+        assert_eq!(id.prefix, "em");
+        // Replace position: just after the `u.`
+        assert_eq!(&"SELECT u.em"[id.start..11], "u.em");
+    }
+
+    #[test]
+    fn extract_identifier_handles_dot_with_empty_prefix() {
+        let id = extract_identifier("SELECT u.", 9).unwrap();
+        assert_eq!(id.qualifier.as_deref(), Some("u"));
+        assert_eq!(id.prefix, "");
+    }
+
+    #[test]
+    fn extract_identifier_at_start_of_buffer() {
+        let id = extract_identifier("us", 2).unwrap();
+        assert_eq!(id.qualifier, None);
+        assert_eq!(id.prefix, "us");
+        assert_eq!(id.start, 0);
+    }
+
+    #[test]
+    fn extract_identifier_after_whitespace_yields_empty_partial() {
+        // Cursor on fresh space — completion can still start (offers
+        // anything from the cache).
+        let id = extract_identifier("SELECT ", 7).unwrap();
+        assert_eq!(id.qualifier, None);
+        assert_eq!(id.prefix, "");
+    }
+
+    #[test]
+    fn extract_identifier_returns_none_after_random_punctuation() {
+        // Punctuation that isn't a dot or whitespace shouldn't trigger.
+        assert!(extract_identifier("SELECT *;", 9).is_none());
+    }
+
+    // -- candidates_for: unqualified --
+
+    #[test]
+    fn unqualified_with_no_from_lists_tables_matching_prefix() {
+        // Without a FROM clause yet, we can't tell whether the user is
+        // in SELECT or FROM scope, so we offer every match that starts
+        // with the prefix. The key invariant is that the real `users`
+        // table shows up as a Table candidate.
+        let cache = build_cache();
+        let buf = "SELECT * FROM us";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let users = cands
+            .iter()
+            .find(|c| c.display == "users")
+            .expect("users table should be a candidate");
+        assert_eq!(users.kind, CandidateKind::Table);
+    }
+
+    #[test]
+    fn unqualified_with_from_prefers_columns_of_in_scope_tables() {
+        let cache = build_cache();
+        let buf = "SELECT em FROM users";
+        // Cursor right after the `em`
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        // Column `email` of users is the only "em*" hit and should come first.
+        assert!(!cands.is_empty());
+        assert_eq!(cands[0].display, "email");
+        assert_eq!(cands[0].kind, CandidateKind::Column);
+    }
+
+    #[test]
+    fn unqualified_offers_aliases_in_scope() {
+        let cache = build_cache();
+        let buf = "SELECT u FROM users u";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // Both alias `u` (alias kind) and `users` (table kind) match.
+        // Alias should appear before the table per ordering rules — but
+        // only after any column hits (here there are none for "u").
+        assert!(labels.contains(&"u"));
+        assert!(labels.contains(&"users"));
+        let alias_pos = labels.iter().position(|l| *l == "u").unwrap();
+        let table_pos = labels.iter().position(|l| *l == "users").unwrap();
+        assert!(alias_pos < table_pos, "alias should sort before table: {labels:?}");
+    }
+
+    // -- candidates_for: qualified --
+
+    #[test]
+    fn alias_dot_offers_only_columns_of_aliased_table() {
+        let cache = build_cache();
+        let buf = "SELECT u. FROM users u";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["email", "id", "name"]);
+        for c in &cands {
+            assert_eq!(c.kind, CandidateKind::Column);
+        }
+    }
+
+    #[test]
+    fn table_dot_offers_columns_when_no_alias() {
+        let cache = build_cache();
+        let buf = "SELECT users.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["email", "id", "name"]);
+    }
+
+    #[test]
+    fn schema_dot_offers_tables_of_that_schema() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM audit.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["events"]);
+        assert_eq!(cands[0].kind, CandidateKind::Table);
+    }
+
+    #[test]
+    fn qualified_unknown_alias_yields_nothing() {
+        let cache = build_cache();
+        let buf = "SELECT x.foo FROM users u";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        assert!(cands.is_empty());
+    }
+
+    // -- mixed case --
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        let cache = build_cache();
+        let buf = "SELECT EM";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        assert!(cands.iter().any(|c| c.display == "email"));
+    }
+
+    #[test]
+    fn empty_cache_yields_empty_candidates() {
+        let cache = SchemaCache::default();
+        assert!(candidates_for("SELECT u", 8, &cache).is_empty());
+    }
+}

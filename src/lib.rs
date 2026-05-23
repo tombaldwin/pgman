@@ -10,6 +10,7 @@ pub mod creds;
 pub mod dbunit;
 pub mod font_probe;
 pub mod grid;
+pub mod project;
 pub mod query;
 pub mod safety;
 pub mod splash;

@@ -5,6 +5,8 @@ pub mod msg;
 use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
 use crate::grid::Grid;
+use crate::query::complete::{self as complete_q, Candidate};
+use crate::query::schema::SchemaCache;
 use crate::query::{self, reconstruct::ReconstructedQuery};
 use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
@@ -14,7 +16,7 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyM
 use futures::StreamExt;
 use ratatui::widgets::TableState;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 /// The query M0 runs on connect — a read-only database overview. Every column
@@ -38,6 +40,20 @@ pub enum Mode {
     TxDecision,
     /// Picking a reconstructed query from a parsed log.
     LogPick,
+    /// Picking a connection to open from a list of detected data sources
+    /// (e.g. multiple IntelliJ `.idea/dataSources.xml` entries) at startup.
+    ConnPick,
+    /// Expanded view of the currently-selected grid row — one line per
+    /// column, long values wrapped. Read-only modal.
+    RowDetail,
+    /// "About pgman" overlay — version + tagline + credits. Same info as
+    /// the splash, but accessible at any time.
+    About,
+    /// Focused single-cell view, opened from `RowDetail` with Enter on a
+    /// field. Shows just that one (column, value) pair with the value
+    /// wrapped to popup width and scrollable — useful for JSON / large
+    /// text fields that overflow the row-detail card.
+    CellDetail,
 }
 
 /// Connection lifecycle state.
@@ -67,6 +83,43 @@ impl RunKind {
     }
 }
 
+/// Active editor Tab-completion cycle. Built fresh when the user starts
+/// cycling; cleared by any non-Tab editor key so a typo-and-retry reverts
+/// the editor to a clean draft state.
+#[derive(Debug, Clone)]
+pub struct CompletionCycle {
+    /// Byte offset where the partial identifier started — the renderer
+    /// replaces `[start, end)` each step with the active candidate.
+    pub start: usize,
+    /// Byte offset of the end of the current insertion. Equals
+    /// `start + candidates[index].insert.len()` after each step;
+    /// before the first step equals the cursor at cycle-start.
+    pub end: usize,
+    /// The prefix the user had typed when the cycle began. Kept so a
+    /// future "Esc to abandon" can restore it cleanly (and so the
+    /// footer can show what we matched against).
+    pub origin: String,
+    /// Candidates in display order.
+    pub candidates: Vec<Candidate>,
+    /// Which candidate is currently inserted. `0` for the first step.
+    pub index: usize,
+}
+
+/// A data source the user can pick at startup. Built from external sources
+/// (IntelliJ `.idea/dataSources.xml` today; Spring `application*.yml` later)
+/// before the TUI starts; surfaced via `Mode::ConnPick` when there's more
+/// than one candidate.
+#[derive(Debug, Clone)]
+pub struct DataSourcePick {
+    /// Human label shown in the picker (e.g. the `<data-source name="…">`).
+    pub name: String,
+    /// Where this pick came from, for the operator's benefit
+    /// (e.g. "IntelliJ" / "Spring").
+    pub origin: &'static str,
+    /// Resolved DSN, ready to hand to `connect_and_bootstrap`.
+    pub dsn: Dsn,
+}
+
 /// A run waiting on user confirmation (the safety guard returned `Confirm`).
 #[derive(Debug, Clone)]
 pub struct PendingRun {
@@ -86,9 +139,19 @@ pub struct App {
     pub mode: Mode,
     pub conn_state: ConnState,
     pub dsn: Option<Dsn>,
+    /// Where the current DSN came from — surfaced in the failure view to
+    /// help the operator answer "wait, which connection did pgman just try?"
+    /// Examples: "--dsn flag", "auto-picked IntelliJ data source 'prod'".
+    /// Set wherever `dsn` is set; `None` when the operator hasn't picked yet.
+    pub dsn_origin: Option<String>,
     pub grid: Grid,
     pub grid_state: TableState,
     pub splash_visible: bool,
+    /// Earliest moment at which the splash may auto-dismiss. The splash
+    /// always shows for at least this long at startup, regardless of how
+    /// quickly the connection completes — so the elephant gets its moment
+    /// even on a fast local DB. A keypress still dismisses immediately.
+    pub splash_until: Option<Instant>,
     pub anim_tick: usize,
     pub generation: u64,
     pub should_quit: bool,
@@ -121,6 +184,45 @@ pub struct App {
     pub last_error: Option<String>,
     /// True while a query is in flight (drives the spinner).
     pub query_running: bool,
+    /// Candidate data sources surfaced at startup. Populated when the operator
+    /// didn't pass `--dsn` and we found multiple sources via discovery (e.g.
+    /// IntelliJ). Drives `Mode::ConnPick`.
+    pub data_source_picks: Vec<DataSourcePick>,
+    /// Selected entry in `data_source_picks`.
+    pub data_source_pick_index: usize,
+
+    /// Vertical scroll offset for the help overlay (number of leading lines
+    /// hidden above the viewport).
+    pub help_scroll: u16,
+    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
+    /// each frame and read by the j/k handler so an incremental scroll past
+    /// the bottom doesn't accumulate phantom offsets.
+    pub help_max_scroll: u16,
+    /// Scroll / clamp state for the row-detail modal — same shape as
+    /// `help_scroll` / `help_max_scroll`. `row_detail_scroll` is normally
+    /// driven by the renderer's auto-scroll (so the focused field stays in
+    /// view); the key handler only nudges it as a side-effect of moving
+    /// `row_detail_field`.
+    pub row_detail_scroll: u16,
+    pub row_detail_max_scroll: u16,
+    /// Scroll / clamp state for the per-cell zoom view (`Mode::CellDetail`).
+    pub cell_detail_scroll: u16,
+    pub cell_detail_max_scroll: u16,
+    /// Currently-focused field (column index) inside the row-detail modal.
+    /// Bounded by `row_detail_field_count` which the renderer writes each
+    /// frame (it's just `grid.columns.len()` today, but kept as a separate
+    /// field so the clamp matches what's actually rendered).
+    pub row_detail_field: usize,
+    pub row_detail_field_count: usize,
+
+    /// Snapshot of the database catalog used by Tab-completion in the
+    /// editor. Refilled on every successful `Booted`. Empty before
+    /// connect (or after a failed catalog fetch).
+    pub schema_cache: SchemaCache,
+    /// Active completion cycle, when the user has pressed Tab one or
+    /// more times in a row. Reset on any non-Tab editor keypress so a
+    /// subsequent Tab starts a fresh cycle from the current cursor.
+    pub completion: Option<CompletionCycle>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -134,7 +236,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(theme: Theme, dsn: Option<Dsn>, safety_config: SafetyConfig) -> Self {
+    pub fn new(
+        theme: Theme,
+        dsn: Option<Dsn>,
+        data_source_picks: Vec<DataSourcePick>,
+        safety_config: SafetyConfig,
+    ) -> Self {
         let db = dsn
             .as_ref()
             .map(|d| d.dbname.as_str())
@@ -143,14 +250,23 @@ impl App {
         let read_only = profile.read_only;
         let statement_timeout_ms = profile.statement_timeout_ms;
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+        // When the operator hasn't pre-selected a DSN and we discovered
+        // multiple candidates, the post-splash mode is the picker — that's
+        // the "lovely discovery" surface. Splash always shows first
+        // (`splash_until` keeps it visible for ~3s minimum); when it
+        // dismisses the user lands on either the picker or Normal mode.
+        let show_picker = dsn.is_none() && data_source_picks.len() >= 2;
+        let mode = if show_picker { Mode::ConnPick } else { Mode::Normal };
         Self {
             theme,
-            mode: Mode::Normal,
+            mode,
             conn_state: ConnState::Disconnected,
             dsn,
+            dsn_origin: None,
             grid: Grid::default(),
             grid_state: TableState::default(),
             splash_visible: true,
+            splash_until: Some(Instant::now() + Duration::from_secs(3)),
             anim_tick: 0,
             generation: 0,
             should_quit: false,
@@ -167,6 +283,18 @@ impl App {
             last_status: None,
             last_error: None,
             query_running: false,
+            help_scroll: 0,
+            help_max_scroll: 0,
+            row_detail_scroll: 0,
+            row_detail_max_scroll: 0,
+            row_detail_field: 0,
+            row_detail_field_count: 0,
+            cell_detail_scroll: 0,
+            cell_detail_max_scroll: 0,
+            schema_cache: SchemaCache::default(),
+            completion: None,
+            data_source_picks,
+            data_source_pick_index: 0,
             client: None,
             safety_config,
             read_only,
@@ -194,6 +322,7 @@ impl App {
         frame.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         while !self.should_quit {
+            self.tick_splash();
             tui.draw(self)?;
             let animate = self.wants_animation();
             tokio::select! {
@@ -213,12 +342,27 @@ impl App {
         Ok(())
     }
 
+    /// Auto-dismiss the splash once its minimum-display deadline has passed.
+    /// Cheap to call every loop iteration — it's a single `Instant::now`.
+    fn tick_splash(&mut self) {
+        if !self.splash_visible {
+            return;
+        }
+        if let Some(until) = self.splash_until {
+            if Instant::now() >= until {
+                self.splash_visible = false;
+                self.splash_until = None;
+            }
+        }
+    }
+
     /// Whether the frame clock should keep ticking — for the splash trunk /
     /// blink animation, the connecting spinner, and the in-flight-query
     /// spinner.
     fn wants_animation(&self) -> bool {
         self.splash_visible
             || self.query_running
+            || matches!(self.mode, Mode::About)
             || matches!(self.conn_state, ConnState::Connecting)
     }
 
@@ -247,6 +391,7 @@ impl App {
                     server_version: b.server_version,
                     grid: b.grid,
                     client: b.client,
+                    schema_cache: b.schema_cache,
                 },
                 Err(error) => AppMsg::BootFailed { generation, error },
             };
@@ -265,6 +410,7 @@ impl App {
                 server_version,
                 grid,
                 client,
+                schema_cache,
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
@@ -272,11 +418,11 @@ impl App {
                 self.grid = grid;
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
-                self.splash_visible = false; // connection-ready dismisses splash
+                self.schema_cache = schema_cache;
+                // Splash stays up — `tick_splash` honours the 3s minimum.
             }
             AppMsg::BootFailed { error, .. } => {
                 self.conn_state = ConnState::Failed(error);
-                self.splash_visible = false;
             }
             AppMsg::QueryOk {
                 grid,
@@ -340,27 +486,251 @@ impl App {
             self.should_quit = true;
             return;
         }
-        // Any key dismisses the splash and is otherwise consumed.
+        // Any key dismisses the splash and is otherwise consumed — gives
+        // snappy users an instant skip past the 3s minimum.
         if self.splash_visible {
             self.splash_visible = false;
+            self.splash_until = None;
             return;
         }
 
         match self.mode {
-            Mode::Help => {
-                if matches!(key.code, KeyCode::Char('q' | '?') | KeyCode::Esc) {
-                    self.mode = Mode::Normal;
-                }
-            }
+            Mode::Help => self.on_help_key(key),
             Mode::Confirm => self.on_confirm_key(key),
             Mode::TxDecision => self.on_tx_decision_key(key),
             Mode::LogPick => self.on_log_pick_key(key),
+            Mode::ConnPick => self.on_conn_pick_key(key),
+            Mode::RowDetail => self.on_row_detail_key(key),
+            Mode::CellDetail => self.on_cell_detail_key(key),
+            Mode::About => self.on_about_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
     }
 
+    fn on_about_key(&mut self, key: KeyEvent) {
+        if matches!(
+            key.code,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q' | 'A')
+        ) {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// Open the expanded view of the currently-selected grid row. No-op
+    /// when the grid is empty or nothing is selected.
+    fn open_row_detail(&mut self) {
+        let Some(idx) = self.grid_state.selected() else {
+            return;
+        };
+        if self.grid.rows.get(idx).is_none() {
+            return;
+        }
+        self.row_detail_scroll = 0;
+        self.row_detail_field = 0;
+        self.mode = Mode::RowDetail;
+    }
+
+    /// Row-detail modal: j/k navigate fields (renderer auto-scrolls so the
+    /// focused field stays visible); g/G first/last field; PageUp/Down
+    /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
+    /// the focused field (`Mode::CellDetail`); Esc/q close.
+    fn on_row_detail_key(&mut self, key: KeyEvent) {
+        let last = self.row_detail_field_count.saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.row_detail_scroll = 0;
+            }
+            KeyCode::Enter => self.open_cell_detail(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.row_detail_field = (self.row_detail_field + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.row_detail_field = self.row_detail_field.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.row_detail_field = 0,
+            KeyCode::Char('G') | KeyCode::End => self.row_detail_field = last,
+            KeyCode::PageDown => {
+                self.row_detail_field = (self.row_detail_field + 10).min(last);
+            }
+            KeyCode::PageUp => {
+                self.row_detail_field = self.row_detail_field.saturating_sub(10);
+            }
+            KeyCode::Char('y') => self.yank_focused_field(),
+            _ => {}
+        }
+    }
+
+    /// Zoom into the currently-focused field. No-op when the row or
+    /// field cursor is out of bounds.
+    fn open_cell_detail(&mut self) {
+        let Some(idx) = self.grid_state.selected() else {
+            return;
+        };
+        let Some(row) = self.grid.rows.get(idx) else {
+            return;
+        };
+        if row.get(self.row_detail_field).is_none() {
+            return;
+        }
+        self.cell_detail_scroll = 0;
+        self.mode = Mode::CellDetail;
+    }
+
+    /// Cell-detail modal: scroll the value, `y` yanks it (same shortcut
+    /// as in RowDetail for muscle-memory), Esc/q/Enter pop back to the
+    /// row view.
+    fn on_cell_detail_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                self.mode = Mode::RowDetail;
+                self.cell_detail_scroll = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.cell_detail_scroll = self
+                    .cell_detail_scroll
+                    .saturating_add(1)
+                    .min(self.cell_detail_max_scroll);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.cell_detail_scroll = self.cell_detail_scroll.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.cell_detail_scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => {
+                self.cell_detail_scroll = self.cell_detail_max_scroll;
+            }
+            KeyCode::PageDown => {
+                self.cell_detail_scroll = self
+                    .cell_detail_scroll
+                    .saturating_add(10)
+                    .min(self.cell_detail_max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.cell_detail_scroll = self.cell_detail_scroll.saturating_sub(10);
+            }
+            KeyCode::Char('y') => self.yank_focused_field(),
+            _ => {}
+        }
+    }
+
+    /// Copy the currently-focused field's value to the system clipboard.
+    /// Surfaces success / failure via `last_status` / `last_error`.
+    fn yank_focused_field(&mut self) {
+        let Some(idx) = self.grid_state.selected() else {
+            return;
+        };
+        let Some(row) = self.grid.rows.get(idx) else {
+            return;
+        };
+        let Some(value) = row.get(self.row_detail_field) else {
+            return;
+        };
+        let column = self
+            .grid
+            .columns
+            .get(self.row_detail_field)
+            .cloned()
+            .unwrap_or_default();
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
+            Ok(()) => {
+                let chars = value.chars().count();
+                self.last_status = Some(format!("yanked '{column}' · {chars} char(s)"));
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.last_error = Some(format!("yank failed: {e}"));
+            }
+        }
+    }
+
+    /// Connection picker (startup): j/k navigate, Enter selects + connects,
+    /// Esc/q quits since there's nothing else to do without a connection.
+    fn on_conn_pick_key(&mut self, key: KeyEvent) {
+        let last = self.data_source_picks.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.data_source_pick_index = (self.data_source_pick_index + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.data_source_pick_index = self.data_source_pick_index.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.data_source_pick_index = 0,
+            KeyCode::Char('G') | KeyCode::End => self.data_source_pick_index = last,
+            KeyCode::Enter => {
+                if let Some(pick) = self.data_source_picks.get(self.data_source_pick_index) {
+                    let dsn = pick.dsn.clone();
+                    // Re-resolve safety profile against the *picked* db name
+                    // — the placeholder in App::new used the empty default.
+                    let profile = self.safety_config.profile_for(&dsn.dbname);
+                    self.read_only = profile.read_only;
+                    self.statement_timeout_ms = profile.statement_timeout_ms;
+                    self.dsn = Some(dsn);
+                    self.dsn_origin =
+                        Some(format!("picked {} data source '{}'", pick.origin, pick.name));
+                    self.mode = Mode::Normal;
+                    self.start_connect();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_help_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('q' | '?') | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.help_scroll = 0;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.help_scroll = self
+                    .help_scroll
+                    .saturating_add(1)
+                    .min(self.help_max_scroll);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.help_scroll = self.help_scroll.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => {
+                self.help_scroll = 0;
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                self.help_scroll = self.help_max_scroll;
+            }
+            KeyCode::PageDown => {
+                self.help_scroll = self
+                    .help_scroll
+                    .saturating_add(10)
+                    .min(self.help_max_scroll);
+            }
+            KeyCode::PageUp => {
+                self.help_scroll = self.help_scroll.saturating_sub(10);
+            }
+            _ => {}
+        }
+    }
+
     fn on_normal_key(&mut self, key: KeyEvent) {
+        // Failure-screen shortcuts — only active while we're showing the
+        // "connection failed" body. `r` retries the same DSN; `p` re-opens
+        // the picker when we have data sources to choose from.
+        if matches!(self.conn_state, ConnState::Failed(_)) {
+            match key.code {
+                KeyCode::Char('r') => {
+                    if self.dsn.is_some() {
+                        self.start_connect();
+                    }
+                    return;
+                }
+                KeyCode::Char('p') if !self.data_source_picks.is_empty() => {
+                    self.mode = Mode::ConnPick;
+                    self.data_source_pick_index = 0;
+                    return;
+                }
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('?') => self.mode = Mode::Help,
@@ -373,11 +743,36 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => {
                 self.select_row(self.grid.row_count().saturating_sub(1));
             }
+            KeyCode::Enter => self.open_row_detail(),
+            KeyCode::Char('A') => self.mode = Mode::About,
             _ => {}
         }
     }
 
     fn on_editor_key(&mut self, key: KeyEvent) {
+        // Tab drives identifier completion — it's the only key that
+        // reads the active cycle, so handle it before the universal
+        // "non-Tab key cancels the cycle" reset below.
+        if matches!(key.code, KeyCode::Tab)
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        {
+            self.editor_complete();
+            return;
+        }
+        // Esc with an active cycle abandons completion *without* leaving
+        // editor mode — restores the originally-typed prefix so the user
+        // can keep typing. Without an active cycle, Esc still exits to
+        // Normal (the existing behaviour) via the match below.
+        if matches!(key.code, KeyCode::Esc) && self.completion.is_some() {
+            self.editor_abandon_completion();
+            return;
+        }
+        // Any other editor key abandons an in-progress completion cycle
+        // so a typo-then-keep-typing reverts the editor to a clean
+        // draft state (next Tab starts fresh from the new cursor).
+        self.completion = None;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
@@ -463,6 +858,99 @@ impl App {
     fn editor_dirty(&mut self) {
         self.history_pos = None;
         self.editor_preferred_col = None;
+    }
+
+    /// Abandon an active completion cycle: replace the inserted candidate
+    /// with the prefix the user had typed when the cycle began, and put
+    /// the cursor at the end of that prefix. No-op when no cycle is active.
+    fn editor_abandon_completion(&mut self) {
+        let Some(cycle) = self.completion.take() else {
+            return;
+        };
+        self.editor_buffer
+            .replace_range(cycle.start..cycle.end, &cycle.origin);
+        self.editor_cursor = cycle.start + cycle.origin.len();
+        self.last_status = Some("completion cancelled".to_string());
+    }
+
+    /// Tab-completion in the editor. First press starts a cycle from the
+    /// partial identifier under the cursor; subsequent presses cycle
+    /// through matches. Any non-Tab key drops the cycle (so a typo-then-
+    /// keep-typing reverts cleanly).
+    fn editor_complete(&mut self) {
+        // Editor housekeeping (mirrors editor_dirty) — without clearing
+        // the cycle, which we own here.
+        self.history_pos = None;
+        self.editor_preferred_col = None;
+
+        if let Some(cycle) = self.completion.clone() {
+            // -- advance an active cycle --
+            if cycle.candidates.is_empty() {
+                return;
+            }
+            let next = (cycle.index + 1) % cycle.candidates.len();
+            let cand = cycle.candidates[next].clone();
+            self.editor_buffer
+                .replace_range(cycle.start..cycle.end, &cand.insert);
+            let new_end = cycle.start + cand.insert.len();
+            self.editor_cursor = new_end;
+            self.last_status = Some(format!(
+                "completion {}/{} · {}",
+                next + 1,
+                cycle.candidates.len(),
+                cand.kind.label()
+            ));
+            self.completion = Some(CompletionCycle {
+                start: cycle.start,
+                end: new_end,
+                origin: cycle.origin,
+                candidates: cycle.candidates,
+                index: next,
+            });
+            return;
+        }
+
+        // -- start a fresh cycle --
+        if self.schema_cache.is_empty() {
+            self.last_status = Some("completion: no schema cache yet".to_string());
+            return;
+        }
+        let Some(id) = complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
+        else {
+            return;
+        };
+        let cands = complete_q::candidates_for(
+            &self.editor_buffer,
+            self.editor_cursor,
+            &self.schema_cache,
+        );
+        if cands.is_empty() {
+            self.last_status = Some(format!(
+                "completion: no matches for {:?}",
+                id.prefix
+            ));
+            return;
+        }
+        // Replace [prefix_start, cursor) — the qualifier and dot stay put.
+        // `prefix.len()` is byte length (prefix was sliced from the buffer).
+        let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let cand = cands[0].clone();
+        self.editor_buffer
+            .replace_range(prefix_start..self.editor_cursor, &cand.insert);
+        let new_end = prefix_start + cand.insert.len();
+        self.editor_cursor = new_end;
+        self.last_status = Some(format!(
+            "completion 1/{} · {}",
+            cands.len(),
+            cand.kind.label()
+        ));
+        self.completion = Some(CompletionCycle {
+            start: prefix_start,
+            end: new_end,
+            origin: id.prefix,
+            candidates: cands,
+            index: 0,
+        });
     }
 
     /// Step back into older history (Ctrl-P). The first step saves the live
