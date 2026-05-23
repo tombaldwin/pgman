@@ -95,7 +95,11 @@ safely." Nothing else.
   + scrollable so long JSON / text fits. `y` still yanks. `Esc`/
   `Enter` pops back to the row view; `Esc` in RowDetail now closes
   to Normal (Enter rebinds to zoom) — DONE.
-- Follow-ups: TLS (`tokio-postgres-rustls`) — RDS needs it; `deadpool`
+- TLS via `tokio-postgres-rustls` — connector tries native trust roots
+  (`rustls-native-certs`) then falls back to Mozilla's `webpki-roots` so
+  RDS / managed Postgres "just works". `sslmode=` URL param honoured
+  (`disable` / `prefer` (default) / `require` / `verify-*`) — DONE.
+- Follow-ups: `deadpool`
   pooling once interactive queries land (M2); panic hook to restore the
   terminal; `NUMERIC` / unknown-type cell rendering in `conn::cell_to_string`;
   IntelliJ `dataSources.local.xml` password parsing (the
