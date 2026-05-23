@@ -2,6 +2,7 @@
 
 use crate::app::{App, ConnState, Mode};
 use crate::grid::{self, Grid};
+use crate::query::complete::Candidate;
 use crate::splash;
 use crate::theme::Theme;
 
@@ -487,6 +488,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         } else {
             match app.mode {
                 Mode::Help => "esc / ?  close help",
+                Mode::Editor if app.completion.is_some() => {
+                    // Popup is up — surface the keys that act on it.
+                    // Typing narrows live; Tab cycles; Esc restores the
+                    // pre-Tab text. Any other key implicitly commits.
+                    "type to narrow · tab cycle · esc undo"
+                }
                 Mode::Editor => {
                     "tab complete · ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
                 }
@@ -664,11 +671,19 @@ fn draw_completion_popup(
         return;
     }
     let theme = &app.theme;
-    // Width = widest "display (kind)" plus padding, clamped to body area.
-    let kind_width = cycle
+    // Width = widest "display  (kind · context)" plus padding, clamped
+    // to body area. Compute the tail (`(kind · ctx)`) per candidate so
+    // we measure and render the same string.
+    let tail_of = |c: &Candidate| -> String {
+        match &c.context {
+            Some(ctx) => format!(" ({} · {})", c.kind.label(), ctx),
+            None => format!(" ({})", c.kind.label()),
+        }
+    };
+    let tail_width = cycle
         .candidates
         .iter()
-        .map(|c| c.kind.label().len())
+        .map(|c| tail_of(c).chars().count())
         .max()
         .unwrap_or(0);
     let label_width = cycle
@@ -677,7 +692,7 @@ fn draw_completion_popup(
         .map(|c| c.display.chars().count())
         .max()
         .unwrap_or(0);
-    let inner_width = (label_width + 1 + kind_width + 2 + 4) as u16;
+    let inner_width = (label_width + tail_width + 4) as u16;
     let width = inner_width.min(body_area.width).max(20);
 
     // Show at most VISIBLE rows; auto-scroll keeps the active row in view.
@@ -730,17 +745,15 @@ fn draw_completion_popup(
         // one (after the second Tab). Before that, render all rows
         // neutrally — the popup is informational.
         let is_focus = cycle.selected == Some(i);
-        let kind = cand.kind.label();
         let prefix = if is_focus { "▶ " } else { "  " };
         let display = &cand.display;
         // Pad so the row's bg-highlight spans the full popup width.
         let body = format!("{prefix}{display}");
         let body_w = body.chars().count();
-        let pad_after = inner_w
-            .saturating_sub(body_w)
-            .saturating_sub(kind.len() + 2); // kind + " (" + ")"
+        let kind_text = tail_of(cand);
+        let kind_w = kind_text.chars().count();
+        let pad_after = inner_w.saturating_sub(body_w).saturating_sub(kind_w);
         let pad = " ".repeat(pad_after);
-        let kind_text = format!(" ({kind})");
         let (l_style, k_style) = if is_focus {
             (focus_style, focus_style)
         } else {
