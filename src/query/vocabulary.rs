@@ -111,6 +111,40 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
     "SIMILAR TO",
 ];
 
+/// Common Postgres GUC (Grand Unified Configuration) parameter names.
+/// Surfaced in `SHOW |` and `SET |` completion. Not exhaustive —
+/// Postgres has hundreds of GUCs — but covers the ones a daily
+/// operator routinely inspects / tweaks. Add a one-liner here when
+/// you find yourself reaching for a missing one.
+pub const GUC_PARAMETERS: &[&str] = &[
+    // Session basics
+    "search_path", "timezone", "client_encoding", "client_min_messages",
+    "datestyle", "intervalstyle", "application_name", "role", "session_user",
+    // Transactions / isolation
+    "default_transaction_isolation", "default_transaction_read_only",
+    "default_transaction_deferrable", "transaction_isolation",
+    "transaction_read_only", "transaction_deferrable", "idle_in_transaction_session_timeout",
+    // Limits / safety
+    "statement_timeout", "lock_timeout", "deadlock_timeout",
+    "work_mem", "maintenance_work_mem", "temp_buffers",
+    "max_connections", "max_parallel_workers", "max_parallel_workers_per_gather",
+    "max_wal_size", "min_wal_size",
+    // Planner
+    "enable_seqscan", "enable_indexscan", "enable_bitmapscan",
+    "enable_hashjoin", "enable_mergejoin", "enable_nestloop",
+    "random_page_cost", "seq_page_cost", "cpu_tuple_cost",
+    "effective_cache_size", "default_statistics_target",
+    "join_collapse_limit", "from_collapse_limit",
+    // Logging / observability
+    "log_statement", "log_duration", "log_min_duration_statement",
+    "log_lock_waits", "log_temp_files",
+    // Server info (read-mostly, common in SHOW)
+    "server_version", "server_version_num", "server_encoding",
+    "data_directory", "config_file", "hba_file", "ident_file",
+    "shared_buffers", "wal_level", "max_wal_senders",
+    "synchronous_commit", "wal_compression",
+];
+
 /// Postgres `EXPLAIN (option, option, ...)` flags. Surfaced inside
 /// the `EXPLAIN (...)` paren group via `ClauseContext::ExplainOptions`.
 /// Each appears as a bare word; the operator follows with the value
@@ -188,7 +222,11 @@ mod tests {
     /// (popup shows "select" not "SELECT").
     #[test]
     fn all_entries_are_uppercase() {
-        let all_tables: &[&[&str]] = &[
+        // Keyword / function / operator tables are uppercase by
+        // convention. GUC_PARAMETERS is intentionally lowercase (it
+        // mirrors Postgres' own naming — `search_path`, not
+        // `SEARCH_PATH`) so it gets its own no-uppercase test below.
+        let uppercase_tables: &[&[&str]] = &[
             STATEMENT_KEYWORDS,
             AGGREGATE_FUNCTIONS,
             SCALAR_FUNCTIONS,
@@ -203,7 +241,7 @@ mod tests {
             continuations::AFTER_UPDATE_ASSIGN,
             continuations::AFTER_VALUES,
         ];
-        for table in all_tables {
+        for table in uppercase_tables {
             for word in *table {
                 assert_eq!(
                     *word,
@@ -212,6 +250,15 @@ mod tests {
                 );
                 assert!(!word.is_empty(), "vocabulary entry is empty string");
             }
+        }
+        // GUCs are lowercase by Postgres convention.
+        for word in GUC_PARAMETERS {
+            assert_eq!(
+                *word,
+                word.to_ascii_lowercase(),
+                "GUC entry {word:?} should be lowercase"
+            );
+            assert!(!word.is_empty());
         }
     }
 
@@ -227,6 +274,7 @@ mod tests {
             ("PREDICATE_OPERATORS", PREDICATE_OPERATORS),
             ("JOIN_VARIANTS", JOIN_VARIANTS),
             ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
+            ("GUC_PARAMETERS", GUC_PARAMETERS),
             ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
             ("AFTER_TABLE_REF", continuations::AFTER_TABLE_REF),
             ("AFTER_PREDICATE", continuations::AFTER_PREDICATE),
