@@ -368,7 +368,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
 
     lines.push(Line::from(""));
     let mut actions = String::from("  r retry");
-    if !app.data_source_picks.is_empty() {
+    if app.data_source_picks.len() >= 2 {
         actions.push_str(" · p change connection");
     }
     actions.push_str(" · q quit · logs in ~/.cache/pgman/pgman.log");
