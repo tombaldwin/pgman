@@ -170,12 +170,18 @@ fn tokenize(sql: &str) -> Vec<Tok<'_>> {
             });
             continue;
         }
-        // Punctuation — emit as a single-char token so the caller can
-        // recognise `,` `.` `;` `(` `)` etc.
+        // Punctuation / unknown — emit one char as a token. Step to the
+        // next UTF-8 char boundary rather than blindly `+1`, otherwise a
+        // non-ASCII byte (e.g. user paste of `é` / `λ` / a non-breaking
+        // space) would slice mid-codepoint and panic.
+        let mut end = i + 1;
+        while end < bytes.len() && !sql.is_char_boundary(end) {
+            end += 1;
+        }
         out.push(Tok {
-            text: &sql[i..i + 1],
+            text: &sql[i..end],
         });
-        i += 1;
+        i = end;
     }
     out
 }
@@ -345,6 +351,28 @@ mod tests {
     #[test]
     fn empty_input_yields_empty_vec() {
         assert!(refs("").is_empty());
+    }
+
+    #[test]
+    fn tokenizer_does_not_panic_on_non_ascii_punctuation() {
+        // Used to panic at `&sql[i..i+1]` when `i` landed on a multi-byte
+        // codepoint outside strings/comments. Now char-boundary safe.
+        // (Two FROM clauses parse since the em-dash isn't a clause break;
+        // that's fine — we only care the call returned without crashing.)
+        let got = parse_from_tables("SELECT * FROM users — note FROM email");
+        assert!(
+            got.iter().any(|t| t.name == "users"),
+            "first FROM should still appear: {got:?}"
+        );
+    }
+
+    #[test]
+    fn tokenizer_handles_emoji_and_accents() {
+        // Smoke: just don't crash. The em-dash, accented letter, and
+        // emoji are all non-ASCII bytes that previously hit the
+        // unguarded slice.
+        let _ = parse_from_tables("SELECT 'café 🐘' FROM users");
+        let _ = parse_from_tables("λ FROM x");
     }
 
     #[test]
