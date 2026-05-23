@@ -150,6 +150,10 @@ pub struct Booted {
     /// The live client — handed to `App` so subsequent queries run on the
     /// same session (and the read-only / statement-timeout settings stick).
     pub client: Arc<tokio_postgres::Client>,
+    /// Snapshot of the database catalog used by Tab-completion. Empty
+    /// when the catalog query failed (e.g. permissions) — that just
+    /// disables completion, the connection itself is still usable.
+    pub schema_cache: crate::query::schema::SchemaCache,
 }
 
 /// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
@@ -174,7 +178,7 @@ pub async fn connect_and_bootstrap(
     let (client, connection) = cfg
         .connect(tokio_postgres::NoTls)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| chain_message(&e))?;
     // Drive the connection in the background; it ends when the last `Arc<Client>`
     // drops (which is when App finishes).
     tokio::spawn(async move {
@@ -188,13 +192,13 @@ pub async fn connect_and_bootstrap(
         client
             .batch_execute("SET default_transaction_read_only = on")
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| chain_message(&e))?;
     }
     if statement_timeout_ms > 0 {
         client
             .batch_execute(&format!("SET statement_timeout = {statement_timeout_ms}"))
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| chain_message(&e))?;
     }
 
     let server_version = client
@@ -206,10 +210,16 @@ pub async fn connect_and_bootstrap(
 
     let client = Arc::new(client);
     let grid = run_query(&client, &bootstrap_sql).await?;
+    // Schema cache for Tab-completion. Best-effort — its own helper
+    // swallows query errors and returns an empty cache, so a session
+    // without `pg_catalog` SELECT (rare but possible on locked-down
+    // managed instances) just disables completion.
+    let schema_cache = crate::query::schema::fetch(&client).await;
     Ok(Booted {
         server_version,
         grid,
         client,
+        schema_cache,
     })
 }
 
@@ -389,6 +399,87 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
     rendered.unwrap_or_else(|| "?".to_string())
 }
 
+/// Flatten an error and its `source()` chain into a single string —
+/// `"top: cause1: cause2"`. tokio-postgres' Display only emits the top
+/// level ("error connecting to server"); the actually-useful cause
+/// ("Connection refused", "no such host", "password authentication failed")
+/// is on the source chain.
+pub fn chain_message(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = err.to_string();
+    let mut src = err.source();
+    while let Some(e) = src {
+        let next = e.to_string();
+        // Some libraries already include the cause in their own Display.
+        // Avoid the visual stutter ("X: X: …") by skipping a duplicate tail.
+        if !out.ends_with(&next) {
+            out.push_str(": ");
+            out.push_str(&next);
+        }
+        src = e.source();
+    }
+    out
+}
+
+/// Best-effort actionable hint for a connection-error string. Returns a
+/// short imperative sentence the operator can read and act on, or `None`
+/// when nothing in the message looks familiar. Pure — pattern-match only.
+pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("connection refused") {
+        return Some(format!(
+            "nothing is listening at {}:{}. is the server running, and is the port right?",
+            dsn.host, dsn.port
+        ));
+    }
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return Some(format!(
+            "{}:{} didn't answer in time. VPN / firewall / security group blocking?",
+            dsn.host, dsn.port
+        ));
+    }
+    if lower.contains("no such host")
+        || lower.contains("failed to lookup")
+        || lower.contains("name or service not known")
+        || lower.contains("nodename nor servname")
+    {
+        return Some(format!(
+            "host {:?} doesn't resolve. typo, or missing /etc/hosts / DNS entry?",
+            dsn.host
+        ));
+    }
+    if lower.contains("password authentication failed") {
+        return Some(
+            "wrong password. set PGPASSWORD before launching pgman, or pass user:pass in --dsn"
+                .to_string(),
+        );
+    }
+    if lower.contains("no password was provided") || lower.contains("requires password") {
+        return Some(
+            "server demands a password. set PGPASSWORD before launching pgman, or pass it in --dsn"
+                .to_string(),
+        );
+    }
+    if lower.contains("role") && lower.contains("does not exist") {
+        return Some(format!(
+            "user {:?} doesn't exist on the server. check spelling / `\\du`",
+            dsn.user.as_deref().unwrap_or("")
+        ));
+    }
+    if lower.contains("database") && lower.contains("does not exist") {
+        return Some(format!(
+            "database {:?} doesn't exist on the server. check spelling / `\\l`",
+            dsn.dbname
+        ));
+    }
+    if lower.contains("ssl") || lower.contains("tls") {
+        return Some(
+            "server requires TLS but pgman currently connects with NoTls (BACKLOG: TLS support)"
+                .to_string(),
+        );
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +552,103 @@ mod tests {
         assert!(r.contains("alice"), "user shown: {r}");
         assert!(!r.contains("s3cret"), "password leaked: {r}");
         assert!(r.contains("***"));
+    }
+
+    // A tiny test-only error type with a source() — enough to exercise the
+    // chain walker without depending on tokio-postgres being live.
+    #[derive(Debug)]
+    struct StubErr {
+        msg: &'static str,
+        src: Option<Box<dyn std::error::Error + 'static>>,
+    }
+    impl std::fmt::Display for StubErr {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.msg)
+        }
+    }
+    impl std::error::Error for StubErr {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.src.as_deref()
+        }
+    }
+
+    #[test]
+    fn chain_message_concatenates_top_and_cause() {
+        let inner = StubErr {
+            msg: "Connection refused (os error 61)",
+            src: None,
+        };
+        let outer = StubErr {
+            msg: "error connecting to server",
+            src: Some(Box::new(inner)),
+        };
+        assert_eq!(
+            chain_message(&outer),
+            "error connecting to server: Connection refused (os error 61)"
+        );
+    }
+
+    #[test]
+    fn chain_message_handles_no_source() {
+        let only = StubErr { msg: "boom", src: None };
+        assert_eq!(chain_message(&only), "boom");
+    }
+
+    #[test]
+    fn chain_message_avoids_duplicate_tail() {
+        // Some libraries bake the cause into Display already; don't end up
+        // with "io error: ECONNREFUSED: ECONNREFUSED".
+        let inner = StubErr { msg: "ECONNREFUSED", src: None };
+        let outer = StubErr {
+            msg: "io error: ECONNREFUSED",
+            src: Some(Box::new(inner)),
+        };
+        assert_eq!(chain_message(&outer), "io error: ECONNREFUSED");
+    }
+
+    fn dsn_for(host: &str, db: &str, user: Option<&str>) -> Dsn {
+        Dsn {
+            host: host.to_string(),
+            port: 5432,
+            user: user.map(|s| s.to_string()),
+            password: None,
+            dbname: db.to_string(),
+            params: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn connect_hint_recognises_refused() {
+        let d = dsn_for("db.local", "x", None);
+        let h = connect_hint("Connection refused (os error 61)", &d).unwrap();
+        assert!(h.contains("db.local"), "got: {h}");
+        assert!(h.contains("5432"), "got: {h}");
+    }
+
+    #[test]
+    fn connect_hint_recognises_dns_failure() {
+        let d = dsn_for("missing-host", "x", None);
+        let h = connect_hint("failed to lookup address info", &d).unwrap();
+        assert!(h.contains("missing-host"), "got: {h}");
+    }
+
+    #[test]
+    fn connect_hint_recognises_auth_failure() {
+        let d = dsn_for("h", "x", Some("alice"));
+        let h = connect_hint("password authentication failed for user \"alice\"", &d).unwrap();
+        assert!(h.to_lowercase().contains("password"), "got: {h}");
+    }
+
+    #[test]
+    fn connect_hint_recognises_missing_database() {
+        let d = dsn_for("h", "ghost", None);
+        let h = connect_hint("database \"ghost\" does not exist", &d).unwrap();
+        assert!(h.contains("ghost"), "got: {h}");
+    }
+
+    #[test]
+    fn connect_hint_returns_none_for_unknown_errors() {
+        let d = dsn_for("h", "x", None);
+        assert!(connect_hint("something weird happened", &d).is_none());
     }
 }

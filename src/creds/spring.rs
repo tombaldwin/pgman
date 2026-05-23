@@ -52,6 +52,83 @@ pub fn parse_properties(text: &str) -> SpringDatasource {
     ds
 }
 
+/// One datasource discovered in a Spring `.properties` file, identified by
+/// its prefix (the key text before the trailing `.url` / `.username` /
+/// `.password`). A file can declare more than one — e.g.
+/// `dataSource.url`, `logDataSource.url`, `replicaDataSource.url`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpringDatasourceEntry {
+    /// The prefix (e.g. "dataSource", "spring.datasource", "logDataSource").
+    pub prefix: String,
+    pub url: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+/// Parse every `<prefix>.url` / `<prefix>.username` / `<prefix>.password`
+/// triple from a `.properties` body. Order in the output preserves the
+/// order in which each prefix's `.url` line was encountered.
+///
+/// Filters: a prefix is only emitted when its `.url` starts with `jdbc:`
+/// — otherwise it's almost certainly not a datasource (e.g. `service.url`,
+/// `swagger.url`).
+pub fn parse_properties_all(text: &str) -> Vec<SpringDatasourceEntry> {
+    use std::collections::HashMap;
+
+    let mut order: Vec<String> = Vec::new();
+    let mut entries: HashMap<String, SpringDatasourceEntry> = HashMap::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+            continue;
+        }
+        let Some(sep) = line.find(['=', ':']) else {
+            continue;
+        };
+        let key = line[..sep].trim();
+        let value = line[sep + 1..].trim();
+
+        let (prefix, field) = if let Some(p) = key.strip_suffix(".url") {
+            (p.to_string(), "url")
+        } else if let Some(p) = key.strip_suffix(".username") {
+            (p.to_string(), "username")
+        } else if let Some(p) = key.strip_suffix(".password") {
+            (p.to_string(), "password")
+        } else {
+            continue;
+        };
+
+        let entry = entries
+            .entry(prefix.clone())
+            .or_insert_with(|| SpringDatasourceEntry {
+                prefix: prefix.clone(),
+                url: String::new(),
+                username: None,
+                password: None,
+            });
+        match field {
+            "url" => {
+                if entry.url.is_empty() && !order.contains(&prefix) {
+                    order.push(prefix.clone());
+                }
+                entry.url = value.to_string();
+            }
+            "username" => entry.username = Some(value.to_string()),
+            "password" => entry.password = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    // Reassemble in first-seen order, dropping prefixes that never got a
+    // jdbc:* URL (or got nothing at all).
+    order
+        .into_iter()
+        .filter_map(|p| entries.remove(&p))
+        .filter(|e| e.url.starts_with("jdbc:"))
+        .collect()
+}
+
 /// Parse `spring.datasource.*` out of an `application.yml` body.
 ///
 /// Stub — M1.5 (see BACKLOG.md).
@@ -135,5 +212,61 @@ spring.application.name=orders-api
     #[test]
     fn empty_input_yields_empty_datasource() {
         assert_eq!(parse_properties(""), SpringDatasource::default());
+    }
+
+    #[test]
+    fn parse_properties_all_handles_non_spring_prefix() {
+        // Real-world: the user's project uses `dataSource.*`, not the
+        // Spring-Boot-canonical `spring.datasource.*`. Both should work.
+        let text = "\
+dataSource.url=jdbc:postgresql://localhost:5432/nems?escapeSyntaxCallMode=callIfNoReturn
+dataSource.username=nems
+dataSource.password=Exp!0de3atGravy
+
+logDataSource.url=jdbc:postgresql://localhost:5432/nemslog
+logDataSource.username=nems
+logDataSource.password=Exp!0de3atGravy
+";
+        let entries = parse_properties_all(text);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].prefix, "dataSource");
+        assert_eq!(entries[0].username.as_deref(), Some("nems"));
+        assert!(entries[0].url.contains("nems"));
+        assert_eq!(entries[1].prefix, "logDataSource");
+        assert!(entries[1].url.contains("nemslog"));
+    }
+
+    #[test]
+    fn parse_properties_all_filters_non_jdbc_urls() {
+        // `service.url` is a URL but not a datasource; should be dropped.
+        let text = "\
+service.url=https://example.test
+dataSource.url=jdbc:postgresql://h/x
+";
+        let entries = parse_properties_all(text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].prefix, "dataSource");
+    }
+
+    #[test]
+    fn parse_properties_all_skips_prefixes_with_no_url() {
+        // `mailSender.username` alone is not a datasource — no jdbc URL.
+        let text = "\
+mailSender.username=svc
+mailSender.password=secret
+dataSource.url=jdbc:postgresql://h/x
+";
+        let entries = parse_properties_all(text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].prefix, "dataSource");
+    }
+
+    #[test]
+    fn parse_properties_all_handles_spring_canonical_prefix() {
+        let text = "spring.datasource.url=jdbc:postgresql://h/x\n\
+                    spring.datasource.username=svc";
+        let entries = parse_properties_all(text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].prefix, "spring.datasource");
     }
 }
