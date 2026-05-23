@@ -975,15 +975,19 @@ impl App {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         if just_typed_dot && self.completion.is_none() {
+            // The `.` is at the byte position immediately before the
+            // cursor. Walk back ONE char (not one byte) so identifiers
+            // ending in non-ASCII letters — `café.`, `naïve.`,
+            // quoted-name-style `"My Table".` once we support those —
+            // still trigger. Reading `bytes[dot_byte - 1]` would catch
+            // only ASCII suffixes.
             let dot_byte = self.editor_cursor.saturating_sub(1);
-            if dot_byte > 0 {
-                let prev = self.editor_buffer.as_bytes()[dot_byte - 1];
-                if prev.is_ascii_alphabetic() || prev == b'_' {
-                    let saved_status = self.last_status.clone();
-                    self.editor_complete();
-                    if self.completion.is_none() {
-                        self.last_status = saved_status;
-                    }
+            let prev_char = self.editor_buffer[..dot_byte].chars().next_back();
+            if matches!(prev_char, Some(c) if c.is_alphabetic() || c == '_') {
+                let saved_status = self.last_status.clone();
+                self.editor_complete();
+                if self.completion.is_none() {
+                    self.last_status = saved_status;
                 }
             }
         }
@@ -1014,8 +1018,19 @@ impl App {
             &self.schema_cache,
         );
         if cands.is_empty() {
-            self.last_status =
-                Some(format!("completion: no matches for {:?}", id.prefix));
+            // Mirror the tailored messaging from editor_complete so the
+            // status footer doesn't show `no matches for ""` when the
+            // operator narrows the prefix down to empty in a clause
+            // context that has nothing else to suggest.
+            let msg = if id.prefix.is_empty() {
+                match &id.qualifier {
+                    Some(q) => format!("completion: no matches for {q}.…"),
+                    None => "completion: nothing to suggest here".to_string(),
+                }
+            } else {
+                format!("completion: no matches for {:?}", id.prefix)
+            };
+            self.last_status = Some(msg);
             return;
         }
         let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
@@ -1150,7 +1165,58 @@ impl App {
         let original_text = self.editor_buffer[prefix_start..replace_end].to_string();
         let original_cursor = self.editor_cursor;
 
-        // Single-match fast path: insert it.
+        // 1) Exact-match fast path: the typed prefix already IS one of
+        //    the candidates (case-insensitively). The operator typed the
+        //    full name; commit and dismiss the popup. Runs BEFORE the
+        //    single-match path so that a lone candidate matching the
+        //    typed prefix exactly (e.g. cache has only `users`, operator
+        //    typed `users`) also dismisses the popup rather than leaving
+        //    a one-row cycle hanging. Empty prefix can't match (no
+        //    candidate insert is empty), so this is a no-op there.
+        if let Some(exact) = cands
+            .iter()
+            .find(|c| !c.insert.is_empty() && c.insert.eq_ignore_ascii_case(&id.prefix))
+        {
+            let cand = exact.clone();
+            self.editor_buffer
+                .replace_range(prefix_start..replace_end, &cand.insert);
+            let new_end = prefix_start + cand.insert.len();
+            self.editor_cursor = new_end;
+            self.last_status =
+                Some(format!("completion · exact match · {}", cand.kind.label()));
+            self.completion = None;
+            return;
+        }
+
+        // 2) Empty unqualified prefix → always show the popup with no
+        //    auto-insertion. The operator pressed Tab on whitespace
+        //    asking "what can I type here?"; silently inserting a
+        //    single candidate would be a footgun (e.g. `INSERT INTO t
+        //    (<Tab>` with a one-column table would commit the column
+        //    without the operator seeing the choice). Qualified-empty
+        //    (`u.|`) still falls through to single-match — the
+        //    qualifier IS the operator's signal of intent.
+        if id.prefix.is_empty() && id.qualifier.is_none() {
+            let cand_count = cands.len();
+            self.last_status = Some(format!(
+                "completion: {} match{} · Tab to pick",
+                cand_count,
+                if cand_count == 1 { "" } else { "es" }
+            ));
+            self.completion = Some(CompletionCycle {
+                start: prefix_start,
+                end: replace_end,
+                origin: original_text,
+                origin_prefix: id.prefix,
+                origin_cursor: original_cursor,
+                candidates: cands,
+                selected: None,
+            });
+            return;
+        }
+
+        // 3) Single-match fast path: insert it and keep the cycle
+        //    around so Esc undoes the auto-insert.
         if cands.len() == 1 {
             let cand = cands[0].clone();
             self.editor_buffer
@@ -1170,35 +1236,11 @@ impl App {
             return;
         }
 
-        // Exact-match fast path: the typed prefix already IS one of the
-        // candidates (case-insensitively). The operator typed the full
-        // name; commit and dismiss the popup. Without this, a name
-        // like `user` against [user, users, user_logs] would just show
-        // the popup with no auto-commit, forcing another Tab.
-        // Honours the candidate's stored case (e.g. `users` from the
-        // cache, not the operator's `USERS`).
-        if let Some(exact) = cands
-            .iter()
-            .find(|c| c.insert.eq_ignore_ascii_case(&id.prefix))
-        {
-            let cand = exact.clone();
-            self.editor_buffer
-                .replace_range(prefix_start..replace_end, &cand.insert);
-            let new_end = prefix_start + cand.insert.len();
-            self.editor_cursor = new_end;
-            self.last_status =
-                Some(format!("completion · exact match · {}", cand.kind.label()));
-            // No cycle stored — the operator's typing already
-            // disambiguated; popup would be noise.
-            self.completion = None;
-            return;
-        }
-
-        // Multi-match: compute the longest common prefix (case-
-        // insensitive) of all candidate inserts. If it extends past
-        // what the operator already typed, advance the buffer to that
-        // common prefix and show the popup — no specific row selected
-        // yet, so a second Tab picks the first match.
+        // 4) Multi-match: compute the longest common prefix
+        //    (case-insensitive) of all candidate inserts. If it extends
+        //    past what the operator already typed, advance the buffer
+        //    to that common prefix and show the popup — no specific
+        //    row selected yet, so a second Tab picks the first match.
         let inserts: Vec<&str> = cands.iter().map(|c| c.insert.as_str()).collect();
         let lcp = complete_q::longest_common_prefix_ci(&inserts);
         let insert_text = if lcp.len() > id.prefix.len() {
@@ -2131,6 +2173,58 @@ mod tests {
         assert!(labels.iter().any(|l| *l == "users"), "got {labels:?}");
         assert!(labels.iter().any(|l| *l == "orders"), "got {labels:?}");
     }
+
+    #[test]
+    fn exact_match_with_only_one_candidate_still_dismisses_popup() {
+        // Cache has just `users`. Operator types `FROM users` Tab.
+        // cands.len() == 1, but the single-match path must NOT shadow
+        // exact-match — the popup should go away because the operator
+        // typed the full name.
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM users");
+        a.editor_complete();
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        assert!(
+            a.completion.is_none(),
+            "exact match must dismiss the popup even when it's the only candidate"
+        );
+    }
+
+    #[test]
+    fn empty_unqualified_prefix_with_single_candidate_shows_popup_no_insert() {
+        // Construct a context where empty-prefix completion yields a
+        // single candidate. We can't easily get cands.len() == 1 in a
+        // normal clause (the classifier extends with continuations) so
+        // this is a "doesn't auto-insert" sanity check at the API
+        // level: Tab on whitespace in a clean buffer offers statement
+        // keywords (multiple cands), and Tab on `SELECT ` offers
+        // multiple. So the property we actually want is that the
+        // popup opens with selected: None — operator decides.
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        set_editor(&mut a, "SELECT * FROM ");
+        a.editor_complete();
+        let cycle = a
+            .completion
+            .as_ref()
+            .expect("popup should open on whitespace-Tab");
+        assert!(
+            cycle.selected.is_none(),
+            "empty unqualified prefix must not pre-select; got {:?}",
+            cycle.selected
+        );
+        // Buffer unchanged — no silent insert.
+        assert_eq!(a.editor_buffer, "SELECT * FROM ");
+    }
+
+    // Note: auto-trigger after `.` for non-ASCII identifier endings
+    // (e.g. `café.`) would benefit from the char-aware lookup in
+    // `on_editor_key`, but `extract_identifier` itself walks back
+    // byte-by-byte and rejects non-ASCII suffixes — so end-to-end
+    // non-ASCII identifier completion is gated on widening the
+    // tokenizer in a follow-up. The char-aware check here is kept
+    // defensively so the auto-trigger path is correct from day one.
 
     #[test]
     fn backspace_to_empty_prefix_keeps_context_popup() {

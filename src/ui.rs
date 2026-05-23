@@ -671,12 +671,27 @@ fn draw_completion_popup(
         return;
     }
     let theme = &app.theme;
-    // Width = widest "display  (kind · context)" plus padding, clamped
-    // to body area. Compute the tail (`(kind · ctx)`) per candidate so
-    // we measure and render the same string.
+    // The right-side tail is `(kind · context)`. Long context strings
+    // (e.g. a long schema or table name) would otherwise overflow the
+    // popup width on narrow terminals and get raggedly truncated by
+    // ratatui — defeating the disambiguation the context is there for.
+    // Cap the rendered context length and ellipsise; preserve the
+    // "..." suffix at the end so the kind label and the boundary
+    // marker are always visible.
+    const CONTEXT_MAX_CHARS: usize = 24;
+    let truncated_context = |ctx: &str| -> String {
+        let cc = ctx.chars().count();
+        if cc <= CONTEXT_MAX_CHARS {
+            ctx.to_string()
+        } else {
+            let keep = CONTEXT_MAX_CHARS.saturating_sub(1);
+            let head: String = ctx.chars().take(keep).collect();
+            format!("{head}…")
+        }
+    };
     let tail_of = |c: &Candidate| -> String {
         match &c.context {
-            Some(ctx) => format!(" ({} · {})", c.kind.label(), ctx),
+            Some(ctx) => format!(" ({} · {})", c.kind.label(), truncated_context(ctx)),
             None => format!(" ({})", c.kind.label()),
         }
     };
@@ -739,17 +754,25 @@ fn draw_completion_popup(
         .add_modifier(Modifier::BOLD);
     let prefix_focus_style = focus_style.fg(theme.title);
 
-    // How many leading chars of each candidate's display correspond to
-    // the prefix actually in the buffer. The cycle's [start..end) is
-    // always the live prefix (LCP-expanded, single-match-inserted, or
-    // narrowed-via-typing — refresh_completion / editor_complete
-    // maintain this invariant). Char count, not byte count, since
-    // ratatui span positions are char-indexed.
-    let prefix_char_count: usize = app
+    // The bolded "head" portion must visually match what's already in
+    // the buffer — i.e. the operator's typed/expanded case — so slice
+    // directly from `editor_buffer[cycle.start..cycle.end)` rather than
+    // taking the first N chars of the candidate's `display` (which is
+    // always in the cache's case). Avoids the surprise where the
+    // operator typed `T_` and Tab-expanded to `T_USER_`, but the popup
+    // bolds `t_user_` (lowercase) on each row.
+    //
+    // The cycle's [start..end) is always the live prefix (LCP-expanded,
+    // single-match-inserted, or narrowed-via-typing — refresh_completion
+    // / editor_complete maintain this invariant). When the slice isn't
+    // on a char boundary (shouldn't happen in practice, but defensive
+    // here), .get returns None and we fall back to no highlighting.
+    let typed_head: String = app
         .editor_buffer
         .get(cycle.start..cycle.end)
-        .map(|s| s.chars().count())
-        .unwrap_or(0);
+        .unwrap_or("")
+        .to_string();
+    let typed_head_char_count = typed_head.chars().count();
 
     let inner_w = popup.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line> = Vec::with_capacity(visible);
@@ -767,17 +790,18 @@ fn draw_completion_popup(
         let marker = if is_focus { "▶ " } else { "  " };
         let display = &cand.display;
         let display_chars: Vec<char> = display.chars().collect();
-        // Split the display into [prefix-matched, rest]. We rely on
-        // candidates_for's starts_with_ci filter — the first N chars
-        // ARE the prefix (up to case). Clamp to avoid panicking on a
-        // candidate shorter than the typed prefix (rare, but possible
-        // in test fixtures).
-        let split_at = prefix_char_count.min(display_chars.len());
-        let head: String = display_chars[..split_at].iter().collect();
-        let tail: String = display_chars[split_at..].iter().collect();
+        // Skip the first `typed_head_char_count` chars of display when
+        // composing the tail — those are the prefix we'll render from
+        // the buffer slice instead. Clamp to the candidate length to
+        // avoid skipping past the end (rare: short candidate, long
+        // prefix — possible in test fixtures).
+        let skip_n = typed_head_char_count.min(display_chars.len());
+        let head = typed_head.clone();
+        let tail: String = display_chars[skip_n..].iter().collect();
+        let row_display_chars = typed_head_char_count + (display_chars.len() - skip_n);
         let kind_text = tail_of(cand);
         let kind_w = kind_text.chars().count();
-        let body_w = marker.chars().count() + display_chars.len();
+        let body_w = marker.chars().count() + row_display_chars;
         let pad_after = inner_w.saturating_sub(body_w).saturating_sub(kind_w);
         let pad = " ".repeat(pad_after);
         let (l_style, k_style, p_style) = if is_focus {
