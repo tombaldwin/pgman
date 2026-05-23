@@ -49,6 +49,9 @@ pub enum ClauseContext {
     /// the same (parameter names) and the right-hand side of SET
     /// (`= value`) needs per-parameter value vocab that's out of scope.
     GucParameter,
+    /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
+    /// Wants entries from `vocabulary::TYPE_NAMES`.
+    TypeName,
     /// After `UPDATE <table> SET` — wants the columns of that table.
     UpdateAssign(QualifiedTable),
     /// Inside `VALUES (...)` — literals, no useful identifier completion.
@@ -180,6 +183,14 @@ struct ScopeState {
     expecting_insert_paren: bool,
     /// `EXPLAIN` seen; the next `(` opens its option list.
     expecting_explain_paren: bool,
+    /// `CAST` seen; the next `(` opens its argument paren. The child
+    /// scope inherits `is_cast_scope = true` so a subsequent `AS`
+    /// inside flips ctx to `TypeName` instead of being read as an
+    /// alias introducer.
+    expecting_cast_paren: bool,
+    /// This scope sits inside the parens of a `CAST(...)`. Set by the
+    /// `(` handler when the parent was `expecting_cast_paren`.
+    is_cast_scope: bool,
 }
 
 impl ScopeState {
@@ -191,6 +202,8 @@ impl ScopeState {
             pending_by: false,
             expecting_insert_paren: false,
             expecting_explain_paren: false,
+            expecting_cast_paren: false,
+            is_cast_scope: false,
         }
     }
 }
@@ -215,6 +228,7 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
         if tok.text == "(" {
             // Decide what context the new scope starts in.
             let parent = scopes.last().expect("scope stack invariant");
+            let inherits_cast = parent.expecting_cast_paren;
             let new_ctx = if parent.expecting_explain_paren {
                 ExplainOptions
             } else if parent.expecting_insert_paren {
@@ -235,10 +249,13 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             let parent_mut = scopes.last_mut().unwrap();
             parent_mut.expecting_insert_paren = false;
             parent_mut.expecting_explain_paren = false;
+            parent_mut.expecting_cast_paren = false;
             parent_mut.pending_table_ref = false;
             parent_mut.pending_by = false;
             entered_via_values = matches!(new_ctx, Values);
-            scopes.push(ScopeState::new(new_ctx));
+            let mut child = ScopeState::new(new_ctx);
+            child.is_cast_scope = inherits_cast;
+            scopes.push(child);
             i += 1;
             continue;
         }
@@ -337,6 +354,15 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 // else (a bare `EXPLAIN SELECT …`) just falls through
                 // to whatever clause follows.
                 scope.expecting_explain_paren = true;
+            }
+            "CAST" => {
+                // The next `(` opens CAST's argument scope. Inside,
+                // `AS` flips ctx to TypeName.
+                scope.expecting_cast_paren = true;
+            }
+            "AS" if scope.is_cast_scope => {
+                // We're inside CAST's parens; AS introduces the type.
+                scope.ctx = TypeName;
             }
             // `SHOW <param>` / `SET <param> = …` — after either, the
             // operator is naming a GUC. The value-side of SET isn't
@@ -1063,6 +1089,29 @@ mod tests {
         let got = extract_ctes("WITH foo AS (SELECT * FROM users) SELECT * FROM foo");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].columns, Vec::<String>::new());
+    }
+
+    #[test]
+    fn cast_as_enters_type_name() {
+        assert_eq!(classify("SELECT CAST(x AS "), ClauseContext::TypeName);
+        assert_eq!(classify("SELECT CAST(x AS in"), ClauseContext::TypeName);
+    }
+
+    #[test]
+    fn cast_as_does_not_leak_to_outer_after_close() {
+        // After CAST(x AS integer), the cursor's context goes back to
+        // SelectList (the outer SELECT).
+        assert_eq!(
+            classify("SELECT CAST(x AS integer), em"),
+            ClauseContext::SelectList
+        );
+    }
+
+    #[test]
+    fn regular_as_outside_cast_does_not_enter_type_name() {
+        // `SELECT col AS alias` — AS is alias-introducing, not type.
+        // SelectList stays.
+        assert_eq!(classify("SELECT col AS "), ClauseContext::SelectList);
     }
 
     #[test]
