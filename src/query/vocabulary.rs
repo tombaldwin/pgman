@@ -154,12 +154,25 @@ pub const TYPE_NAMES: &[&str] = &[
     "bit", "bit varying",
 ];
 
+/// Universal values usable on the right-hand side of `SET <param> = |`.
+/// Boolean GUCs (enable_seqscan, log_duration, …) take `on` / `off` /
+/// `true` / `false`. Any GUC accepts `default` to revert. String / enum
+/// GUCs need per-parameter vocab not yet modeled — operators type the
+/// value manually for those.
+pub const GUC_VALUES: &[&str] = &[
+    "on", "off", "true", "false", "default",
+];
+
 /// Common Postgres GUC (Grand Unified Configuration) parameter names.
 /// Surfaced in `SHOW |` and `SET |` completion. Not exhaustive —
 /// Postgres has hundreds of GUCs — but covers the ones a daily
 /// operator routinely inspects / tweaks. Add a one-liner here when
 /// you find yourself reaching for a missing one.
 pub const GUC_PARAMETERS: &[&str] = &[
+    // SHOW-only shorthand: `SHOW ALL` lists every GUC. `SET ALL` isn't
+    // valid but the cost of offering ALL after SET is just one extra
+    // Tab the operator skips past.
+    "all",
     // Session basics
     "search_path", "timezone", "client_encoding", "client_min_messages",
     "datestyle", "intervalstyle", "application_name", "role", "session_user",
@@ -313,6 +326,16 @@ mod tests {
             );
             assert!(!word.is_empty());
         }
+        // GUC values (`on`, `off`, `default`) — lowercase by SQL
+        // convention.
+        for word in GUC_VALUES {
+            assert_eq!(
+                *word,
+                word.to_ascii_lowercase(),
+                "GUC value {word:?} should be lowercase"
+            );
+            assert!(!word.is_empty());
+        }
     }
 
     /// Contract: no duplicates within a single list. Duplicates would
@@ -329,6 +352,7 @@ mod tests {
             ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
             ("DROP_CONTINUATIONS", DROP_CONTINUATIONS),
             ("GUC_PARAMETERS", GUC_PARAMETERS),
+            ("GUC_VALUES", GUC_VALUES),
             ("TYPE_NAMES", TYPE_NAMES),
             ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
             ("AFTER_TABLE_REF", continuations::AFTER_TABLE_REF),
