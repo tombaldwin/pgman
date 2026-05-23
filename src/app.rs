@@ -380,6 +380,11 @@ impl App {
         let Some(dsn) = self.dsn.clone() else {
             return;
         };
+        // Bump the generation so a late Booted/BootFailed from a prior
+        // attempt can't clobber this one's state. The `on_msg` filter
+        // already drops messages whose generation doesn't match; we just
+        // need to make the field actually move.
+        self.generation = self.generation.wrapping_add(1);
         self.conn_state = ConnState::Connecting;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
