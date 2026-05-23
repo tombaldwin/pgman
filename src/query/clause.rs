@@ -121,155 +121,179 @@ fn statement_start(buf: &str, cursor: usize) -> usize {
     }
 }
 
+/// Per-paren-scope state. Each `(` pushes a new scope; `)` pops back to
+/// the parent. That isolation is what makes the classifier correct for
+/// subqueries and CTE bodies — the parent's `pending_table_ref` etc
+/// can't leak into the inner scope, and the inner scope's WHERE / FROM
+/// can't poison the outer ctx after `)` closes.
+#[derive(Debug, Clone)]
+struct ScopeState {
+    ctx: ClauseContext,
+    /// The most-recently-named table in this scope — used by `SET`
+    /// (becomes the UpdateAssign target) and by INSERT-column-list
+    /// resolution.
+    active_table: Option<QualifiedTable>,
+    /// Next identifier is the target table (set by FROM / JOIN / INTO /
+    /// UPDATE).
+    pending_table_ref: bool,
+    /// Expecting `BY` after `ORDER` / `GROUP`.
+    pending_by: bool,
+    /// `INSERT INTO <table>` seen at this scope; the next `(` opens its
+    /// column list.
+    expecting_insert_paren: bool,
+}
+
+impl ScopeState {
+    fn new(ctx: ClauseContext) -> Self {
+        Self {
+            ctx,
+            active_table: None,
+            pending_table_ref: false,
+            pending_by: false,
+            expecting_insert_paren: false,
+        }
+    }
+}
+
 fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classification {
     use ClauseContext::*;
-    let mut ctx = StatementStart;
-    let mut active_table: Option<QualifiedTable> = None;
+    let mut scopes: Vec<ScopeState> = vec![ScopeState::new(StatementStart)];
+    // Statement-level state — survives paren scoping.
     let mut write_target: Option<QualifiedTable> = None;
-    let mut in_write_stmt = false; // true if we've seen INSERT/UPDATE/DELETE
-    // Pending state — set when a keyword expects something next.
-    let mut pending_table_ref = false; // INTO / UPDATE / DELETE FROM consumed → next ident is target
-    let mut pending_by = false; // ORDER / GROUP — waiting for BY
-    let mut expecting_insert_paren = false; // INSERT INTO <table> seen → next `(` opens column list
-    let mut paren_depth: i32 = 0;
-    let mut in_insert_columns = false;
-    let mut in_values = false;
+    let mut in_write_stmt = false;
+    // Flagged when entering a paren whose contents are VALUES literals
+    // (so the cursor inside reports Values rather than e.g. a phantom
+    // SelectList).
+    let mut entered_via_values = false;
 
     let mut i = 0;
     while i < tokens.len() {
         let tok = &tokens[i];
         let upper = tok.text.to_ascii_uppercase();
-        // Punctuation
+
+        // Punctuation: parens manage the scope stack.
         if tok.text == "(" {
-            paren_depth += 1;
-            if expecting_insert_paren {
-                in_insert_columns = true;
-                expecting_insert_paren = false;
-                ctx = InsertColumns(active_table.clone().unwrap_or(QualifiedTable {
+            // Decide what context the new scope starts in.
+            let parent = scopes.last().expect("scope stack invariant");
+            let new_ctx = if parent.expecting_insert_paren {
+                InsertColumns(parent.active_table.clone().unwrap_or(QualifiedTable {
                     schema: None,
                     name: String::new(),
-                }));
-            } else if in_values {
-                ctx = Values;
-            }
+                }))
+            } else if matches!(parent.ctx, Values) {
+                Values
+            } else {
+                // Subquery / parenthesised expression / CTE body — fresh
+                // sub-statement scope, so an inner SELECT / FROM / WHERE
+                // is correctly classified.
+                StatementStart
+            };
+            // Clear consumers on the parent — entering parens consumes
+            // any pending intent.
+            let parent_mut = scopes.last_mut().unwrap();
+            parent_mut.expecting_insert_paren = false;
+            parent_mut.pending_table_ref = false;
+            parent_mut.pending_by = false;
+            entered_via_values = matches!(new_ctx, Values);
+            scopes.push(ScopeState::new(new_ctx));
             i += 1;
             continue;
         }
         if tok.text == ")" {
-            paren_depth -= 1;
-            if paren_depth <= 0 {
-                paren_depth = 0;
-                if in_insert_columns {
-                    in_insert_columns = false;
-                    // After the column list closes the operator types
-                    // VALUES (...) or SELECT ...
-                    ctx = StatementStart; // re-classify on next keyword
-                }
-                if in_values {
-                    in_values = false;
-                }
+            if scopes.len() > 1 {
+                scopes.pop();
             }
             i += 1;
             continue;
         }
         if tok.text == "," || tok.text == "." {
-            // Commas don't change clause context; dots are part of
-            // qualified names handled below in identifier-capture paths.
             i += 1;
             continue;
         }
-        // Pending consumers
-        if pending_table_ref && is_identifier_like(&tok.text) {
-            // Could be schema.table — peek ahead for `.`.
+
+        // From here on we work on the top scope.
+        let scope = scopes.last_mut().expect("scope stack invariant");
+
+        if scope.pending_table_ref && is_identifier_like(tok.text) {
             let (table, consumed) = take_qualified(tokens, i);
-            active_table = Some(table.clone());
-            // For an INSERT/UPDATE/DELETE this is the write target —
-            // remember it so completion in subsequent clauses (WHERE,
-            // SET) can include its columns even without a FROM.
+            scope.active_table = Some(table.clone());
+            // The first table named in a write statement is the write
+            // target; carried across scopes for WHERE / SET completion.
             if in_write_stmt && write_target.is_none() {
                 write_target = Some(table);
             }
-            pending_table_ref = false;
-            // For INSERT INTO <table>, the next `(` is the column list.
-            expecting_insert_paren = matches!(ctx, TableRef) && in_insert_path(tokens, i);
-            // Stay in TableRef until the next clause keyword (the user
-            // may still be typing the alias / etc).
+            scope.pending_table_ref = false;
+            scope.expecting_insert_paren =
+                matches!(scope.ctx, TableRef) && in_insert_path(tokens, i);
             i += consumed;
             continue;
         }
-        if pending_by && upper == "BY" {
-            ctx = OrderOrGroup;
-            pending_by = false;
+        if scope.pending_by && upper == "BY" {
+            scope.ctx = OrderOrGroup;
+            scope.pending_by = false;
             i += 1;
             continue;
         }
-        // Clause-introducing keywords
+
+        // Clause-introducing keywords. With the scope stack, none of
+        // these need a paren_depth guard — each scope is locally at
+        // "depth 0".
         match upper.as_str() {
-            "SELECT" if paren_depth == 0 => ctx = SelectList,
-            "FROM" if paren_depth == 0 => {
-                // DELETE FROM <table>: the table is the target. Other
-                // FROMs land a table list — both are TableRef position.
-                ctx = TableRef;
-                pending_table_ref = true;
+            "SELECT" => scope.ctx = SelectList,
+            "FROM" => {
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
             }
             "JOIN" => {
-                ctx = TableRef;
-                pending_table_ref = true;
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
             }
             "INTO" => {
-                ctx = TableRef;
-                pending_table_ref = true;
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
                 in_write_stmt = true;
             }
             "UPDATE" => {
-                ctx = TableRef;
-                pending_table_ref = true;
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
                 in_write_stmt = true;
             }
             "DELETE" => {
-                ctx = TableRef;
+                scope.ctx = TableRef;
                 in_write_stmt = true;
-                // Wait for the FROM that follows; that's where the
-                // table comes from.
             }
-            "WHERE" | "HAVING" | "ON" => ctx = Predicate,
-            "ORDER" | "GROUP" => {
-                pending_by = true;
-            }
-            "RETURNING" => ctx = SelectList,
+            "WHERE" | "HAVING" | "ON" => scope.ctx = Predicate,
+            "ORDER" | "GROUP" => scope.pending_by = true,
+            "RETURNING" => scope.ctx = SelectList,
             "VALUES" => {
-                in_values = true;
-                ctx = Values;
+                scope.ctx = Values;
+                // Critical: VALUES consumes any earlier
+                // `expecting_insert_paren` — `INSERT INTO foo VALUES (`
+                // opens a Values scope, not an InsertColumns one.
+                scope.expecting_insert_paren = false;
             }
-            "SET" if matches!(ctx, TableRef) => {
-                if let Some(t) = &active_table {
-                    ctx = UpdateAssign(t.clone());
+            "SET" if matches!(scope.ctx, TableRef) => {
+                if let Some(t) = scope.active_table.clone() {
+                    scope.ctx = UpdateAssign(t);
                 }
             }
             "INSERT" => {
-                ctx = StatementStart; // until we see INTO
                 in_write_stmt = true;
             }
-            _ => {
-                // Unknown / non-clause token — leave ctx unchanged.
-            }
+            _ => {}
         }
         i += 1;
     }
-    // Refine: if we're inside the insert column list, that wins regardless
-    // of later tokens.
-    let ctx = if in_insert_columns {
-        if let Some(t) = active_table.clone() {
-            InsertColumns(t)
-        } else {
-            ctx
-        }
-    } else if in_values {
-        Values
-    } else {
-        ctx
-    };
-    Classification { ctx, write_target }
+
+    let final_ctx = scopes
+        .last()
+        .map(|s| s.ctx.clone())
+        .unwrap_or(StatementStart);
+    let _ = entered_via_values; // currently advisory; reserved for future refinements
+    Classification {
+        ctx: final_ctx,
+        write_target,
+    }
 }
 
 fn is_identifier_like(s: &str) -> bool {
@@ -448,6 +472,64 @@ mod tests {
         );
         assert_eq!(
             classify("SELECT * FROM u; SELECT "),
+            ClauseContext::SelectList
+        );
+    }
+
+    #[test]
+    fn insert_into_table_values_is_values_not_insert_columns() {
+        // Regression: `INSERT INTO foo VALUES (` used to flip the `(`
+        // into InsertColumns because expecting_insert_paren wasn't
+        // cleared by VALUES.
+        assert_eq!(
+            classify("INSERT INTO foo VALUES ("),
+            ClauseContext::Values
+        );
+    }
+
+    #[test]
+    fn from_subquery_does_not_capture_inner_table_as_outer_active() {
+        // Regression: `FROM (SELECT a FROM t)` used to consume `a`
+        // as the active table because pending_table_ref leaked
+        // across the `(`.
+        let c = classify_at("UPDATE foo SET x = (SELECT 1 FROM bar) WHERE ", 44);
+        // The write target must still be `foo` — not `bar` from the
+        // subquery's FROM.
+        assert_eq!(
+            c.write_target.as_ref().map(|t| t.name.clone()),
+            Some("foo".to_string())
+        );
+    }
+
+    #[test]
+    fn subquery_where_does_not_leak_to_outer_context() {
+        // Regression: WHERE / ORDER BY inside a subquery used to leave
+        // the outer context stuck at Predicate / OrderOrGroup after the
+        // `)` closed. The outer cursor is at the alias position after
+        // `(subq) ` — that's still TableRef.
+        assert_eq!(
+            classify("SELECT col FROM (SELECT a FROM t WHERE x = 1) "),
+            ClauseContext::TableRef
+        );
+    }
+
+    #[test]
+    fn cte_body_classifies_inner_select() {
+        // Regression: `WITH cte AS (SELECT em` used to return
+        // StatementStart because the inner SELECT was suppressed by
+        // the old `paren_depth == 0` guard.
+        assert_eq!(
+            classify("WITH cte AS (SELECT em"),
+            ClauseContext::SelectList
+        );
+    }
+
+    #[test]
+    fn insert_into_select_subquery_is_select_list() {
+        // INSERT INTO foo SELECT a FROM bar  — at the SELECT-list
+        // position the operator is choosing source columns from `bar`.
+        assert_eq!(
+            classify("INSERT INTO foo SELECT a"),
             ClauseContext::SelectList
         );
     }
