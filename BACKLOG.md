@@ -352,6 +352,20 @@ Pull a remote database down for local testing; keep tagged backups.
   surfaces SELECT-list output aliases (`SELECT COUNT(*) AS n …
   HAVING n|`) — Postgres uniquely allows this, and our completion
   now matches — DONE.
+- `EXPLAIN (...)` option-list completion — new
+  `ClauseContext::ExplainOptions` + `EXPLAIN_OPTIONS` vocab list
+  (ANALYZE / BUFFERS / VERBOSE / WAL / TIMING / FORMAT / etc.).
+  `EXPLAIN SELECT …` without parens still falls through to the normal
+  clause classification — DONE.
+- `SHOW` / `SET` parameter-name completion — new
+  `ClauseContext::GucParameter` + `GUC_PARAMETERS` vocab list (~50
+  daily-ops GUCs: session basics, transaction settings, planner knobs,
+  logging, server-info). GUCs are lowercase by Postgres convention so
+  the vocabulary contract has a dedicated lowercase test — DONE.
+- `COPY tab (col_list)` and `TRUNCATE tab` — both routed through
+  `TableRef`; COPY reuses the existing InsertColumns paren-list
+  mechanism so `COPY users (em|` offers `email` (and only `email`).
+  TRUNCATE offers only tables (no columns leak through) — DONE.
 
 ## v3+ — deferred
 
