@@ -25,6 +25,31 @@ a `statement_timeout`, classifies every statement, and applies **per-database
 guard rails** (`safety.rs`) — e.g. block `DROP`, confirm `TRUNCATE` /
 unqualified `DELETE`, and wrap DML in a transaction you can roll back.
 
+## Install
+
+From a local checkout (recommended while pgman is private and pre-v1):
+
+```sh
+cargo install --path ~/git/pgman --locked
+```
+
+The binary lands at `~/.cargo/bin/pgman`, which is on `$PATH` if your shell
+sources `~/.cargo/env` (rustup does this for you).
+
+## Upgrade
+
+```sh
+pgman --upgrade
+```
+
+That's it. `--upgrade` pulls the source repo it was built from (baked in at
+compile time via `CARGO_MANIFEST_DIR`), then reinstalls via
+`cargo install --path … --locked --force`. Subprocesses inherit stdio, so
+you see `git pull` and `cargo install` output live.
+
+If you installed via `cargo install --git`, `--upgrade` will tell you to
+reinstall manually — it can't know the git URL.
+
 ## Status
 
-Pre-v1 scaffold. See `BACKLOG.md` for the milestone plan.
+Pre-v1. See `BACKLOG.md` for what's shipped and what's next.

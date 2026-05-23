@@ -1,7 +1,7 @@
 //! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::{app, conn, creds, font_probe, safety, theme, tui, util};
+use pgman::{app, conn, creds, font_probe, safety, theme, tui, upgrade, util};
 
 #[derive(Parser)]
 #[command(name = "pgman", version, about = "k9s-style Postgres TUI for Java/AWS shops")]
@@ -13,11 +13,23 @@ struct Cli {
     /// Colour theme: dark | light | high-contrast.
     #[arg(long, default_value = "dark")]
     theme: String,
+
+    /// Pull the source repo and reinstall via cargo, then exit. Requires that
+    /// pgman was installed from a local path (`cargo install --path …`).
+    #[arg(long)]
+    upgrade: bool,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // `--upgrade` is the only flag that doesn't enter the TUI. Handle it
+    // before we set up logging / probe the terminal.
+    if cli.upgrade {
+        return upgrade::run();
+    }
+
     init_logging();
     tracing::info!("pgman {} starting", env!("CARGO_PKG_VERSION"));
 
