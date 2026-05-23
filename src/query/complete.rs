@@ -22,7 +22,7 @@ use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
     continuations, AGGREGATE_FUNCTIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS, JOIN_VARIANTS,
-    PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
+    PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, TYPE_NAMES, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -369,6 +369,18 @@ fn candidates_for_in_context(
             .map(|p| Candidate {
                 display: (*p).to_string(),
                 insert: (*p).to_string(),
+                kind: CandidateKind::Keyword,
+            })
+            .collect(),
+
+        // CAST(expr AS |  → SQL type names. Multi-word types like
+        // `timestamp with time zone` land as one Tab.
+        ClauseContext::TypeName => TYPE_NAMES
+            .iter()
+            .filter(|t| starts_with_ci(t, &id.prefix))
+            .map(|t| Candidate {
+                display: (*t).to_string(),
+                insert: (*t).to_string(),
                 kind: CandidateKind::Keyword,
             })
             .collect(),
@@ -1477,6 +1489,26 @@ mod tests {
         let cands = candidates_for("SET time", 8, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"timezone"));
+    }
+
+    #[test]
+    fn cast_as_offers_type_names() {
+        let cache = build_cache();
+        let cands = candidates_for("SELECT CAST(x AS in", 19, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"integer"), "got: {labels:?}");
+        // Must NOT offer columns / tables.
+        assert!(!labels.contains(&"id"));
+        assert!(!labels.contains(&"users"));
+    }
+
+    #[test]
+    fn cast_as_supports_multi_word_types() {
+        let cache = build_cache();
+        let cands = candidates_for("SELECT CAST(x AS time", 21, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"timestamp"));
+        assert!(labels.contains(&"timestamp with time zone"));
     }
 
     #[test]

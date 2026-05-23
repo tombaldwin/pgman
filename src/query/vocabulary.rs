@@ -111,6 +111,39 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
     "SIMILAR TO",
 ];
 
+/// Postgres SQL type names — surfaced inside `CAST(expr AS |)` and
+/// DDL column-type positions. Covers the common built-in types; add
+/// to this list when you find yourself typing a missing one. Lowercase
+/// because Postgres prints them lowercase (so cycling shows the value
+/// you actually want to commit to disk).
+pub const TYPE_NAMES: &[&str] = &[
+    // Numeric
+    "smallint", "integer", "bigint", "decimal", "numeric",
+    "real", "double precision", "smallserial", "serial", "bigserial",
+    "money",
+    // Character
+    "character varying", "varchar", "character", "char", "text",
+    // Binary
+    "bytea",
+    // Date / time
+    "timestamp", "timestamp with time zone", "timestamptz",
+    "date", "time", "time with time zone", "timetz", "interval",
+    // Boolean
+    "boolean", "bool",
+    // Enumerated / network / monetary / geometric (selected)
+    "uuid", "inet", "cidr", "macaddr", "macaddr8",
+    "point", "line", "lseg", "box", "path", "polygon", "circle",
+    // JSON / XML
+    "json", "jsonb", "xml",
+    // Arrays — operator usually qualifies with [] manually
+    // Range types
+    "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange",
+    // Text search
+    "tsvector", "tsquery",
+    // Bit strings
+    "bit", "bit varying",
+];
+
 /// Common Postgres GUC (Grand Unified Configuration) parameter names.
 /// Surfaced in `SHOW |` and `SET |` completion. Not exhaustive —
 /// Postgres has hundreds of GUCs — but covers the ones a daily
@@ -260,6 +293,15 @@ mod tests {
             );
             assert!(!word.is_empty());
         }
+        // Type names are lowercase (Postgres prints them lowercase).
+        for word in TYPE_NAMES {
+            assert_eq!(
+                *word,
+                word.to_ascii_lowercase(),
+                "type name {word:?} should be lowercase"
+            );
+            assert!(!word.is_empty());
+        }
     }
 
     /// Contract: no duplicates within a single list. Duplicates would
@@ -275,6 +317,7 @@ mod tests {
             ("JOIN_VARIANTS", JOIN_VARIANTS),
             ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
             ("GUC_PARAMETERS", GUC_PARAMETERS),
+            ("TYPE_NAMES", TYPE_NAMES),
             ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
             ("AFTER_TABLE_REF", continuations::AFTER_TABLE_REF),
             ("AFTER_PREDICATE", continuations::AFTER_PREDICATE),
