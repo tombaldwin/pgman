@@ -46,6 +46,47 @@ pub fn run() -> anyhow::Result<()> {
         anyhow::bail!("cargo install failed ({status})");
     }
 
-    eprintln!("\n✓ pgman upgraded · `pgman --version` to check");
-    Ok(())
+    // Skip the relaunch when invoked non-interactively (CI, scripts piping
+    // output) so we don't start a TUI that has no terminal.
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        eprintln!("\n✓ pgman upgraded · stdin/stdout not a TTY — not relaunching");
+        return Ok(());
+    }
+
+    eprintln!("\n✓ pgman upgraded · relaunching…\n");
+    relaunch()
+}
+
+/// Replace this process with the (just-installed) `pgman` binary, passing
+/// through the user's original CLI args minus `--upgrade`. The exec'd binary
+/// is the same path we were launched from — `cargo install` has overwritten
+/// the file there.
+#[cfg(unix)]
+fn relaunch() -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| a != "--upgrade")
+        .collect();
+    // `exec` does not return on success — the new binary takes over.
+    let err = Command::new(&exe).args(&args).exec();
+    Err(anyhow::anyhow!("exec failed: {err}"))
+}
+
+#[cfg(not(unix))]
+fn relaunch() -> anyhow::Result<()> {
+    let exe = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|a| a != "--upgrade")
+        .collect();
+    let status = Command::new(&exe)
+        .args(&args)
+        .status()
+        .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
+    std::process::exit(status.code().unwrap_or(1));
 }
