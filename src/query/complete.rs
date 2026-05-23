@@ -15,7 +15,7 @@
 //! The Tab handler in `app.rs` is the only consumer; everything in this
 //! module is pure and unit-tested.
 
-use crate::query::clause::{classify_at, extract_cte_names, ClauseContext, QualifiedTable};
+use crate::query::clause::{classify_at, extract_ctes, ClauseContext, CteDef, QualifiedTable};
 use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
@@ -239,12 +239,13 @@ pub fn candidates_for(
             schema: t.schema.clone(),
             name: t.name.clone(),
             alias: None,
+            virtual_columns: None,
         });
     }
 
-    let cte_names = extract_cte_names(buf);
+    let ctes = extract_ctes(buf);
 
-    candidates_for_in_context(&id, &classification.ctx, &in_scope, &cte_names, schema)
+    candidates_for_in_context(&id, &classification.ctx, &in_scope, &ctes, schema)
 }
 
 /// Branch on clause context to keep candidates relevant to what the
@@ -254,7 +255,7 @@ fn candidates_for_in_context(
     id: &Identifier,
     ctx: &ClauseContext,
     in_scope: &[TableRefInQuery],
-    cte_names: &[String],
+    ctes: &[CteDef],
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
     // 3-segment `schema.table.col|` — always resolves to columns of
@@ -267,6 +268,23 @@ fn candidates_for_in_context(
             .cloned()
             .unwrap_or_default();
         return matches_for(&cols, &id.prefix, CandidateKind::Column);
+    }
+    // 2-segment `cte.col|` or `sub.col|` — resolve the qualifier
+    // against CTE / subquery virtual columns BEFORE falling through to
+    // catalog-table / alias logic.
+    if id.schema.is_none() {
+        if let Some(q) = id.qualifier.as_deref() {
+            if let Some(cte) = ctes.iter().find(|c| c.name.eq_ignore_ascii_case(q)) {
+                return matches_for(&cte.columns, &id.prefix, CandidateKind::Column);
+            }
+            for t in in_scope {
+                if t.match_key() == q.to_ascii_lowercase() {
+                    if let Some(cols) = &t.virtual_columns {
+                        return matches_for(cols, &id.prefix, CandidateKind::Column);
+                    }
+                }
+            }
+        }
     }
     match ctx {
         // Inside a `VALUES (...)` literal list — operator is typing
@@ -308,12 +326,12 @@ fn candidates_for_in_context(
         ClauseContext::TableRef => match id.qualifier.as_deref() {
             Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
             None => {
-                let mut out: Vec<Candidate> = cte_names
+                let mut out: Vec<Candidate> = ctes
                     .iter()
-                    .filter(|n| starts_with_ci(n, &id.prefix))
-                    .map(|n| Candidate {
-                        display: n.clone(),
-                        insert: n.clone(),
+                    .filter(|c| starts_with_ci(&c.name, &id.prefix))
+                    .map(|c| Candidate {
+                        display: c.name.clone(),
+                        insert: c.name.clone(),
                         kind: CandidateKind::Table,
                     })
                     .collect();
@@ -594,10 +612,19 @@ fn candidates_for_unqualified(
     let mut seen: std::collections::BTreeSet<(CandidateKind, String)> =
         std::collections::BTreeSet::new();
 
-    // Tier 1: columns of in-scope tables.
+    // Tier 1: columns of in-scope tables. `virtual_columns` wins over
+    // the catalog so subquery aliases (`FROM (SELECT a, b) sub`) and
+    // CTE references contribute their inferred columns.
     for table in in_scope {
-        if let Some(cols) = schema.columns_for(table.schema.as_deref(), &table.name) {
-            for c in cols {
+        let cols_owned: Option<Vec<String>> = if let Some(v) = &table.virtual_columns {
+            Some(v.clone())
+        } else {
+            schema
+                .columns_for(table.schema.as_deref(), &table.name)
+                .cloned()
+        };
+        if let Some(cols) = cols_owned {
+            for c in &cols {
                 if starts_with_ci(c, prefix)
                     && seen.insert((CandidateKind::Column, c.clone()))
                 {
@@ -1314,6 +1341,68 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         // Unknown schema → silent (no fall-through to ambiguous lookup).
         assert!(cands.is_empty());
+    }
+
+    #[test]
+    fn cte_dot_offers_cte_columns_qualified() {
+        // `WITH active AS (SELECT id, email FROM users) SELECT a|`
+        // → typing `active.|` should offer id + email.
+        let cache = build_cache();
+        let buf = "WITH active AS (SELECT id, email FROM users) SELECT * FROM active WHERE active.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"id"), "got: {labels:?}");
+        assert!(labels.contains(&"email"));
+        // The cache also has `name` column on `users` — but
+        // `name` is NOT in the CTE's SELECT list, so it must NOT
+        // be offered for the CTE qualifier.
+        assert!(!labels.contains(&"name"));
+    }
+
+    #[test]
+    fn cte_columns_appear_in_outer_select_unqualified() {
+        // The outer SELECT's column completion sees the CTE's columns
+        // because `FROM active` brought it into scope.
+        let cache = build_cache();
+        let buf = "WITH active AS (SELECT id, email FROM users) SELECT em FROM active";
+        let cur = buf.find(" FROM active").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn cte_with_explicit_column_list_uses_those_columns() {
+        let cache = build_cache();
+        let buf = "WITH t(a, b) AS (SELECT 1, 2) SELECT * FROM t WHERE t.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn subquery_alias_dot_offers_inferred_columns() {
+        // `FROM (SELECT id, email FROM users) sub` — `sub.|` should
+        // offer the inferred id + email.
+        let cache = build_cache();
+        let buf = "SELECT * FROM (SELECT id, email FROM users) sub WHERE sub.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"id"));
+        assert!(labels.contains(&"email"));
+        assert!(!labels.contains(&"name"));
+    }
+
+    #[test]
+    fn subquery_with_aliased_column_uses_alias_name() {
+        // `SELECT id AS user_id` — the subquery exposes `user_id`, not
+        // `id`.
+        let cache = build_cache();
+        let buf = "SELECT * FROM (SELECT id AS user_id FROM users) sub WHERE sub.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"user_id"));
+        assert!(!labels.contains(&"id"));
     }
 
     #[test]
