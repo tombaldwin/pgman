@@ -305,7 +305,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let hints = match app.mode {
             Mode::Help => "esc / ?  close help",
             Mode::Editor => {
-                "F5 run · F6 EXPLAIN · F7 EXPLAIN ANALYZE · F8 log-import · ctrl-p/n history · esc"
+                "ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-p/n history · esc"
             }
             Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
             // TxDecision is handled above with a return — this arm is unreachable.
@@ -546,10 +546,10 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    g / G         first / last row"),
         Line::from(""),
         Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
-        Line::from("    F5            run the statement (through safety guards)"),
-        Line::from("    F6            EXPLAIN  (never executes)"),
-        Line::from("    F7            EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
-        Line::from("    F8            parse buffer as log → pick a reconstructed query"),
+        Line::from("    ctrl-r / F5   run the statement (through safety guards)"),
+        Line::from("    ctrl-e / F6   EXPLAIN  (never executes)"),
+        Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
+        Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
         Line::from("    enter         insert newline"),
         Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
         Line::from("    home / end    start / end of current line"),
