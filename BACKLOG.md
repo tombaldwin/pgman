@@ -322,10 +322,22 @@ Pull a remote database down for local testing; keep tagged backups.
   silently empty for an unknown schema rather than guessing — DONE.
 - Subquery alias as in-scope table — `FROM (SELECT ...) sub` registers
   `sub` as an alias in `parse_from_tables` so it surfaces in unqualified
-  completion (typing `su` matches it). Subquery body's columns aren't
-  type-checked yet — `sub.|` returns empty rather than wrong columns —
-  DONE. Follow-up: type-check the subquery body so `sub.|` offers
-  the subquery's SELECT list as columns.
+  completion (typing `su` matches it) — DONE.
+- SELECT-list column extractor (`query::select_list`) — pure, tolerant
+  walker that pulls column names out of a SELECT list. Recognises:
+  plain idents, `tab.col`, `schema.tab.col`, `expr AS alias`,
+  `DISTINCT [ON (…)]` modifiers, function-call commas. Skips
+  unnameable expressions and `*`. 11 dedicated tests — DONE.
+- CTE column inference — `extract_ctes` now returns `Vec<CteDef>` where
+  each `CteDef` carries inferred columns. Explicit `WITH foo(a, b) AS
+  …` lists win; otherwise the body's SELECT list is parsed. `foo.|`
+  completion offers those columns; `SELECT … FROM foo` brings the
+  columns into scope for unqualified completion — DONE.
+- Subquery body column inference — `FROM (SELECT id, email FROM users)
+  sub` now stores `sub`'s inferred columns on its `TableRefInQuery`
+  via the new `virtual_columns: Option<Vec<String>>` field. `sub.|`
+  offers `id, email` (and respects `AS alias`); the outer SELECT's
+  unqualified completion picks them up too — DONE.
 
 ## v3+ — deferred
 

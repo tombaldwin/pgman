@@ -360,53 +360,74 @@ fn take_qualified(
     }
 }
 
-/// Extract names of CTEs (`WITH cte_name AS (...)`) declared in `buf`.
-/// Returns the names in declaration order. Tolerant of partial input:
-/// an unterminated CTE body still emits everything before it.
+/// A CTE definition captured from a `WITH` block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CteDef {
+    pub name: String,
+    /// Column names the CTE exposes. Sourced from the explicit
+    /// `WITH cte(a, b) AS (...)` column list when present, otherwise
+    /// inferred from the body's SELECT list. May be empty when neither
+    /// is determinable (e.g. `SELECT *` without a known FROM).
+    pub columns: Vec<String>,
+}
+
+/// Extract CTEs (`WITH cte_name AS (...)`) declared in `buf` in
+/// declaration order. Tolerant of partial input — an unterminated CTE
+/// body still produces an entry for the name.
 ///
-/// Used by completion so `FROM ` after a `WITH` block offers the local
-/// CTE names alongside catalog tables.
-pub fn extract_cte_names(buf: &str) -> Vec<String> {
+/// Columns: explicit `WITH cte(a, b) AS (...)` lists win; otherwise
+/// pulled from the body's SELECT list via `select_list::extract_select_columns`.
+pub fn extract_ctes(buf: &str) -> Vec<CteDef> {
     let tokens = tokenize(buf);
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<CteDef> = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
         if tokens[i].text.eq_ignore_ascii_case("WITH") {
             i += 1;
-            // Optional RECURSIVE keyword.
             if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("RECURSIVE") {
                 i += 1;
             }
-            // CTE list: `name [(col_list)] AS ( body ) [, name2 ...]`.
             loop {
                 if i >= tokens.len() || !is_identifier_like(tokens[i].text) {
                     break;
                 }
                 let name = tokens[i].text.to_string();
                 i += 1;
-                // Optional column-list.
+                // Optional column list `cte(a, b) AS …`.
+                let mut explicit_columns: Vec<String> = Vec::new();
                 if i < tokens.len() && tokens[i].text == "(" {
+                    explicit_columns = read_paren_ident_list(&tokens, i);
                     i = skip_parenthesised(&tokens, i);
                 }
-                // AS keyword is required for CTE syntax.
                 if i >= tokens.len() || !tokens[i].text.eq_ignore_ascii_case("AS") {
                     break;
                 }
                 i += 1;
-                // Optional MATERIALIZED / NOT MATERIALIZED.
                 if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("NOT") {
                     i += 1;
                 }
                 if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("MATERIALIZED") {
                     i += 1;
                 }
-                // CTE body: `( ... )`. Capture the name first so a
-                // partial / unterminated body still counts.
-                out.push(name);
+                // Body — extract the raw substring so we can re-run the
+                // select-list extractor on it. Token positions aren't
+                // tracked, so we slice via a paren-balance walk on the
+                // raw bytes of `buf`.
+                let body_text = extract_paren_body(buf, &tokens, i);
+                let body_columns = if !explicit_columns.is_empty() {
+                    explicit_columns
+                } else {
+                    body_text
+                        .map(|body| crate::query::select_list::extract_select_columns(body))
+                        .unwrap_or_default()
+                };
+                out.push(CteDef {
+                    name,
+                    columns: body_columns,
+                });
                 if i < tokens.len() && tokens[i].text == "(" {
                     i = skip_parenthesised(&tokens, i);
                 }
-                // Continue if the list extends with a comma.
                 if i < tokens.len() && tokens[i].text == "," {
                     i += 1;
                     continue;
@@ -418,6 +439,172 @@ pub fn extract_cte_names(buf: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Convenience for callers that only care about the names. Wraps
+/// `extract_ctes` so we don't break older consumers in one go.
+pub fn extract_cte_names(buf: &str) -> Vec<String> {
+    extract_ctes(buf).into_iter().map(|c| c.name).collect()
+}
+
+/// Read identifier names from a `( a, b, c )` group starting at
+/// `tokens[i] == "("`. Skips anything that isn't a plain identifier.
+fn read_paren_ident_list(
+    tokens: &[crate::query::from_parse::Tok<'_>],
+    i: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if tokens.get(i).map(|t| t.text) != Some("(") {
+        return out;
+    }
+    let mut depth = 1i32;
+    let mut j = i + 1;
+    while j < tokens.len() && depth > 0 {
+        match tokens[j].text {
+            "(" => depth += 1,
+            ")" => depth -= 1,
+            "," => {}
+            t if is_identifier_like(t) && depth == 1 => out.push(t.to_string()),
+            _ => {}
+        }
+        j += 1;
+    }
+    out
+}
+
+/// Slice the body of a parenthesised group from the original `buf`.
+/// `tokens[i] == "("` is required; otherwise returns None.
+/// Uses a parens-balance walk on the raw bytes (not the tokens),
+/// honouring single-quoted strings and SQL comments so an in-string
+/// `(` / `)` can't unbalance the count.
+fn extract_paren_body<'a>(
+    buf: &'a str,
+    tokens: &[crate::query::from_parse::Tok<'_>],
+    i: usize,
+) -> Option<&'a str> {
+    if tokens.get(i).map(|t| t.text) != Some("(") {
+        return None;
+    }
+    // Find the byte offset of the i-th `(` token by walking the raw
+    // bytes and counting tokenizable-`(`s. Cheap-and-cheerful: we
+    // count any `(` not inside a string / comment.
+    let mut byte_idx: Option<usize> = None;
+    let mut count = 0usize;
+    let bytes = buf.as_bytes();
+    let target_paren_count = count_lparens_through_token(tokens, i);
+    let mut k = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+    while k < bytes.len() {
+        let b = bytes[k];
+        if in_single {
+            if b == b'\'' {
+                in_single = false;
+            }
+            k += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+            k += 1;
+            continue;
+        }
+        if b == b'-' && k + 1 < bytes.len() && bytes[k + 1] == b'-' {
+            while k < bytes.len() && bytes[k] != b'\n' {
+                k += 1;
+            }
+            continue;
+        }
+        if b == b'/' && k + 1 < bytes.len() && bytes[k + 1] == b'*' {
+            k += 2;
+            while k + 1 < bytes.len() && !(bytes[k] == b'*' && bytes[k + 1] == b'/') {
+                k += 1;
+            }
+            if k + 1 < bytes.len() {
+                k += 2;
+            }
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => {
+                count += 1;
+                if count == target_paren_count {
+                    byte_idx = Some(k);
+                    break;
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let open = byte_idx?;
+    // Walk forward from `open + 1` to the matching `)`.
+    let mut depth = 1i32;
+    let mut j = open + 1;
+    let mut in_single = false;
+    let mut in_double = false;
+    while j < bytes.len() && depth > 0 {
+        let b = bytes[j];
+        if in_single {
+            if b == b'\'' {
+                in_single = false;
+            }
+            j += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+            j += 1;
+            continue;
+        }
+        if b == b'-' && j + 1 < bytes.len() && bytes[j + 1] == b'-' {
+            while j < bytes.len() && bytes[j] != b'\n' {
+                j += 1;
+            }
+            continue;
+        }
+        if b == b'/' && j + 1 < bytes.len() && bytes[j + 1] == b'*' {
+            j += 2;
+            while j + 1 < bytes.len() && !(bytes[j] == b'*' && bytes[j + 1] == b'/') {
+                j += 1;
+            }
+            if j + 1 < bytes.len() {
+                j += 2;
+            }
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    // Body is `(...)` exclusive of the outer parens — return inner.
+    let inner_start = open + 1;
+    let inner_end = if depth == 0 { j - 1 } else { j };
+    if !buf.is_char_boundary(inner_start) || !buf.is_char_boundary(inner_end) {
+        return None;
+    }
+    Some(&buf[inner_start..inner_end])
+}
+
+/// How many `(` tokens (as the tokenizer sees them) appear at-or-before
+/// index `i`. Used by `extract_paren_body` to translate a token index
+/// into a byte index in the original buffer.
+fn count_lparens_through_token(
+    tokens: &[crate::query::from_parse::Tok<'_>],
+    i: usize,
+) -> usize {
+    tokens.iter().take(i + 1).filter(|t| t.text == "(").count()
 }
 
 /// Step past a `(...)` group starting at `tokens[i] == "("`. Returns the
@@ -724,6 +911,49 @@ mod tests {
     #[test]
     fn extract_cte_names_returns_empty_for_no_with() {
         assert!(extract_cte_names("SELECT * FROM users").is_empty());
+    }
+
+    #[test]
+    fn extract_ctes_pulls_columns_from_body_select() {
+        let got = extract_ctes(
+            "WITH active_users AS (SELECT id, email FROM users WHERE active) \
+             SELECT * FROM active_users",
+        );
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "active_users");
+        assert_eq!(got[0].columns, vec!["id", "email"]);
+    }
+
+    #[test]
+    fn extract_ctes_explicit_column_list_wins() {
+        // The column list on the CTE-name side overrides body inference.
+        let got = extract_ctes("WITH foo (a, b) AS (SELECT 1, 2) SELECT * FROM foo");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].columns, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn extract_ctes_multiple_ctes_each_with_columns() {
+        let got = extract_ctes(
+            "WITH foo AS (SELECT a, b FROM x), \
+             bar (one, two) AS (SELECT 1, 2) \
+             SELECT * FROM bar JOIN foo ON true",
+        );
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "foo");
+        assert_eq!(got[0].columns, vec!["a", "b"]);
+        assert_eq!(got[1].name, "bar");
+        assert_eq!(got[1].columns, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn extract_ctes_handles_unnameable_body_gracefully() {
+        // SELECT * → no inferred names; CTE still appears but with
+        // empty columns. Completion will fall back to "no candidates"
+        // for `cte.|` rather than guess wrong.
+        let got = extract_ctes("WITH foo AS (SELECT * FROM users) SELECT * FROM foo");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].columns, Vec::<String>::new());
     }
 
     #[test]
