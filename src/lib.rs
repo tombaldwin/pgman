@@ -7,6 +7,7 @@
 pub mod app;
 pub mod conn;
 pub mod creds;
+pub mod dbunit;
 pub mod font_probe;
 pub mod grid;
 pub mod query;

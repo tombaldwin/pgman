@@ -305,7 +305,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let hints = match app.mode {
             Mode::Help => "esc / ?  close help",
             Mode::Editor => {
-                "ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-p/n history · esc"
+                "ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
             }
             Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
             // TxDecision is handled above with a return — this arm is unreachable.
@@ -417,13 +417,29 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let theme = &app.theme;
-    let kind_label = format!("{:?}", pending.decision.kind);
+    let detail = match &pending.summary {
+        Some(s) => s.clone(),
+        None => format!("{:?}", pending.decision.kind),
+    };
     let wrap_note = if pending.decision.wrap_in_tx {
         " · will wrap in transaction"
     } else {
         ""
     };
-    let lines = vec![
+    // For batch runs the SQL can be long — show the first 8 lines and an
+    // ellipsis. Single statements show as-is.
+    let sql_preview = if pending.is_batch {
+        let total = pending.sql.lines().count();
+        let preview: String = pending.sql.lines().take(8).collect::<Vec<_>>().join("\n");
+        if total > 8 {
+            format!("{preview}\n…")
+        } else {
+            preview
+        }
+    } else {
+        pending.sql.clone()
+    };
+    let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             "Confirm",
             Style::default()
@@ -432,22 +448,29 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            format!("{} ({kind_label}){wrap_note}", pending.kind.label()),
+            format!("{} ({detail}){wrap_note}", pending.kind.label()),
             Style::default().fg(theme.accent),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            pending.sql.clone(),
-            Style::default().fg(theme.text),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "y = run · n / esc = cancel",
-            Style::default().fg(theme.muted),
-        )),
     ];
+    for sql_line in sql_preview.lines() {
+        lines.push(Line::from(Span::styled(
+            sql_line.to_string(),
+            Style::default().fg(theme.text),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "y = run · n / esc = cancel",
+        Style::default().fg(theme.muted),
+    )));
     let h = (lines.len() as u16 + 2).min(area.height);
-    let w = ((pending.sql.chars().count().max(40) + 4) as u16).min(area.width);
+    let widest_line = sql_preview
+        .lines()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(40);
+    let w = ((widest_line.max(40) + 4) as u16).min(area.width);
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
     f.render_widget(
@@ -550,6 +573,7 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    ctrl-e / F6   EXPLAIN  (never executes)"),
         Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
         Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
+        Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
         Line::from("    enter         insert newline"),
         Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
         Line::from("    home / end    start / end of current line"),
