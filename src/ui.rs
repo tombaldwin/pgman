@@ -470,12 +470,20 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // screen too, not just on the failure card.
         let failed_normal = app.mode == Mode::Normal
             && matches!(app.conn_state, ConnState::Failed(_));
+        // While we're still mid-connect, surface that — the Normal hints
+        // would suggest j/k/scroll affordances against a grid that
+        // doesn't exist yet, and `r retry` wouldn't fire (only Failed
+        // accepts r).
+        let connecting_normal = app.mode == Mode::Normal
+            && matches!(app.conn_state, ConnState::Connecting);
         let hints: &str = if failed_normal {
-            if app.data_source_picks.is_empty() {
-                "r retry · q quit · ? help"
-            } else {
+            if app.data_source_picks.len() >= 2 {
                 "r retry · p change connection · q quit · ? help"
+            } else {
+                "r retry · q quit · ? help"
             }
+        } else if connecting_normal {
+            "connecting… · q quit"
         } else {
             match app.mode {
                 Mode::Help => "esc / ?  close help",
