@@ -232,7 +232,12 @@ fn take_alias(tokens: &[Tok], i: usize) -> (Option<String>, usize) {
         let upper = t.text.to_ascii_uppercase();
         if upper == "AS" {
             if let Some(alias) = tokens.get(i + 1) {
-                if is_identifier_like(alias.text) {
+                let alias_upper = alias.text.to_ascii_uppercase();
+                // Reject keywords after AS — `FROM users AS JOIN orders`
+                // should not consume `JOIN` as the alias of `users`.
+                if is_identifier_like(alias.text)
+                    && !stop_words.contains(&alias_upper.as_str())
+                {
                     return (Some(alias.text.to_string()), i + 2);
                 }
             }
@@ -373,6 +378,17 @@ mod tests {
         // unguarded slice.
         let _ = parse_from_tables("SELECT 'café 🐘' FROM users");
         let _ = parse_from_tables("λ FROM x");
+    }
+
+    #[test]
+    fn as_does_not_swallow_a_following_keyword_as_alias() {
+        // `FROM users AS JOIN orders ...` — `JOIN` is a clause keyword,
+        // not an alias. The downstream JOIN must still be parsed.
+        let got = parse_from_tables("SELECT * FROM users AS JOIN orders o ON o.x = users.x");
+        assert!(
+            got.iter().any(|t| t.name == "orders"),
+            "orders JOIN should still appear in scope: {got:?}"
+        );
     }
 
     #[test]
