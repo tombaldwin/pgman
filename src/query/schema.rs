@@ -63,14 +63,24 @@ impl SchemaCache {
     /// unqualified names via `search_path`.
     pub fn columns_for(&self, schema: Option<&str>, name: &str) -> Option<&Vec<String>> {
         if let Some(s) = schema {
-            return self.columns_by_table.get(&(s.to_string(), name.to_string()));
+            // Case-insensitive: typed identifiers are folded to match
+            // unquoted-Postgres behaviour. Quoted-case-sensitive lookups
+            // are a v2 concern.
+            for t in &self.tables {
+                if t.schema.eq_ignore_ascii_case(s) && t.name.eq_ignore_ascii_case(name) {
+                    return self
+                        .columns_by_table
+                        .get(&(t.schema.clone(), t.name.clone()));
+                }
+            }
+            return None;
         }
         // Schema not specified: scan tables in their sorted order and
         // return the first hit. (search_path-style behavior would prefer
         // 'public' / first-on-path; we don't know the user's path so
         // sorted order is a reasonable proxy.)
         for t in &self.tables {
-            if t.name == name {
+            if t.name.eq_ignore_ascii_case(name) {
                 return self
                     .columns_by_table
                     .get(&(t.schema.clone(), t.name.clone()));
@@ -197,6 +207,25 @@ mod tests {
             c.columns_for(Some("public"), "users").unwrap(),
             &vec!["id".to_string(), "email".to_string()]
         );
+        assert!(c.columns_for(Some("nope"), "users").is_none());
+    }
+
+    #[test]
+    fn columns_for_is_case_insensitive_on_both_args() {
+        let mut c = SchemaCache::default();
+        c.tables.push(TableMeta {
+            schema: "public".into(),
+            name: "users".into(),
+        });
+        c.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into()],
+        );
+        // Mixed case in either schema or name should still hit.
+        assert!(c.columns_for(None, "USERS").is_some());
+        assert!(c.columns_for(None, "Users").is_some());
+        assert!(c.columns_for(Some("PUBLIC"), "users").is_some());
+        assert!(c.columns_for(Some("public"), "USERS").is_some());
         assert!(c.columns_for(Some("nope"), "users").is_none());
     }
 
