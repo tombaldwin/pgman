@@ -386,7 +386,23 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 scope.ctx = TableRef;
                 in_write_stmt = true;
             }
-            "WHERE" | "ON" => scope.ctx = Predicate,
+            "WHERE" => scope.ctx = Predicate,
+            "ON" => {
+                // Peek-ahead: `ON CONFLICT` opens an upsert clause
+                // (handled by the CONFLICT keyword arm), not a
+                // predicate. And inside an existing ON CONFLICT, any
+                // ON belongs to the conflict spec (`ON CONSTRAINT`
+                // is the canonical use). Either way, skip the
+                // Predicate flip. Plain `JOIN x ON x.id = y.id` still
+                // routes to Predicate.
+                let next_is_conflict = tokens
+                    .get(i + 1)
+                    .map(|t| t.text.eq_ignore_ascii_case("CONFLICT"))
+                    .unwrap_or(false);
+                if !next_is_conflict && !scope.in_on_conflict {
+                    scope.ctx = Predicate;
+                }
+            }
             "HAVING" => scope.ctx = HavingPredicate,
             "ORDER" | "GROUP" => scope.pending_by = true,
             "RETURNING" => scope.ctx = SelectList,
@@ -1258,6 +1274,18 @@ mod tests {
         // pending_drop_kind set, but no TABLE/VIEW follows; ctx stays
         // at the current value (StatementStart in this case).
         assert_eq!(classify("DROP "), ClauseContext::StatementStart);
+    }
+
+    #[test]
+    fn on_inside_on_conflict_does_not_trigger_predicate() {
+        // `INSERT INTO foo (a) VALUES (1) ON CONFLICT ON CONSTRAINT |`
+        // — the second ON belongs to "ON CONSTRAINT", not a Predicate
+        // introducer. ctx must not flip to Predicate.
+        let c = classify_at(
+            "INSERT INTO foo (a) VALUES (1) ON CONFLICT ON CONSTRAINT ",
+            55,
+        );
+        assert_ne!(c.ctx, ClauseContext::Predicate);
     }
 
     #[test]
