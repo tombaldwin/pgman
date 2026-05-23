@@ -511,7 +511,31 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 
 /// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
 /// buffer; the cursor renders as a reverse-video character on its line.
-fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
+/// Given the current scroll offset, the cursor's line index, the total line
+/// count, and the visible-row budget, return the scroll offset that keeps
+/// the cursor visible while clamping to the valid range. Pure / testable.
+///
+/// Rules:
+/// - cursor above viewport → scroll up to the cursor line
+/// - cursor at-or-below the bottom of the viewport → scroll just enough
+///   so the cursor sits on the last visible row
+/// - otherwise hold; clamp to `total.saturating_sub(visible)` so we
+///   don't reveal blank rows past the buffer's end
+pub(crate) fn clamp_editor_scroll(scroll: u16, cur_line: u16, total: u16, visible: u16) -> u16 {
+    if visible == 0 {
+        return 0;
+    }
+    let max_scroll = total.saturating_sub(visible);
+    let mut s = scroll;
+    if cur_line < s {
+        s = cur_line;
+    } else if visible > 0 && cur_line >= s.saturating_add(visible) {
+        s = cur_line.saturating_sub(visible).saturating_add(1);
+    }
+    s.min(max_scroll)
+}
+
+fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let focused = app.mode == Mode::Editor;
     let border_color = if focused {
@@ -519,10 +543,20 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
     } else {
         theme.border_idle
     };
+    let total_lines = app.editor_buffer.matches('\n').count() + 1;
+    let (cur_line_check, _) =
+        crate::app::cursor_position(&app.editor_buffer, app.editor_cursor);
     let title_text = if focused {
-        match app.history_pos {
+        let base = match app.history_pos {
             None => "editor".to_string(),
             Some(i) => format!("editor · history {}/{}", i + 1, app.history.len()),
+        };
+        // Show line N/M when the buffer is long enough to actually scroll;
+        // the visible window is bounded by the pane height (3-12).
+        if total_lines > 10 {
+            format!("{base} · line {}/{}", cur_line_check + 1, total_lines)
+        } else {
+            base
         }
     } else {
         "editor (e to focus)".to_string()
@@ -595,7 +629,21 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(spans));
     }
 
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Vertical scroll: keep the cursor's line visible inside the pane's
+    // limited height (3-12 rows incl. borders). For short buffers
+    // editor_scroll stays 0; long buffers scroll to follow the cursor.
+    let total_rendered = lines.len() as u16;
+    let scroll = clamp_editor_scroll(
+        app.editor_scroll,
+        cur_line as u16,
+        total_rendered,
+        inner.height,
+    );
+    app.editor_scroll = scroll;
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
+        inner,
+    );
 }
 
 /// Completion candidates popup. Anchored just under the editor pane,
@@ -1488,6 +1536,45 @@ mod tests {
         // Falling back to one line keeps render functions from panicking on
         // `chunks(0)`.
         assert_eq!(wrap_value("hello", 0), vec!["hello"]);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_holds_when_cursor_inside_viewport() {
+        // 20-line buffer, 5-row viewport, cursor on line 7, current scroll 3.
+        // Viewport shows lines 3..8 — cursor visible — no change.
+        assert_eq!(clamp_editor_scroll(3, 7, 20, 5), 3);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_pulls_down_when_cursor_above() {
+        // Cursor moved up to line 1; viewport was at line 5.
+        // Scroll up to make cursor the new top row.
+        assert_eq!(clamp_editor_scroll(5, 1, 20, 5), 1);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_pushes_up_when_cursor_below_viewport() {
+        // Viewport 0..5, cursor moved to line 12 — bring it to last
+        // visible row (so cursor sits at row 4 of the pane).
+        assert_eq!(clamp_editor_scroll(0, 12, 20, 5), 12 - 5 + 1);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_caps_at_total_minus_visible() {
+        // Don't reveal blank rows past the buffer's end.
+        assert_eq!(clamp_editor_scroll(50, 19, 20, 5), 15);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_returns_zero_when_buffer_fits() {
+        // Buffer fits in one pane — no scrolling possible.
+        assert_eq!(clamp_editor_scroll(3, 4, 5, 10), 0);
+    }
+
+    #[test]
+    fn clamp_editor_scroll_handles_zero_visible() {
+        // Defensive: degenerate pane height.
+        assert_eq!(clamp_editor_scroll(7, 5, 20, 0), 0);
     }
 
     #[test]

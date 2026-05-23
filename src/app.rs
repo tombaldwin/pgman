@@ -171,6 +171,12 @@ pub struct App {
     /// Remembered char-column for vertical motion (Up/Down). `None` outside a
     /// vertical-motion run; cleared by any other edit or horizontal move.
     pub editor_preferred_col: Option<usize>,
+    /// Vertical scroll offset (lines hidden above the viewport) for the
+    /// editor pane. The renderer auto-adjusts this each frame to keep
+    /// the cursor's line visible; the field is plain state (not derived)
+    /// so the renderer doesn't have to recompute from scratch when the
+    /// buffer changes between frames.
+    pub editor_scroll: u16,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -281,6 +287,7 @@ impl App {
             editor_buffer: String::new(),
             editor_cursor: 0,
             editor_preferred_col: None,
+            editor_scroll: 0,
             history: Vec::new(),
             history_pos: None,
             history_draft: String::new(),
