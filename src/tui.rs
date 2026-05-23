@@ -9,6 +9,7 @@
 use std::io::{self, Stdout};
 use std::sync::Once;
 
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -24,6 +25,7 @@ pub struct Tui {
 /// panic hook (errors are ignored). Used by both `Drop` and the panic
 /// hook so the two paths can't drift.
 fn restore_terminal() {
+    let _ = io::stdout().execute(DisableBracketedPaste);
     let _ = disable_raw_mode();
     let _ = io::stdout().execute(LeaveAlternateScreen);
 }
@@ -49,6 +51,12 @@ impl Tui {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         stdout.execute(EnterAlternateScreen)?;
+        // Bracketed paste: terminal wraps pasted text in escape codes so
+        // crossterm delivers it as a single `Event::Paste(String)` rather
+        // than streaming each character through `Event::Key`. Best-effort
+        // — older terminals ignore the enable sequence; we just keep
+        // pasting char-by-char in that case.
+        let _ = stdout.execute(EnableBracketedPaste);
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
         Ok(Self { terminal })
     }

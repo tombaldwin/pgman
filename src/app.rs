@@ -503,10 +503,36 @@ impl App {
     }
 
     fn on_event(&mut self, ev: Event) {
-        if let Event::Key(key) = ev {
-            if key.kind != KeyEventKind::Release {
-                self.on_key(key);
-            }
+        match ev {
+            Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
+            Event::Paste(text) => self.on_paste(text),
+            _ => {}
+        }
+    }
+
+    /// Bracketed paste: terminal delivered the entire pasted blob in one
+    /// event. Only meaningful in the editor (the only typing surface);
+    /// elsewhere we ignore so a stray paste on the grid doesn't trigger
+    /// arbitrary keypress side effects.
+    fn on_paste(&mut self, text: String) {
+        if self.mode != Mode::Editor {
+            return;
+        }
+        // Splash, if still visible, was waiting on a key — dismiss it
+        // so the paste lands on the actual editor surface, not an empty
+        // pre-app frame.
+        self.splash_visible = false;
+        self.splash_until = None;
+        // Drop any active completion cycle — a paste mid-cycle is a hard
+        // commit / reset boundary.
+        self.completion = None;
+        self.editor_dirty();
+        // Normalise line endings to LF: most terminals deliver CRLF on
+        // Windows or `\r` from old-Mac sources. Don't collapse blank
+        // lines — the operator pasted them deliberately.
+        let cleaned = text.replace("\r\n", "\n").replace('\r', "\n");
+        for c in cleaned.chars() {
+            editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, c);
         }
     }
 
