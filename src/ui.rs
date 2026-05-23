@@ -688,14 +688,18 @@ fn draw_completion_popup(
     if height < 3 {
         return;
     }
+    // Scroll to keep the selected row centred. When nothing's selected
+    // (we expanded a common prefix or just showed the list), show the
+    // top of the candidate list.
+    let focus_idx = cycle.selected.unwrap_or(0);
     let scroll = if total <= VISIBLE {
         0
-    } else if cycle.index >= total - VISIBLE / 2 {
+    } else if focus_idx >= total - VISIBLE / 2 {
         total - VISIBLE
-    } else if cycle.index < VISIBLE / 2 {
+    } else if focus_idx < VISIBLE / 2 {
         0
     } else {
-        cycle.index - VISIBLE / 2
+        focus_idx - VISIBLE / 2
     };
 
     // Anchor flush under the editor's bottom border, left-aligned.
@@ -722,7 +726,10 @@ fn draw_completion_popup(
         .skip(scroll)
         .take(VISIBLE)
     {
-        let is_focus = i == cycle.index;
+        // Only highlight a row when the operator has actually picked
+        // one (after the second Tab). Before that, render all rows
+        // neutrally — the popup is informational.
+        let is_focus = cycle.selected == Some(i);
         let kind = cand.kind.label();
         let prefix = if is_focus { "▶ " } else { "  " };
         let display = &cand.display;
@@ -746,7 +753,10 @@ fn draw_completion_popup(
         ]));
     }
 
-    let title = format!(" {}/{} ", cycle.index + 1, total);
+    let title = match cycle.selected {
+        Some(i) => format!(" {}/{} ", i + 1, total),
+        None => format!(" {} matches · Tab to pick ", total),
+    };
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
