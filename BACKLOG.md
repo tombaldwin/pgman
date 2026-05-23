@@ -440,6 +440,15 @@ Pull a remote database down for local testing; keep tagged backups.
   - **Ranking**: in SelectList, clause continuations (FROM, WHERE,
     GROUP BY) now rank BEFORE functions (FORMAT, FLOOR). So
     `SELECT * F|` gives FROM first — DONE.
+- **Live narrowing while typing**: when the completion popup is up in
+  pre-selection state (LCP expanded / popup-only, nothing committed
+  via Tab yet), narrowing keys — plain char insertion, Backspace,
+  Delete — now keep the cycle alive and refresh the candidate list
+  against the new buffer state. So `t_` Tab → `t_user_` (popup),
+  type `lo` → popup narrows to `t_user_logs`; type `c` → popup
+  empties and disappears. Right-arrow / Enter / Ctrl-key still drops
+  the cycle (operator's "I'm done" gesture). Esc-restore still
+  undoes the entire session back to the pre-Tab state — DONE.
 
 ## v3+ — deferred
 
