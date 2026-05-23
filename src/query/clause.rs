@@ -360,6 +360,86 @@ fn take_qualified(
     }
 }
 
+/// Extract names of CTEs (`WITH cte_name AS (...)`) declared in `buf`.
+/// Returns the names in declaration order. Tolerant of partial input:
+/// an unterminated CTE body still emits everything before it.
+///
+/// Used by completion so `FROM ` after a `WITH` block offers the local
+/// CTE names alongside catalog tables.
+pub fn extract_cte_names(buf: &str) -> Vec<String> {
+    let tokens = tokenize(buf);
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i].text.eq_ignore_ascii_case("WITH") {
+            i += 1;
+            // Optional RECURSIVE keyword.
+            if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("RECURSIVE") {
+                i += 1;
+            }
+            // CTE list: `name [(col_list)] AS ( body ) [, name2 ...]`.
+            loop {
+                if i >= tokens.len() || !is_identifier_like(tokens[i].text) {
+                    break;
+                }
+                let name = tokens[i].text.to_string();
+                i += 1;
+                // Optional column-list.
+                if i < tokens.len() && tokens[i].text == "(" {
+                    i = skip_parenthesised(&tokens, i);
+                }
+                // AS keyword is required for CTE syntax.
+                if i >= tokens.len() || !tokens[i].text.eq_ignore_ascii_case("AS") {
+                    break;
+                }
+                i += 1;
+                // Optional MATERIALIZED / NOT MATERIALIZED.
+                if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("NOT") {
+                    i += 1;
+                }
+                if i < tokens.len() && tokens[i].text.eq_ignore_ascii_case("MATERIALIZED") {
+                    i += 1;
+                }
+                // CTE body: `( ... )`. Capture the name first so a
+                // partial / unterminated body still counts.
+                out.push(name);
+                if i < tokens.len() && tokens[i].text == "(" {
+                    i = skip_parenthesised(&tokens, i);
+                }
+                // Continue if the list extends with a comma.
+                if i < tokens.len() && tokens[i].text == "," {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Step past a `(...)` group starting at `tokens[i] == "("`. Returns the
+/// index of the token AFTER the matching `)`, or `tokens.len()` when
+/// the input runs out before the close.
+fn skip_parenthesised(tokens: &[crate::query::from_parse::Tok<'_>], i: usize) -> usize {
+    if tokens.get(i).map(|t| t.text) != Some("(") {
+        return i;
+    }
+    let mut depth = 1i32;
+    let mut j = i + 1;
+    while j < tokens.len() && depth > 0 {
+        match tokens[j].text {
+            "(" => depth += 1,
+            ")" => depth -= 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    j
+}
+
 /// Heuristic: did `INSERT INTO` appear earlier in this token stream?
 /// We only care because `INSERT INTO foo (` should switch to
 /// InsertColumns, but `UPDATE foo (...)` (unusual) shouldn't.
@@ -610,6 +690,40 @@ mod tests {
     #[test]
     fn write_target_none_for_pure_select() {
         assert_eq!(target("SELECT * FROM foo WHERE "), None);
+    }
+
+    #[test]
+    fn extract_cte_names_single() {
+        let got = extract_cte_names("WITH foo AS (SELECT 1) SELECT * FROM foo");
+        assert_eq!(got, vec!["foo"]);
+    }
+
+    #[test]
+    fn extract_cte_names_multiple_with_recursive_and_column_list() {
+        let got = extract_cte_names(
+            "WITH RECURSIVE foo(a, b) AS (SELECT 1, 2), bar AS (SELECT * FROM foo) SELECT * FROM bar",
+        );
+        assert_eq!(got, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn extract_cte_names_materialized_keyword() {
+        let got = extract_cte_names(
+            "WITH foo AS MATERIALIZED (SELECT 1), bar AS NOT MATERIALIZED (SELECT 2) SELECT 1",
+        );
+        assert_eq!(got, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn extract_cte_names_partial_body_still_captures_name() {
+        // User mid-typing the CTE body — name is already there.
+        let got = extract_cte_names("WITH foo AS (SELECT em");
+        assert_eq!(got, vec!["foo"]);
+    }
+
+    #[test]
+    fn extract_cte_names_returns_empty_for_no_with() {
+        assert!(extract_cte_names("SELECT * FROM users").is_empty());
     }
 
     #[test]
