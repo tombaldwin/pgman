@@ -531,9 +531,12 @@ impl App {
         // Windows or `\r` from old-Mac sources. Don't collapse blank
         // lines — the operator pasted them deliberately.
         let cleaned = text.replace("\r\n", "\n").replace('\r', "\n");
-        for c in cleaned.chars() {
-            editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, c);
-        }
+        // Bulk insert (O(N)) — looping editor_insert char-by-char is
+        // O(N²) because each `String::insert(idx, c)` shifts the tail
+        // of the buffer. A 5MB schema-diff paste froze the UI for
+        // multiple seconds; insert_str makes it instant.
+        self.editor_buffer.insert_str(self.editor_cursor, &cleaned);
+        self.editor_cursor += cleaned.len();
     }
 
     fn on_key(&mut self, key: KeyEvent) {
