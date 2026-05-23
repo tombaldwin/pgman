@@ -269,10 +269,22 @@ Pull a remote database down for local testing; keep tagged backups.
   - UPDATE / DELETE write target is folded into in-scope so WHERE
     completion works without a FROM
   Lightweight token scan, not a full SQL grammar — tolerant of mid-
-  typed buffers. — DONE. Follow-ups: aggregation suggestions (`COUNT`,
-  `SUM`) in SelectList; comparison operators (`=`, `>`, `LIKE`) in
-  Predicate; subquery scoping (subquery-FROMs as separate scopes);
-  `WITH cte AS (...)` CTE awareness.
+  typed buffers. — DONE.
+- Aggregate / scalar functions in SelectList — `COUNT`, `SUM`, `AVG`,
+  `MIN`, `MAX`, `ARRAY_AGG`, `STRING_AGG`, `JSON_AGG`, `COALESCE`,
+  `NOW`, `CURRENT_TIMESTAMP` etc. surface as `CandidateKind::Function`
+  alongside columns of in-scope tables — DONE.
+- CTE awareness — `extract_cte_names` walks `WITH cte_name AS (...)`
+  blocks (recursive, materialized variants, multi-CTE comma lists,
+  partial bodies) and the names show up as `Table` candidates inside
+  TableRef completion — DONE.
+- Scope-stack classifier — subquery `(... SELECT / WHERE ...)` no
+  longer leaks into the outer ctx after `)`; `WITH cte AS (SELECT em`
+  classifies correctly inside the CTE body — DONE (via post-review
+  refactor).
+- Follow-ups: comparison operators (`=`, `>`, `LIKE`, `IN`) in
+  Predicate; column lookup honouring `verify-ca` hostname-skip in TLS
+  (needs custom rustls verifier); Spring bootstrap.yml discovery.
 
 ## v3+ — deferred
 
