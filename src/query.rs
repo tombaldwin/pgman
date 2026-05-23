@@ -11,6 +11,7 @@
 
 pub mod clause;
 pub mod complete;
+pub mod vocabulary;
 pub mod from_parse;
 pub mod hibernate;
 pub mod jdbc;
