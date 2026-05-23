@@ -366,6 +366,30 @@ Pull a remote database down for local testing; keep tagged backups.
   `TableRef`; COPY reuses the existing InsertColumns paren-list
   mechanism so `COPY users (em|` offers `email` (and only `email`).
   TRUNCATE offers only tables (no columns leak through) — DONE.
+- `CAST(expr AS |)` — new `ClauseContext::TypeName` + `TYPE_NAMES`
+  vocab (~40 entries spanning numeric, character, binary, date/time,
+  boolean, network, JSON, geometric, range, text-search). Scope flag
+  `is_cast_scope` inherited on the paren push so `AS` flips to TypeName
+  only inside CAST(...); regular `SELECT col AS alias` is unaffected
+  — DONE.
+- `INSERT … ON CONFLICT (col) DO UPDATE SET col = EXCLUDED.col` — new
+  scope flag `in_on_conflict` set on CONFLICT; gates the UPDATE arm
+  so the SET token isn't consumed as a table name. New `SET if
+  in_on_conflict` arm flips ctx to `UpdateAssign(write_target)`.
+  EXCLUDED is added as a synthetic in-scope entry with
+  `virtual_columns = write_target's columns` — DONE.
+- `DROP TABLE / VIEW / MATERIALIZED VIEW` — new
+  `ClauseContext::DropTarget` offers tables + schemas + `IF EXISTS`
+  / `CASCADE` / `RESTRICT`. NOT JOIN variants / WHERE / etc.
+  (deliberately scoped). INDEX / SEQUENCE / etc. don't flip the ctx
+  until the catalog fetch extends to those object kinds — DONE.
+- `SHOW ALL` — added to GUC_PARAMETERS so `SHOW al|` autocompletes.
+- `SET <param> = |` value side — new `ClauseContext::GucValue` +
+  `GUC_VALUES` vocab (`on`, `off`, `true`, `false`, `default`). The
+  `=` token flips GucParameter→GucValue. GucValue contexts skip the
+  keyword-match arm entirely so `SET timezone = on` doesn't
+  accidentally re-fire ON as the Predicate-introducing SQL keyword
+  — DONE.
 
 ## v3+ — deferred
 

@@ -22,8 +22,8 @@ use crate::query::from_parse::{parse_from_tables_resolved, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
     continuations, AGGREGATE_FUNCTIONS, DROP_CONTINUATIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS,
-    JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS, TYPE_NAMES,
-    WINDOW_FUNCTIONS,
+    GUC_VALUES, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS,
+    TYPE_NAMES, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -386,6 +386,17 @@ fn candidates_for_in_context(
             .map(|p| Candidate {
                 display: (*p).to_string(),
                 insert: (*p).to_string(),
+                kind: CandidateKind::Keyword,
+            })
+            .collect(),
+
+        // SET <param> = |  → on / off / true / false / default.
+        ClauseContext::GucValue => GUC_VALUES
+            .iter()
+            .filter(|v| starts_with_ci(v, &id.prefix))
+            .map(|v| Candidate {
+                display: (*v).to_string(),
+                insert: (*v).to_string(),
                 kind: CandidateKind::Keyword,
             })
             .collect(),
@@ -1500,6 +1511,33 @@ mod tests {
         assert!(labels.contains(&"email"));
         // Columns of OTHER tables must NOT leak in.
         assert!(!labels.contains(&"total"));
+    }
+
+    #[test]
+    fn show_all_appears_in_guc_parameter_list() {
+        let cache = build_cache();
+        let cands = candidates_for("SHOW al", 7, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"all"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn set_value_side_offers_on_off_default() {
+        let cache = build_cache();
+        let cands = candidates_for("SET enable_seqscan = of", 23, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"off"));
+    }
+
+    #[test]
+    fn set_value_side_does_not_offer_parameter_names() {
+        let cache = build_cache();
+        let cands = candidates_for("SET enable_seqscan = ", 21, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // After the `=`, the operator is typing a value — NOT another
+        // parameter name.
+        assert!(!labels.contains(&"timezone"));
+        assert!(labels.contains(&"default"));
     }
 
     #[test]

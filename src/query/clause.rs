@@ -46,9 +46,14 @@ pub enum ClauseContext {
     ExplainOptions,
     /// `SHOW |` or `SET |` — the operator is naming a GUC parameter.
     /// We don't distinguish SHOW vs SET because the candidate set is
-    /// the same (parameter names) and the right-hand side of SET
-    /// (`= value`) needs per-parameter value vocab that's out of scope.
+    /// the same (parameter names); the value side flips to `GucValue`
+    /// once `=` appears.
     GucParameter,
+    /// `SET <param> = |` — the operator is typing the value. Wants
+    /// `on` / `off` / `true` / `false` / `default`. String-typed GUCs
+    /// (timezone, search_path) accept any string literal — we only
+    /// offer the universal values here.
+    GucValue,
     /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
     /// Wants entries from `vocabulary::TYPE_NAMES`.
     TypeName,
@@ -288,9 +293,30 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             i += 1;
             continue;
         }
+        // `=` inside `SET <param> = …` flips ctx to the value side so
+        // completion offers `on` / `off` / `default` rather than more
+        // parameter names. `SHOW timezone` has no `=` so SHOW
+        // completion is unaffected.
+        if tok.text == "=" {
+            let scope = scopes.last_mut().expect("scope stack invariant");
+            if matches!(scope.ctx, GucParameter) {
+                scope.ctx = GucValue;
+            }
+            i += 1;
+            continue;
+        }
 
         // From here on we work on the top scope.
         let scope = scopes.last_mut().expect("scope stack invariant");
+        // Once we're in GucValue (`SET timezone = |`), the operator is
+        // typing the value — `ON` (the SQL keyword) is also `on` (the
+        // boolean GUC value), and we don't want it to flip the ctx
+        // back to Predicate. Stay in GucValue until the statement ends
+        // (next `;`).
+        if matches!(scope.ctx, GucValue) {
+            i += 1;
+            continue;
+        }
 
         if scope.pending_table_ref && is_identifier_like(tok.text) {
             let (table, consumed) = take_qualified(tokens, i);
@@ -1253,6 +1279,12 @@ mod tests {
             // but the surrounding behaviour mustn't regress.
             ClauseContext::TableRef
         );
+    }
+
+    #[test]
+    fn equals_after_set_param_enters_guc_value() {
+        assert_eq!(classify("SET timezone = "), ClauseContext::GucValue);
+        assert_eq!(classify("SET timezone = on"), ClauseContext::GucValue);
     }
 
     #[test]
