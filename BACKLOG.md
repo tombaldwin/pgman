@@ -194,8 +194,12 @@ Survey done — lift as the milestones reach them:
   `auto_tx` + commit/rollback prompt still wraps the whole batch). The
   confirm modal shows a kind-tagged summary instead of the (less useful
   for batches) single-statement classification — DONE.
-- Follow-ups: saved queries; N+1 cluster view; bracketed paste; editor
-  scrolling for >10-line buffers; connection picker that uses IntelliJ
+- Editor vertical scrolling: the pane stays capped at 12 rows (10 content
+  + 2 border) but long buffers now follow the cursor — `clamp_editor_scroll`
+  computes the offset each frame to keep the cursor visible. Title shows
+  `line N/M` once the buffer exceeds the pane — DONE.
+- Follow-ups: saved queries; N+1 cluster view; bracketed paste;
+  connection picker that uses IntelliJ
   data sources at startup; capture-current-state → write a fixture (the
   reverse of apply); per-database `CleanMode` config; `dataSources.local.xml`
   password integration.
