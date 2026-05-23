@@ -132,6 +132,14 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
             _ => return None,
         }
     }
+    // Numeric literals look identifier-shaped (digits + dot) — reject
+    // them so `SELECT price * 1.5` doesn't get mis-parsed as `1.5`
+    // having qualifier="1", prefix="5".
+    if let Some(first) = buf[start..].chars().next() {
+        if first.is_ascii_digit() {
+            return None;
+        }
+    }
     let raw = &buf[start..cursor];
     if let Some(dot_idx) = raw.rfind('.') {
         let qualifier = raw[..dot_idx].to_string();
@@ -462,6 +470,14 @@ mod tests {
     fn extract_identifier_end_equals_cursor_when_at_word_boundary() {
         let id = extract_identifier("SELECT users ", 12).unwrap();
         assert_eq!(id.end, 12);
+    }
+
+    #[test]
+    fn extract_identifier_rejects_numeric_literals() {
+        // `1.5` looks identifier-shaped (digits + dot) but mustn't be
+        // mis-parsed as qualifier="1" / prefix="5".
+        assert!(extract_identifier("SELECT 1.5", 10).is_none());
+        assert!(extract_identifier("WHERE n > 0.0.0", 15).is_none());
     }
 
     // -- candidates_for: unqualified --
