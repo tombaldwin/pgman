@@ -15,7 +15,7 @@
 //! The Tab handler in `app.rs` is the only consumer; everything in this
 //! module is pure and unit-tested.
 
-use crate::query::clause::{classify_at, ClauseContext, QualifiedTable};
+use crate::query::clause::{classify_at, extract_cte_names, ClauseContext, QualifiedTable};
 use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 
@@ -47,6 +47,10 @@ pub enum CandidateKind {
     Column,
     Alias,
     Keyword,
+    /// SQL aggregate / window functions (`COUNT`, `SUM`, `AVG`, etc).
+    /// Surfaced in SELECT-list / RETURNING contexts where they're
+    /// usefully called inline.
+    Function,
 }
 
 impl CandidateKind {
@@ -57,6 +61,7 @@ impl CandidateKind {
             CandidateKind::Column => "column",
             CandidateKind::Alias => "alias",
             CandidateKind::Keyword => "keyword",
+            CandidateKind::Function => "fn",
         }
     }
 }
@@ -69,6 +74,17 @@ const STATEMENT_KEYWORDS: &[&str] = &[
     "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "EXPLAIN",
     "BEGIN", "COMMIT", "ROLLBACK", "SHOW", "VACUUM", "ANALYZE",
     "TRUNCATE", "VALUES",
+];
+
+/// SQL aggregates / common scalar functions surfaced in SELECT-list /
+/// RETURNING contexts. Inserted as bare names (no `(...)`) so the
+/// operator's caret lands right where they'd type the argument.
+const AGGREGATE_FUNCTIONS: &[&str] = &[
+    "COUNT", "SUM", "AVG", "MIN", "MAX",
+    "ARRAY_AGG", "STRING_AGG", "BOOL_AND", "BOOL_OR",
+    "JSON_AGG", "JSONB_AGG", "JSON_OBJECT_AGG",
+    "COALESCE", "NULLIF", "GREATEST", "LEAST",
+    "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE",
 ];
 
 /// One completion the user can land on. `insert` is the text to substitute
@@ -229,7 +245,9 @@ pub fn candidates_for(
         });
     }
 
-    candidates_for_in_context(&id, &classification.ctx, &in_scope, schema)
+    let cte_names = extract_cte_names(buf);
+
+    candidates_for_in_context(&id, &classification.ctx, &in_scope, &cte_names, schema)
 }
 
 /// Branch on clause context to keep candidates relevant to what the
@@ -239,6 +257,7 @@ fn candidates_for_in_context(
     id: &Identifier,
     ctx: &ClauseContext,
     in_scope: &[TableRefInQuery],
+    cte_names: &[String],
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
     match ctx {
@@ -262,18 +281,39 @@ fn candidates_for_in_context(
 
         // Table-reference position (FROM / JOIN / INSERT INTO target /
         // UPDATE target / DELETE FROM). Tables + schemas only — columns
-        // are nonsensical here.
+        // are nonsensical here. CTE names declared earlier in the
+        // buffer (`WITH cte AS (...)`) are surfaced as Table candidates
+        // so `FROM cte` autocompletes.
         ClauseContext::TableRef => match id.qualifier.as_deref() {
             Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
-            None => candidates_tables_and_schemas(&id.prefix, schema),
+            None => {
+                let mut out: Vec<Candidate> = cte_names
+                    .iter()
+                    .filter(|n| starts_with_ci(n, &id.prefix))
+                    .map(|n| Candidate {
+                        display: n.clone(),
+                        insert: n.clone(),
+                        kind: CandidateKind::Table,
+                    })
+                    .collect();
+                out.extend(candidates_tables_and_schemas(&id.prefix, schema));
+                out
+            }
         },
 
         // Predicate / SELECT list / ORDER BY / GROUP BY / HAVING / RETURNING
         // — columns of in-scope tables. Qualified path still allowed
-        // for `alias.col` form.
-        ClauseContext::SelectList
-        | ClauseContext::Predicate
-        | ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
+        // for `alias.col` form. SELECT-list and RETURNING also surface
+        // SQL aggregates so the operator can autocomplete `COUNT(`.
+        ClauseContext::SelectList => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => {
+                let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
+                out.extend(candidates_functions(&id.prefix));
+                out
+            }
+        },
+        ClauseContext::Predicate | ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
             None => candidates_columns_only(&id.prefix, in_scope, schema),
         },
@@ -304,6 +344,18 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
             display: (*kw).to_string(),
             insert: (*kw).to_string(),
             kind: CandidateKind::Keyword,
+        })
+        .collect()
+}
+
+fn candidates_functions(prefix: &str) -> Vec<Candidate> {
+    AGGREGATE_FUNCTIONS
+        .iter()
+        .filter(|fname| starts_with_ci(fname, prefix))
+        .map(|fname| Candidate {
+            display: (*fname).to_string(),
+            insert: (*fname).to_string(),
+            kind: CandidateKind::Function,
         })
         .collect()
 }
@@ -904,6 +956,46 @@ mod tests {
         let cands = candidates_for(buf, buf.len(), &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert_eq!(labels, vec!["email", "id", "name"]);
+    }
+
+    #[test]
+    fn select_list_offers_aggregate_functions() {
+        let cache = build_cache();
+        // After FROM exists, SELECT-list completion offers both columns
+        // of in-scope tables AND SQL aggregates.
+        let buf = "SELECT CO FROM users";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"COUNT"), "got: {labels:?}");
+        assert!(cands
+            .iter()
+            .find(|c| c.display == "COUNT")
+            .map(|c| c.kind == CandidateKind::Function)
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn from_clause_offers_cte_names_from_with_block() {
+        let cache = build_cache();
+        let buf = "WITH active_users AS (SELECT * FROM users WHERE 1=1) SELECT * FROM act";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.contains(&"active_users"),
+            "CTE name should appear in FROM completion: {labels:?}"
+        );
+        let cte = cands.iter().find(|c| c.display == "active_users").unwrap();
+        assert_eq!(cte.kind, CandidateKind::Table);
+    }
+
+    #[test]
+    fn from_completion_still_works_without_any_cte() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM us";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users"));
     }
 
     #[test]
