@@ -86,35 +86,60 @@ pub fn classify_at(buf: &str, cursor: usize) -> Classification {
 }
 
 /// Where the current statement begins — the byte offset just past the
-/// last `;` (outside strings / comments) before `cursor`, or `0`.
+/// last `;` (outside strings / quoted identifiers / comments) before
+/// `cursor`, or `0`.
 fn statement_start(buf: &str, cursor: usize) -> usize {
-    // The tokenizer already skips strings / comments, so re-using it on
-    // the slice up to the cursor and finding the rightmost `;` is the
-    // simplest correct answer. Slightly wasteful but a typical editor
-    // buffer is tiny.
-    let prefix = &buf[..cursor];
-    let toks = tokenize(prefix);
+    let bytes = buf.as_bytes();
+    let end = cursor.min(bytes.len());
+    let mut i = 0;
     let mut last_semi: Option<usize> = None;
-    let mut cursor_byte = 0;
-    // We need byte offsets for semicolons; rebuild by scanning the
-    // raw bytes (the tokenizer doesn't expose positions).
-    for (i, b) in prefix.bytes().enumerate() {
-        if b == b';' {
-            // Check this semicolon was emitted as a real token (i.e.
-            // wasn't inside a string / comment). Cheap heuristic: the
-            // tokenizer would emit it as a 1-byte token of text ";".
-            last_semi = Some(i);
+    let mut in_single = false; // '…' string literal
+    let mut in_double = false; // "…" quoted identifier
+    while i < end {
+        let b = bytes[i];
+        if in_single {
+            // Postgres doubles a `'` to embed it; treat any `'` as end
+            // of literal — the worst case is a slightly over-eager
+            // close, which still keeps `;` correctly inside strings.
+            if b == b'\'' {
+                in_single = false;
+            }
+            i += 1;
+            continue;
         }
-        cursor_byte = i;
+        if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        // -- line comment: skip to newline.
+        if b == b'-' && i + 1 < end && bytes[i + 1] == b'-' {
+            while i < end && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // /* … */ block comment (no nesting).
+        if b == b'/' && i + 1 < end && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < end {
+                i += 2;
+            }
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b';' => last_semi = Some(i),
+            _ => {}
+        }
+        i += 1;
     }
-    let _ = cursor_byte; // suppress unused warning in some configs
-    // We can't quickly verify the semicolon wasn't inside a string from
-    // the token list without re-scanning. Trust the heuristic: a literal
-    // `;` inside a string would have been escaped to a string-literal
-    // body, but our tokenizer drops string contents anyway. For now,
-    // accept the simple form and accept that `';' IN strings`-inside-
-    // strings will mis-split (extremely rare in interactive SQL).
-    let _ = toks;
     match last_semi {
         Some(i) => i + 1,
         None => 0,
@@ -462,6 +487,37 @@ mod tests {
     #[test]
     fn delete_from_enters_table_ref() {
         assert_eq!(classify("DELETE FROM "), ClauseContext::TableRef);
+    }
+
+    #[test]
+    fn statement_start_ignores_semicolons_inside_strings() {
+        // Regression: `;` inside a string literal used to be picked up
+        // by the naive byte scan, splitting the statement mid-string
+        // and losing all the WHERE / FROM tokens that came after.
+        assert_eq!(
+            classify("SELECT 'foo;bar' FROM t WHERE em"),
+            ClauseContext::Predicate
+        );
+    }
+
+    #[test]
+    fn statement_start_ignores_semicolons_in_quoted_idents_and_comments() {
+        // `"col;name"` — quoted identifier shouldn't terminate the
+        // statement.
+        assert_eq!(
+            classify(r#"SELECT "col;name" FROM t WHERE "#),
+            ClauseContext::Predicate
+        );
+        // -- line comment with embedded ;
+        assert_eq!(
+            classify("SELECT 1 -- foo;bar\nFROM t WHERE "),
+            ClauseContext::Predicate
+        );
+        // /* block comment with ; */
+        assert_eq!(
+            classify("SELECT /* a;b */ 1 FROM t WHERE "),
+            ClauseContext::Predicate
+        );
     }
 
     #[test]
