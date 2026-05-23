@@ -159,7 +159,17 @@ pub struct Booted {
 /// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
 /// and return its result.
 ///
-/// Plain TCP (`NoTls`) — RDS, which requires TLS, is a follow-up (BACKLOG.md).
+/// TLS is negotiated via tokio-postgres' standard SSL flow (SSLRequest →
+/// server S/N → handshake or plaintext continue). The mode follows the
+/// `sslmode` URL param:
+///
+/// - `disable`              — plaintext only
+/// - `prefer` (default)     — try TLS; fall back to plaintext on N
+/// - `require` / `verify-*` — TLS required; fail if server says N
+///
+/// Trust roots come from the OS keychain via `rustls-native-certs`,
+/// falling back to the Mozilla root bundle (`webpki-roots`) so a fresh
+/// container without an installed trust store still connects to RDS.
 pub async fn connect_and_bootstrap(
     dsn: Dsn,
     read_only: bool,
@@ -174,18 +184,43 @@ pub async fn connect_and_bootstrap(
     if let Some(password) = &dsn.password {
         cfg.password(password);
     }
+    apply_ssl_mode(&mut cfg, &dsn);
 
-    let (client, connection) = cfg
-        .connect(tokio_postgres::NoTls)
-        .await
-        .map_err(|e| chain_message(&e))?;
-    // Drive the connection in the background; it ends when the last `Arc<Client>`
-    // drops (which is when App finishes).
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            tracing::warn!("postgres connection closed: {e}");
+    // Connect with TLS when we can build a connector; fall back to
+    // NoTls only when connector init itself fails (e.g. crypto provider
+    // panic) — that's expected to be rare. The connection driver is
+    // spawned inside each branch because its stream type depends on
+    // which connector ran the handshake.
+    let client = match build_tls_connector() {
+        Ok(connector) => {
+            let (client, connection) = cfg
+                .connect(connector)
+                .await
+                .map_err(|e| chain_message(&e))?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::warn!("postgres connection closed: {e}");
+                }
+            });
+            client
         }
-    });
+        Err(tls_err) => {
+            // TLS connector setup failed. Fall back to NoTls so localhost
+            // / dev databases still connect; the operator will see the
+            // warning in the log if they were expecting TLS.
+            tracing::warn!("TLS connector init failed ({tls_err}); falling back to plaintext");
+            let (client, connection) = cfg
+                .connect(tokio_postgres::NoTls)
+                .await
+                .map_err(|e| chain_message(&e))?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    tracing::warn!("postgres connection closed: {e}");
+                }
+            });
+            client
+        }
+    };
 
     // Safety session settings — applied before any query runs.
     if read_only {
@@ -399,6 +434,70 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
     rendered.unwrap_or_else(|| "?".to_string())
 }
 
+/// Apply `sslmode` from `dsn.params` to a `tokio_postgres::Config`. Unknown
+/// values are logged-and-ignored (the default `Prefer` stays). Pure-ish:
+/// only mutates `cfg`, no I/O.
+fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) {
+    use tokio_postgres::config::SslMode;
+    let mode = dsn
+        .params
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("sslmode"))
+        .map(|(_, v)| v.as_str());
+    match mode {
+        Some("disable") => {
+            cfg.ssl_mode(SslMode::Disable);
+        }
+        Some("prefer") | None => {
+            cfg.ssl_mode(SslMode::Prefer);
+        }
+        Some("require") | Some("verify-ca") | Some("verify-full") => {
+            cfg.ssl_mode(SslMode::Require);
+        }
+        Some(other) => {
+            tracing::warn!("unknown sslmode={other:?} — defaulting to Prefer");
+            cfg.ssl_mode(SslMode::Prefer);
+        }
+    }
+}
+
+/// Build a `MakeRustlsConnect` for the Postgres TLS handshake. Trust roots
+/// come from the OS keychain via `rustls-native-certs`; the Mozilla bundle
+/// from `webpki-roots` is always added too so a freshly-spun container
+/// without a populated trust store still reaches RDS (whose CA is in
+/// Mozilla's bundle). Returns the connector or a short error string.
+fn build_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    // Install the default crypto provider once per process — rustls 0.23
+    // requires this before any ClientConfig is built.
+    static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
+    CRYPTO_INIT.call_once(|| {
+        // Ignore the result: re-installing after another caller already
+        // did is fine; first-write wins.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+
+    let mut root_store = rustls::RootCertStore::empty();
+    // Native first — picks up corporate CAs the operator has trusted on
+    // their machine.
+    match rustls_native_certs::load_native_certs() {
+        certs if !certs.certs.is_empty() => {
+            let (added, _ignored) = root_store.add_parsable_certificates(certs.certs);
+            tracing::debug!("loaded {added} native root cert(s)");
+        }
+        _ => {
+            tracing::debug!("no native root certs available; relying on webpki-roots");
+        }
+    }
+    // Always also add Mozilla's roots — small overlap, covers the "no
+    // native store" case (containers, CI).
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
+
 /// Flatten an error and its `source()` chain into a single string —
 /// `"top: cause1: cause2"`. tokio-postgres' Display only emits the top
 /// level ("error connecting to server"); the actually-useful cause
@@ -537,6 +636,42 @@ mod tests {
         assert_eq!(
             Dsn::parse("postgres://h:not-a-port/db"),
             Err(DsnError::BadPort("not-a-port".to_string()))
+        );
+    }
+
+    #[test]
+    fn apply_ssl_mode_maps_url_params_to_tokio_postgres_modes() {
+        use tokio_postgres::config::SslMode;
+        fn parsed(s: &str) -> tokio_postgres::Config {
+            let dsn = Dsn::parse(s).unwrap();
+            let mut cfg = tokio_postgres::Config::new();
+            super::apply_ssl_mode(&mut cfg, &dsn);
+            cfg
+        }
+        // Default — no sslmode in URL — is Prefer.
+        assert_eq!(parsed("postgres://h/d").get_ssl_mode(), SslMode::Prefer);
+        assert_eq!(
+            parsed("postgres://h/d?sslmode=disable").get_ssl_mode(),
+            SslMode::Disable
+        );
+        assert_eq!(
+            parsed("postgres://h/d?sslmode=prefer").get_ssl_mode(),
+            SslMode::Prefer
+        );
+        assert_eq!(
+            parsed("postgres://h/d?sslmode=require").get_ssl_mode(),
+            SslMode::Require
+        );
+        // verify-* upgrades to Require (tokio-postgres doesn't expose
+        // the verify variants distinctly without a custom verifier).
+        assert_eq!(
+            parsed("postgres://h/d?sslmode=verify-full").get_ssl_mode(),
+            SslMode::Require
+        );
+        // Unknown value falls back to Prefer.
+        assert_eq!(
+            parsed("postgres://h/d?sslmode=bogus").get_ssl_mode(),
+            SslMode::Prefer
         );
     }
 
