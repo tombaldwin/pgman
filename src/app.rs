@@ -95,10 +95,18 @@ pub struct CompletionCycle {
     /// `start + candidates[index].insert.len()` after each step;
     /// before the first step equals the cursor at cycle-start.
     pub end: usize,
-    /// The prefix the user had typed when the cycle began. Kept so a
-    /// future "Esc to abandon" can restore it cleanly (and so the
-    /// footer can show what we matched against).
+    /// The original buffer text spanning `[start, original_end)` at
+    /// cycle-start — i.e. the whole identifier the user was on top of,
+    /// including any chars trailing the cursor. Esc restores this so a
+    /// mid-word Tab can be cleanly undone.
     pub origin: String,
+    /// The prefix the user had typed BEFORE the cursor when the cycle
+    /// began. Footer shows `no matches for {prefix}` etc; the prefix is
+    /// a strict prefix of `origin`.
+    pub origin_prefix: String,
+    /// Byte offset of the cursor at cycle-start (so Esc-restore can
+    /// put the cursor back exactly where Tab found it).
+    pub origin_cursor: usize,
     /// Candidates in display order.
     pub candidates: Vec<Candidate>,
     /// Which candidate is currently inserted. `0` for the first step.
@@ -860,16 +868,17 @@ impl App {
         self.editor_preferred_col = None;
     }
 
-    /// Abandon an active completion cycle: replace the inserted candidate
-    /// with the prefix the user had typed when the cycle began, and put
-    /// the cursor at the end of that prefix. No-op when no cycle is active.
+    /// Abandon an active completion cycle: restore the original buffer
+    /// text the cycle replaced (including any chars that trailed the
+    /// cursor when Tab fired) and put the cursor back where it was when
+    /// the user pressed Tab. No-op when no cycle is active.
     fn editor_abandon_completion(&mut self) {
         let Some(cycle) = self.completion.take() else {
             return;
         };
         self.editor_buffer
             .replace_range(cycle.start..cycle.end, &cycle.origin);
-        self.editor_cursor = cycle.start + cycle.origin.len();
+        self.editor_cursor = cycle.origin_cursor;
         self.last_status = Some("completion cancelled".to_string());
     }
 
@@ -904,6 +913,8 @@ impl App {
                 start: cycle.start,
                 end: new_end,
                 origin: cycle.origin,
+                origin_prefix: cycle.origin_prefix,
+                origin_cursor: cycle.origin_cursor,
                 candidates: cycle.candidates,
                 index: next,
             });
@@ -931,12 +942,20 @@ impl App {
             ));
             return;
         }
-        // Replace [prefix_start, cursor) — the qualifier and dot stay put.
+        // Replace [prefix_start, id.end) — the qualifier and dot stay
+        // put; the trailing identifier chars past the cursor are also
+        // replaced so Tab inside an existing word (`SELECT user|_id`)
+        // swaps the WHOLE word, not just the part before the cursor.
         // `prefix.len()` is byte length (prefix was sliced from the buffer).
         let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let replace_end = id.end;
+        // Snapshot the original text BEFORE we mutate so Esc-abandon can
+        // put it back verbatim (including any post-cursor chars).
+        let original_text = self.editor_buffer[prefix_start..replace_end].to_string();
+        let original_cursor = self.editor_cursor;
         let cand = cands[0].clone();
         self.editor_buffer
-            .replace_range(prefix_start..self.editor_cursor, &cand.insert);
+            .replace_range(prefix_start..replace_end, &cand.insert);
         let new_end = prefix_start + cand.insert.len();
         self.editor_cursor = new_end;
         self.last_status = Some(format!(
@@ -947,7 +966,9 @@ impl App {
         self.completion = Some(CompletionCycle {
             start: prefix_start,
             end: new_end,
-            origin: id.prefix,
+            origin: original_text,
+            origin_prefix: id.prefix,
+            origin_cursor: original_cursor,
             candidates: cands,
             index: 0,
         });
