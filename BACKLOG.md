@@ -423,6 +423,23 @@ Pull a remote database down for local testing; keep tagged backups.
   `discover_spring_datasources` now accepts files starting with
   either `application` or `bootstrap`. Spring Cloud apps that put
   datasource config in bootstrap.yml are now auto-detected — DONE.
+- Completion UX polish, three together:
+  - **Case preservation**: `sel|` offers `select` (lowercase), `SEL|`
+    offers `SELECT` (uppercase). Applied to all keyword / function /
+    operator candidates via a `case_match` helper. Identifiers
+    (columns / tables) keep cache case; GUC params / type names /
+    GUC values are already lowercase by convention so they pass
+    through untouched.
+  - **Common-prefix expansion + lazy insertion**: Bash-style two-
+    phase Tab. First Tab on `t_|` with `t_users`, `t_user_logs`,
+    `t_user_roles` → expand to `t_user_` (the longest common prefix),
+    showing the popup with no row selected. Second Tab picks the
+    first match. With no shared LCP, first Tab leaves the buffer
+    alone but shows the popup with a "N matches · Tab to pick"
+    title so the operator can type more characters to narrow.
+  - **Ranking**: in SelectList, clause continuations (FROM, WHERE,
+    GROUP BY) now rank BEFORE functions (FORMAT, FLOOR). So
+    `SELECT * F|` gives FROM first — DONE.
 
 ## v3+ — deferred
 

@@ -109,8 +109,11 @@ pub struct CompletionCycle {
     pub origin_cursor: usize,
     /// Candidates in display order.
     pub candidates: Vec<Candidate>,
-    /// Which candidate is currently inserted. `0` for the first step.
-    pub index: usize,
+    /// Which candidate is currently inserted. `None` means we expanded
+    /// to a common prefix (or just showed the popup) without inserting
+    /// any specific candidate — the next Tab will pick `candidates[0]`.
+    /// `Some(i)` means `candidates[i]` is currently in the buffer.
+    pub selected: Option<usize>,
 }
 
 /// A data source the user can pick at startup. Built from external sources
@@ -955,10 +958,22 @@ impl App {
         self.last_status = Some("completion cancelled".to_string());
     }
 
-    /// Tab-completion in the editor. First press starts a cycle from the
-    /// partial identifier under the cursor; subsequent presses cycle
-    /// through matches. Any non-Tab key drops the cycle (so a typo-then-
-    /// keep-typing reverts cleanly).
+    /// Tab-completion in the editor. Bash-style two-phase:
+    ///
+    /// - First Tab on a fresh prefix:
+    ///   - 1 match: insert it.
+    ///   - 2+ matches sharing a longer common prefix: insert just the
+    ///     common prefix (so `t_` → `t_us` when every match starts with
+    ///     `t_us`). The popup shows all candidates; no row highlighted.
+    ///   - 2+ matches sharing no extra prefix: don't insert anything;
+    ///     show the popup so the operator can see the options and type
+    ///     more characters to narrow.
+    /// - Second Tab (cycle present, no candidate selected): pick the
+    ///   first match.
+    /// - Third+ Tab: cycle through.
+    ///
+    /// Any non-Tab editor key drops the cycle so typing more characters
+    /// reverts cleanly.
     fn editor_complete(&mut self) {
         // Editor housekeeping (mirrors editor_dirty) — without clearing
         // the cycle, which we own here.
@@ -966,11 +981,16 @@ impl App {
         self.editor_preferred_col = None;
 
         if let Some(cycle) = self.completion.clone() {
-            // -- advance an active cycle --
             if cycle.candidates.is_empty() {
                 return;
             }
-            let next = (cycle.index + 1) % cycle.candidates.len();
+            // Either advance to next candidate, or — if nothing's
+            // selected yet (we expanded a common prefix or just showed
+            // the popup) — pick the first match.
+            let next = match cycle.selected {
+                None => 0,
+                Some(i) => (i + 1) % cycle.candidates.len(),
+            };
             let cand = cycle.candidates[next].clone();
             self.editor_buffer
                 .replace_range(cycle.start..cycle.end, &cand.insert);
@@ -989,7 +1009,7 @@ impl App {
                 origin_prefix: cycle.origin_prefix,
                 origin_cursor: cycle.origin_cursor,
                 candidates: cycle.candidates,
-                index: next,
+                selected: Some(next),
             });
             return;
         }
@@ -1024,26 +1044,57 @@ impl App {
             ));
             return;
         }
-        // Replace [prefix_start, id.end) — the qualifier and dot stay
-        // put; the trailing identifier chars past the cursor are also
-        // replaced so Tab inside an existing word (`SELECT user|_id`)
-        // swaps the WHOLE word, not just the part before the cursor.
-        // `prefix.len()` is byte length (prefix was sliced from the buffer).
+
         let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
         let replace_end = id.end;
-        // Snapshot the original text BEFORE we mutate so Esc-abandon can
-        // put it back verbatim (including any post-cursor chars).
         let original_text = self.editor_buffer[prefix_start..replace_end].to_string();
         let original_cursor = self.editor_cursor;
-        let cand = cands[0].clone();
+
+        // Single-match fast path: insert it.
+        if cands.len() == 1 {
+            let cand = cands[0].clone();
+            self.editor_buffer
+                .replace_range(prefix_start..replace_end, &cand.insert);
+            let new_end = prefix_start + cand.insert.len();
+            self.editor_cursor = new_end;
+            self.last_status = Some(format!("completion 1/1 · {}", cand.kind.label()));
+            self.completion = Some(CompletionCycle {
+                start: prefix_start,
+                end: new_end,
+                origin: original_text,
+                origin_prefix: id.prefix,
+                origin_cursor: original_cursor,
+                candidates: cands,
+                selected: Some(0),
+            });
+            return;
+        }
+
+        // Multi-match: compute the longest common prefix (case-
+        // insensitive) of all candidate inserts. If it extends past
+        // what the operator already typed, advance the buffer to that
+        // common prefix and show the popup — no specific row selected
+        // yet, so a second Tab picks the first match.
+        let inserts: Vec<&str> = cands.iter().map(|c| c.insert.as_str()).collect();
+        let lcp = complete_q::longest_common_prefix_ci(&inserts);
+        let insert_text = if lcp.len() > id.prefix.len() {
+            // Mirror the operator's case onto the LCP (so `t_` stays
+            // lowercase; `T_` stays uppercase) — the LCP itself is
+            // from the first candidate's case which may not match.
+            complete_q::case_match(&lcp, &id.prefix)
+        } else {
+            // No common prefix to expand. Keep the operator's typed
+            // text — don't insert anything yet.
+            id.prefix.clone()
+        };
         self.editor_buffer
-            .replace_range(prefix_start..replace_end, &cand.insert);
-        let new_end = prefix_start + cand.insert.len();
+            .replace_range(prefix_start..replace_end, &insert_text);
+        let new_end = prefix_start + insert_text.len();
         self.editor_cursor = new_end;
         self.last_status = Some(format!(
-            "completion 1/{} · {}",
+            "completion: {} match{} · Tab to pick",
             cands.len(),
-            cand.kind.label()
+            if cands.len() == 1 { "" } else { "es" }
         ));
         self.completion = Some(CompletionCycle {
             start: prefix_start,
@@ -1052,7 +1103,7 @@ impl App {
             origin_prefix: id.prefix,
             origin_cursor: original_cursor,
             candidates: cands,
-            index: 0,
+            selected: None,
         });
     }
 

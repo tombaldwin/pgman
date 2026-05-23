@@ -557,8 +557,11 @@ fn candidates_for_in_context(
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
             None => {
                 let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
-                out.extend(candidates_functions(&id.prefix));
+                // Clause continuations BEFORE functions: after typing
+                // `SELECT * F`, FROM is the natural next clause and
+                // should rank above FORMAT / FLOOR.
                 out.extend(candidates_from_list(&id.prefix, continuations::AFTER_SELECT_LIST));
+                out.extend(candidates_functions(&id.prefix));
                 out
             }
         },
@@ -629,10 +632,13 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
     STATEMENT_KEYWORDS
         .iter()
         .filter(|kw| starts_with_ci(kw, prefix))
-        .map(|kw| Candidate {
-            display: (*kw).to_string(),
-            insert: (*kw).to_string(),
-            kind: CandidateKind::Keyword,
+        .map(|kw| {
+            let text = case_match(kw, prefix);
+            Candidate {
+                display: text.clone(),
+                insert: text,
+                kind: CandidateKind::Keyword,
+            }
         })
         .collect()
 }
@@ -640,7 +646,7 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
 /// Function candidates — aggregates + scalar + window functions, all
 /// inserted as `NAME(` so the cursor lands inside the parens ready for
 /// the operator's first argument. `display` stays as the bare name so
-/// the popup row reads cleanly.
+/// the popup row reads cleanly. Case mirrors the operator's prefix.
 fn candidates_functions(prefix: &str) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
     let mut seen: std::collections::BTreeSet<&'static str> =
@@ -648,9 +654,10 @@ fn candidates_functions(prefix: &str) -> Vec<Candidate> {
     for source in [AGGREGATE_FUNCTIONS, SCALAR_FUNCTIONS, WINDOW_FUNCTIONS] {
         for fname in source {
             if seen.insert(fname) && starts_with_ci(fname, prefix) {
+                let text = case_match(fname, prefix);
                 out.push(Candidate {
-                    display: (*fname).to_string(),
-                    insert: format!("{fname}("),
+                    display: text.clone(),
+                    insert: format!("{text}("),
                     kind: CandidateKind::Function,
                 });
             }
@@ -666,10 +673,13 @@ fn candidates_predicate_operators(prefix: &str) -> Vec<Candidate> {
     PREDICATE_OPERATORS
         .iter()
         .filter(|op| starts_with_ci(op, prefix))
-        .map(|op| Candidate {
-            display: (*op).to_string(),
-            insert: (*op).to_string(),
-            kind: CandidateKind::Keyword,
+        .map(|op| {
+            let text = case_match(op, prefix);
+            Candidate {
+                display: text.clone(),
+                insert: text,
+                kind: CandidateKind::Keyword,
+            }
         })
         .collect()
 }
@@ -677,14 +687,18 @@ fn candidates_predicate_operators(prefix: &str) -> Vec<Candidate> {
 /// Generic helper — turn a static `&[&str]` of keywords into matching
 /// `Candidate`s. Used for the "continuation" lists (what clauses can
 /// follow this position) and the JOIN variants. All emitted as
-/// `CandidateKind::Keyword` so the popup row reads `(keyword)`.
+/// `CandidateKind::Keyword` so the popup row reads `(keyword)`. Case
+/// mirrors the operator's prefix.
 fn candidates_from_list(prefix: &str, list: &[&str]) -> Vec<Candidate> {
     list.iter()
         .filter(|w| starts_with_ci(w, prefix))
-        .map(|w| Candidate {
-            display: (*w).to_string(),
-            insert: (*w).to_string(),
-            kind: CandidateKind::Keyword,
+        .map(|w| {
+            let text = case_match(w, prefix);
+            Candidate {
+                display: text.clone(),
+                insert: text,
+                kind: CandidateKind::Keyword,
+            }
         })
         .collect()
 }
@@ -957,6 +971,55 @@ fn starts_with_ci(haystack: &str, needle: &str) -> bool {
     }
     haystack.len() >= needle.len()
         && haystack[..needle.len()].eq_ignore_ascii_case(needle)
+}
+
+/// Mirror the operator's chosen case onto a keyword / function /
+/// operator template. The vocabulary stores everything uppercase (or
+/// lowercase for GUCs / types) by contract — this lets the inserted
+/// candidate match whatever the operator was typing instead of
+/// always forcing case.
+///
+/// Rule: if the prefix is non-empty and contains no uppercase letters,
+/// downcase the template. Otherwise keep the template as authored.
+/// Empty prefix → lowercase (modern Postgres style; the operator can
+/// still cycle past it).
+pub(crate) fn case_match(template: &str, prefix: &str) -> String {
+    let lower = prefix.chars().all(|c| !c.is_ascii_uppercase());
+    if lower {
+        template.to_ascii_lowercase()
+    } else {
+        template.to_string()
+    }
+}
+
+/// Longest common prefix of `xs`, compared case-insensitively but
+/// returning the substring of the FIRST entry (so it keeps that
+/// entry's case for the operator to see). `[]` and one-element inputs
+/// return the whole first entry / empty.
+pub(crate) fn longest_common_prefix_ci(xs: &[&str]) -> String {
+    let mut iter = xs.iter();
+    let Some(first) = iter.next() else {
+        return String::new();
+    };
+    let rest: Vec<&&str> = iter.collect();
+    if rest.is_empty() {
+        return (*first).to_string();
+    }
+    let mut end = 0usize;
+    for (i, c) in first.char_indices() {
+        let next = i + c.len_utf8();
+        let all_match = rest.iter().all(|s| {
+            s.get(i..next)
+                .map(|seg| seg.eq_ignore_ascii_case(&first[i..next]))
+                .unwrap_or(false)
+        });
+        if all_match {
+            end = next;
+        } else {
+            break;
+        }
+    }
+    first[..end].to_string()
 }
 
 #[cfg(test)]
@@ -1959,11 +2022,111 @@ mod tests {
         let buf = "SELECT pg_s FROM users";
         let cur = buf.find(" FROM").unwrap();
         let cands = candidates_for(buf, cur, &cache);
-        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        let labels: Vec<String> = cands.iter().map(|c| c.display.clone()).collect();
+        // Case follows the operator's prefix (lowercase here).
         assert!(
-            labels.iter().any(|l| l.starts_with("PG_SIZE")),
-            "expected PG_SIZE_* function: {labels:?}"
+            labels.iter().any(|l| l.to_ascii_lowercase().starts_with("pg_size")),
+            "expected pg_size_* function: {labels:?}"
         );
+    }
+
+    // -- pure helpers --
+
+    #[test]
+    fn case_match_lowercases_when_prefix_is_lowercase() {
+        assert_eq!(super::case_match("SELECT", "sel"), "select");
+        assert_eq!(super::case_match("LEFT JOIN", "le"), "left join");
+    }
+
+    #[test]
+    fn case_match_keeps_template_when_prefix_has_any_uppercase() {
+        assert_eq!(super::case_match("SELECT", "SEL"), "SELECT");
+        assert_eq!(super::case_match("SELECT", "Sel"), "SELECT");
+    }
+
+    #[test]
+    fn case_match_empty_prefix_lowercases() {
+        // Default to lowercase for the empty-prefix case (modern style).
+        assert_eq!(super::case_match("SELECT", ""), "select");
+    }
+
+    #[test]
+    fn lcp_of_empty_and_single() {
+        assert_eq!(super::longest_common_prefix_ci(&[]), "");
+        assert_eq!(super::longest_common_prefix_ci(&["foo"]), "foo");
+    }
+
+    #[test]
+    fn lcp_finds_common_prefix() {
+        assert_eq!(
+            super::longest_common_prefix_ci(&["t_users", "t_user_logs", "t_user_roles"]),
+            "t_user"
+        );
+        assert_eq!(
+            super::longest_common_prefix_ci(&["users", "user_logs", "user_roles"]),
+            "user"
+        );
+    }
+
+    #[test]
+    fn lcp_handles_case_insensitivity() {
+        // Different case across entries — the LCP comparison is
+        // case-insensitive, but the returned value is from the first
+        // entry's case.
+        let xs = vec!["UsErS", "users_logs", "USERS_ROLES"];
+        let got = super::longest_common_prefix_ci(&xs);
+        assert!(got.eq_ignore_ascii_case("users"));
+    }
+
+    #[test]
+    fn lcp_returns_empty_when_no_overlap() {
+        assert_eq!(super::longest_common_prefix_ci(&["foo", "bar"]), "");
+    }
+
+    // -- case preservation --
+
+    #[test]
+    fn lowercase_prefix_lowercase_keyword_candidate() {
+        // `sel|` should offer `select`, not `SELECT`.
+        let cache = build_cache();
+        let cands = candidates_for("sel", 3, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"select"), "got: {labels:?}");
+        assert!(!labels.contains(&"SELECT"));
+    }
+
+    #[test]
+    fn uppercase_prefix_keeps_uppercase_keyword() {
+        let cache = build_cache();
+        let cands = candidates_for("SEL", 3, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"SELECT"));
+    }
+
+    #[test]
+    fn lowercase_prefix_lowercases_multiword_join_variants() {
+        let cache = build_cache();
+        let buf = "select * from users le";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"left join"));
+        assert!(labels.contains(&"left outer join"));
+    }
+
+    // -- continuation ranking --
+
+    #[test]
+    fn select_then_F_prefers_from_over_format() {
+        let cache = build_cache();
+        let cands = candidates_for("SELECT * F", 10, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        let from_pos = labels.iter().position(|l| l.eq_ignore_ascii_case("FROM"));
+        let format_pos = labels.iter().position(|l| l.eq_ignore_ascii_case("FORMAT"));
+        match (from_pos, format_pos) {
+            (Some(f), Some(fmt)) => assert!(f < fmt, "FROM should rank before FORMAT: {labels:?}"),
+            (Some(_), None) => {} // fine, FORMAT not offered
+            (None, _) => panic!("FROM should appear: {labels:?}"),
+        }
     }
 
     #[test]
