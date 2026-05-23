@@ -844,19 +844,37 @@ impl App {
             self.editor_abandon_completion();
             return;
         }
-        // Any other editor key abandons an in-progress completion cycle
-        // so a typo-then-keep-typing reverts the editor to a clean
-        // draft state (next Tab starts fresh from the new cursor). Also
-        // wipe a stale `completion N/M …` status the footer was showing,
-        // so it doesn't linger past the cycle it described.
-        if self.completion.is_some() {
-            if let Some(s) = &self.last_status {
-                if s.starts_with("completion") {
-                    self.last_status = None;
+        // While a completion popup is up in pre-selection state (LCP
+        // expanded / popup-only, nothing committed via Tab yet),
+        // narrowing keys — plain char insertion, Backspace, Delete —
+        // should keep the popup live and re-narrow the candidate list
+        // instead of clearing the cycle. Any other key (Enter, arrow
+        // keys, Ctrl-*, etc.) drops the cycle as before.
+        let was_pre_selected = self
+            .completion
+            .as_ref()
+            .map(|c| c.selected.is_none())
+            .unwrap_or(false);
+        let is_narrowing_key = match key.code {
+            KeyCode::Char(_) => !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT),
+            KeyCode::Backspace | KeyCode::Delete => true,
+            _ => false,
+        };
+        let preserve_cycle = was_pre_selected && is_narrowing_key;
+        if !preserve_cycle {
+            // Existing: clear cycle on any non-narrowing key. Also wipe
+            // a stale `completion N/M …` status the footer was showing.
+            if self.completion.is_some() {
+                if let Some(s) = &self.last_status {
+                    if s.starts_with("completion") {
+                        self.last_status = None;
+                    }
                 }
             }
+            self.completion = None;
         }
-        self.completion = None;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
@@ -935,6 +953,61 @@ impl App {
             }
             _ => {}
         }
+        // If we kept the cycle alive across a narrowing key, recompute
+        // the candidate set against the new buffer state so the popup
+        // reflects what's now matching.
+        if preserve_cycle {
+            self.refresh_completion();
+        }
+    }
+
+    /// Re-extract candidates from the current buffer/cursor. Called
+    /// after a narrowing key while the completion popup is in
+    /// pre-selection state so the popup stays live and narrows as the
+    /// operator types. Preserves the cycle's `origin` fields so a
+    /// later Esc still undoes back to the pre-Tab state.
+    fn refresh_completion(&mut self) {
+        let existing = match self.completion.take() {
+            Some(c) => c,
+            None => return,
+        };
+        let Some(id) =
+            complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
+        else {
+            return;
+        };
+        // Narrowed away to the empty prefix → drop the popup.
+        if id.qualifier.is_none() && id.prefix.is_empty() {
+            return;
+        }
+        let cands = complete_q::candidates_for(
+            &self.editor_buffer,
+            self.editor_cursor,
+            &self.schema_cache,
+        );
+        if cands.is_empty() {
+            self.last_status =
+                Some(format!("completion: no matches for {:?}", id.prefix));
+            return;
+        }
+        let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let cand_count = cands.len();
+        self.completion = Some(CompletionCycle {
+            start: prefix_start,
+            end: self.editor_cursor,
+            // Original cycle's origin is preserved so Esc-restore
+            // returns to the pre-Tab state, not the mid-narrow state.
+            origin: existing.origin,
+            origin_prefix: existing.origin_prefix,
+            origin_cursor: existing.origin_cursor,
+            candidates: cands,
+            selected: None,
+        });
+        self.last_status = Some(format!(
+            "completion: {} match{} · Tab to pick",
+            cand_count,
+            if cand_count == 1 { "" } else { "es" }
+        ));
     }
 
     /// Any edit / non-vertical motion exits history navigation and resets
