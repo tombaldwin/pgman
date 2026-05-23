@@ -243,6 +243,22 @@ pub fn candidates_for(
             alias: None,
             virtual_columns: None,
         });
+        // `EXCLUDED` is the Postgres virtual reference inside an
+        // `ON CONFLICT DO UPDATE SET col = EXCLUDED.col` clause — it
+        // exposes the would-be-inserted row's columns, which match
+        // the target table's columns one-for-one. Surface it so the
+        // qualified path `EXCLUDED.|` autocompletes.
+        if let Some(cols) = schema
+            .columns_for(t.schema.as_deref(), &t.name)
+            .cloned()
+        {
+            in_scope.push(TableRefInQuery {
+                schema: None,
+                name: "EXCLUDED".into(),
+                alias: Some("EXCLUDED".into()),
+                virtual_columns: Some(cols),
+            });
+        }
     }
 
     let ctes = extract_ctes_resolved(buf, schema);
@@ -1489,6 +1505,40 @@ mod tests {
         let cands = candidates_for("SET time", 8, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"timezone"));
+    }
+
+    #[test]
+    fn on_conflict_paren_offers_target_columns() {
+        let cache = build_cache();
+        let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT (em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+        // No other table's columns.
+        assert!(!labels.contains(&"total"));
+    }
+
+    #[test]
+    fn on_conflict_do_update_set_offers_target_columns() {
+        let cache = build_cache();
+        let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+    }
+
+    #[test]
+    fn excluded_dot_resolves_to_target_columns() {
+        // `SET col = EXCLUDED.|` — EXCLUDED is the Postgres virtual
+        // table holding the would-be-inserted row.
+        let cache = build_cache();
+        let buf = "INSERT INTO users (id) VALUES (1) \
+                   ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"id"));
+        assert!(labels.contains(&"email"));
+        assert!(labels.contains(&"name"));
     }
 
     #[test]
