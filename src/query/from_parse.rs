@@ -132,6 +132,19 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
             // Pull one table ref (or subquery), then zero-or-one alias.
             // Loop continues across `,`-separated lists after FROM.
             loop {
+                // LATERAL is a marker that precedes a subquery (or a
+                // function call). Skip past it so the next iteration
+                // handles the following `(...)` as a normal subquery.
+                // Without this skip, LATERAL would be consumed by
+                // `take_table_ref` as a phantom table named "LATERAL".
+                if tokens
+                    .get(i)
+                    .map(|t| t.text.eq_ignore_ascii_case("LATERAL"))
+                    .unwrap_or(false)
+                {
+                    i += 1;
+                    continue;
+                }
                 // Subquery: `( ... ) [AS] alias` — capture the alias as
                 // a synthetic table entry so it shows up in_scope. We
                 // don't type-check the subquery body (would need a
@@ -560,6 +573,20 @@ mod tests {
         let got = refs("SELECT * FROM (SELECT a FROM users) sub JOIN orders o ON true");
         assert!(got.iter().any(|t| t.name == "sub" && t.alias.as_deref() == Some("sub")));
         assert!(got.iter().any(|t| t.name == "orders"));
+    }
+
+    #[test]
+    fn lateral_subquery_alias_in_scope_and_no_phantom_lateral_table() {
+        // `FROM users u, LATERAL (SELECT ...) sub` — `sub` is in
+        // scope, and `LATERAL` is NOT captured as a phantom table.
+        let got = refs("SELECT * FROM users u, LATERAL (SELECT 1) sub WHERE 1=1");
+        let names: Vec<&str> = got.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"users"));
+        assert!(names.contains(&"sub"));
+        assert!(
+            !names.contains(&"LATERAL"),
+            "LATERAL should not appear as a table: {names:?}"
+        );
     }
 
     #[test]
