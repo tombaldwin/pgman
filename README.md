@@ -43,9 +43,15 @@ pgman --upgrade
 ```
 
 That's it. `--upgrade` pulls the source repo it was built from (baked in at
-compile time via `CARGO_MANIFEST_DIR`), then reinstalls via
-`cargo install --path … --locked --force`. Subprocesses inherit stdio, so
-you see `git pull` and `cargo install` output live.
+compile time via `CARGO_MANIFEST_DIR`), reinstalls via
+`cargo install --path … --locked --force`, then `exec`s the new binary —
+so the upgrade command effectively becomes the new pgman. Any other args
+you passed (`--dsn`, `--theme`) are forwarded; `--upgrade` is stripped so
+it doesn't loop. Run from a non-TTY (CI / piped) and it stops after
+installing rather than launching a TUI with no terminal.
+
+Subprocesses inherit stdio so you see `git pull` and `cargo install`
+output live.
 
 If you installed via `cargo install --git`, `--upgrade` will tell you to
 reinstall manually — it can't know the git URL.
