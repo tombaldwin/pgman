@@ -32,6 +32,13 @@ pub struct SchemaCache {
     /// All visible tables / views / matviews / partitioned tables /
     /// foreign tables, sorted by (schema, name).
     pub tables: Vec<TableMeta>,
+    /// All visible sequences (`pg_class.relkind = 'S'`), sorted by
+    /// (schema, name). Used for `DROP SEQUENCE` completion + future
+    /// `nextval('|')` literal-context completion.
+    pub sequences: Vec<TableMeta>,
+    /// All visible indexes (`pg_class.relkind = 'i'`), sorted by
+    /// (schema, name). Used for `DROP INDEX` / `REINDEX INDEX`.
+    pub indexes: Vec<TableMeta>,
     /// Column names per (schema, table). Order = pg attnum, so it mirrors
     /// what `SELECT *` would expose.
     pub columns_by_table: HashMap<(String, String), Vec<String>>,
@@ -93,14 +100,16 @@ impl SchemaCache {
 /// Query that powers `fetch`. Public so a future "show me the cache" UI
 /// can quote it / re-run it. Excludes system schemas; includes regular
 /// tables (`r`), views (`v`), materialized views (`m`), partitioned
-/// tables (`p`), and foreign tables (`f`).
+/// tables (`p`), foreign tables (`f`), sequences (`S`), and indexes
+/// (`i`). The `relkind` column is included so the post-processor can
+/// shard rows into the right bucket on `SchemaCache`.
 pub const SCHEMA_SQL: &str = "\
-SELECT n.nspname, c.relname, a.attname \
+SELECT n.nspname, c.relname, c.relkind, a.attname \
 FROM pg_catalog.pg_class c \
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
 LEFT JOIN pg_catalog.pg_attribute a \
        ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped \
-WHERE c.relkind = ANY ('{r,v,m,p,f}') \
+WHERE c.relkind = ANY ('{r,v,m,p,f,S,i}') \
   AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
 ORDER BY n.nspname, c.relname, a.attnum";
 
@@ -116,7 +125,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         }
     };
     let mut cache = SchemaCache::default();
-    let mut last_table: Option<(String, String)> = None;
+    let mut last_relation: Option<(String, String)> = None;
     let mut seen_schemas: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     for row in &rows {
@@ -124,36 +133,54 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let table: String = match row.try_get(1) {
+        let name: String = match row.try_get(1) {
             Ok(t) => t,
             Err(_) => continue,
         };
-        // attname can be NULL (table with no columns? rare but possible);
-        // a try_get on Option handles that.
-        let col: Option<String> = row.try_get(2).ok();
+        // pg_class.relkind is a single-char field (`r`/`v`/`m`/`p`/`f`
+        // /`S`/`i`); shapes rows into the right bucket on the cache.
+        let relkind: i8 = row.try_get(2).unwrap_or(b'r' as i8);
+        let col: Option<String> = row.try_get(3).ok();
         seen_schemas.insert(schema.clone());
-        let key = (schema.clone(), table.clone());
-        if last_table.as_ref() != Some(&key) {
-            cache.tables.push(TableMeta {
+        let key = (schema.clone(), name.clone());
+        if last_relation.as_ref() != Some(&key) {
+            let meta = TableMeta {
                 schema: schema.clone(),
-                name: table.clone(),
-            });
-            last_table = Some(key.clone());
-            cache.columns_by_table.entry(key.clone()).or_default();
+                name: name.clone(),
+            };
+            match relkind as u8 {
+                b'S' => cache.sequences.push(meta),
+                b'i' => cache.indexes.push(meta),
+                // r, v, m, p, f all live in `tables` — completion
+                // doesn't distinguish them today, and the column
+                // shapes match.
+                _ => {
+                    cache.tables.push(meta);
+                    cache.columns_by_table.entry(key.clone()).or_default();
+                }
+            }
+            last_relation = Some(key.clone());
         }
         if let Some(c) = col {
-            cache
-                .columns_by_table
-                .entry(key)
-                .or_default()
-                .push(c);
+            // Only tables/views/etc. have columns we'd want to suggest;
+            // sequences and indexes have internal columns that aren't
+            // useful for completion.
+            if matches!(relkind as u8, b'r' | b'v' | b'm' | b'p' | b'f') {
+                cache
+                    .columns_by_table
+                    .entry(key)
+                    .or_default()
+                    .push(c);
+            }
         }
     }
     cache.schemas = seen_schemas.into_iter().collect();
     tracing::info!(
-        "schema cache: {} schema(s), {} table(s)",
+        "schema cache: {} schema(s), {} table(s), {} sequence(s), {} index(es)",
         cache.schemas.len(),
-        cache.tables.len()
+        cache.tables.len(),
+        cache.sequences.len(),
+        cache.indexes.len(),
     );
     cache
 }

@@ -57,11 +57,11 @@ pub enum ClauseContext {
     /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
     /// Wants entries from `vocabulary::TYPE_NAMES`.
     TypeName,
-    /// `DROP TABLE | …` / `DROP VIEW | …` / etc. — the operator is
-    /// naming the relation to drop. Wants tables + schemas (no JOIN
-    /// variants / WHERE / etc. — those would just be noise here),
-    /// plus `IF EXISTS` / `CASCADE` / `RESTRICT`.
-    DropTarget,
+    /// `DROP <kind> | …` — the operator is naming the relation to drop.
+    /// `kind` selects which catalog set to suggest (tables / sequences
+    /// / indexes / …). All variants get `IF EXISTS` / `CASCADE` /
+    /// `RESTRICT` continuations alongside.
+    DropTarget(DropKind),
     /// After `UPDATE <table> SET` — wants the columns of that table.
     UpdateAssign(QualifiedTable),
     /// Inside `VALUES (...)` — literals, no useful identifier completion.
@@ -78,6 +78,18 @@ pub enum ClauseContext {
 pub struct QualifiedTable {
     pub schema: Option<String>,
     pub name: String,
+}
+
+/// Which kind of catalog object a `DROP` statement is naming. Determines
+/// which `SchemaCache` field the completion engine pulls candidates
+/// from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropKind {
+    /// `DROP TABLE` / `DROP VIEW` / `DROP MATERIALIZED VIEW` — all
+    /// resolve to `cache.tables`.
+    Table,
+    Index,
+    Sequence,
 }
 
 /// Output of [`classify_at`] — the clause the cursor is sitting in plus
@@ -434,12 +446,20 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             // continuations + nothing else) so we don't suggest
             // misleading table names there.
             "TABLE" | "VIEW" if scope.pending_drop_kind => {
-                scope.ctx = DropTarget;
+                scope.ctx = DropTarget(DropKind::Table);
                 scope.pending_drop_kind = false;
             }
             "MATERIALIZED" if scope.pending_drop_kind => {
                 // `DROP MATERIALIZED VIEW name` — wait for the VIEW
                 // token to flip ctx. Keep the pending flag.
+            }
+            "INDEX" if scope.pending_drop_kind => {
+                scope.ctx = DropTarget(DropKind::Index);
+                scope.pending_drop_kind = false;
+            }
+            "SEQUENCE" if scope.pending_drop_kind => {
+                scope.ctx = DropTarget(DropKind::Sequence);
+                scope.pending_drop_kind = false;
             }
             "CAST" => {
                 // The next `(` opens CAST's argument scope. Inside,
@@ -1179,20 +1199,33 @@ mod tests {
 
     #[test]
     fn drop_table_enters_drop_target() {
-        assert_eq!(classify("DROP TABLE "), ClauseContext::DropTarget);
-        assert_eq!(classify("DROP TABLE us"), ClauseContext::DropTarget);
+        assert_eq!(classify("DROP TABLE "), ClauseContext::DropTarget(DropKind::Table));
+        assert_eq!(classify("DROP TABLE us"), ClauseContext::DropTarget(DropKind::Table));
     }
 
     #[test]
     fn drop_view_enters_drop_target() {
-        assert_eq!(classify("DROP VIEW "), ClauseContext::DropTarget);
+        assert_eq!(classify("DROP VIEW "), ClauseContext::DropTarget(DropKind::Table));
     }
 
     #[test]
     fn drop_materialized_view_enters_drop_target() {
         assert_eq!(
             classify("DROP MATERIALIZED VIEW "),
-            ClauseContext::DropTarget
+            ClauseContext::DropTarget(DropKind::Table)
+        );
+    }
+
+    #[test]
+    fn drop_index_enters_drop_target_index() {
+        assert_eq!(classify("DROP INDEX "), ClauseContext::DropTarget(DropKind::Index));
+    }
+
+    #[test]
+    fn drop_sequence_enters_drop_target_sequence() {
+        assert_eq!(
+            classify("DROP SEQUENCE "),
+            ClauseContext::DropTarget(DropKind::Sequence)
         );
     }
 
