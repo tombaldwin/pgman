@@ -27,13 +27,14 @@ pub struct Theme {
     pub text: Color,
     pub accent: Color,
 
-    // Splash elephant palette
+    // Splash elephant palette (matches the Claude Design export)
     pub elephant_outline: Color,
-    pub elephant_rim: Color,
     pub elephant_body: Color,
     pub elephant_shade: Color,
     pub elephant_eye: Color,
+    pub elephant_pupil: Color,
     pub elephant_cheek: Color,
+    pub elephant_tusk: Color,
 
     // Backgrounds
     pub row_alt_bg: Color,
@@ -84,12 +85,13 @@ impl Theme {
             text: Color::Rgb(220, 222, 230),
             accent: Color::Rgb(255, 200, 120),
 
-            elephant_outline: Color::Rgb(28, 28, 58),
-            elephant_rim: Color::Rgb(64, 82, 140),
-            elephant_body: Color::Rgb(124, 144, 200),
-            elephant_shade: Color::Rgb(96, 112, 168),
-            elephant_eye: Color::Rgb(244, 245, 250),
-            elephant_cheek: Color::Rgb(232, 142, 166),
+            elephant_outline: Color::Rgb(14, 22, 56),
+            elephant_body: Color::Rgb(125, 166, 230),
+            elephant_shade: Color::Rgb(77, 123, 194),
+            elephant_eye: Color::Rgb(255, 255, 255),
+            elephant_pupil: Color::Rgb(10, 16, 36),
+            elephant_cheek: Color::Rgb(255, 143, 168),
+            elephant_tusk: Color::Rgb(255, 245, 214),
 
             row_alt_bg: Color::Rgb(18, 22, 28),
             row_red_bg: Color::Rgb(48, 18, 22),
@@ -141,12 +143,13 @@ impl Theme {
             text: Color::Rgb(30, 32, 40),
             accent: Color::Rgb(180, 90, 0),
 
-            elephant_outline: Color::Rgb(28, 28, 58),
-            elephant_rim: Color::Rgb(52, 68, 122),
-            elephant_body: Color::Rgb(108, 128, 188),
-            elephant_shade: Color::Rgb(84, 100, 154),
-            elephant_eye: Color::Rgb(248, 248, 252),
-            elephant_cheek: Color::Rgb(224, 130, 156),
+            elephant_outline: Color::Rgb(14, 22, 56),
+            elephant_body: Color::Rgb(125, 166, 230),
+            elephant_shade: Color::Rgb(77, 123, 194),
+            elephant_eye: Color::Rgb(255, 255, 255),
+            elephant_pupil: Color::Rgb(10, 16, 36),
+            elephant_cheek: Color::Rgb(255, 143, 168),
+            elephant_tusk: Color::Rgb(255, 245, 214),
 
             row_alt_bg: Color::Rgb(238, 240, 244),
             row_red_bg: Color::Rgb(250, 220, 220),
@@ -199,11 +202,12 @@ impl Theme {
             accent: Color::Rgb(255, 180, 0),
 
             elephant_outline: Color::Rgb(0, 0, 0),
-            elephant_rim: Color::Rgb(30, 50, 110),
-            elephant_body: Color::Rgb(120, 150, 230),
-            elephant_shade: Color::Rgb(70, 95, 175),
+            elephant_body: Color::Rgb(125, 166, 230),
+            elephant_shade: Color::Rgb(77, 123, 194),
             elephant_eye: Color::Rgb(255, 255, 255),
-            elephant_cheek: Color::Rgb(255, 150, 180),
+            elephant_pupil: Color::Rgb(0, 0, 0),
+            elephant_cheek: Color::Rgb(255, 143, 168),
+            elephant_tusk: Color::Rgb(255, 245, 214),
 
             row_alt_bg: Color::Rgb(20, 20, 20),
             row_red_bg: Color::Rgb(80, 0, 0),
