@@ -26,9 +26,19 @@
 /// line here AND a corresponding arm in `query::clause` if it should
 /// shift the cursor's classification.
 pub const STATEMENT_KEYWORDS: &[&str] = &[
-    "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "EXPLAIN",
-    "BEGIN", "COMMIT", "ROLLBACK", "SHOW", "VACUUM", "ANALYZE",
-    "TRUNCATE", "VALUES",
+    // DQL / DML
+    "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "WITH", "VALUES",
+    // DDL
+    "CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT",
+    // Plan / inspection
+    "EXPLAIN", "SHOW", "VACUUM", "ANALYZE", "REINDEX", "CLUSTER",
+    // Session / transaction
+    "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "END",
+    "SET", "RESET",
+    // Permissions
+    "GRANT", "REVOKE",
+    // Misc
+    "COPY", "LISTEN", "NOTIFY", "UNLISTEN", "CHECKPOINT",
 ];
 
 /// Aggregate functions surfaced in `SelectList` (and `RETURNING`).
@@ -47,11 +57,33 @@ pub const AGGREGATE_FUNCTIONS: &[&str] = &[
 /// COALESCE, NULLIF, string / date helpers etc. Same insertion shape
 /// as aggregates (`NAME(`).
 pub const SCALAR_FUNCTIONS: &[&str] = &[
-    "COALESCE", "NULLIF", "GREATEST", "LEAST",
+    // Conditional / null handling
+    "COALESCE", "NULLIF", "GREATEST", "LEAST", "CAST",
+    // Time
     "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME",
-    "LENGTH", "LOWER", "UPPER", "TRIM", "SUBSTRING", "CONCAT",
-    "EXTRACT", "DATE_TRUNC", "AGE",
-    "CAST",
+    "EXTRACT", "DATE_TRUNC", "AGE", "TO_CHAR", "TO_DATE", "TO_TIMESTAMP",
+    // String
+    "LENGTH", "CHAR_LENGTH", "LOWER", "UPPER", "INITCAP",
+    "TRIM", "LTRIM", "RTRIM", "BTRIM",
+    "SUBSTRING", "POSITION", "REPLACE", "REGEXP_REPLACE",
+    "REGEXP_MATCH", "REGEXP_MATCHES", "REGEXP_SPLIT_TO_ARRAY",
+    "CONCAT", "CONCAT_WS", "FORMAT", "REPEAT", "REVERSE", "SPLIT_PART",
+    // Numeric / math
+    "ABS", "CEIL", "CEILING", "FLOOR", "ROUND", "TRUNC",
+    "POWER", "SQRT", "MOD", "DIV", "RANDOM",
+    // Array
+    "ARRAY_LENGTH", "ARRAY_POSITION", "ARRAY_AGG", "UNNEST", "CARDINALITY",
+    // JSON / JSONB
+    "JSONB_BUILD_OBJECT", "JSON_BUILD_OBJECT",
+    "JSONB_BUILD_ARRAY", "JSON_BUILD_ARRAY",
+    "JSONB_OBJECT_KEYS", "JSONB_PATH_QUERY", "JSONB_SET",
+    "TO_JSONB", "TO_JSON",
+    // Postgres catalog / introspection — high-signal for ops queries
+    "VERSION", "CURRENT_DATABASE", "CURRENT_SCHEMA", "CURRENT_USER",
+    "SESSION_USER", "PG_BACKEND_PID", "PG_TYPEOF",
+    "PG_RELATION_SIZE", "PG_TOTAL_RELATION_SIZE", "PG_SIZE_PRETTY",
+    "PG_TABLE_SIZE", "PG_INDEXES_SIZE", "PG_DATABASE_SIZE",
+    "TXID_CURRENT",
 ];
 
 /// Window functions (the `OVER (...)` family). Same insertion as the
@@ -79,6 +111,59 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
     "SIMILAR TO",
 ];
 
+/// JOIN variants surfaced as multi-word completions in `TableRef`
+/// continuations. Tab once gets the whole shape (`LEFT OUTER JOIN`)
+/// so the operator doesn't have to type the verb-of-art.
+pub const JOIN_VARIANTS: &[&str] = &[
+    "JOIN",
+    "INNER JOIN",
+    "LEFT JOIN", "LEFT OUTER JOIN",
+    "RIGHT JOIN", "RIGHT OUTER JOIN",
+    "FULL JOIN", "FULL OUTER JOIN",
+    "CROSS JOIN", "NATURAL JOIN",
+    "LATERAL JOIN", "LEFT JOIN LATERAL", "INNER JOIN LATERAL",
+];
+
+/// "What clause keyword can follow this position." Drives the
+/// continuation candidates added to each clause arm in `query::complete`.
+/// Each list is sorted by typical-frequency (descending) so the
+/// completion cycle prioritises the more common follow-up.
+///
+/// Adding support for a new clause keyword that should appear after
+/// FROM (say `WINDOW`): append it here AND make sure `query::clause`
+/// classifies the cursor correctly once it appears.
+pub mod continuations {
+    /// After SELECT-list — the natural next is FROM. Sub-selects
+    /// already have their own scope so this fires only at top-level.
+    pub const AFTER_SELECT_LIST: &[&str] = &["FROM"];
+
+    /// After a FROM / JOIN clause — JOIN variants, WHERE, GROUP BY,
+    /// ORDER BY, LIMIT, RETURNING (when inside an UPDATE / DELETE).
+    pub const AFTER_TABLE_REF: &[&str] = &[
+        "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
+        "FETCH FIRST", "RETURNING", "ON CONFLICT", "UNION", "INTERSECT", "EXCEPT",
+        // Aliasing keywords
+        "AS",
+    ];
+
+    /// After WHERE / HAVING / ON — the typical next clauses.
+    pub const AFTER_PREDICATE: &[&str] = &[
+        "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "RETURNING",
+        "UNION", "INTERSECT", "EXCEPT",
+    ];
+
+    /// After ORDER BY / GROUP BY — pagination + RETURNING.
+    pub const AFTER_ORDER_OR_GROUP: &[&str] = &[
+        "LIMIT", "OFFSET", "FETCH FIRST", "HAVING", "ORDER BY",
+    ];
+
+    /// After UPDATE … SET col = … — the natural continuations.
+    pub const AFTER_UPDATE_ASSIGN: &[&str] = &["WHERE", "RETURNING", "FROM"];
+
+    /// After a `VALUES (...)` block in INSERT.
+    pub const AFTER_VALUES: &[&str] = &["RETURNING", "ON CONFLICT"];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,14 +174,22 @@ mod tests {
     /// (popup shows "select" not "SELECT").
     #[test]
     fn all_entries_are_uppercase() {
-        for table in [
+        let all_tables: &[&[&str]] = &[
             STATEMENT_KEYWORDS,
             AGGREGATE_FUNCTIONS,
             SCALAR_FUNCTIONS,
             WINDOW_FUNCTIONS,
             PREDICATE_OPERATORS,
-        ] {
-            for word in table {
+            JOIN_VARIANTS,
+            continuations::AFTER_SELECT_LIST,
+            continuations::AFTER_TABLE_REF,
+            continuations::AFTER_PREDICATE,
+            continuations::AFTER_ORDER_OR_GROUP,
+            continuations::AFTER_UPDATE_ASSIGN,
+            continuations::AFTER_VALUES,
+        ];
+        for table in all_tables {
+            for word in *table {
                 assert_eq!(
                     *word,
                     word.to_ascii_uppercase(),
@@ -111,15 +204,23 @@ mod tests {
     /// cycle past the same candidate twice in the completion popup.
     #[test]
     fn no_duplicates_within_a_list() {
-        for (label, table) in [
+        let labelled: &[(&str, &[&str])] = &[
             ("STATEMENT_KEYWORDS", STATEMENT_KEYWORDS),
             ("AGGREGATE_FUNCTIONS", AGGREGATE_FUNCTIONS),
             ("SCALAR_FUNCTIONS", SCALAR_FUNCTIONS),
             ("WINDOW_FUNCTIONS", WINDOW_FUNCTIONS),
             ("PREDICATE_OPERATORS", PREDICATE_OPERATORS),
-        ] {
+            ("JOIN_VARIANTS", JOIN_VARIANTS),
+            ("AFTER_SELECT_LIST", continuations::AFTER_SELECT_LIST),
+            ("AFTER_TABLE_REF", continuations::AFTER_TABLE_REF),
+            ("AFTER_PREDICATE", continuations::AFTER_PREDICATE),
+            ("AFTER_ORDER_OR_GROUP", continuations::AFTER_ORDER_OR_GROUP),
+            ("AFTER_UPDATE_ASSIGN", continuations::AFTER_UPDATE_ASSIGN),
+            ("AFTER_VALUES", continuations::AFTER_VALUES),
+        ];
+        for (label, table) in labelled {
             let mut seen = std::collections::BTreeSet::new();
-            for word in table {
+            for word in *table {
                 assert!(
                     seen.insert(*word),
                     "{label} contains duplicate {word:?}"

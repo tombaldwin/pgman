@@ -19,8 +19,8 @@ use crate::query::clause::{classify_at, extract_cte_names, ClauseContext, Qualif
 use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
-    AGGREGATE_FUNCTIONS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS,
-    WINDOW_FUNCTIONS,
+    continuations, AGGREGATE_FUNCTIONS, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS,
+    STATEMENT_KEYWORDS, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -248,15 +248,26 @@ fn candidates_for_in_context(
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
     match ctx {
-        // Inside a `VALUES (...)` literal list — no useful identifier
-        // completion. Operator is typing constants.
-        ClauseContext::Values => Vec::new(),
+        // Inside a `VALUES (...)` literal list — operator is typing
+        // constants, no identifier completion. After the closing `)`
+        // the scope pops and continuations (RETURNING, ON CONFLICT)
+        // can fire from the outer scope; here we offer them only if
+        // the prefix matches, so a mid-literal Tab is still silent.
+        ClauseContext::Values => {
+            candidates_from_list(&id.prefix, continuations::AFTER_VALUES)
+        }
 
         // INSERT INTO foo (|  → columns of `foo` (specifically).
         ClauseContext::InsertColumns(t) => columns_of(t, &id.prefix, schema),
 
-        // UPDATE foo SET |  → columns of `foo`.
-        ClauseContext::UpdateAssign(t) => columns_of(t, &id.prefix, schema),
+        // UPDATE foo SET |  → columns of `foo`, plus continuations
+        // (WHERE, RETURNING) once the operator's finished the
+        // assignment list.
+        ClauseContext::UpdateAssign(t) => {
+            let mut out = columns_of(t, &id.prefix, schema);
+            out.extend(candidates_from_list(&id.prefix, continuations::AFTER_UPDATE_ASSIGN));
+            out
+        }
 
         // Top of statement — operator is typing a verb. Offer SQL
         // keywords; the unusual `schema.|` case at statement start
@@ -270,7 +281,9 @@ fn candidates_for_in_context(
         // UPDATE target / DELETE FROM). Tables + schemas only — columns
         // are nonsensical here. CTE names declared earlier in the
         // buffer (`WITH cte AS (...)`) are surfaced as Table candidates
-        // so `FROM cte` autocompletes.
+        // so `FROM cte` autocompletes. JOIN variants + continuation
+        // keywords (WHERE, GROUP BY, …) come after the identifier
+        // candidates so the cycle prioritises identifiers.
         ClauseContext::TableRef => match id.qualifier.as_deref() {
             Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
             None => {
@@ -284,6 +297,8 @@ fn candidates_for_in_context(
                     })
                     .collect();
                 out.extend(candidates_tables_and_schemas(&id.prefix, schema));
+                out.extend(candidates_from_list(&id.prefix, JOIN_VARIANTS));
+                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_TABLE_REF));
                 out
             }
         },
@@ -297,6 +312,7 @@ fn candidates_for_in_context(
             None => {
                 let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
                 out.extend(candidates_functions(&id.prefix));
+                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_SELECT_LIST));
                 out
             }
         },
@@ -304,16 +320,22 @@ fn candidates_for_in_context(
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
             None => {
                 let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
-                // Predicate position — also surface word-shaped
-                // operators (LIKE, IN, IS NULL, …). They land after the
-                // column candidates so the cycle prioritises identifiers.
+                // Word-shaped operators (LIKE, IN, IS NULL, …) come
+                // after the column candidates so the cycle prioritises
+                // identifiers; clause continuations (GROUP BY, ORDER BY,
+                // LIMIT) come after those.
                 out.extend(candidates_predicate_operators(&id.prefix));
+                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_PREDICATE));
                 out
             }
         },
         ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
-            None => candidates_columns_only(&id.prefix, in_scope, schema),
+            None => {
+                let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
+                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_ORDER_OR_GROUP));
+                out
+            }
         },
 
         // Unknown context — fall back to the pre-grammar behaviour so
@@ -378,6 +400,21 @@ fn candidates_predicate_operators(prefix: &str) -> Vec<Candidate> {
         .map(|op| Candidate {
             display: (*op).to_string(),
             insert: (*op).to_string(),
+            kind: CandidateKind::Keyword,
+        })
+        .collect()
+}
+
+/// Generic helper — turn a static `&[&str]` of keywords into matching
+/// `Candidate`s. Used for the "continuation" lists (what clauses can
+/// follow this position) and the JOIN variants. All emitted as
+/// `CandidateKind::Keyword` so the popup row reads `(keyword)`.
+fn candidates_from_list(prefix: &str, list: &[&str]) -> Vec<Candidate> {
+    list.iter()
+        .filter(|w| starts_with_ci(w, prefix))
+        .map(|w| Candidate {
+            display: (*w).to_string(),
+            insert: (*w).to_string(),
             kind: CandidateKind::Keyword,
         })
         .collect()
@@ -1115,6 +1152,89 @@ mod tests {
         let cache = build_cache();
         let cands = candidates_for("VAL", 3, &cache);
         assert!(cands.iter().any(|c| c.display == "VALUES"));
+    }
+
+    #[test]
+    fn from_clause_offers_join_variants() {
+        let cache = build_cache();
+        // After typing a table in FROM, JOIN variants are continuation
+        // candidates.
+        let buf = "SELECT * FROM users LE";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"LEFT JOIN"), "got: {labels:?}");
+        assert!(labels.contains(&"LEFT OUTER JOIN"));
+    }
+
+    #[test]
+    fn from_clause_offers_clause_continuations() {
+        let cache = build_cache();
+        // After typing a table in FROM, WHERE / GROUP BY / ORDER BY
+        // are the natural next clauses.
+        let buf = "SELECT * FROM users WH";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"WHERE"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn predicate_offers_clause_continuations() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users WHERE id = 1 OR";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // `ORDER BY` is a multi-word continuation candidate.
+        assert!(labels.contains(&"ORDER BY"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn order_by_offers_limit() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users ORDER BY id LI";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"LIMIT"));
+    }
+
+    #[test]
+    fn update_set_offers_where_returning() {
+        let cache = build_cache();
+        let buf = "UPDATE users SET name = 'x' WH";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"WHERE"));
+    }
+
+    #[test]
+    fn statement_start_now_offers_ddl_verbs() {
+        let cache = build_cache();
+        let cands = candidates_for("CR", 2, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"CREATE"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn statement_start_now_offers_set_session() {
+        let cache = build_cache();
+        let cands = candidates_for("SE", 2, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // SET (session variable) and SELECT both start with SE — both
+        // should be offered.
+        assert!(labels.contains(&"SET"));
+        assert!(labels.contains(&"SELECT"));
+    }
+
+    #[test]
+    fn select_offers_postgres_catalog_functions() {
+        let cache = build_cache();
+        let buf = "SELECT pg_s FROM users";
+        let cur = buf.find(" FROM").unwrap();
+        let cands = candidates_for(buf, cur, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(
+            labels.iter().any(|l| l.starts_with("PG_SIZE")),
+            "expected PG_SIZE_* function: {labels:?}"
+        );
     }
 
     #[test]
