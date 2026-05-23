@@ -273,6 +273,7 @@ pub fn candidates_for(
     candidates_for_in_context(
         &id,
         &classification.ctx,
+        classification.write_target.as_ref(),
         &in_scope,
         &ctes,
         &select_aliases,
@@ -330,6 +331,7 @@ fn current_statement(buf: &str, cursor: usize) -> &str {
 fn candidates_for_in_context(
     id: &Identifier,
     ctx: &ClauseContext,
+    write_target: Option<&QualifiedTable>,
     in_scope: &[TableRefInQuery],
     ctes: &[CteDef],
     select_aliases: &[String],
@@ -400,6 +402,33 @@ fn candidates_for_in_context(
                 kind: CandidateKind::Keyword,
             })
             .collect(),
+
+        // ON CONFLICT ON CONSTRAINT |  → unique/PK constraints owned
+        // by the INSERT target. Filtered by write_target.table so a
+        // hundred-table database doesn't list unrelated constraints.
+        ClauseContext::ConstraintName => {
+            let target = match write_target {
+                Some(t) => t,
+                None => return Vec::new(),
+            };
+            schema
+                .constraints
+                .iter()
+                .filter(|c| {
+                    c.table.eq_ignore_ascii_case(&target.name)
+                        && match &target.schema {
+                            Some(s) => c.schema.eq_ignore_ascii_case(s),
+                            None => true,
+                        }
+                        && starts_with_ci(&c.name, &id.prefix)
+                })
+                .map(|c| Candidate {
+                    display: c.name.clone(),
+                    insert: c.name.clone(),
+                    kind: CandidateKind::Table,
+                })
+                .collect()
+        }
 
         // CAST(expr AS |  → SQL type names. Multi-word types like
         // `timestamp with time zone` land as one Tab.
@@ -1668,6 +1697,34 @@ mod tests {
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(!labels.contains(&"WHERE"));
         assert!(!labels.contains(&"LEFT JOIN"));
+    }
+
+    #[test]
+    fn on_constraint_offers_constraint_names_scoped_to_target() {
+        let mut cache = build_cache();
+        cache.constraints.push(crate::query::schema::ConstraintMeta {
+            schema: "public".into(),
+            table: "users".into(),
+            name: "users_email_key".into(),
+        });
+        cache.constraints.push(crate::query::schema::ConstraintMeta {
+            schema: "public".into(),
+            table: "users".into(),
+            name: "users_pkey".into(),
+        });
+        // Different table — must NOT appear.
+        cache.constraints.push(crate::query::schema::ConstraintMeta {
+            schema: "public".into(),
+            table: "orders".into(),
+            name: "orders_pkey".into(),
+        });
+        let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT ON CONSTRAINT us";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users_email_key"), "got: {labels:?}");
+        assert!(labels.contains(&"users_pkey"));
+        // Orders' constraint must NOT leak.
+        assert!(!labels.contains(&"orders_pkey"));
     }
 
     #[test]

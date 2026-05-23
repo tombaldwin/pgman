@@ -22,6 +22,16 @@ pub struct TableMeta {
     pub name: String,
 }
 
+/// A unique / primary-key constraint — what `ON CONFLICT ON
+/// CONSTRAINT name` can name. The owning table is captured so
+/// completion can scope to the write target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConstraintMeta {
+    pub schema: String,
+    pub table: String,
+    pub name: String,
+}
+
 /// Snapshot of the live database catalog used by completion. Empty is a
 /// valid state (means "no info; offer nothing"); built once and only
 /// replaced on explicit refresh.
@@ -42,6 +52,10 @@ pub struct SchemaCache {
     /// Column names per (schema, table). Order = pg attnum, so it mirrors
     /// what `SELECT *` would expose.
     pub columns_by_table: HashMap<(String, String), Vec<String>>,
+    /// Unique / primary-key constraints (the kinds `ON CONFLICT ON
+    /// CONSTRAINT` can name). Fetched from `pg_constraint` separately
+    /// from the main relation query.
+    pub constraints: Vec<ConstraintMeta>,
 }
 
 impl SchemaCache {
@@ -113,6 +127,19 @@ WHERE c.relkind = ANY ('{r,v,m,p,f,S,i}') \
   AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
 ORDER BY n.nspname, c.relname, a.attnum";
 
+/// Query that fetches unique + primary-key constraint names, scoped
+/// by their owning table. Run separately from `SCHEMA_SQL` so a
+/// permission gap on `pg_constraint` (rare) doesn't take down the
+/// whole cache build.
+pub const CONSTRAINTS_SQL: &str = "\
+SELECT n.nspname, t.relname, c.conname \
+FROM pg_catalog.pg_constraint c \
+JOIN pg_catalog.pg_class t ON t.oid = c.conrelid \
+JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+WHERE c.contype = ANY ('{u,p}') \
+  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+ORDER BY n.nspname, t.relname, c.conname";
+
 /// Run the cache-building query on `client` and assemble a `SchemaCache`.
 /// Returns an empty cache (and logs a warning) if the query fails — the
 /// rest of pgman keeps working without completion.
@@ -175,12 +202,34 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         }
     }
     cache.schemas = seen_schemas.into_iter().collect();
+    // Second-pass: constraint names (separate query so a
+    // pg_constraint permission gap doesn't kill the main cache).
+    match client.query(CONSTRAINTS_SQL, &[]).await {
+        Ok(rows) => {
+            for row in &rows {
+                let s: Result<String, _> = row.try_get(0);
+                let t: Result<String, _> = row.try_get(1);
+                let n: Result<String, _> = row.try_get(2);
+                if let (Ok(s), Ok(t), Ok(n)) = (s, t, n) {
+                    cache.constraints.push(ConstraintMeta {
+                        schema: s,
+                        table: t,
+                        name: n,
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("constraint fetch failed: {e}; ON CONSTRAINT completion disabled");
+        }
+    };
     tracing::info!(
-        "schema cache: {} schema(s), {} table(s), {} sequence(s), {} index(es)",
+        "schema cache: {} schema(s), {} table(s), {} sequence(s), {} index(es), {} constraint(s)",
         cache.schemas.len(),
         cache.tables.len(),
         cache.sequences.len(),
         cache.indexes.len(),
+        cache.constraints.len(),
     );
     cache
 }
