@@ -217,12 +217,13 @@ struct ScopeState {
     /// so that a subsequent `DO UPDATE` doesn't reset the classifier
     /// state as if it were the start of an UPDATE statement.
     in_on_conflict: bool,
-    /// `DROP` seen; the next keyword (TABLE / VIEW / MATERIALIZED /
-    /// SCHEMA / …) selects which kind of object the operator's
-    /// naming. We only have tables / views / matviews in the schema
-    /// cache, so for those we flip ctx to `DropTarget`. INDEX /
-    /// SEQUENCE / FUNCTION / TYPE / DATABASE / ROLE etc. leave the
-    /// ctx unchanged (no useful candidates from the current cache).
+    /// `DROP` or `REINDEX` seen; the next keyword (TABLE / VIEW /
+    /// MATERIALIZED VIEW / INDEX / SEQUENCE / SCHEMA / ...) selects
+    /// which kind of object the operator is naming. INDEX → fetches
+    /// from cache.indexes; SEQUENCE → cache.sequences; TABLE/VIEW →
+    /// cache.tables. Other kinds (FUNCTION / TYPE / DATABASE / ROLE
+    /// etc.) leave the ctx unchanged — no useful candidates from the
+    /// current cache.
     pending_drop_kind: bool,
 }
 
@@ -437,6 +438,12 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 scope.expecting_explain_paren = true;
             }
             "DROP" => {
+                scope.pending_drop_kind = true;
+            }
+            // REINDEX has the same `verb <kind> <name>` shape as DROP
+            // (REINDEX INDEX i / REINDEX TABLE t / REINDEX SCHEMA s /
+            // REINDEX DATABASE d). Reuse the pending-kind machinery.
+            "REINDEX" => {
                 scope.pending_drop_kind = true;
             }
             // After DROP, the kind keyword tells us what to suggest.
@@ -1212,6 +1219,22 @@ mod tests {
     fn drop_materialized_view_enters_drop_target() {
         assert_eq!(
             classify("DROP MATERIALIZED VIEW "),
+            ClauseContext::DropTarget(DropKind::Table)
+        );
+    }
+
+    #[test]
+    fn reindex_index_enters_drop_target_index() {
+        assert_eq!(
+            classify("REINDEX INDEX "),
+            ClauseContext::DropTarget(DropKind::Index)
+        );
+    }
+
+    #[test]
+    fn reindex_table_enters_drop_target_table() {
+        assert_eq!(
+            classify("REINDEX TABLE "),
             ClauseContext::DropTarget(DropKind::Table)
         );
     }
