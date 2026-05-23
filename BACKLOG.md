@@ -338,6 +338,20 @@ Pull a remote database down for local testing; keep tagged backups.
   via the new `virtual_columns: Option<Vec<String>>` field. `sub.|`
   offers `id, email` (and respects `AS alias`); the outer SELECT's
   unqualified completion picks them up too — DONE.
+- `SELECT *` expansion in CTE / subquery bodies — `extract_select_items`
+  now returns a `SelectItem` enum (Named / Star / StarOf). Resolved
+  variants (`resolve_select_columns`, `extract_ctes_resolved`,
+  `parse_from_tables_resolved`) walk Star against the FROM clause +
+  schema cache so `WITH foo AS (SELECT * FROM users) ... foo.|`
+  offers users' columns; `FROM (SELECT u.*, o.id FROM users u, orders o)
+  sub` exposes all of users' columns plus `id`. UNION column inference
+  is implicit — the extractor stops at UNION so only the first arm's
+  columns survive (matches SQL semantics) — DONE.
+- HAVING gets its own `ClauseContext::HavingPredicate` variant so the
+  classifier can distinguish it from WHERE / ON. Completion in HAVING
+  surfaces SELECT-list output aliases (`SELECT COUNT(*) AS n …
+  HAVING n|`) — Postgres uniquely allows this, and our completion
+  now matches — DONE.
 
 ## v3+ — deferred
 
