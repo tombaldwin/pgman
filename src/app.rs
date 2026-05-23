@@ -836,6 +836,16 @@ impl App {
             self.editor_complete();
             return;
         }
+        // Ctrl-Space is the industry-standard alias — IDEs and most
+        // shells bind it to "open the completion popup". Same handler
+        // as Tab; gives muscle-memory users a familiar shortcut without
+        // pre-empting Tab's role as the indent / fast-cycle key.
+        if matches!(key.code, KeyCode::Char(' '))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.editor_complete();
+            return;
+        }
         // Esc with an active cycle abandons completion *without* leaving
         // editor mode — restores the originally-typed prefix so the user
         // can keep typing. Without an active cycle, Esc still exits to

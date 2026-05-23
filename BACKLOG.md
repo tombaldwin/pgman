@@ -481,6 +481,10 @@ Pull a remote database down for local testing; keep tagged backups.
   buffer) render in bold/accent inside each candidate. Auto-completed
   trailing chars stay neutral so the operator can see at a glance
   what Tab would add — DONE.
+- **Ctrl-Space as completion alias**: the industry-standard
+  "open completion popup" shortcut now opens / advances the cycle
+  just like Tab. Lets muscle-memory IDE users hit the popup without
+  thinking about Tab's role — DONE.
 - **Tab on whitespace opens context-aware popup**: pressing Tab when
   the cursor is on whitespace (or in an empty buffer) opens the
   popup with candidates for the surrounding clause — statement
