@@ -75,14 +75,14 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
 // -- internals --
 
 #[derive(Debug, Clone)]
-struct Tok<'a> {
-    text: &'a str,
+pub(crate) struct Tok<'a> {
+    pub(crate) text: &'a str,
 }
 
 /// Lex a SQL fragment into identifier / punctuation / keyword tokens.
 /// Strings, comments, and whitespace are skipped. Stops on unterminated
 /// string / comment to keep the scan deterministic on partial input.
-fn tokenize(sql: &str) -> Vec<Tok<'_>> {
+pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
     let bytes = sql.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;

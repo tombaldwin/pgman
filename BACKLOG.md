@@ -254,17 +254,25 @@ Pull a remote database down for local testing; keep tagged backups.
   keys. Today Esc quits from Normal mode and from the ConnPick picker.
   Make Esc a no-op (or "close any overlay; otherwise no-op") so a
   reflex Esc never loses the session.
-- **Grammar-aware completion** — current completion is a tolerant
-  tokenizer + FROM-clause heuristic. A real SQL grammar (or at least a
-  statement-position classifier: SELECT-list / FROM / WHERE / GROUP /
-  ORDER / RETURNING) would let us:
-  - in SELECT after `SELECT`: only columns of in-scope tables, plus
-    aggregations
-  - in FROM/JOIN position: only tables / schemas, never columns
-  - in WHERE: columns of in-scope tables; suggest comparison operators
-  - after `ORDER BY` / `GROUP BY`: in-scope columns
-  - inside `INSERT INTO foo (`: columns of `foo`
-  Probably reuse `sqlparser` crate rather than rolling our own.
+- **Grammar-aware completion** — new `query::clause` classifier scans
+  tokens of the current statement (everything since the last `;`) and
+  returns `ClauseContext` + an optional write target. `candidates_for`
+  branches on context:
+  - `StatementStart` → SQL keywords (`SELECT`, `INSERT`, …)
+  - `TableRef` (FROM / JOIN / INSERT INTO target / UPDATE / DELETE
+    FROM) → tables + schemas; never columns
+  - `SelectList` / `Predicate` / `OrderOrGroup` → columns of in-scope
+    tables (with the qualified `alias.col` path still honoured)
+  - `InsertColumns(t)` / `UpdateAssign(t)` → columns of *that*
+    specific table
+  - `Values` → nothing (operator is typing literals)
+  - UPDATE / DELETE write target is folded into in-scope so WHERE
+    completion works without a FROM
+  Lightweight token scan, not a full SQL grammar — tolerant of mid-
+  typed buffers. — DONE. Follow-ups: aggregation suggestions (`COUNT`,
+  `SUM`) in SelectList; comparison operators (`=`, `>`, `LIKE`) in
+  Predicate; subquery scoping (subquery-FROMs as separate scopes);
+  `WITH cte AS (...)` CTE awareness.
 
 ## v3+ — deferred
 

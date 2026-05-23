@@ -15,6 +15,7 @@
 //! The Tab handler in `app.rs` is the only consumer; everything in this
 //! module is pure and unit-tested.
 
+use crate::query::clause::{classify_at, ClauseContext, QualifiedTable};
 use crate::query::from_parse::{parse_from_tables, TableRefInQuery};
 use crate::query::schema::SchemaCache;
 
@@ -45,6 +46,7 @@ pub enum CandidateKind {
     Table,
     Column,
     Alias,
+    Keyword,
 }
 
 impl CandidateKind {
@@ -54,9 +56,20 @@ impl CandidateKind {
             CandidateKind::Table => "table",
             CandidateKind::Column => "column",
             CandidateKind::Alias => "alias",
+            CandidateKind::Keyword => "keyword",
         }
     }
 }
+
+/// The SQL verbs / clause keywords pgman offers at statement-start.
+/// Kept short and focused on what an operator actually types at the
+/// editor prompt — DDL (`CREATE` / `ALTER` / `DROP`) and TX control
+/// can grow this list as those workflows land.
+const STATEMENT_KEYWORDS: &[&str] = &[
+    "SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "EXPLAIN",
+    "BEGIN", "COMMIT", "ROLLBACK", "SHOW", "VACUUM", "ANALYZE",
+    "TRUNCATE",
+];
 
 /// One completion the user can land on. `insert` is the text to substitute
 /// for `prefix`; `display` is what the picker (footer hint) shows.
@@ -203,10 +216,194 @@ pub fn candidates_for(
     let mut in_scope = before;
     in_scope.extend(after);
 
-    match id.qualifier.as_deref() {
-        Some(q) => candidates_for_qualified(q, &id.prefix, &in_scope, schema),
-        None => candidates_for_unqualified(&id.prefix, &in_scope, schema),
+    let classification = classify_at(buf, cursor);
+    // For write statements (UPDATE / INSERT / DELETE), the target
+    // table isn't surfaced by the FROM parser — fold it into in_scope
+    // so a WHERE / SET / RETURNING clause inside one of those statements
+    // still gets the target's columns.
+    if let Some(t) = &classification.write_target {
+        in_scope.push(TableRefInQuery {
+            schema: t.schema.clone(),
+            name: t.name.clone(),
+            alias: None,
+        });
     }
+
+    candidates_for_in_context(&id, &classification.ctx, &in_scope, schema)
+}
+
+/// Branch on clause context to keep candidates relevant to what the
+/// operator is actually typing. Each arm has a tight, testable behaviour:
+/// see `tests::candidates_for_*_context` for the locked-in cases.
+fn candidates_for_in_context(
+    id: &Identifier,
+    ctx: &ClauseContext,
+    in_scope: &[TableRefInQuery],
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    match ctx {
+        // Inside a `VALUES (...)` literal list — no useful identifier
+        // completion. Operator is typing constants.
+        ClauseContext::Values => Vec::new(),
+
+        // INSERT INTO foo (|  → columns of `foo` (specifically).
+        ClauseContext::InsertColumns(t) => columns_of(t, &id.prefix, schema),
+
+        // UPDATE foo SET |  → columns of `foo`.
+        ClauseContext::UpdateAssign(t) => columns_of(t, &id.prefix, schema),
+
+        // Top of statement — operator is typing a verb. Offer SQL
+        // keywords; the unusual `schema.|` case at statement start
+        // still routes through the qualified path so it's not dead.
+        ClauseContext::StatementStart => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => candidates_keywords(&id.prefix),
+        },
+
+        // Table-reference position (FROM / JOIN / INSERT INTO target /
+        // UPDATE target / DELETE FROM). Tables + schemas only — columns
+        // are nonsensical here.
+        ClauseContext::TableRef => match id.qualifier.as_deref() {
+            Some(q) => candidates_tables_in_schema(q, &id.prefix, schema),
+            None => candidates_tables_and_schemas(&id.prefix, schema),
+        },
+
+        // Predicate / SELECT list / ORDER BY / GROUP BY / HAVING / RETURNING
+        // — columns of in-scope tables. Qualified path still allowed
+        // for `alias.col` form.
+        ClauseContext::SelectList
+        | ClauseContext::Predicate
+        | ClauseContext::OrderOrGroup => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => candidates_columns_only(&id.prefix, in_scope, schema),
+        },
+
+        // Unknown context — fall back to the pre-grammar behaviour so
+        // syntax we don't recognise still gets completion (just less
+        // targeted).
+        ClauseContext::Unknown => match id.qualifier.as_deref() {
+            Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
+            None => candidates_for_unqualified(&id.prefix, in_scope, schema),
+        },
+    }
+}
+
+fn columns_of(table: &QualifiedTable, prefix: &str, schema: &SchemaCache) -> Vec<Candidate> {
+    let cols = schema
+        .columns_for(table.schema.as_deref(), &table.name)
+        .cloned()
+        .unwrap_or_default();
+    matches_for(&cols, prefix, CandidateKind::Column)
+}
+
+fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
+    STATEMENT_KEYWORDS
+        .iter()
+        .filter(|kw| starts_with_ci(kw, prefix))
+        .map(|kw| Candidate {
+            display: (*kw).to_string(),
+            insert: (*kw).to_string(),
+            kind: CandidateKind::Keyword,
+        })
+        .collect()
+}
+
+fn candidates_tables_and_schemas(prefix: &str, schema: &SchemaCache) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen_tables: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for t in &schema.tables {
+        if starts_with_ci(&t.name, prefix) && seen_tables.insert(t.name.clone()) {
+            out.push(Candidate {
+                display: t.name.clone(),
+                insert: t.name.clone(),
+                kind: CandidateKind::Table,
+            });
+        }
+    }
+    for s in &schema.schemas {
+        if starts_with_ci(s, prefix) {
+            out.push(Candidate {
+                display: s.clone(),
+                insert: s.clone(),
+                kind: CandidateKind::Schema,
+            });
+        }
+    }
+    out
+}
+
+fn candidates_tables_in_schema(
+    schema_name: &str,
+    prefix: &str,
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    if !schema
+        .schemas
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(schema_name))
+    {
+        return Vec::new();
+    }
+    let names: Vec<String> = schema
+        .tables
+        .iter()
+        .filter(|t| t.schema.eq_ignore_ascii_case(schema_name))
+        .map(|t| t.name.clone())
+        .collect();
+    matches_for(&names, prefix, CandidateKind::Table)
+}
+
+fn candidates_columns_only(
+    prefix: &str,
+    in_scope: &[TableRefInQuery],
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    // In-scope tables first.
+    for t in in_scope {
+        if let Some(cols) = schema.columns_for(t.schema.as_deref(), &t.name) {
+            for c in cols {
+                if starts_with_ci(c, prefix) && seen.insert(c.clone()) {
+                    out.push(Candidate {
+                        display: c.clone(),
+                        insert: c.clone(),
+                        kind: CandidateKind::Column,
+                    });
+                }
+            }
+        }
+    }
+    // Aliases bound by the FROM clause — useful for `SELECT u, e FROM users u, events e`
+    // (typing the alias).
+    for t in in_scope {
+        if let Some(alias) = &t.alias {
+            if starts_with_ci(alias, prefix) && seen.insert(alias.clone()) {
+                out.push(Candidate {
+                    display: alias.clone(),
+                    insert: alias.clone(),
+                    kind: CandidateKind::Alias,
+                });
+            }
+        }
+    }
+    // If there's no FROM at all (in_scope empty), fall back to every
+    // column across the cache — better than dead silence when the
+    // operator hasn't typed a FROM yet.
+    if in_scope.is_empty() {
+        for col in schema.all_column_names() {
+            if starts_with_ci(&col, prefix) && seen.insert(col.clone()) {
+                out.push(Candidate {
+                    display: col.clone(),
+                    insert: col.clone(),
+                    kind: CandidateKind::Column,
+                });
+            }
+        }
+    }
+    out
 }
 
 fn candidates_for_qualified(
@@ -512,20 +709,24 @@ mod tests {
     }
 
     #[test]
-    fn unqualified_offers_aliases_in_scope() {
+    fn unqualified_offers_aliases_in_scope_for_select_list() {
         let cache = build_cache();
+        // Cursor right after `u` in the SELECT list — clause-aware
+        // completion offers columns + aliases here. Table names
+        // (`users`) are deliberately NOT offered: writing `SELECT
+        // users` against `FROM users u` would be a bug, and the alias
+        // `u` is what the operator meant.
         let buf = "SELECT u FROM users u";
         let cur = buf.find(" FROM").unwrap();
         let cands = candidates_for(buf, cur, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
-        // Both alias `u` (alias kind) and `users` (table kind) match.
-        // Alias should appear before the table per ordering rules — but
-        // only after any column hits (here there are none for "u").
-        assert!(labels.contains(&"u"));
-        assert!(labels.contains(&"users"));
-        let alias_pos = labels.iter().position(|l| *l == "u").unwrap();
-        let table_pos = labels.iter().position(|l| *l == "users").unwrap();
-        assert!(alias_pos < table_pos, "alias should sort before table: {labels:?}");
+        assert!(labels.contains(&"u"), "alias `u` should appear: {labels:?}");
+        assert!(
+            !labels.contains(&"users"),
+            "SELECT-list completion shouldn't offer table name: {labels:?}"
+        );
+        let alias = cands.iter().find(|c| c.display == "u").unwrap();
+        assert_eq!(alias.kind, CandidateKind::Alias);
     }
 
     // -- candidates_for: qualified --
@@ -579,6 +780,125 @@ mod tests {
         let buf = "SELECT EM";
         let cands = candidates_for(buf, buf.len(), &cache);
         assert!(cands.iter().any(|c| c.display == "email"));
+    }
+
+    // -- grammar-aware completion --
+
+    #[test]
+    fn statement_start_offers_sql_keywords() {
+        let cache = build_cache();
+        let buf = "SEL";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"SELECT"), "got: {labels:?}");
+        assert!(cands.iter().all(|c| c.kind == CandidateKind::Keyword));
+    }
+
+    #[test]
+    fn from_context_offers_tables_not_columns() {
+        let cache = build_cache();
+        // Cursor right after the FROM, before any table name.
+        let buf = "SELECT * FROM ";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // Tables show up.
+        assert!(labels.contains(&"users"));
+        assert!(labels.contains(&"orders"));
+        // Columns must NOT — they don't belong in the FROM list.
+        assert!(!labels.iter().any(|l| *l == "email" || *l == "user_id"));
+    }
+
+    #[test]
+    fn where_context_offers_columns_of_in_scope_tables() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users WHERE em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // `email` is a column of `users` — should be offered. Table
+        // names should not.
+        assert!(labels.contains(&"email"), "got: {labels:?}");
+        assert!(!labels.contains(&"users"));
+    }
+
+    #[test]
+    fn order_by_context_offers_columns() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users ORDER BY em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+    }
+
+    #[test]
+    fn insert_into_column_list_offers_only_columns_of_that_table() {
+        let cache = build_cache();
+        // Cursor sitting in the column list of `INSERT INTO users (...)`.
+        let buf = "INSERT INTO users (em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+        // No columns from other tables.
+        assert!(!labels.contains(&"total"));
+        assert!(!labels.contains(&"user_id"));
+    }
+
+    #[test]
+    fn update_set_offers_columns_of_target() {
+        let cache = build_cache();
+        let buf = "UPDATE users SET em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+    }
+
+    #[test]
+    fn update_where_includes_update_target_columns_without_from() {
+        // UPDATE has no FROM clause, but the target table's columns
+        // should still be available inside WHERE via write_target.
+        let cache = build_cache();
+        let buf = "UPDATE users SET name = 'x' WHERE em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn delete_where_includes_target_columns() {
+        let cache = build_cache();
+        let buf = "DELETE FROM users WHERE em";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+    }
+
+    #[test]
+    fn values_context_yields_no_candidates() {
+        let cache = build_cache();
+        let buf = "INSERT INTO users (id, email) VALUES (";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        // Inside VALUES the operator is typing literals — no identifier
+        // completion. (Tests that we don't accidentally offer column
+        // names where they'd be syntactically wrong.)
+        assert!(cands.is_empty(), "got: {cands:?}");
+    }
+
+    #[test]
+    fn schema_dot_in_from_clause_offers_tables_in_that_schema() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM audit.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["events"]);
+        assert_eq!(cands[0].kind, CandidateKind::Table);
+    }
+
+    #[test]
+    fn alias_dot_in_where_still_routes_to_columns() {
+        let cache = build_cache();
+        let buf = "SELECT * FROM users u WHERE u.";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert_eq!(labels, vec!["email", "id", "name"]);
     }
 
     #[test]
