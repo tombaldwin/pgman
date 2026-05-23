@@ -1441,6 +1441,27 @@ mod tests {
     }
 
     #[test]
+    fn truncate_offers_tables_not_columns() {
+        let cache = build_cache();
+        let cands = candidates_for("TRUNCATE us", 11, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users"));
+        // No columns leaking through.
+        assert!(!labels.contains(&"id"));
+        assert!(!labels.contains(&"email"));
+    }
+
+    #[test]
+    fn copy_paren_offers_target_columns() {
+        let cache = build_cache();
+        let cands = candidates_for("COPY users (em", 14, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"email"));
+        // Columns of OTHER tables must NOT leak in.
+        assert!(!labels.contains(&"total"));
+    }
+
+    #[test]
     fn show_offers_guc_parameter_names() {
         let cache = build_cache();
         let cands = candidates_for("SHOW sear", 9, &cache);
