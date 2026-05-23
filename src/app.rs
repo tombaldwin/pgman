@@ -1021,14 +1021,17 @@ impl App {
         if just_typed_space && self.completion.is_none() {
             // The just-typed space is at `editor_cursor - 1`. Strip it
             // and any further trailing whitespace, then read back the
-            // last alphanumeric / `_` word. rfind on byte-indexed chars
-            // is fine here because the boundary chars we look for
-            // (space, comma, paren, `;`) are ASCII.
+            // last alphanumeric / `_` word. Walk char_indices in reverse
+            // so a multi-byte boundary char (en-dash, smart quote, NBSP,
+            // …) doesn't land us mid-codepoint — `rfind(predicate) + 1`
+            // would have panicked on those.
             let before_space = &self.editor_buffer[..self.editor_cursor.saturating_sub(1)];
             let trimmed = before_space.trim_end();
             let word_start = trimmed
-                .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-                .map(|i| i + 1)
+                .char_indices()
+                .rev()
+                .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+                .map(|(i, c)| i + c.len_utf8())
                 .unwrap_or(0);
             let last_word = &trimmed[word_start..];
             if !last_word.is_empty()
@@ -2254,6 +2257,29 @@ mod tests {
             .expect("auto-trigger should pop after `AND `");
         let labels: Vec<&str> = cycle.candidates.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.iter().any(|l| *l == "email" || *l == "name"));
+    }
+
+    #[test]
+    fn auto_trigger_after_space_does_not_panic_on_multibyte_boundary_char() {
+        // Regression guard: rfind on a predicate that matches a
+        // multi-byte char (smart quote, en-dash, NBSP, …) would return
+        // the byte index of the char's FIRST byte; `i + 1` then lands
+        // in the middle of the codepoint and `&trimmed[start..]`
+        // panicked. Walk char_indices.rev() instead.
+        let mut a = test_app_with_cache(&[("users", &["id"])]);
+        a.mode = Mode::Editor;
+        // En-dash (U+2013, 3 bytes) followed by an identifier-shaped
+        // word — the en-dash is the closest non-alphanumeric / non-`_`
+        // char to the right of the would-be word start.
+        set_editor(&mut a, "–FROM");
+        // Just typing the space — we don't actually need it to fire
+        // the trigger, only to not panic walking back over the en-dash.
+        type_key(&mut a, KeyCode::Char(' '));
+        // FROM is in the trigger list, so the popup should also open.
+        assert!(
+            a.completion.is_some(),
+            "expected popup to open after `–FROM ` (en-dash + FROM); no panic is the main thing"
+        );
     }
 
     #[test]

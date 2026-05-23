@@ -347,6 +347,12 @@ pub fn fuzzy_score(haystack: &str, needle: &str) -> Option<usize> {
 /// functions: those are short and the operator usually remembers
 /// them; bulking the fuzzy result with `FROM` for `usr` would just be
 /// noise.
+/// Cap on the fuzzy result list — both the unqualified scan and each
+/// qualified arm honour this. Lift here so a future tweak only touches
+/// one site (per code review: redeclaring this inside each arm was a
+/// maintenance trap waiting to drift).
+const MAX_FUZZY_RESULTS: usize = 30;
+
 fn candidates_fuzzy(
     id: &Identifier,
     in_scope: &[TableRefInQuery],
@@ -404,7 +410,6 @@ fn candidates_fuzzy(
                     }
                 }
                 scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-                const MAX_FUZZY_RESULTS: usize = 30;
                 return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
             }
         }
@@ -422,7 +427,6 @@ fn candidates_fuzzy(
                 }
             }
             scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-            const MAX_FUZZY_RESULTS: usize = 30;
             return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
         }
         // Bare table-name qualifier with no FROM scope → its columns.
@@ -437,7 +441,6 @@ fn candidates_fuzzy(
                 );
             }
             scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-            const MAX_FUZZY_RESULTS: usize = 30;
             return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
         }
         // Unrecognised qualifier — nothing to fuzz over.
@@ -501,7 +504,6 @@ fn candidates_fuzzy(
     // result list so a 3-char prefix that subsequence-matches half the
     // schema doesn't drown the popup.
     scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-    const MAX_FUZZY_RESULTS: usize = 30;
     scored
         .into_iter()
         .take(MAX_FUZZY_RESULTS)
