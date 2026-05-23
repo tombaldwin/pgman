@@ -19,11 +19,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let area = f.area();
+    // Dynamic editor height: grow with the buffer up to a cap, with a min so
+    // the focused empty editor still has a visible content line.
+    let editor_lines = app.editor_buffer.matches('\n').count() + 1;
+    let editor_height: u16 = (editor_lines as u16 + 2).clamp(3, 12);
     let chunks = Layout::vertical([
-        Constraint::Length(1), // header
-        Constraint::Length(3), // editor pane (border + 1 line + border)
-        Constraint::Min(0),    // results grid
-        Constraint::Length(1), // footer
+        Constraint::Length(1),             // header
+        Constraint::Length(editor_height), // editor pane (border + lines + border)
+        Constraint::Min(0),                // results grid
+        Constraint::Length(1),             // footer
     ])
     .split(area);
     draw_header(f, chunks[0], app);
@@ -265,7 +269,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     } else {
         let hints = match app.mode {
             Mode::Help => "esc / ?  close help",
-            Mode::Editor => "F5 run · F6 EXPLAIN · F7 EXPLAIN ANALYZE · ctrl-u clear · esc",
+            Mode::Editor => {
+                "F5 run · F6 EXPLAIN · F7 EXPLAIN ANALYZE · enter newline · ctrl-p/n history · esc"
+            }
             Mode::Confirm => "y run · n / esc cancel",
             Mode::Normal => "q quit · ? help · e editor · j/k scroll · g/G top/bottom",
         };
@@ -277,7 +283,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-/// SQL editor pane — always visible, focused in `Mode::Editor`.
+/// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
+/// buffer; the cursor renders as a reverse-video character on its line.
 fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let focused = app.mode == Mode::Editor;
@@ -286,48 +293,83 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &App) {
     } else {
         theme.border_idle
     };
-    let title = if focused {
-        " editor "
+    let title_text = if focused {
+        match app.history_pos {
+            None => "editor".to_string(),
+            Some(i) => format!("editor · history {}/{}", i + 1, app.history.len()),
+        }
     } else {
-        " editor (e to focus) "
+        "editor (e to focus)".to_string()
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(title.to_string(), Style::default().fg(theme.title)));
+        .title(Span::styled(
+            format!(" {title_text} "),
+            Style::default().fg(theme.title),
+        ));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
     let buf = &app.editor_buffer;
-    let cursor = app.editor_cursor;
-    let mut spans: Vec<Span> = vec![Span::styled("> ", Style::default().fg(theme.muted))];
+    let (cur_line, cur_col) = crate::app::cursor_position(buf, app.editor_cursor);
+    let text_color = if focused { theme.text } else { theme.muted };
 
-    if focused {
-        let before = buf[..cursor].to_string();
-        let (cursor_char, after) = if cursor < buf.len() {
-            let mut next = cursor + 1;
-            while next < buf.len() && !buf.is_char_boundary(next) {
-                next += 1;
-            }
-            (buf[cursor..next].to_string(), buf[next..].to_string())
-        } else {
-            (" ".to_string(), String::new())
-        };
-        spans.push(Span::styled(before, Style::default().fg(theme.text)));
-        spans.push(Span::styled(
-            cursor_char,
-            Style::default().add_modifier(Modifier::REVERSED),
-        ));
-        spans.push(Span::styled(after, Style::default().fg(theme.text)));
-    } else {
-        let text = if buf.is_empty() {
-            "(empty — press e to focus)".to_string()
-        } else {
-            buf.clone()
-        };
-        spans.push(Span::styled(text, Style::default().fg(theme.muted)));
+    // Unfocused, empty buffer — show a hint instead of an empty pane.
+    if !focused && buf.is_empty() {
+        let lines = vec![Line::from(vec![
+            Span::styled("> ", Style::default().fg(theme.muted)),
+            Span::styled(
+                "(empty — press e to focus)",
+                Style::default().fg(theme.muted),
+            ),
+        ])];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), inner);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, line_text) in buf.split('\n').enumerate() {
+        let prompt = if i == 0 { "> " } else { "  " };
+        let mut spans: Vec<Span> =
+            vec![Span::styled(prompt.to_string(), Style::default().fg(theme.muted))];
+
+        if focused && i == cur_line {
+            // Find byte offset of `cur_col` chars into this line.
+            let byte_at_col = line_text
+                .char_indices()
+                .nth(cur_col)
+                .map(|(b, _)| b)
+                .unwrap_or(line_text.len());
+            let before = line_text[..byte_at_col].to_string();
+            let (cursor_char, after) = if byte_at_col < line_text.len() {
+                let mut next = byte_at_col + 1;
+                while next < line_text.len() && !line_text.is_char_boundary(next) {
+                    next += 1;
+                }
+                (
+                    line_text[byte_at_col..next].to_string(),
+                    line_text[next..].to_string(),
+                )
+            } else {
+                (" ".to_string(), String::new())
+            };
+            spans.push(Span::styled(before, Style::default().fg(text_color)));
+            spans.push(Span::styled(
+                cursor_char,
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+            spans.push(Span::styled(after, Style::default().fg(text_color)));
+        } else {
+            spans.push(Span::styled(
+                line_text.to_string(),
+                Style::default().fg(text_color),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// Modal for a guarded run. Shows the statement, the safety classification,
@@ -404,9 +446,13 @@ fn draw_help(f: &mut Frame, area: Rect, theme: &Theme) {
         Line::from("    g / G         first / last row"),
         Line::from(""),
         Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
-        Line::from("    F5  / enter   run the statement (through safety guards)"),
+        Line::from("    F5            run the statement (through safety guards)"),
         Line::from("    F6            EXPLAIN  (never executes)"),
         Line::from("    F7            EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
+        Line::from("    enter         insert newline"),
+        Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
+        Line::from("    home / end    start / end of current line"),
+        Line::from("    ctrl-p / -n   prev / next history entry"),
         Line::from("    ctrl-u        clear the buffer"),
         Line::from("    esc           back to grid"),
         Line::from(""),
