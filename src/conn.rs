@@ -184,14 +184,14 @@ pub async fn connect_and_bootstrap(
     if let Some(password) = &dsn.password {
         cfg.password(password);
     }
-    apply_ssl_mode(&mut cfg, &dsn);
+    let verify = apply_ssl_mode(&mut cfg, &dsn);
 
     // Connect with TLS when we can build a connector; fall back to
     // NoTls only when connector init itself fails (e.g. crypto provider
     // panic) — that's expected to be rare. The connection driver is
     // spawned inside each branch because its stream type depends on
     // which connector ran the handshake.
-    let client = match build_tls_connector() {
+    let client = match build_tls_connector(verify) {
         Ok(connector) => {
             let (client, connection) = cfg
                 .connect(connector)
@@ -434,10 +434,20 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
     rendered.unwrap_or_else(|| "?".to_string())
 }
 
-/// Apply `sslmode` from `dsn.params` to a `tokio_postgres::Config`. Unknown
-/// values are logged-and-ignored (the default `Prefer` stays). Pure-ish:
-/// only mutates `cfg`, no I/O.
-fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) {
+/// Apply `sslmode` from `dsn.params` to a `tokio_postgres::Config` and
+/// return whether certificate verification should be performed by the
+/// TLS connector. Matches libpq's semantics:
+///
+/// - `disable`              → plaintext only (no verify regardless)
+/// - `prefer` / `require`   → encrypt without verifying — works against
+///   self-signed dev databases. `require` differs from `prefer` only in
+///   the connector's handling when the server says no: `require` fails.
+/// - `verify-ca` / `verify-full` → encrypt AND verify the chain (and,
+///   for verify-full, the hostname). `tokio-postgres-rustls`'s default
+///   verifier checks both; we currently collapse verify-ca onto
+///   verify-full (a noted follow-up — verify-ca-without-hostname needs
+///   a custom rustls verifier).
+fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> bool {
     use tokio_postgres::config::SslMode;
     let mode = dsn
         .params
@@ -447,26 +457,39 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) {
     match mode {
         Some("disable") => {
             cfg.ssl_mode(SslMode::Disable);
+            false
         }
         Some("prefer") | None => {
             cfg.ssl_mode(SslMode::Prefer);
+            false
         }
-        Some("require") | Some("verify-ca") | Some("verify-full") => {
+        Some("require") => {
             cfg.ssl_mode(SslMode::Require);
+            false
+        }
+        Some("verify-ca") | Some("verify-full") => {
+            cfg.ssl_mode(SslMode::Require);
+            true
         }
         Some(other) => {
             tracing::warn!("unknown sslmode={other:?} — defaulting to Prefer");
             cfg.ssl_mode(SslMode::Prefer);
+            false
         }
     }
 }
 
-/// Build a `MakeRustlsConnect` for the Postgres TLS handshake. Trust roots
-/// come from the OS keychain via `rustls-native-certs`; the Mozilla bundle
-/// from `webpki-roots` is always added too so a freshly-spun container
-/// without a populated trust store still reaches RDS (whose CA is in
-/// Mozilla's bundle). Returns the connector or a short error string.
-fn build_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+/// Build a `MakeRustlsConnect` for the Postgres TLS handshake. When
+/// `verify` is true (sslmode=verify-ca / verify-full) we build a
+/// strict verifier from the union of the OS keychain (corporate CAs)
+/// and Mozilla's `webpki-roots` bundle (covers RDS, containers without
+/// a populated native store). When `verify` is false (sslmode=require
+/// / prefer) we install a no-op verifier that matches libpq's "encrypt
+/// without verifying" behaviour — without this, self-signed dev DBs
+/// would fail the handshake.
+fn build_tls_connector(
+    verify: bool,
+) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
     // Install the default crypto provider once per process — rustls 0.23
     // requires this before any ClientConfig is built.
     static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -476,26 +499,93 @@ fn build_tls_connector() -> Result<tokio_postgres_rustls::MakeRustlsConnect, Str
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 
-    let mut root_store = rustls::RootCertStore::empty();
-    // Native first — picks up corporate CAs the operator has trusted on
-    // their machine.
-    match rustls_native_certs::load_native_certs() {
-        certs if !certs.certs.is_empty() => {
-            let (added, _ignored) = root_store.add_parsable_certificates(certs.certs);
-            tracing::debug!("loaded {added} native root cert(s)");
+    let config = if verify {
+        let mut root_store = rustls::RootCertStore::empty();
+        match rustls_native_certs::load_native_certs() {
+            r if !r.certs.is_empty() => {
+                let (added, _ignored) = root_store.add_parsable_certificates(r.certs);
+                tracing::debug!("loaded {added} native root cert(s)");
+                if !r.errors.is_empty() {
+                    // Surface load errors as warn-level — a denied
+                    // keychain prompt on macOS otherwise silently drops
+                    // corporate CAs and the operator can't figure out
+                    // why the connection later fails with UnknownIssuer.
+                    for e in &r.errors {
+                        tracing::warn!("native-certs partial load error: {e}");
+                    }
+                }
+            }
+            r => {
+                if !r.errors.is_empty() {
+                    for e in &r.errors {
+                        tracing::warn!("native-certs load error: {e}");
+                    }
+                } else {
+                    tracing::debug!("no native root certs available; relying on webpki-roots");
+                }
+            }
         }
-        _ => {
-            tracing::debug!("no native root certs available; relying on webpki-roots");
-        }
-    }
-    // Always also add Mozilla's roots — small overlap, covers the "no
-    // native store" case (containers, CI).
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let config = rustls::ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+    } else {
+        rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier))
+            .with_no_client_auth()
+    };
     Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
+}
+
+/// Rustls verifier that accepts any server cert. Used for
+/// `sslmode=require` / `prefer` — encrypts the wire but doesn't
+/// validate the peer. Matches libpq's semantics for those modes.
+#[derive(Debug)]
+struct NoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        use rustls::SignatureScheme::*;
+        vec![
+            RSA_PKCS1_SHA256,
+            RSA_PKCS1_SHA384,
+            RSA_PKCS1_SHA512,
+            RSA_PSS_SHA256,
+            RSA_PSS_SHA384,
+            RSA_PSS_SHA512,
+            ECDSA_NISTP256_SHA256,
+            ECDSA_NISTP384_SHA384,
+            ECDSA_NISTP521_SHA512,
+            ED25519,
+        ]
+    }
 }
 
 /// Flatten an error and its `source()` chain into a single string —
@@ -642,37 +732,42 @@ mod tests {
     #[test]
     fn apply_ssl_mode_maps_url_params_to_tokio_postgres_modes() {
         use tokio_postgres::config::SslMode;
-        fn parsed(s: &str) -> tokio_postgres::Config {
+        fn parsed(s: &str) -> (tokio_postgres::Config, bool) {
             let dsn = Dsn::parse(s).unwrap();
             let mut cfg = tokio_postgres::Config::new();
-            super::apply_ssl_mode(&mut cfg, &dsn);
-            cfg
+            let verify = super::apply_ssl_mode(&mut cfg, &dsn);
+            (cfg, verify)
         }
-        // Default — no sslmode in URL — is Prefer.
-        assert_eq!(parsed("postgres://h/d").get_ssl_mode(), SslMode::Prefer);
-        assert_eq!(
-            parsed("postgres://h/d?sslmode=disable").get_ssl_mode(),
-            SslMode::Disable
-        );
-        assert_eq!(
-            parsed("postgres://h/d?sslmode=prefer").get_ssl_mode(),
-            SslMode::Prefer
-        );
-        assert_eq!(
-            parsed("postgres://h/d?sslmode=require").get_ssl_mode(),
-            SslMode::Require
-        );
-        // verify-* upgrades to Require (tokio-postgres doesn't expose
-        // the verify variants distinctly without a custom verifier).
-        assert_eq!(
-            parsed("postgres://h/d?sslmode=verify-full").get_ssl_mode(),
-            SslMode::Require
-        );
+        // Default — no sslmode in URL — is Prefer, no verify.
+        let (cfg, v) = parsed("postgres://h/d");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Prefer);
+        assert!(!v);
+
+        let (cfg, v) = parsed("postgres://h/d?sslmode=disable");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Disable);
+        assert!(!v);
+
+        let (cfg, v) = parsed("postgres://h/d?sslmode=prefer");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Prefer);
+        assert!(!v);
+
+        // `require`: encrypt, no verify (libpq semantics).
+        let (cfg, v) = parsed("postgres://h/d?sslmode=require");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Require);
+        assert!(!v, "sslmode=require should not verify the server cert");
+
+        // verify-* upgrades to Require AND turns verification on.
+        let (cfg, v) = parsed("postgres://h/d?sslmode=verify-full");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Require);
+        assert!(v);
+
+        let (_, v) = parsed("postgres://h/d?sslmode=verify-ca");
+        assert!(v);
+
         // Unknown value falls back to Prefer.
-        assert_eq!(
-            parsed("postgres://h/d?sslmode=bogus").get_ssl_mode(),
-            SslMode::Prefer
-        );
+        let (cfg, v) = parsed("postgres://h/d?sslmode=bogus");
+        assert_eq!(cfg.get_ssl_mode(), SslMode::Prefer);
+        assert!(!v);
     }
 
     #[test]
