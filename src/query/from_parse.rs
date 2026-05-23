@@ -17,6 +17,11 @@ pub struct TableRefInQuery {
     pub schema: Option<String>,
     pub name: String,
     pub alias: Option<String>,
+    /// When this `TableRefInQuery` came from a subquery
+    /// (`FROM (SELECT a, b FROM users) sub`), holds the column names
+    /// inferred from the subquery's SELECT list. `None` for catalog
+    /// tables (look those up in the schema cache).
+    pub virtual_columns: Option<Vec<String>>,
 }
 
 impl TableRefInQuery {
@@ -66,6 +71,13 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         .map(|t| t.text)
                         .filter(|t| is_identifier_like(t));
                     if let Some(name) = alias_text {
+                        // Pull the subquery body's SELECT list so the
+                        // outer query can complete `sub.col` against it.
+                        let body_tokens = &tokens[i + 1..close - 1];
+                        let body_text: String =
+                            body_tokens.iter().map(|t| t.text).collect::<Vec<_>>().join(" ");
+                        let cols = crate::query::select_list::extract_select_columns(&body_text);
+                        let virtual_columns = if cols.is_empty() { None } else { Some(cols) };
                         out.push(TableRefInQuery {
                             schema: None,
                             name: name.to_string(),
@@ -73,6 +85,7 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                             // surfaces in both the alias and the
                             // qualified-lookup paths of completion.
                             alias: Some(name.to_string()),
+                            virtual_columns,
                         });
                         i = alias_idx + 1;
                     } else {
@@ -91,6 +104,7 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         schema: table.schema,
                         name: table.name,
                         alias,
+                        virtual_columns: None,
                     });
                 }
                 // After a comma, another table ref. Anything else ends
@@ -338,7 +352,8 @@ mod tests {
             vec![TableRefInQuery {
                 schema: None,
                 name: "users".into(),
-                alias: None
+                alias: None,
+                virtual_columns: None,
             }]
         );
     }
@@ -480,12 +495,14 @@ mod tests {
             schema: None,
             name: "Users".into(),
             alias: Some("u".into()),
+            virtual_columns: None,
         };
         assert_eq!(r.match_key(), "u");
         let r2 = TableRefInQuery {
             schema: None,
             name: "Users".into(),
             alias: None,
+            virtual_columns: None,
         };
         assert_eq!(r2.match_key(), "users");
     }
