@@ -1671,6 +1671,18 @@ mod tests {
     }
 
     #[test]
+    fn on_conflict_on_constraint_does_not_leak_column_candidates() {
+        let cache = build_cache();
+        let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT ON CONSTRAINT us";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // We don't have constraint names; the key invariant is that
+        // columns / operators do NOT surface here.
+        assert!(!labels.contains(&"email"));
+        assert!(!labels.contains(&"id"));
+    }
+
+    #[test]
     fn on_conflict_paren_offers_target_columns() {
         let cache = build_cache();
         let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT (em";
