@@ -32,7 +32,7 @@ pub enum Pixel {
 /// while the splash is visible, so the timings are in those units.
 pub fn frame(tick: usize) -> Vec<Vec<Pixel>> {
     let trunk_left = (tick / 8) % 2 == 1; // ~880 ms per phase
-    let blinking = tick % 50 >= 48; // 2 ticks (~220 ms) every ~5.5 s
+    let blinking = tick % 50 >= 46; // 4 ticks (~440 ms) every ~5.5 s
     let template = match (trunk_left, blinking) {
         (false, false) => SPRITE_RIGHT_OPEN,
         (false, true) => SPRITE_RIGHT_BLINK,
@@ -92,7 +92,7 @@ const SPRITE_RIGHT_BLINK: &str = r#"
   O###OOOOOOOO###O
  O####O######O####O
 O#####O######O#####O
-O#####O######O#####O
+O#####OOO##OOO#####O
 O#d###O######O#d###O
 O#d###O######O#d###O
 O#####Oc####cO#####O
@@ -134,7 +134,7 @@ const SPRITE_LEFT_BLINK: &str = r#"
   O###OOOOOOOO###O
  O####O######O####O
 O#####O######O#####O
-O#####O######O#####O
+O#####OOO##OOO#####O
 O#d###O######O#d###O
 O#d###O######O#d###O
 O#####Oc####cO#####O
