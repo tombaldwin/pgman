@@ -23,7 +23,7 @@ use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
     continuations, AGGREGATE_FUNCTIONS, DROP_CONTINUATIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS,
     GUC_VALUES, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS,
-    TYPE_NAMES, WINDOW_FUNCTIONS,
+    TYPE_NAMES, VACUUM_OPTIONS, WINDOW_FUNCTIONS,
 };
 
 /// The partial identifier the cursor is inside (or immediately after).
@@ -380,6 +380,9 @@ fn candidates_for_in_context(
 
         // EXPLAIN (|  → the documented options.
         ClauseContext::ExplainOptions => candidates_from_list(&id.prefix, EXPLAIN_OPTIONS),
+
+        // VACUUM (|  /  ANALYZE (|  → maintenance options.
+        ClauseContext::VacuumOptions => candidates_from_list(&id.prefix, VACUUM_OPTIONS),
 
         // SHOW | / SET |  → GUC parameter names.
         ClauseContext::GucParameter => GUC_PARAMETERS
@@ -1791,6 +1794,24 @@ mod tests {
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"timestamp"));
         assert!(labels.contains(&"timestamp with time zone"));
+    }
+
+    #[test]
+    fn vacuum_paren_offers_vacuum_options() {
+        let cache = build_cache();
+        let cands = candidates_for("VACUUM (FU", 10, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"FULL"), "got: {labels:?}");
+        // Must NOT offer columns / tables.
+        assert!(!labels.contains(&"users"));
+    }
+
+    #[test]
+    fn analyze_paren_offers_vacuum_options() {
+        let cache = build_cache();
+        let cands = candidates_for("ANALYZE (VER", 12, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"VERBOSE"));
     }
 
     #[test]

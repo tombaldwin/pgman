@@ -44,6 +44,9 @@ pub enum ClauseContext {
     /// Inside `EXPLAIN (...)` — option-name position. Wants tokens like
     /// `ANALYZE`, `BUFFERS`, etc.
     ExplainOptions,
+    /// Inside `VACUUM (...)` or `ANALYZE (...)` — option-name position.
+    /// Wants entries from `vocabulary::VACUUM_OPTIONS`.
+    VacuumOptions,
     /// `SHOW |` or `SET |` — the operator is naming a GUC parameter.
     /// We don't distinguish SHOW vs SET because the candidate set is
     /// the same (parameter names); the value side flips to `GucValue`
@@ -210,6 +213,9 @@ struct ScopeState {
     expecting_insert_paren: bool,
     /// `EXPLAIN` seen; the next `(` opens its option list.
     expecting_explain_paren: bool,
+    /// `VACUUM` or `ANALYZE` seen; the next `(` opens its option list
+    /// (same shape as EXPLAIN's option list).
+    expecting_vacuum_paren: bool,
     /// `CAST` seen; the next `(` opens its argument paren. The child
     /// scope inherits `is_cast_scope = true` so a subsequent `AS`
     /// inside flips ctx to `TypeName` instead of being read as an
@@ -241,6 +247,7 @@ impl ScopeState {
             pending_by: false,
             expecting_insert_paren: false,
             expecting_explain_paren: false,
+            expecting_vacuum_paren: false,
             expecting_cast_paren: false,
             is_cast_scope: false,
             in_on_conflict: false,
@@ -272,6 +279,8 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             let inherits_cast = parent.expecting_cast_paren;
             let new_ctx = if parent.expecting_explain_paren {
                 ExplainOptions
+            } else if parent.expecting_vacuum_paren {
+                VacuumOptions
             } else if parent.expecting_insert_paren {
                 InsertColumns(parent.active_table.clone().unwrap_or(QualifiedTable {
                     schema: None,
@@ -290,6 +299,7 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             let parent_mut = scopes.last_mut().unwrap();
             parent_mut.expecting_insert_paren = false;
             parent_mut.expecting_explain_paren = false;
+            parent_mut.expecting_vacuum_paren = false;
             parent_mut.expecting_cast_paren = false;
             parent_mut.pending_table_ref = false;
             parent_mut.pending_by = false;
@@ -462,6 +472,14 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 // else (a bare `EXPLAIN SELECT …`) just falls through
                 // to whatever clause follows.
                 scope.expecting_explain_paren = true;
+            }
+            // VACUUM and ANALYZE can take an option-list paren group
+            // (`VACUUM (FULL, VERBOSE) tab`). When the operator types
+            // a bare `VACUUM tab` or `ANALYZE tab` (no parens), the
+            // flag stays set until next-`(` or end-of-statement — no
+            // harm done.
+            "VACUUM" | "ANALYZE" => {
+                scope.expecting_vacuum_paren = true;
             }
             "DROP" => {
                 scope.pending_drop_kind = true;
@@ -1408,6 +1426,24 @@ mod tests {
     fn set_enters_guc_parameter_until_equals() {
         assert_eq!(classify("SET "), ClauseContext::GucParameter);
         assert_eq!(classify("SET time"), ClauseContext::GucParameter);
+    }
+
+    #[test]
+    fn vacuum_paren_enters_vacuum_options() {
+        assert_eq!(classify("VACUUM ("), ClauseContext::VacuumOptions);
+        assert_eq!(classify("VACUUM (FU"), ClauseContext::VacuumOptions);
+    }
+
+    #[test]
+    fn analyze_paren_enters_vacuum_options_too() {
+        // ANALYZE (...) reuses the same options syntax as VACUUM.
+        assert_eq!(classify("ANALYZE ("), ClauseContext::VacuumOptions);
+    }
+
+    #[test]
+    fn vacuum_without_paren_stays_at_statement_start() {
+        // `VACUUM tab` (bare form) — no parens, falls through.
+        assert_eq!(classify("VACUUM "), ClauseContext::StatementStart);
     }
 
     #[test]

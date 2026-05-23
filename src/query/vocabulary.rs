@@ -215,6 +215,17 @@ pub const EXPLAIN_OPTIONS: &[&str] = &[
     "SERIALIZE", "MEMORY",
 ];
 
+/// Postgres `VACUUM (option, ...) [table]` flags. Same shape as
+/// `EXPLAIN (...)`. ANALYZE — the standalone statement — accepts a
+/// subset of these in its own `(...)` option list, so the same
+/// vocabulary is reused for both.
+pub const VACUUM_OPTIONS: &[&str] = &[
+    "FULL", "FREEZE", "VERBOSE", "ANALYZE",
+    "DISABLE_PAGE_SKIPPING", "SKIP_LOCKED", "INDEX_CLEANUP",
+    "PROCESS_TOAST", "TRUNCATE", "PARALLEL",
+    "BUFFER_USAGE_LIMIT", "SKIP_DATABASE_STATS", "ONLY_DATABASE_STATS",
+];
+
 /// JOIN variants surfaced as multi-word completions in `TableRef`
 /// continuations. Tab once gets the whole shape (`LEFT OUTER JOIN`)
 /// so the operator doesn't have to type the verb-of-art.
@@ -290,6 +301,7 @@ mod tests {
             PREDICATE_OPERATORS,
             JOIN_VARIANTS,
             EXPLAIN_OPTIONS,
+            VACUUM_OPTIONS,
             DROP_CONTINUATIONS,
             continuations::AFTER_SELECT_LIST,
             continuations::AFTER_TABLE_REF,
@@ -350,6 +362,7 @@ mod tests {
             ("PREDICATE_OPERATORS", PREDICATE_OPERATORS),
             ("JOIN_VARIANTS", JOIN_VARIANTS),
             ("EXPLAIN_OPTIONS", EXPLAIN_OPTIONS),
+            ("VACUUM_OPTIONS", VACUUM_OPTIONS),
             ("DROP_CONTINUATIONS", DROP_CONTINUATIONS),
             ("GUC_PARAMETERS", GUC_PARAMETERS),
             ("GUC_VALUES", GUC_VALUES),
