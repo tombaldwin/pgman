@@ -92,8 +92,8 @@ const SPRITE_RIGHT_BLINK: &str = r#"
   O###OOOOOOOO###O
  O####O######O####O
 O#####O######O#####O
-O#####OOO##OOO#####O
-O#d###O######O#d###O
+O#####O######O#####O
+O#d###OOO##OOO#d###O
 O#d###O######O#d###O
 O#####Oc####cO#####O
 O#####O######O#####O
@@ -134,8 +134,8 @@ const SPRITE_LEFT_BLINK: &str = r#"
   O###OOOOOOOO###O
  O####O######O####O
 O#####O######O#####O
-O#####OOO##OOO#####O
-O#d###O######O#d###O
+O#####O######O#####O
+O#d###OOO##OOO#d###O
 O#d###O######O#d###O
 O#####Oc####cO#####O
 O#####O######O#####O
