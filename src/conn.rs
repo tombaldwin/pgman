@@ -49,6 +49,54 @@ impl fmt::Display for DsnError {
 
 impl std::error::Error for DsnError {}
 
+/// A failed query — the human-readable message plus, when Postgres
+/// sent one, the 1-indexed character position of the syntax error
+/// within the submitted SQL. The position lets the editor jump the
+/// cursor to the offending token.
+///
+/// Display elides the position so existing call sites that just
+/// `.to_string()` keep working unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryErr {
+    pub msg: String,
+    pub position: Option<u32>,
+}
+
+impl QueryErr {
+    /// Build a position-less error — for non-Postgres failures (TLS,
+    /// IO, our own validation).
+    pub fn msg(msg: impl Into<String>) -> Self {
+        Self {
+            msg: msg.into(),
+            position: None,
+        }
+    }
+}
+
+impl From<tokio_postgres::Error> for QueryErr {
+    fn from(e: tokio_postgres::Error) -> Self {
+        let position = e
+            .as_db_error()
+            .and_then(|db| db.position())
+            .map(|p| match p {
+                tokio_postgres::error::ErrorPosition::Original(n)
+                | tokio_postgres::error::ErrorPosition::Internal { position: n, .. } => *n,
+            });
+        Self {
+            msg: e.to_string(),
+            position,
+        }
+    }
+}
+
+impl std::fmt::Display for QueryErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for QueryErr {}
+
 impl Dsn {
     /// Parse a `postgres://user:pass@host:port/dbname?k=v` connection string.
     ///
@@ -360,21 +408,18 @@ pub async fn connect_and_bootstrap(
 /// statements (`SELECT`, `EXPLAIN`, `SHOW`, …) and non-row-returning ones
 /// (`UPDATE`, `DELETE`, DDL). Non-row statements yield a single-cell grid with
 /// the affected-row count.
-pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
-    let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
+pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns = stmt.columns();
     if columns.is_empty() {
-        let affected = client
-            .execute(&stmt, &[])
-            .await
-            .map_err(|e| e.to_string())?;
+        let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
         Ok(Grid {
             columns: vec!["status".to_string()],
             rows: vec![vec![format!("{affected} row(s) affected")]],
         })
     } else {
         let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
-        let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
+        let rows = client.query(&stmt, &[]).await.map_err(QueryErr::from)?;
         let out_rows: Vec<Vec<String>> = rows
             .iter()
             .take(crate::grid::MAX_ROWS)
@@ -391,11 +436,8 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
 /// open** — the caller (usually the App's commit/rollback prompt) decides
 /// `COMMIT` or `ROLLBACK`. On error the transaction is rolled back immediately
 /// so the session doesn't sit aborted.
-pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
-    client
-        .batch_execute("BEGIN")
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
     match run_statement(client, sql).await {
         Ok(grid) => Ok(grid),
         Err(e) => {
@@ -408,11 +450,8 @@ pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Resul
 /// Run a multi-statement script (`;`-separated) via the simple query
 /// protocol. Returns a single-row "status" grid since `batch_execute` does
 /// not yield row sets.
-pub async fn run_batch(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
-    client
-        .batch_execute(sql)
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn run_batch(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    client.batch_execute(sql).await.map_err(QueryErr::from)?;
     Ok(status_grid("batch executed"))
 }
 
@@ -422,16 +461,13 @@ pub async fn run_batch(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
 pub async fn run_batch_in_tx_open(
     client: &tokio_postgres::Client,
     sql: &str,
-) -> Result<Grid, String> {
-    client
-        .batch_execute("BEGIN")
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<Grid, QueryErr> {
+    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
     match client.batch_execute(sql).await {
         Ok(()) => Ok(status_grid("batch ran — awaiting commit/rollback")),
         Err(e) => {
             let _ = client.batch_execute("ROLLBACK").await;
-            Err(e.to_string())
+            Err(QueryErr::from(e))
         }
     }
 }
@@ -464,11 +500,8 @@ pub async fn tx_rollback(client: &tokio_postgres::Client) -> Result<(), String> 
 pub async fn run_in_tx_rollback(
     client: &tokio_postgres::Client,
     sql: &str,
-) -> Result<Grid, String> {
-    client
-        .batch_execute("BEGIN")
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<Grid, QueryErr> {
+    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
     let result = run_statement(client, sql).await;
     let _ = client.batch_execute("ROLLBACK").await;
     result

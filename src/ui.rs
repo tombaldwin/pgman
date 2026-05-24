@@ -494,8 +494,17 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     // pre-Tab text. Any other key implicitly commits.
                     "type to narrow · tab cycle · esc undo"
                 }
+                Mode::Editor if app.query_running => {
+                    // The only key that does anything useful right
+                    // now — surface it on its own so it's impossible
+                    // to miss.
+                    "ctrl-c cancel running query"
+                }
                 Mode::Editor => {
-                    "tab complete · ctrl-r run · ctrl-e EXPLAIN · ctrl-a ANALYZE · ctrl-l log · ctrl-d dbunit · esc"
+                    "F5 run · ctrl-r history · ctrl-e EXPLAIN · ctrl-a ANALYZE · tab complete · ctrl-l log · ctrl-d dbunit · esc"
+                }
+                Mode::HistorySearch => {
+                    "type to search · ctrl-r next-older match · enter accept · esc cancel"
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
@@ -1429,9 +1438,11 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    A             about pgman (version, credits)"),
         Line::from(""),
         Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
-        Line::from("    ctrl-r / F5   run the statement (through safety guards)"),
+        Line::from("    F5 / ctrl-↵   run the statement (through safety guards)"),
+        Line::from("    ctrl-c         cancel the running query (while in-flight)"),
         Line::from("    ctrl-e / F6   EXPLAIN  (never executes)"),
         Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
+        Line::from("    ctrl-r         reverse-incremental history search"),
         Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
         Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
         Line::from("    tab / ctrl-spc identifier completion (cycles on repeat tab)"),

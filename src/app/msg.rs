@@ -35,7 +35,15 @@ pub enum AppMsg {
         tx_open_after: bool,
     },
     /// A user-initiated query failed.
-    QueryFailed { generation: u64, error: String },
+    QueryFailed {
+        generation: u64,
+        error: String,
+        /// 1-indexed character position into the submitted SQL when
+        /// Postgres flagged a syntax error there. App jumps the editor
+        /// cursor to this position so the operator sees the offending
+        /// token highlighted.
+        position: Option<u32>,
+    },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     TxClosed {
         generation: u64,
