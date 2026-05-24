@@ -155,6 +155,26 @@ pub struct WatchTickInputs {
 /// Pure decision: should the next `\watch` tick dispatch a re-run?
 /// Returns `true` when the interval has elapsed AND nothing is
 /// blocking (no query in flight, no modal up, etc.).
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use pgman::app::{watch_should_fire, WatchState, WatchTickInputs};
+/// let now = Instant::now();
+/// let state = WatchState {
+///     sql: "SELECT 1".into(),
+///     interval: Duration::from_secs(2),
+///     last_fire: now,
+/// };
+/// let clear = WatchTickInputs {
+///     query_running: false, tx_open: false,
+///     pending_run: false, mode_blocks: false,
+/// };
+/// assert!(!watch_should_fire(&state, now, clear));              // not yet
+/// assert!(watch_should_fire(&state, now + Duration::from_secs(2), clear));
+/// // Any blocker suppresses fire even past the interval.
+/// let blocked = WatchTickInputs { query_running: true, ..clear };
+/// assert!(!watch_should_fire(&state, now + Duration::from_secs(10), blocked));
+/// ```
 pub fn watch_should_fire(
     state: &WatchState,
     now: std::time::Instant,
@@ -171,6 +191,15 @@ pub fn watch_should_fire(
 /// false)) → None`. Pressing `s` over a *different* column jumps to
 /// ASC on the new column rather than continuing the prior cycle —
 /// matches how spreadsheet apps disambiguate "I want this column now".
+///
+/// ```
+/// use pgman::app::next_sort_state;
+/// assert_eq!(next_sort_state(None, 3), Some((3, true)));
+/// assert_eq!(next_sort_state(Some((3, true)), 3), Some((3, false)));
+/// assert_eq!(next_sort_state(Some((3, false)), 3), None);
+/// // Different column → ASC, not "continue from here".
+/// assert_eq!(next_sort_state(Some((3, false)), 5), Some((5, true)));
+/// ```
 pub fn next_sort_state(
     current: Option<(usize, bool)>,
     target_col: usize,
@@ -186,6 +215,16 @@ pub fn next_sort_state(
 /// Pure: filter `rows` by `pattern` (case-insensitive substring
 /// across every column). Returns the row indices that match, in
 /// original order. `None` pattern means "everything".
+///
+/// ```
+/// use pgman::app::compute_visible_rows;
+/// let rows = vec![
+///     vec!["1".into(), "alice".into()],
+///     vec!["2".into(), "BOB".into()],
+/// ];
+/// assert_eq!(compute_visible_rows(&rows, None), vec![0, 1]);
+/// assert_eq!(compute_visible_rows(&rows, Some("bo")), vec![1]); // case-insens
+/// ```
 pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<usize> {
     match pattern {
         None => (0..rows.len()).collect(),
@@ -202,10 +241,80 @@ pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<
     }
 }
 
+/// Pure decision: should the splash dismiss at `now`? `until` is
+/// the absolute deadline set at App start (3s after launch);
+/// `conn_resolved` reflects whether the connection is no longer in
+/// the Connecting state (any other state lets us drop the splash
+/// early so a fast failure isn't hidden behind the elephant).
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use pgman::app::splash_should_dismiss;
+/// let t0 = Instant::now();
+/// let until = Some(t0 + Duration::from_secs(3));
+/// // Invisible → never dismisses (nothing to do).
+/// assert!(!splash_should_dismiss(false, until, false, t0));
+/// // Past deadline → dismiss.
+/// assert!(splash_should_dismiss(true, until, false, t0 + Duration::from_secs(4)));
+/// // Connection resolved before deadline → dismiss anyway.
+/// assert!(splash_should_dismiss(true, until, true, t0));
+/// ```
+pub fn splash_should_dismiss(
+    visible: bool,
+    until: Option<std::time::Instant>,
+    conn_resolved: bool,
+    now: std::time::Instant,
+) -> bool {
+    if !visible {
+        return false;
+    }
+    match until {
+        Some(deadline) => now >= deadline || conn_resolved,
+        None => false,
+    }
+}
+
+/// Pure decision: is the draft auto-save throttle past its window?
+/// Returns `true` when at least `min_gap` has elapsed since the last
+/// save, OR when there's never been a save yet. The run-loop uses
+/// 500 ms; tests can pass an arbitrary gap.
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use pgman::app::draft_save_due;
+/// let t0 = Instant::now();
+/// let gap = Duration::from_millis(500);
+/// assert!(draft_save_due(None, t0, gap));                // never saved → due
+/// assert!(!draft_save_due(Some(t0), t0, gap));           // just saved
+/// assert!(draft_save_due(
+///     Some(t0),
+///     t0 + Duration::from_millis(501),
+///     gap,
+/// ));
+/// ```
+pub fn draft_save_due(
+    last_save: Option<std::time::Instant>,
+    now: std::time::Instant,
+    min_gap: std::time::Duration,
+) -> bool {
+    match last_save {
+        Some(t) => now.duration_since(t) >= min_gap,
+        None => true,
+    }
+}
+
 /// Pure: reverse-incremental history match. Starting from
 /// `from_exclusive` (or `history.len()` when `None`), walks backward
 /// to find the newest entry that contains `needle` (case-
 /// insensitively). Returns the index of the match.
+///
+/// ```
+/// use pgman::app::history_search_next;
+/// let h = vec!["SELECT 1".into(), "INSERT INTO t".into(), "SELECT 2".into()];
+/// assert_eq!(history_search_next(&h, "sel", None), Some(2));   // newest
+/// assert_eq!(history_search_next(&h, "sel", Some(2)), Some(0)); // older
+/// assert_eq!(history_search_next(&h, "sel", Some(0)), None);    // past oldest
+/// ```
 pub fn history_search_next(
     history: &[String],
     needle: &str,
@@ -548,16 +657,12 @@ impl App {
             // the buffer is dirty, so a panic in any spawned task
             // loses at most half a second of work. Cheap atomic
             // write via rename; not even a syscall when not dirty.
-            if self.draft_dirty {
-                let ready = match self.draft_last_save {
-                    Some(t) => t.elapsed() > Duration::from_millis(500),
-                    None => true,
-                };
-                if ready {
-                    let _ = persist_draft(&self.editor_buffer);
-                    self.draft_last_save = Some(Instant::now());
-                    self.draft_dirty = false;
-                }
+            if self.draft_dirty
+                && draft_save_due(self.draft_last_save, Instant::now(), Duration::from_millis(500))
+            {
+                let _ = persist_draft(&self.editor_buffer);
+                self.draft_last_save = Some(Instant::now());
+                self.draft_dirty = false;
             }
         }
         // Persist the editor draft so the next launch can restore
@@ -618,14 +723,16 @@ impl App {
         if !self.splash_visible {
             return;
         }
-        let Some(until) = self.splash_until else {
-            return;
-        };
         let connection_resolved = matches!(
             self.conn_state,
             ConnState::Connected { .. } | ConnState::Failed(_)
         );
-        if Instant::now() >= until || connection_resolved {
+        if splash_should_dismiss(
+            self.splash_visible,
+            self.splash_until,
+            connection_resolved,
+            Instant::now(),
+        ) {
             self.splash_visible = false;
             self.splash_until = None;
         }
@@ -2862,8 +2969,14 @@ fn draft_path() -> std::path::PathBuf {
 /// `None` when the file is absent or unreadable — the operator gets
 /// a fresh blank buffer in either case rather than a startup error.
 pub fn load_draft() -> Option<String> {
-    let path = draft_path();
-    let text = std::fs::read_to_string(&path).ok()?;
+    load_draft_from(&draft_path())
+}
+
+/// Path-parameterised core of [`load_draft`]. Lets tests use a
+/// unique temp file so parallel tests don't race on the shared
+/// `~/.local/share/pgman/draft.sql`.
+pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
     if text.is_empty() {
         None
     } else {
@@ -2875,8 +2988,14 @@ pub fn load_draft() -> Option<String> {
 /// Empty buffers still get written so a deliberate Ctrl-U + quit
 /// clears the saved draft.
 pub(crate) fn persist_draft(buf: &str) -> std::io::Result<()> {
-    let path = draft_path();
-    crate::util::write_atomic(&path, buf)
+    persist_draft_to(&draft_path(), buf)
+}
+
+/// Path-parameterised core of [`persist_draft`]. Same atomic-rename
+/// guarantee — a crash mid-write leaves either the old file intact
+/// or the new file complete, never a truncated half-write.
+pub fn persist_draft_to(path: &std::path::Path, buf: &str) -> std::io::Result<()> {
+    crate::util::write_atomic(path, buf)
 }
 
 /// Split `$EDITOR` into program + initial args by whitespace. Matches

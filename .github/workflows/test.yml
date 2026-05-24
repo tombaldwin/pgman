@@ -1,0 +1,87 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Unit + doc + render + subprocess tests on both OSes. No Postgres
+  # needed.
+  test:
+    name: cargo test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --tests
+      - run: cargo test --all-targets
+      - run: cargo test --doc
+
+  # Integration tests against a real Postgres. Linux only — GitHub
+  # services aren't supported on macOS runners.
+  integration:
+    name: cargo test --features integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pgman_test
+          POSTGRES_PASSWORD: pgman_test
+          POSTGRES_DB: pgman_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U pgman_test -d pgman_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --features integration --test integration
+
+  # Coverage report via cargo-llvm-cov. Posts the summary to the run
+  # log; the lcov artifact is uploadable to Codecov or similar.
+  coverage:
+    name: coverage (cargo-llvm-cov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-llvm-cov --locked
+      - run: cargo llvm-cov --all-targets --lcov --output-path lcov.info
+      - run: cargo llvm-cov report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
+
+  lint:
+    name: clippy + fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      # Advisory only (no -D warnings) — pre-existing lints from
+      # before clippy started running in CI. Fix-as-you-go; tightening
+      # to deny is a follow-up.
+      - run: cargo clippy --all-targets

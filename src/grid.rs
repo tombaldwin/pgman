@@ -49,6 +49,14 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
 /// Empty strings (the renderer's representation of SQL NULL) sort
 /// AFTER non-empty values, matching Postgres's default `NULLS LAST`
 /// for `ORDER BY … ASC`.
+///
+/// ```
+/// use std::cmp::Ordering;
+/// use pgman::grid::cmp_cells;
+/// assert_eq!(cmp_cells("2", "10"), Ordering::Less);          // numeric
+/// assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);     // lex
+/// assert_eq!(cmp_cells("", "anything"), Ordering::Greater);  // NULL last
+/// ```
 pub fn cmp_cells(a: &str, b: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     match (a.is_empty(), b.is_empty()) {
