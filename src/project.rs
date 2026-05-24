@@ -121,17 +121,22 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
         dsn.password = Some(pw);
     }
     // SSH tunnel: project-config field wins over a URL `ssh_tunnel=`
-    // param if both are present. A typo in the project config logs a
-    // warning and falls back to whatever the URL provided (or
-    // direct-connect) — same forgiving stance as the URL parser.
+    // param. When the field is set the operator's intent is to control
+    // the tunnel from the TOML — so a malformed value clears any URL-
+    // derived tunnel too rather than silently falling back to it.
+    // (Otherwise a typo in `ssh_tunnel = "bastion:"` would route the
+    // operator through whatever obsolete `?ssh_tunnel=…` the URL
+    // happened to carry.)
     if let Some(spec) = c.ssh_tunnel.as_deref().filter(|s| !s.is_empty()) {
         match crate::tunnel::SshTunnelSpec::parse(spec) {
             Ok(s) => dsn.ssh_tunnel = Some(s),
             Err(e) => {
                 tracing::warn!(
-                    "connection {:?} has malformed ssh_tunnel={spec:?}: {e}; ignoring",
+                    "connection {:?} has malformed ssh_tunnel={spec:?}: {e}; \
+                     dropping any URL-embedded tunnel as well so the typo is visible",
                     c.name
                 );
+                dsn.ssh_tunnel = None;
             }
         }
     }
@@ -311,6 +316,26 @@ statement_timeout_ms = 5000
         // still reach the db directly. We just log a warning.
         let dsn = connection_to_dsn(&c).unwrap();
         assert!(dsn.ssh_tunnel.is_none());
+    }
+
+    #[test]
+    fn malformed_toml_ssh_tunnel_clears_url_embedded_one() {
+        // The contract: setting the TOML field is an explicit
+        // override intent; a typo there must NOT silently fall back
+        // to a (possibly stale) URL-embedded tunnel.
+        let c = Connection {
+            name: "x".into(),
+            url: "postgres://db/app?ssh_tunnel=old-bastion".into(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: Some("bastion:".into()), // trailing colon → BadPort
+        };
+        let dsn = connection_to_dsn(&c).unwrap();
+        assert!(
+            dsn.ssh_tunnel.is_none(),
+            "malformed TOML override should clear URL tunnel; got {:?}",
+            dsn.ssh_tunnel
+        );
     }
 
     #[test]
