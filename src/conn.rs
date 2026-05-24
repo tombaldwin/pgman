@@ -24,6 +24,18 @@ pub struct Dsn {
     pub ssh_tunnel: Option<crate::tunnel::SshTunnelSpec>,
 }
 
+/// A server-side notice (the unified shape we surface for any
+/// `RAISE NOTICE` / `RAISE WARNING` / `RAISE INFO` from a function,
+/// trigger, or DO block). Plain data — App stores recent ones and
+/// renders them in the status line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoticeMsg {
+    pub severity: String,
+    pub message: String,
+    pub detail: Option<String>,
+    pub hint: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DsnError {
     /// No `scheme://` prefix.
@@ -270,11 +282,68 @@ pub struct Booted {
 /// Trust roots come from the OS keychain via `rustls-native-certs`,
 /// falling back to the Mozilla root bundle (`webpki-roots`) so a fresh
 /// container without an installed trust store still connects to RDS.
+/// Drive a `tokio_postgres::Connection` and surface its async messages.
+///
+/// We replace the standard `tokio::spawn(connection.await)` pattern
+/// with a manual `poll_message` loop so server-emitted notices —
+/// `RAISE NOTICE`, `RAISE WARNING`, `RAISE INFO` from functions or
+/// `DO` blocks — get a path back to the App instead of being silently
+/// dropped by the standard driver. `LISTEN`/`NOTIFY` is plumbed
+/// through the same path on the eventual `LISTEN/NOTIFY` feature; for
+/// now we discard `Notification` messages.
+///
+/// Generic over the stream type so it works for both the TLS and
+/// NoTls connect branches.
+fn spawn_connection_driver<S, T>(
+    mut connection: tokio_postgres::Connection<S, T>,
+    notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        use std::pin::Pin;
+        use std::task::Poll;
+        futures::future::poll_fn(|cx| -> Poll<()> {
+            loop {
+                match Pin::new(&mut connection).poll_message(cx) {
+                    Poll::Ready(Some(Ok(msg))) => match msg {
+                        tokio_postgres::AsyncMessage::Notice(notice) => {
+                            let n = NoticeMsg {
+                                severity: notice.severity().to_string(),
+                                message: notice.message().to_string(),
+                                detail: notice.detail().map(|s| s.to_string()),
+                                hint: notice.hint().map(|s| s.to_string()),
+                            };
+                            let _ = notice_tx.send(n);
+                        }
+                        tokio_postgres::AsyncMessage::Notification(_) => {
+                            // LISTEN / NOTIFY — out of scope until the
+                            // backlog's LISTEN feature lands.
+                        }
+                        // `AsyncMessage` is #[non_exhaustive]; ignore
+                        // anything we don't recognise.
+                        _ => {}
+                    },
+                    Poll::Ready(Some(Err(e))) => {
+                        tracing::warn!("postgres connection error: {e}");
+                        return Poll::Ready(());
+                    }
+                    Poll::Ready(None) => return Poll::Ready(()),
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+        })
+        .await;
+    });
+}
+
 pub async fn connect_and_bootstrap(
     dsn: Dsn,
     read_only: bool,
     statement_timeout_ms: u64,
     bootstrap_sql: String,
+    notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
 ) -> Result<Booted, String> {
     // Open the SSH tunnel (if configured) BEFORE building the
     // postgres Config — the host/port we hand to tokio-postgres point
@@ -342,11 +411,7 @@ pub async fn connect_and_bootstrap(
                 .connect(connector)
                 .await
                 .map_err(|e| chain_message(&e))?;
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    tracing::warn!("postgres connection closed: {e}");
-                }
-            });
+            spawn_connection_driver(connection, notice_tx.clone());
             client
         }
         Err(tls_err) => {
@@ -358,11 +423,7 @@ pub async fn connect_and_bootstrap(
                 .connect(tokio_postgres::NoTls)
                 .await
                 .map_err(|e| chain_message(&e))?;
-            tokio::spawn(async move {
-                if let Err(e) = connection.await {
-                    tracing::warn!("postgres connection closed: {e}");
-                }
-            });
+            spawn_connection_driver(connection, notice_tx.clone());
             client
         }
     };

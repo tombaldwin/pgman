@@ -123,6 +123,17 @@ pub struct CompletionCycle {
     pub selected: Option<usize>,
 }
 
+/// Active `\watch` session — re-run the saved SQL every `interval`
+/// seconds until the operator hits any other key. `last_fire` advances
+/// when a tick fires; we hold off on firing if a query is currently in
+/// flight so consecutive ticks can't pile up.
+#[derive(Debug, Clone)]
+pub struct WatchState {
+    pub sql: String,
+    pub interval: std::time::Duration,
+    pub last_fire: std::time::Instant,
+}
+
 /// Reverse-incremental history search state (Ctrl-R). The match cursor
 /// walks `App::history` from newest to oldest, looking for entries whose
 /// text contains `query` (case-insensitive substring). On accept the
@@ -268,6 +279,19 @@ pub struct App {
     /// buffer reflects the current match — Enter accepts, Esc
     /// restores the saved buffer / cursor.
     pub history_search: Option<HistorySearchState>,
+    /// `\watch` session — when `Some`, the main loop re-runs the
+    /// saved SQL at `interval` cadence. Any key event clears it.
+    pub watch: Option<WatchState>,
+    /// Recent server-emitted notices (`RAISE NOTICE`, `RAISE WARNING`,
+    /// etc.). Newest at the end; bounded so a chatty trigger can't
+    /// grow unbounded. The latest one is mirrored into `last_status`
+    /// when it arrives so the operator sees it immediately.
+    pub notices: Vec<crate::conn::NoticeMsg>,
+    /// True when the operator hit the `\e` keybinding and the main
+    /// `run()` loop should suspend the TUI, fork the external editor,
+    /// and reload the buffer. The action needs `&mut Tui`, which the
+    /// editor key handler doesn't have — so it's deferred here.
+    pub external_edit_pending: bool,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -344,6 +368,9 @@ impl App {
             schema_cache: SchemaCache::default(),
             completion: None,
             history_search: None,
+            watch: None,
+            notices: Vec::new(),
+            external_edit_pending: false,
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -385,13 +412,90 @@ impl App {
                 }
                 _ = frame.tick(), if animate => {
                     self.anim_tick = self.anim_tick.wrapping_add(1);
+                    // Hot path for `\watch`: re-fires the saved
+                    // query at the configured cadence. Tick checks
+                    // are cheap (one Instant::now per frame).
+                    self.tick_watch();
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
                 }
             }
+            // Deferred actions that need `&mut Tui`. `\e` (external
+            // editor) sets the flag from the editor key handler; we
+            // do the suspend / fork / resume here so the editor key
+            // path stays sync and doesn't have to plumb Tui through
+            // every dispatch.
+            if self.external_edit_pending {
+                self.external_edit_pending = false;
+                self.run_external_editor(tui);
+            }
         }
         Ok(())
+    }
+
+    /// Suspend the TUI, write the editor buffer to a temp file, run
+    /// `$EDITOR` (or `$VISUAL`, falling back to `vi`), read the file
+    /// back, then resume the TUI. Errors land in `last_error` and the
+    /// terminal is always restored.
+    fn run_external_editor(&mut self, tui: &mut Tui) {
+        use std::process::Command;
+        let editor_cmd = std::env::var("EDITOR")
+            .ok()
+            .or_else(|| std::env::var("VISUAL").ok())
+            .unwrap_or_else(|| "vi".to_string());
+        let (prog, args) = split_editor_command(&editor_cmd);
+
+        // Write the current buffer to a per-process temp file. Same
+        // pid for repeated edits in one session — content is replaced
+        // each round, so no leak.
+        let path = std::env::temp_dir().join(format!("pgman-{}.sql", std::process::id()));
+        if let Err(e) = std::fs::write(&path, &self.editor_buffer) {
+            self.last_error = Some(format!("could not write temp file for $EDITOR: {e}"));
+            return;
+        }
+
+        if let Err(e) = tui.suspend() {
+            self.last_error = Some(format!("could not suspend TUI: {e}"));
+            return;
+        }
+
+        let status = Command::new(&prog).args(&args).arg(&path).status();
+
+        // Resume the TUI even if the editor errored — leaving the
+        // operator stuck in a half-suspended terminal would be much
+        // worse than a slightly delayed error message.
+        let resume_err = tui.resume().err();
+
+        match status {
+            Ok(s) if s.success() => match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    // Strip the trailing newline editors add — typical
+                    // SQL doesn't end with one, and a stray newline
+                    // would shift the buffer's last-line context.
+                    self.editor_buffer = text.trim_end_matches('\n').to_string();
+                    self.editor_cursor = self.editor_buffer.len();
+                    self.editor_preferred_col = None;
+                    self.history_pos = None;
+                    self.last_status =
+                        Some(format!("loaded {} char(s) from $EDITOR", self.editor_buffer.len()));
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("could not read $EDITOR temp file: {e}"));
+                }
+            },
+            Ok(s) => {
+                self.last_error =
+                    Some(format!("$EDITOR ({prog}) exited with status {s} — buffer unchanged"));
+            }
+            Err(e) => {
+                self.last_error = Some(format!("could not run $EDITOR ({prog}): {e}"));
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        if let Some(e) = resume_err {
+            self.last_error = Some(format!("TUI resume after $EDITOR failed: {e}"));
+        }
     }
 
     /// Auto-dismiss the splash either when its 3-second minimum has
@@ -424,6 +528,7 @@ impl App {
     fn wants_animation(&self) -> bool {
         self.splash_visible
             || self.query_running
+            || self.watch.is_some()
             || matches!(self.mode, Mode::About)
             || matches!(self.conn_state, ConnState::Connecting)
     }
@@ -444,12 +549,28 @@ impl App {
         let generation = self.generation;
         let read_only = self.read_only;
         let statement_timeout_ms = self.statement_timeout_ms;
+        // Notice channel — server-emitted `RAISE NOTICE` / `WARNING` /
+        // `INFO` flow through here. Forwarded into the App's main
+        // message queue as `AppMsg::Notice` so a single select! loop
+        // serves everything. Each connect gets a fresh pair so a
+        // stale receiver from a prior session can't leak.
+        let (notice_tx, mut notice_rx) =
+            tokio::sync::mpsc::unbounded_channel::<conn::NoticeMsg>();
+        let forward_tx = tx.clone();
+        tokio::spawn(async move {
+            while let Some(notice) = notice_rx.recv().await {
+                if forward_tx.send(AppMsg::Notice { notice }).is_err() {
+                    break;
+                }
+            }
+        });
         tokio::spawn(async move {
             let msg = match conn::connect_and_bootstrap(
                 dsn,
                 read_only,
                 statement_timeout_ms,
                 BOOTSTRAP_SQL.to_string(),
+                notice_tx,
             )
             .await
             {
@@ -469,7 +590,11 @@ impl App {
 
     /// Apply a finished message from a spawned task.
     fn on_msg(&mut self, msg: AppMsg) {
-        if msg.generation() != self.generation {
+        // Notices flow on the same channel but aren't tied to a
+        // run / connect generation — let them through unconditionally.
+        if !matches!(msg, AppMsg::Notice { .. })
+            && msg.generation() != self.generation
+        {
             tracing::debug!("dropping stale message from generation {}", msg.generation());
             return;
         }
@@ -572,6 +697,24 @@ impl App {
                     }
                 }
             }
+            AppMsg::Notice { notice } => {
+                // Surface server-emitted notices in the status footer,
+                // and stash recent ones so a follow-up "show notices"
+                // panel can render them. Severity goes first so a
+                // `WARNING` reads visibly different from a `NOTICE`.
+                self.last_status = Some(format!("[{}] {}", notice.severity, notice.message));
+                tracing::info!(
+                    "pg notice [{}]: {}{}{}",
+                    notice.severity,
+                    notice.message,
+                    notice.detail.as_deref().map(|d| format!(" · detail: {d}")).unwrap_or_default(),
+                    notice.hint.as_deref().map(|h| format!(" · hint: {h}")).unwrap_or_default(),
+                );
+                self.notices.push(notice);
+                if self.notices.len() > 50 {
+                    self.notices.remove(0);
+                }
+            }
         }
     }
 
@@ -613,18 +756,38 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        // Any key cancels an active `\watch` session — psql-style.
+        // Done BEFORE the Ctrl-C-quits arm so Ctrl-C-while-watching
+        // doesn't also tear down the session.
+        let was_watching = self.watch.is_some();
+        if was_watching {
+            self.cancel_watch();
+        }
         // Ctrl-C quits — UNLESS we're in the editor, where Ctrl-C
         // cancels a running query (the editor's own handler picks it
         // up below). An idle editor still falls through to the
         // editor handler, which no-ops on Ctrl-C with no query — a
         // reflex Ctrl-C in mid-typing shouldn't lose the buffer.
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        // If we were watching, the key already served its purpose
+        // (stopping the loop) — don't quit on it.
+        if !was_watching
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char('c')
+        {
             if self.mode != Mode::Editor {
                 self.should_quit = true;
                 return;
             }
             // Fall through to the editor's on_editor_key for the
             // cancel-or-no-op logic.
+        }
+        if was_watching
+            && matches!(key.code, KeyCode::Char('c'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            // Ctrl-C during watch is taken as "stop the watch" —
+            // don't also fall through to other handlers.
+            return;
         }
         // Any key dismisses the splash — but the key then flows through
         // to the mode dispatcher rather than being consumed. Snappy
@@ -977,6 +1140,16 @@ impl App {
             KeyCode::Char('a') if ctrl => self.request_run(RunKind::ExplainAnalyze),
             KeyCode::Char('l') if ctrl => self.start_log_import(),
             KeyCode::Char('d') if ctrl => self.load_dbunit_fixture(),
+            // Ctrl-W → start a \watch session against the editor's
+            // current buffer (or, if it's empty, the most recent
+            // history entry). Suppressed mid-query and during an
+            // open auto_tx — watch would otherwise pile up runs on
+            // a paused session.
+            KeyCode::Char('w') if ctrl => self.start_watch(),
+            // Ctrl-X → `\e` external editor. Sets a flag so the main
+            // `run()` loop can do the suspend / spawn / resume dance
+            // (which needs `&mut Tui`).
+            KeyCode::Char('x') if ctrl => self.external_edit_pending = true,
             // Some terminals report Ctrl-Enter; others fold it into
             // Ctrl-J. Both run.
             KeyCode::Enter if ctrl => self.request_run(RunKind::Run),
@@ -1700,6 +1873,83 @@ impl App {
     /// Tunneled connections inherit the original `Config` (with
     /// `hostaddr = 127.0.0.1` pointed at the local ssh-forward), so
     /// the cancel TCP rides through the same tunnel.
+    /// Ctrl-W in the editor — start a `\watch`-equivalent session
+    /// against the current buffer (or the most recent history entry
+    /// when the buffer is empty). Re-runs every 2 s until the
+    /// operator hits any other key. Refused when a query is in
+    /// flight or an auto_tx is open: piling up runs against a
+    /// half-committed session would be a footgun.
+    fn start_watch(&mut self) {
+        if self.query_running || self.tx_open {
+            self.last_error =
+                Some("can't \\watch while a query is running or a tx is open".to_string());
+            return;
+        }
+        let sql = self.editor_buffer.trim().to_string();
+        let sql = if sql.is_empty() {
+            match self.history.last() {
+                Some(s) => s.clone(),
+                None => {
+                    self.last_error = Some("nothing to watch (empty buffer, no history)".into());
+                    return;
+                }
+            }
+        } else {
+            sql
+        };
+        // Fire the first run immediately; `last_fire` is set to the
+        // past so the tick check passes on the next loop iteration.
+        let interval = std::time::Duration::from_secs(2);
+        self.watch = Some(WatchState {
+            sql,
+            interval,
+            last_fire: std::time::Instant::now() - interval,
+        });
+        self.last_status = Some(format!(
+            "\\watch every {}s · any key to stop",
+            interval.as_secs()
+        ));
+    }
+
+    /// Stop the active `\watch` session if any. Called from any key
+    /// event so a single keypress always cancels (matches psql).
+    fn cancel_watch(&mut self) {
+        if self.watch.is_some() {
+            self.watch = None;
+            self.last_status = Some("\\watch stopped".into());
+        }
+    }
+
+    /// Called once per frame tick — fires the next `\watch` run when
+    /// the interval has elapsed and no query is currently in flight.
+    /// Goes through the same safety pipeline as a manual Ctrl-R.
+    fn tick_watch(&mut self) {
+        let Some(state) = self.watch.as_ref() else {
+            return;
+        };
+        if self.query_running || self.tx_open {
+            return;
+        }
+        if state.last_fire.elapsed() < state.interval {
+            return;
+        }
+        let sql = state.sql.clone();
+        // Stamp last_fire BEFORE dispatching so even a fast-completing
+        // query doesn't fire twice within the interval.
+        if let Some(s) = self.watch.as_mut() {
+            s.last_fire = std::time::Instant::now();
+        }
+        // Stash the watch state — `request_run` reads the editor
+        // buffer, so we briefly swap it in, run, and then restore.
+        // (Routes through the safety pipeline like a normal run.)
+        let saved_buffer = std::mem::replace(&mut self.editor_buffer, sql);
+        let saved_cursor = self.editor_cursor;
+        self.editor_cursor = self.editor_buffer.len();
+        self.request_run(RunKind::Run);
+        self.editor_buffer = saved_buffer;
+        self.editor_cursor = saved_cursor.min(self.editor_buffer.len());
+    }
+
     fn cancel_running_query(&mut self) {
         let Some(client) = self.client.clone() else {
             return;
@@ -2103,6 +2353,19 @@ fn line_end_byte(buffer: &str, cursor: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Split `$EDITOR` into program + initial args by whitespace. Matches
+/// the convention shells use when expanding `$EDITOR` — `code --wait`
+/// becomes `code` with a single `--wait` arg. We don't go through a
+/// shell ourselves (so no glob / quote handling) — operators with
+/// quotes-or-spaces-in-paths set EDITOR_PROG / EDITOR_ARGS env vars
+/// or alias to a wrapper script.
+pub(crate) fn split_editor_command(s: &str) -> (String, Vec<String>) {
+    let mut parts = s.split_whitespace();
+    let prog = parts.next().unwrap_or("vi").to_string();
+    let args: Vec<String> = parts.map(str::to_string).collect();
+    (prog, args)
 }
 
 /// Build and run the effective SQL for `kind`, honouring the safety decision.
@@ -2797,6 +3060,167 @@ mod tests {
             "expected failure status, got {:?}",
             a.last_status
         );
+    }
+
+    #[test]
+    fn start_watch_uses_editor_buffer_when_set() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        a.editor_buffer = "SELECT NOW()".into();
+        a.start_watch();
+        let w = a.watch.as_ref().expect("watch should be set");
+        assert_eq!(w.sql, "SELECT NOW()");
+        assert_eq!(w.interval.as_secs(), 2);
+    }
+
+    #[test]
+    fn start_watch_falls_back_to_last_history_when_buffer_empty() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.history = vec!["SELECT 1".into(), "SELECT count(*) FROM t".into()];
+        a.mode = Mode::Editor;
+        a.start_watch();
+        let w = a.watch.as_ref().expect("watch should be set");
+        assert_eq!(w.sql, "SELECT count(*) FROM t");
+    }
+
+    #[test]
+    fn start_watch_with_no_input_errors() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        a.start_watch();
+        assert!(a.watch.is_none());
+        assert!(a.last_error.is_some());
+    }
+
+    #[test]
+    fn start_watch_refused_during_query() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.editor_buffer = "SELECT 1".into();
+        a.query_running = true;
+        a.start_watch();
+        assert!(a.watch.is_none());
+    }
+
+    #[test]
+    fn keypress_cancels_active_watch() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        a.watch = Some(WatchState {
+            sql: "SELECT 1".into(),
+            interval: std::time::Duration::from_secs(2),
+            last_fire: std::time::Instant::now(),
+        });
+        a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(a.watch.is_none());
+    }
+
+    #[test]
+    fn split_editor_command_handles_program_with_args() {
+        let (p, a) = split_editor_command("code --wait --new-window");
+        assert_eq!(p, "code");
+        assert_eq!(a, vec!["--wait", "--new-window"]);
+    }
+
+    #[test]
+    fn split_editor_command_handles_bare_program() {
+        let (p, a) = split_editor_command("nvim");
+        assert_eq!(p, "nvim");
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn split_editor_command_defaults_to_vi_on_empty() {
+        let (p, a) = split_editor_command("");
+        assert_eq!(p, "vi");
+        assert!(a.is_empty());
+    }
+
+    #[test]
+    fn split_editor_command_collapses_internal_whitespace() {
+        let (p, a) = split_editor_command("  emacs   -nw  ");
+        assert_eq!(p, "emacs");
+        assert_eq!(a, vec!["-nw"]);
+    }
+
+    #[test]
+    fn pg_notice_lands_in_status_and_history() {
+        use crate::conn::NoticeMsg;
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        let n = NoticeMsg {
+            severity: "NOTICE".into(),
+            message: "function returned: 42".into(),
+            detail: None,
+            hint: None,
+        };
+        // Push via the message channel so we exercise on_msg's
+        // notice-bypass-generation gate.
+        let _ = a.msg_tx.send(AppMsg::Notice { notice: n });
+        if let Some(rx) = a.msg_rx.as_mut() {
+            if let Ok(msg) = rx.try_recv() {
+                a.on_msg(msg);
+            }
+        }
+        assert_eq!(a.notices.len(), 1);
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("function returned: 42"));
+    }
+
+    #[test]
+    fn notice_buffer_caps_at_50() {
+        use crate::conn::NoticeMsg;
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        for i in 0..60 {
+            a.on_msg(AppMsg::Notice {
+                notice: NoticeMsg {
+                    severity: "NOTICE".into(),
+                    message: format!("msg #{i}"),
+                    detail: None,
+                    hint: None,
+                },
+            });
+        }
+        assert_eq!(a.notices.len(), 50);
+        // Oldest dropped — first kept is msg #10.
+        assert_eq!(a.notices.first().unwrap().message, "msg #10");
+        assert_eq!(a.notices.last().unwrap().message, "msg #59");
     }
 
     #[test]
