@@ -79,16 +79,7 @@ under Done, no matter which milestone it came from.
   `SELECT * FROM …`, generate `INSERT INTO … (cols) VALUES (…)`
   template.
 
-### Performance / DBA
-- **pg_stat_statements top-N panel** — `:slow` opens a sorted list
-  of the worst queries in the DB by `total_exec_time` /
-  `mean_exec_time` / `calls`. One key copies the representative SQL
-  into the editor for tuning. Requires the extension to be enabled;
-  detect at connect and gate the keybinding.
-- **Active sessions + locks view** — `pg_stat_activity` joined with
-  `pg_blocking_pids()` so blocked / blocker relationships render as
-  a tree. One key terminates a runaway session (with confirm). The
-  "prod is wedged at 3 a.m." feature.
+### Performance / DBA — follow-ups
 - **Streaming results for huge SELECTs** — today `conn::run_query`
   fetches every row into RAM, so `SELECT * FROM huge_table` brings
   the TUI down. Switch to a cursor / portal-based fetch with a
@@ -98,6 +89,12 @@ under Done, no matter which milestone it came from.
   incoming `NOTIFY` payloads tail into a status strip with
   timestamps. Niche but trivial once the run-loop hosts a
   side-channel reader.
+- **Terminate session key in the active-sessions panel** —
+  `K` + confirm. Out of scope for the initial ship because it
+  needs to route through the safety guard pattern.
+- **Auto-refresh ticker** for slow queries + sessions — `:watch 2`
+  re-loads every 2 s without keypresses. The frame-clock /
+  `wants_animation` machinery used for `\watch` would carry it.
 
 ### UX
 - **Esc shouldn't quit** — today Esc quits from Normal mode and from
@@ -425,6 +422,31 @@ Three quality-of-life features after the psql-parity sweep.
   binary surfaces an actionable error (`brew install pgformatter
   or apt install pgformatter`). Done inline since pg_format is
   sub-second; spawn_blocking would just add plumbing.
+
+### Performance / DBA — slow queries + active sessions
+
+- **`T` slow queries panel** (Mode::SlowQueries). Loads from
+  `pg_stat_statements` via a tagged catalog query
+  (`/* pgman:slow */ … LIMIT 50`). Pure parser in
+  `query::slow_queries::parse` resolves columns by name so a future
+  Postgres rename doesn't silently mangle the result. Renders as
+  `total_ms / mean_ms / calls / rows / query`; the focused row's
+  full SQL appears in a detail strip below. Enter copies the SQL
+  into the editor for tuning; `r` refreshes; `q/esc` close.
+  Failure path detects "relation does not exist" and appends a
+  hint pointing at `CREATE EXTENSION pg_stat_statements`.
+- **`L` active sessions panel** (Mode::Sessions). Loads
+  `pg_stat_activity` with `pg_blocking_pids()` joined in; blocked
+  rows sort to the top and render in red. Columns:
+  `pid / user/app / state / age(s) / blocked / query`. `r`
+  refreshes; `q/esc` close. Self-exclusion via
+  `pid <> pg_backend_pid()` so the panel doesn't list itself.
+- Both panels go through a new `AppMsg::SlowQueriesLoaded` /
+  `AppMsg::SessionsLoaded` round-trip (generation-tagged like the
+  other messages); the catalog queries skip the safety pipeline
+  since they're admin reads.
+- 7 unit tests on the pure parsers (`slow_queries` + `sessions`)
+  + 5 App-side handler tests + 2 insta snapshots.
 
 ### Schema browser
 

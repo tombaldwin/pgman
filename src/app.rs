@@ -75,6 +75,14 @@ pub enum Mode {
     /// table on the right. psql `\d` equivalent, served from the
     /// schema cache so no live queries are issued.
     SchemaBrowser,
+    /// Top-N slow queries from `pg_stat_statements` (`T` from Normal).
+    /// One row per stored statement; Enter copies the SQL into the
+    /// editor for tuning; `r` refreshes.
+    SlowQueries,
+    /// Active sessions + locks (`L` from Normal). Lists
+    /// `pg_stat_activity` rows with `pg_blocking_pids()` joined in;
+    /// blocked sessions sort to the top. `r` refreshes.
+    Sessions,
 }
 
 /// Connection lifecycle state.
@@ -711,6 +719,14 @@ pub struct App {
     /// Names of schemas the operator has expanded. Schemas start
     /// collapsed; the operator picks which to drill into.
     pub schema_browser_expanded: std::collections::HashSet<String>,
+    /// Most recent `pg_stat_statements` snapshot, when
+    /// `Mode::SlowQueries` is active.
+    pub slow_queries: Vec<crate::query::slow_queries::SlowQueryRow>,
+    pub slow_queries_cursor: usize,
+    /// Most recent `pg_stat_activity` snapshot, when
+    /// `Mode::Sessions` is active.
+    pub sessions: Vec<crate::query::sessions::SessionRow>,
+    pub sessions_cursor: usize,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -807,6 +823,10 @@ impl App {
             explain_collapsed: std::collections::HashSet::new(),
             schema_browser_cursor: 0,
             schema_browser_expanded: std::collections::HashSet::new(),
+            slow_queries: Vec::new(),
+            slow_queries_cursor: 0,
+            sessions: Vec::new(),
+            sessions_cursor: 0,
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -1209,6 +1229,42 @@ impl App {
                     }
                 }
             }
+            AppMsg::SlowQueriesLoaded { result, .. } => match result {
+                Ok(rows) => {
+                    self.slow_queries = rows;
+                    self.slow_queries_cursor = 0;
+                    self.last_status =
+                        Some(format!("slow queries · {} row(s)", self.slow_queries.len()));
+                }
+                Err(e) => {
+                    // pg_stat_statements not installed is the most
+                    // common failure — point the operator at the
+                    // `CREATE EXTENSION` they need.
+                    let hint = if e.contains("pg_stat_statements") {
+                        " (try `CREATE EXTENSION pg_stat_statements`)"
+                    } else {
+                        ""
+                    };
+                    self.last_error = Some(format!("slow queries load failed: {e}{hint}"));
+                    self.mode = Mode::Normal;
+                }
+            },
+            AppMsg::SessionsLoaded { result, .. } => match result {
+                Ok(rows) => {
+                    let blocked = rows.iter().filter(|r| r.is_blocked()).count();
+                    self.sessions = rows;
+                    self.sessions_cursor = 0;
+                    self.last_status = Some(format!(
+                        "sessions · {} total · {} blocked",
+                        self.sessions.len(),
+                        blocked
+                    ));
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("sessions load failed: {e}"));
+                    self.mode = Mode::Normal;
+                }
+            },
             AppMsg::Notice { notice, .. } => {
                 // Surface server-emitted notices in the status footer,
                 // and stash recent ones so a follow-up "show notices"
@@ -1322,6 +1378,8 @@ impl App {
             Mode::GridFilter => self.on_grid_filter_key(key),
             Mode::ExplainTree => self.on_explain_tree_key(key),
             Mode::SchemaBrowser => self.on_schema_browser_key(key),
+            Mode::SlowQueries => self.on_slow_queries_key(key),
+            Mode::Sessions => self.on_sessions_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -1596,6 +1654,8 @@ impl App {
             KeyCode::Enter => self.open_row_detail(),
             KeyCode::Char('A') => self.mode = Mode::About,
             KeyCode::Char('S') => self.start_schema_browser(),
+            KeyCode::Char('T') => self.start_slow_queries(),
+            KeyCode::Char('L') => self.start_sessions(),
             _ => {}
         }
     }
@@ -3016,6 +3076,135 @@ impl App {
         }
     }
 
+    /// `T` from Normal — load + open the slow-queries panel.
+    fn start_slow_queries(&mut self) {
+        let Some(client) = self.client.clone() else {
+            self.last_error = Some("not connected".into());
+            return;
+        };
+        self.slow_queries_cursor = 0;
+        self.mode = Mode::SlowQueries;
+        self.last_status = Some("loading pg_stat_statements…".into());
+        self.spawn_slow_queries_load(client);
+    }
+
+    /// `r` inside the slow-queries panel — refresh in place.
+    fn refresh_slow_queries(&mut self) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.last_status = Some("refreshing pg_stat_statements…".into());
+        self.spawn_slow_queries_load(client);
+    }
+
+    fn spawn_slow_queries_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            let result = match conn::run_query(
+                &client,
+                crate::query::slow_queries::PANEL_SQL,
+            )
+            .await
+            {
+                Ok(grid) => Ok(crate::query::slow_queries::parse(&grid)),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(AppMsg::SlowQueriesLoaded { generation, result });
+        });
+    }
+
+    fn on_slow_queries_key(&mut self, key: KeyEvent) {
+        let last = self.slow_queries.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.slow_queries_cursor = (self.slow_queries_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.slow_queries_cursor = self.slow_queries_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.slow_queries_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.slow_queries_cursor = last,
+            KeyCode::Char('r') => self.refresh_slow_queries(),
+            KeyCode::Enter => {
+                // Copy the focused query into the editor for tuning,
+                // then exit back to the editor. Empty when the
+                // panel is empty.
+                if let Some(row) = self.slow_queries.get(self.slow_queries_cursor) {
+                    self.editor_buffer = row.query.clone();
+                    self.editor_cursor = self.editor_buffer.len();
+                    self.editor_preferred_col = None;
+                    self.draft_dirty = true;
+                    self.mode = Mode::Editor;
+                    self.last_status =
+                        Some(format!("loaded slow query · {} char(s)", self.editor_buffer.len()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `L` from Normal — load + open the active-sessions panel.
+    fn start_sessions(&mut self) {
+        let Some(client) = self.client.clone() else {
+            self.last_error = Some("not connected".into());
+            return;
+        };
+        self.sessions_cursor = 0;
+        self.mode = Mode::Sessions;
+        self.last_status = Some("loading pg_stat_activity…".into());
+        self.spawn_sessions_load(client);
+    }
+
+    fn refresh_sessions(&mut self) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.last_status = Some("refreshing pg_stat_activity…".into());
+        self.spawn_sessions_load(client);
+    }
+
+    fn spawn_sessions_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            let result = match conn::run_query(
+                &client,
+                crate::query::sessions::PANEL_SQL,
+            )
+            .await
+            {
+                Ok(grid) => Ok(crate::query::sessions::parse(&grid)),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(AppMsg::SessionsLoaded { generation, result });
+        });
+    }
+
+    fn on_sessions_key(&mut self, key: KeyEvent) {
+        let last = self.sessions.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.sessions_cursor = (self.sessions_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.sessions_cursor = self.sessions_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.sessions_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.sessions_cursor = last,
+            KeyCode::Char('r') => self.refresh_sessions(),
+            _ => {}
+        }
+    }
+
     fn on_explain_tree_key(&mut self, key: KeyEvent) {
         let rows = self.flattened_explain_rows();
         let last = rows.len().saturating_sub(1);
@@ -4378,6 +4567,119 @@ mod tests {
         assert_eq!(a.grid_visible_rows, vec![0, 1, 3]);
         a.grid_state.select(Some(1)); // second visible row → alice
         assert_eq!(a.selected_grid_row_idx(), Some(1));
+    }
+
+    #[test]
+    fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::SlowQueries;
+        a.slow_queries = vec![
+            crate::query::slow_queries::SlowQueryRow {
+                query: "SELECT 1".into(),
+                calls: 100,
+                total_ms: 500.0,
+                mean_ms: 5.0,
+                rows: 100,
+            },
+            crate::query::slow_queries::SlowQueryRow {
+                query: "UPDATE x SET y=1".into(),
+                calls: 10,
+                total_ms: 200.0,
+                mean_ms: 20.0,
+                rows: 10,
+            },
+        ];
+        a.slow_queries_cursor = 1;
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Editor);
+        assert_eq!(a.editor_buffer, "UPDATE x SET y=1");
+    }
+
+    #[test]
+    fn slow_queries_jk_clamps_to_row_range() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::SlowQueries;
+        a.slow_queries = vec![
+            crate::query::slow_queries::SlowQueryRow {
+                query: "a".into(),
+                calls: 1,
+                total_ms: 1.0,
+                mean_ms: 1.0,
+                rows: 1,
+            },
+            crate::query::slow_queries::SlowQueryRow {
+                query: "b".into(),
+                calls: 2,
+                total_ms: 2.0,
+                mean_ms: 1.0,
+                rows: 2,
+            },
+        ];
+        for _ in 0..10 {
+            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        }
+        assert_eq!(a.slow_queries_cursor, 1);
+    }
+
+    #[test]
+    fn sessions_esc_returns_to_normal() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Sessions;
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn start_slow_queries_without_client_surfaces_not_connected() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.start_slow_queries();
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.last_error.as_deref().unwrap_or("").contains("not connected"));
+    }
+
+    #[test]
+    fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::SlowQueries;
+        a.generation = 1;
+        a.on_msg(AppMsg::SlowQueriesLoaded {
+            generation: 1,
+            result: Err(
+                "ERROR: relation \"pg_stat_statements\" does not exist".into(),
+            ),
+        });
+        // Back to Normal + actionable hint in the error.
+        assert_eq!(a.mode, Mode::Normal);
+        let err = a.last_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("CREATE EXTENSION pg_stat_statements"),
+            "expected install hint; got: {err}"
+        );
     }
 
     fn app_with_schemas() -> App {
