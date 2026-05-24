@@ -29,6 +29,7 @@ expression: dump(&buf)
 │              │     ?             toggle this help                                 │              │
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │
+│              │     S             schema browser (psql `\d` equivalent)            │              │
 │              │     h / l  ← →    move column cursor                               │              │
 │              │     s             cycle sort on focused column (off → ASC → DESC)  │              │
 │              │     /             live row filter (n/N step through matches)       │              │
@@ -88,12 +89,11 @@ expression: dump(&buf)
 │              │     y             yank value to clipboard                          │              │
 │              │     esc / enter   back to row detail                               │              │
 │              │                                                                    │              │
-│              │   EXPLAIN tree                                                     │              │
-│              │     j / k  ↑ ↓    navigate plan nodes                              │              │
-│              │     enter         expand / collapse focused subtree                │              │
-│              │     g / G         jump to root / last visible node                 │              │
-│              │     esc / q       close                                            │              │
-│              │ ↓ 2 more below                                                     │              │
+│              │   schema browser                                                   │              │
+│              │     j / k  ↑ ↓    navigate schemas / tables                        │              │
+│              │     enter         expand / collapse focused schema                 │              │
+│              │     g / G         jump to top / bottom                             │              │
+│              │ ↓ 9 more below                                                     │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

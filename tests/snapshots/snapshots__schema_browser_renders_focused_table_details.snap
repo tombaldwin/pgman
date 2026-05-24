@@ -1,0 +1,29 @@
+---
+source: tests/snapshots.rs
+assertion_line: 235
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> (em┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
+└─────│▶ audit  (1)                      public.users                                        │─────┘
+┌ resu│▼ public  (2)                                                                         │─────┐
+│(no r│    orders                        columns (3)                                         │     │
+│     │    users                           · id                                              │     │
+│     │                                    · email                                           │     │
+│     │                                    · active                                          │     │
+│     │                                                                                      │     │
+│     │                                  constraints (1)                                     │     │
+│     │                                    · users_email_key                                 │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ j/k navigate · enter expand schema · g/G top/bottom · q / esc close

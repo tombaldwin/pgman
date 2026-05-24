@@ -207,6 +207,35 @@ fn completion_popup_with_candidates() {
 }
 
 #[test]
+fn schema_browser_renders_focused_table_details() {
+    use pgman::query::schema::{ConstraintMeta, SchemaCache, TableMeta};
+    let mut a = settle_app();
+    let mut cache = SchemaCache::default();
+    cache.schemas = vec!["audit".into(), "public".into()];
+    cache.tables = vec![
+        TableMeta { schema: "public".into(), name: "users".into() },
+        TableMeta { schema: "public".into(), name: "orders".into() },
+        TableMeta { schema: "audit".into(), name: "events".into() },
+    ];
+    cache.columns_by_table.insert(
+        ("public".into(), "users".into()),
+        vec!["id".into(), "email".into(), "active".into()],
+    );
+    cache.constraints.push(ConstraintMeta {
+        schema: "public".into(),
+        table: "users".into(),
+        name: "users_email_key".into(),
+    });
+    a.schema_cache = cache;
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser_expanded.insert("public".into());
+    // Focus the `users` table — row order: audit, public, orders, users.
+    a.schema_browser_cursor = 3;
+    let buf = render(&mut a, 100, 24);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
 fn explain_tree_renders_hash_join_plan() {
     let mut a = settle_app();
     let json = r#"[{
