@@ -10,7 +10,7 @@ use crate::query::schema::SchemaCache;
 use crate::query::{self, reconstruct::ReconstructedQuery};
 use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
-use crate::tui::Tui;
+use crate::tui::{Tui, TuiHost};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
@@ -606,8 +606,35 @@ impl App {
         }
     }
 
-    /// Run the event loop until the user quits.
+    /// Run the event loop until the user quits. Production entry —
+    /// wires crossterm's `EventStream` into a channel + delegates to
+    /// the generic [`run_with`] inner loop. Tests use `run_with`
+    /// directly with a synthetic event channel + a [`HeadlessTui`].
     pub async fn run(&mut self, tui: &mut Tui) -> anyhow::Result<()> {
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<Event>();
+        // Forward crossterm events into the channel so the inner
+        // loop only deals with one event-source shape. The spawned
+        // task ends when the channel is dropped (after run_with
+        // returns), giving us a clean shutdown.
+        tokio::spawn(async move {
+            let mut events = EventStream::new();
+            while let Some(Ok(ev)) = events.next().await {
+                if event_tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        });
+        self.run_with(tui, event_rx).await
+    }
+
+    /// Generic loop body — drives any [`TuiHost`] from any `Event`
+    /// source. Production passes the real `Tui` + a channel fed by
+    /// crossterm; tests pass `HeadlessTui` + a synthetic channel.
+    pub async fn run_with<T: TuiHost>(
+        &mut self,
+        tui: &mut T,
+        mut events: UnboundedReceiver<Event>,
+    ) -> anyhow::Result<()> {
         let mut msg_rx = self
             .msg_rx
             .take()
@@ -617,7 +644,6 @@ impl App {
             self.start_connect();
         }
 
-        let mut events = EventStream::new();
         // One frame clock for all animation sources. Gated by `wants_animation`
         // so an idle, connected app does no work.
         let mut frame = tokio::time::interval(Duration::from_millis(110));
@@ -628,9 +654,14 @@ impl App {
             tui.draw(self)?;
             let animate = self.wants_animation();
             tokio::select! {
-                ev = events.next() => {
-                    if let Some(Ok(ev)) = ev {
-                        self.on_event(ev);
+                ev = events.recv() => {
+                    match ev {
+                        Some(ev) => self.on_event(ev),
+                        // Channel closed — the event producer is gone.
+                        // Treat as quit so the loop terminates cleanly
+                        // (tests rely on this to drive the loop with a
+                        // bounded sequence and then drop the sender).
+                        None => self.should_quit = true,
                     }
                 }
                 _ = frame.tick(), if animate => {
@@ -644,11 +675,11 @@ impl App {
                     self.on_msg(msg);
                 }
             }
-            // Deferred actions that need `&mut Tui`. `\e` (external
-            // editor) sets the flag from the editor key handler; we
-            // do the suspend / fork / resume here so the editor key
-            // path stays sync and doesn't have to plumb Tui through
-            // every dispatch.
+            // Deferred actions that need `&mut TuiHost`. `\e`
+            // (external editor) sets the flag from the editor key
+            // handler; we do the suspend / fork / resume here so the
+            // editor key path stays sync and doesn't have to plumb
+            // TuiHost through every dispatch.
             if self.external_edit_pending {
                 self.external_edit_pending = false;
                 self.run_external_editor(tui);
@@ -678,7 +709,7 @@ impl App {
     /// `$EDITOR` (or `$VISUAL`, falling back to `vi`), read the file
     /// back, then resume the TUI. Errors land in `last_error` and the
     /// terminal is always restored.
-    fn run_external_editor(&mut self, tui: &mut Tui) {
+    fn run_external_editor<T: TuiHost>(&mut self, tui: &mut T) {
         let editor_cmd = std::env::var("EDITOR")
             .ok()
             .or_else(|| std::env::var("VISUAL").ok())

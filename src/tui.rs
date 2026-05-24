@@ -17,6 +17,16 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
+/// The terminal-side surface `App::run` interacts with: render one
+/// frame, then (for the `\e` external-editor handoff) suspend +
+/// resume the alt-screen. Trait-abstracted so a `HeadlessTui` can
+/// drive the run loop in tests without a real terminal.
+pub trait TuiHost {
+    fn draw(&mut self, app: &mut crate::app::App) -> io::Result<()>;
+    fn suspend(&mut self) -> io::Result<()>;
+    fn resume(&mut self) -> io::Result<()>;
+}
+
 pub struct Tui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
 }
@@ -90,6 +100,81 @@ impl Tui {
         let _ = stdout.execute(EnableBracketedPaste);
         self.terminal.clear()?;
         Ok(())
+    }
+}
+
+impl TuiHost for Tui {
+    fn draw(&mut self, app: &mut crate::app::App) -> io::Result<()> {
+        Tui::draw(self, app)
+    }
+    fn suspend(&mut self) -> io::Result<()> {
+        Tui::suspend(self)
+    }
+    fn resume(&mut self) -> io::Result<()> {
+        Tui::resume(self)
+    }
+}
+
+/// A no-op TuiHost for tests / batch / headless contexts. Records
+/// the call sequence so tests can assert on it. Drops are no-ops —
+/// nothing to restore.
+#[derive(Debug, Default)]
+pub struct HeadlessTui {
+    pub draws: usize,
+    pub suspends: usize,
+    pub resumes: usize,
+}
+
+impl TuiHost for HeadlessTui {
+    fn draw(&mut self, _app: &mut crate::app::App) -> io::Result<()> {
+        self.draws += 1;
+        Ok(())
+    }
+    fn suspend(&mut self) -> io::Result<()> {
+        self.suspends += 1;
+        Ok(())
+    }
+    fn resume(&mut self) -> io::Result<()> {
+        self.resumes += 1;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_terminal_is_idempotent() {
+        // Cheap smoke: calling twice doesn't return an error path —
+        // every step inside is best-effort `let _ = …`.
+        restore_terminal();
+        restore_terminal();
+    }
+
+    #[test]
+    fn install_panic_hook_runs_only_once() {
+        // Once::call_once invariant — call twice, both succeed.
+        install_panic_hook();
+        install_panic_hook();
+    }
+
+    #[test]
+    fn headless_records_call_sequence() {
+        let mut h = HeadlessTui::default();
+        let mut app = crate::app::App::new(
+            crate::theme::Theme::default(),
+            None,
+            Vec::new(),
+            crate::safety::SafetyConfig::default(),
+        );
+        h.draw(&mut app).unwrap();
+        h.suspend().unwrap();
+        h.resume().unwrap();
+        h.draw(&mut app).unwrap();
+        assert_eq!(h.draws, 2);
+        assert_eq!(h.suspends, 1);
+        assert_eq!(h.resumes, 1);
     }
 }
 
