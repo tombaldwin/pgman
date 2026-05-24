@@ -45,6 +45,14 @@ pub struct Connection {
     /// pgman falls back to `PGPASSWORD`.
     #[serde(default)]
     pub password_env: Option<String>,
+    /// Optional bastion target — `[user@]host[:port]`. When set, pgman
+    /// opens an `ssh -L` tunnel before connecting and forwards the
+    /// postgres traffic through it. Honours the operator's
+    /// `~/.ssh/config` (keys, ProxyCommand, etc.) since we shell out
+    /// to the system `ssh` binary. Equivalent to the
+    /// `?ssh_tunnel=...` URL param but more discoverable.
+    #[serde(default)]
+    pub ssh_tunnel: Option<String>,
 }
 
 /// The `[safety]` block. Mirrors `safety::SafetyConfig` but makes `default`
@@ -111,6 +119,21 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
         dsn.password = Some(pw);
     } else if let Some(pw) = pg_pw {
         dsn.password = Some(pw);
+    }
+    // SSH tunnel: project-config field wins over a URL `ssh_tunnel=`
+    // param if both are present. A typo in the project config logs a
+    // warning and falls back to whatever the URL provided (or
+    // direct-connect) — same forgiving stance as the URL parser.
+    if let Some(spec) = c.ssh_tunnel.as_deref().filter(|s| !s.is_empty()) {
+        match crate::tunnel::SshTunnelSpec::parse(spec) {
+            Ok(s) => dsn.ssh_tunnel = Some(s),
+            Err(e) => {
+                tracing::warn!(
+                    "connection {:?} has malformed ssh_tunnel={spec:?}: {e}; ignoring",
+                    c.name
+                );
+            }
+        }
     }
     Some(dsn)
 }
@@ -242,6 +265,7 @@ statement_timeout_ms = 5000
             url: "postgres://localhost/db".into(),
             user: Some("alice".into()),
             password_env: None,
+            ssh_tunnel: None,
         };
         let dsn = connection_to_dsn(&c).unwrap();
         assert_eq!(dsn.user.as_deref(), Some("alice"));
@@ -254,8 +278,39 @@ statement_timeout_ms = 5000
             url: "not-a-url".into(),
             user: None,
             password_env: None,
+            ssh_tunnel: None,
         };
         assert!(connection_to_dsn(&c).is_none());
+    }
+
+    #[test]
+    fn connection_to_dsn_applies_ssh_tunnel() {
+        let c = Connection {
+            name: "via-bastion".into(),
+            url: "postgres://db.internal:5432/app".into(),
+            user: Some("alice".into()),
+            password_env: None,
+            ssh_tunnel: Some("tom@bastion.example.com".into()),
+        };
+        let dsn = connection_to_dsn(&c).unwrap();
+        let spec = dsn.ssh_tunnel.expect("ssh_tunnel should be set");
+        assert_eq!(spec.user.as_deref(), Some("tom"));
+        assert_eq!(spec.host, "bastion.example.com");
+    }
+
+    #[test]
+    fn connection_to_dsn_drops_malformed_ssh_tunnel_warns_keeps_dsn() {
+        let c = Connection {
+            name: "x".into(),
+            url: "postgres://db/app".into(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: Some("not:a:valid:spec".into()),
+        };
+        // Malformed tunnel shouldn't fail the DSN — operator may
+        // still reach the db directly. We just log a warning.
+        let dsn = connection_to_dsn(&c).unwrap();
+        assert!(dsn.ssh_tunnel.is_none());
     }
 
     #[test]
