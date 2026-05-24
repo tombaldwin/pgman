@@ -90,10 +90,18 @@ reinstall manually — it can't know the git URL.
 ## Testing
 
 ```bash
-cargo test                              # unit + render snapshots + subprocess stubs
+cargo test                              # unit + render + subprocess + doctests
+cargo test --doc                        # just the doctests
 docker compose -f docker-compose.test.yml up -d
 cargo test --features integration       # adds the Postgres-driving tests
 docker compose -f docker-compose.test.yml down
+```
+
+Coverage (requires `cargo install cargo-llvm-cov`):
+
+```bash
+cargo llvm-cov --all-targets            # summary in the terminal
+cargo llvm-cov --all-targets --html     # writes target/llvm-cov/html/
 ```
 
 The integration tests cover end-to-end batch / pipe mode against a
@@ -102,6 +110,12 @@ real Postgres on `127.0.0.1:55432`. Subprocess paths (`\e` editor,
 `tests/bin/fake_*` shell scripts. Render-path snapshots use
 ratatui's `TestBackend` and inspect specific cells / strings rather
 than full snapshots, so they survive minor layout shifts.
+
+CI runs all of the above on every push (`.github/workflows/test.yml`):
+the unit / render / subprocess / doc tests on linux + macos, the
+integration tests against a live `postgres:16` service container, a
+coverage report via `cargo-llvm-cov`, and `cargo fmt --check` +
+`cargo clippy` (advisory).
 
 ## Status
 

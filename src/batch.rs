@@ -102,6 +102,16 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
 
 /// RFC-4180-style CSV. Fields containing `,`, `"`, `\r`, or `\n` get
 /// quoted; embedded `"` becomes `""`.
+///
+/// ```
+/// use pgman::batch::format_csv;
+/// use pgman::grid::Grid;
+/// let g = Grid {
+///     columns: vec!["id".into(), "name".into()],
+///     rows: vec![vec!["1".into(), "has, comma".into()]],
+/// };
+/// assert_eq!(format_csv(&g), "id,name\n1,\"has, comma\"\n");
+/// ```
 pub fn format_csv(grid: &Grid) -> String {
     let mut out = String::new();
     push_delim_row(&mut out, &grid.columns, ',', true);
@@ -170,6 +180,16 @@ fn push_tsv_field(buf: &mut String, field: &str) {
 /// JSON array of objects. Each row → `{ "col": "value", … }`. Values
 /// are always strings (we don't have a type-aware path; grids carry
 /// the rendered string form). Keys / strings are escaped per RFC 8259.
+///
+/// ```
+/// use pgman::batch::format_json;
+/// use pgman::grid::Grid;
+/// let g = Grid {
+///     columns: vec!["id".into()],
+///     rows: vec![vec!["1".into()], vec!["2".into()]],
+/// };
+/// assert_eq!(format_json(&g), "[{\"id\":\"1\"},{\"id\":\"2\"}]\n");
+/// ```
 pub fn format_json(grid: &Grid) -> String {
     let mut out = String::from("[");
     for (ri, row) in grid.rows.iter().enumerate() {
