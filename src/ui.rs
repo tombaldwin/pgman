@@ -64,6 +64,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::About {
         draw_about(f, area, app);
     }
+    if app.mode == Mode::ExplainTree {
+        draw_explain_tree(f, area, app);
+    }
 }
 
 /// Theme colour for a sprite pixel — `None` for empty (transparent).
@@ -555,6 +558,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::Confirm => "y run · n / esc cancel",
                 Mode::Normal => "q quit · ? help · e editor · c change conn · h/l col · s sort · / filter · Y export",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
+                Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
             }
         };
         Line::from(Span::styled(
@@ -1650,7 +1654,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
         Line::from("    F5 / ctrl-↵   run the statement (through safety guards)"),
         Line::from("    ctrl-c         cancel the running query (while in-flight)"),
-        Line::from("    ctrl-e / F6   EXPLAIN  (never executes)"),
+        Line::from("    ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)"),
         Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
         Line::from("    ctrl-r         reverse-incremental history search"),
         Line::from("    ctrl-w         \\watch — re-run every 2s, any key stops"),
@@ -1695,6 +1699,12 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    PageUp/Down   scroll by 10"),
         Line::from("    y             yank value to clipboard"),
         Line::from("    esc / enter   back to row detail"),
+        Line::from(""),
+        Line::from(Span::styled("  EXPLAIN tree", Style::default().fg(theme.accent))),
+        Line::from("    j / k  ↑ ↓    navigate plan nodes"),
+        Line::from("    enter         expand / collapse focused subtree"),
+        Line::from("    g / G         jump to root / last visible node"),
+        Line::from("    esc / q       close"),
         Line::from(""),
         Line::from(Span::styled("  help", Style::default().fg(theme.accent))),
         Line::from("    j / k  ↑ ↓    scroll"),
@@ -1765,6 +1775,120 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
             row,
         );
     }
+}
+
+/// EXPLAIN tree modal. Flattens the plan via `App::flattened_explain_rows`,
+/// renders each node as one line: `[▶/▼] indent · node_type (relation as
+/// alias) · stats`. The hottest node (highest `actual_total_time` or,
+/// without ANALYZE, `total_cost`) gets a red accent so the bottleneck
+/// is visible at a glance.
+fn draw_explain_tree(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let rows = app.flattened_explain_rows();
+    if rows.is_empty() {
+        return;
+    }
+    // Identify the hottest node by max hot_score across all rows.
+    let hottest_path = rows
+        .iter()
+        .filter_map(|r| r.hot_score.map(|s| (s, r.path.clone())))
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, p)| p);
+
+    let popup = centered_pct(area, 88, 80);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " EXPLAIN plan — q / esc close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    // Scroll so the cursor row stays in view.
+    let visible_h = inner.height as usize;
+    let mut scroll = 0usize;
+    if app.explain_cursor >= visible_h {
+        scroll = app.explain_cursor + 1 - visible_h;
+    }
+
+    let mut lines: Vec<Line> = Vec::with_capacity(rows.len().saturating_sub(scroll).min(visible_h));
+    for (i, row) in rows.iter().enumerate().skip(scroll).take(visible_h) {
+        let is_focus = i == app.explain_cursor;
+        let is_hottest = hottest_path
+            .as_ref()
+            .map(|p| p == &row.path)
+            .unwrap_or(false);
+        let indent = "  ".repeat(row.depth);
+        let marker = if !row.has_children {
+            "·"
+        } else if row.collapsed {
+            "▶"
+        } else {
+            "▼"
+        };
+        let mut header = format!("{indent}{marker} {}", row.node_type);
+        if let Some(rel) = &row.relation {
+            header.push_str(" on ");
+            header.push_str(rel);
+            if let Some(alias) = &row.alias {
+                if alias != rel {
+                    header.push_str(" ");
+                    header.push_str(alias);
+                }
+            }
+        }
+        // Compact per-row stats. ANALYZE timing takes priority; cost
+        // is the fallback. Rows: actual when present, else planned.
+        let mut stats = String::new();
+        if let Some(t) = row.actual_total_time {
+            stats.push_str(&format!(" · {:.2}ms", t));
+        } else if let Some(c) = row.total_cost {
+            stats.push_str(&format!(" · cost {:.0}", c));
+        }
+        if let Some(r) = row.actual_rows {
+            stats.push_str(&format!(" · {:.0} rows", r));
+        } else if let Some(r) = row.plan_rows {
+            stats.push_str(&format!(" · ~{:.0} rows", r));
+        }
+
+        let body_style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_hottest {
+            Style::default()
+                .fg(theme.health_red)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let stats_style = if is_focus {
+            body_style
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(header, body_style),
+            Span::styled(stats, stats_style),
+        ]));
+        // Show extras (Filter, Index Cond, …) under the focused row
+        // only — clutter explodes if every row's extras render.
+        if is_focus {
+            for (k, v) in &row.extras {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{indent}    "), Style::default()),
+                    Span::styled(format!("{k}: "), Style::default().fg(theme.muted)),
+                    Span::styled(v.clone(), Style::default().fg(theme.accent)),
+                ]));
+            }
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// A centred `w`%×`h`% rectangle within `area`.

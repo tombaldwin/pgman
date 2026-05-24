@@ -66,6 +66,10 @@ pub enum Mode {
     /// operator sees results as they type. Enter accepts; Esc
     /// clears the filter.
     GridFilter,
+    /// Tree view of the most recent EXPLAIN / EXPLAIN ANALYZE plan.
+    /// Opened automatically when Ctrl-E / Ctrl-A succeeds and the
+    /// JSON parses; j/k navigate, Enter expand/collapse, Esc closes.
+    ExplainTree,
 }
 
 /// Connection lifecycle state.
@@ -238,6 +242,67 @@ pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<
                 })
                 .collect()
         }
+    }
+}
+
+/// One visible row in the flattened EXPLAIN tree. Carries enough
+/// for the renderer to draw the line (indent + label) and for the
+/// key handler to know which node it points at (the `path` + the
+/// `has_children` flag).
+#[derive(Debug, Clone)]
+pub struct ExplainRow {
+    /// Indices from the root of the tree to this node.
+    pub path: Vec<usize>,
+    pub depth: usize,
+    pub node_type: String,
+    pub relation: Option<String>,
+    pub alias: Option<String>,
+    pub hot_score: Option<f64>,
+    /// Whether this node has children at all (gates the
+    /// expand/collapse marker rendering).
+    pub has_children: bool,
+    /// Whether the node is currently collapsed (its children are
+    /// hidden). Used for the marker glyph.
+    pub collapsed: bool,
+    /// Per-node extras (`Filter`, `Index Cond`, …) the renderer can
+    /// surface alongside the node line.
+    pub extras: Vec<(String, String)>,
+    pub actual_rows: Option<f64>,
+    pub plan_rows: Option<f64>,
+    pub actual_total_time: Option<f64>,
+    pub total_cost: Option<f64>,
+}
+
+fn flatten_plan(
+    node: &crate::query::explain::PlanNode,
+    path: &mut Vec<usize>,
+    depth: usize,
+    collapsed: &std::collections::HashSet<Vec<usize>>,
+    out: &mut Vec<ExplainRow>,
+) {
+    let is_collapsed = collapsed.contains(path);
+    out.push(ExplainRow {
+        path: path.clone(),
+        depth,
+        node_type: node.node_type.clone(),
+        relation: node.relation_name.clone(),
+        alias: node.alias.clone(),
+        hot_score: node.hot_score(),
+        has_children: !node.children.is_empty(),
+        collapsed: is_collapsed,
+        extras: node.extras.clone(),
+        actual_rows: node.actual_rows,
+        plan_rows: node.plan_rows,
+        actual_total_time: node.actual_total_time,
+        total_cost: node.total_cost,
+    });
+    if is_collapsed {
+        return;
+    }
+    for (i, child) in node.children.iter().enumerate() {
+        path.push(i);
+        flatten_plan(child, path, depth + 1, collapsed, out);
+        path.pop();
     }
 }
 
@@ -555,6 +620,17 @@ pub struct App {
     /// the active filter. Equal to `0..rows.len()` when no filter is
     /// set. Rebuilt whenever filter / sort / grid changes.
     pub grid_visible_rows: Vec<usize>,
+    /// Most recent EXPLAIN / EXPLAIN ANALYZE plan, when `Mode::ExplainTree`
+    /// is active. Built from `EXPLAIN (FORMAT JSON)` output on a
+    /// successful run.
+    pub explain_plan: Option<crate::query::explain::PlanNode>,
+    /// Cursor into the flattened (visible-after-collapses) plan list.
+    /// j/k move it; Enter toggles collapse on the focused node.
+    pub explain_cursor: usize,
+    /// Paths (chains of child-array indices from the root) of nodes
+    /// the operator has collapsed. The renderer hides anything below
+    /// these.
+    pub explain_collapsed: std::collections::HashSet<Vec<usize>>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -646,6 +722,9 @@ impl App {
             grid_raw_rows: None,
             grid_filter: None,
             grid_visible_rows: Vec::new(),
+            explain_plan: None,
+            explain_cursor: 0,
+            explain_collapsed: std::collections::HashSet::new(),
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -953,6 +1032,34 @@ impl App {
                     "{kind_label} ok · {} row(s)",
                     self.grid.row_count()
                 ));
+                // EXPLAIN / EXPLAIN ANALYZE: parse the JSON we asked
+                // for and pop the tree visualiser. On parse failure
+                // we fall back to the raw grid (the JSON text is
+                // still readable that way), surface the parse error
+                // in last_status so the operator sees what happened.
+                if kind_label == "EXPLAIN" || kind_label == "EXPLAIN ANALYZE" {
+                    if let Some(text) = self
+                        .grid
+                        .rows
+                        .first()
+                        .and_then(|r| r.first())
+                        .cloned()
+                    {
+                        match crate::query::explain::parse(&text) {
+                            Ok(plan) => {
+                                self.explain_plan = Some(plan);
+                                self.explain_cursor = 0;
+                                self.explain_collapsed.clear();
+                                self.mode = Mode::ExplainTree;
+                            }
+                            Err(e) => {
+                                self.last_status = Some(format!(
+                                    "{kind_label} parse: {e} — falling back to raw text"
+                                ));
+                            }
+                        }
+                    }
+                }
                 if tx_open_after {
                     self.tx_open = true;
                     self.mode = Mode::TxDecision;
@@ -1131,6 +1238,7 @@ impl App {
             Mode::About => self.on_about_key(key),
             Mode::HistorySearch => self.on_history_search_key(key),
             Mode::GridFilter => self.on_grid_filter_key(key),
+            Mode::ExplainTree => self.on_explain_tree_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -2753,6 +2861,52 @@ impl App {
     /// Mode::GridFilter handler. Char / Backspace edit the pattern
     /// and re-filter live; Enter accepts (stays in Normal with the
     /// filter still applied); Esc clears + returns to Normal.
+    /// Walk the plan tree honouring the collapsed-set; return the
+    /// flat sequence of visible rows the renderer will draw. Pure
+    /// over `(plan, collapsed)` — same logic both the renderer and
+    /// the key handler consult.
+    pub fn flattened_explain_rows(&self) -> Vec<ExplainRow> {
+        let Some(plan) = self.explain_plan.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut path = Vec::new();
+        flatten_plan(plan, &mut path, 0, &self.explain_collapsed, &mut out);
+        out
+    }
+
+    fn on_explain_tree_key(&mut self, key: KeyEvent) {
+        let rows = self.flattened_explain_rows();
+        let last = rows.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.explain_cursor = (self.explain_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.explain_cursor = self.explain_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.explain_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.explain_cursor = last,
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                // Toggle collapse on the focused node, IF it has
+                // children. Leaf nodes stay open (collapsing them
+                // would just hide the line they're on).
+                if let Some(row) = rows.get(self.explain_cursor) {
+                    if row.has_children {
+                        if !self.explain_collapsed.remove(&row.path) {
+                            self.explain_collapsed.insert(row.path.clone());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn on_grid_filter_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -3138,18 +3292,21 @@ async fn execute(
             }
         }
         RunKind::Explain => {
-            let wrapped = format!("EXPLAIN {sql}");
+            // FORMAT JSON so the result is a single text cell we can
+            // parse into a plan tree (rendered in Mode::ExplainTree).
+            let wrapped = format!("EXPLAIN (FORMAT JSON) {sql}");
             conn::run_statement(client, &wrapped).await.map_err(|mut e| {
                 // Position came back relative to the wrapped string;
-                // shift it back into the user's buffer. `EXPLAIN ` =
-                // 8 chars; positions ≤ that point inside the wrapper
-                // itself, so drop them.
-                e.position = e.position.and_then(|p| p.checked_sub(8));
+                // shift it back into the user's buffer. The wrapper
+                // is `EXPLAIN (FORMAT JSON) ` = 23 chars; positions
+                // ≤ that point inside the wrapper itself, so drop
+                // them.
+                e.position = e.position.and_then(|p| p.checked_sub(23));
                 e
             })
         }
         RunKind::ExplainAnalyze => {
-            let wrapped = format!("EXPLAIN ANALYZE {sql}");
+            let wrapped = format!("EXPLAIN (ANALYZE, FORMAT JSON) {sql}");
             let result = if decision.kind.is_write() {
                 // The DML inside EXPLAIN ANALYZE actually runs — wrap and
                 // rollback so it never lands.
@@ -3158,7 +3315,7 @@ async fn execute(
                 conn::run_statement(client, &wrapped).await
             };
             result.map_err(|mut e| {
-                e.position = e.position.and_then(|p| p.checked_sub(16)); // len("EXPLAIN ANALYZE ")
+                e.position = e.position.and_then(|p| p.checked_sub(31)); // len("EXPLAIN (ANALYZE, FORMAT JSON) ")
                 e
             })
         }
@@ -4080,6 +4237,102 @@ mod tests {
         assert_eq!(a.grid_visible_rows, vec![0, 1, 3]);
         a.grid_state.select(Some(1)); // second visible row → alice
         assert_eq!(a.selected_grid_row_idx(), Some(1));
+    }
+
+    fn explain_app_with_plan() -> App {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        let json = r#"[{
+          "Plan": {
+            "Node Type": "Hash Join",
+            "Total Cost": 200.0,
+            "Actual Total Time": 50.0,
+            "Plans": [
+              { "Node Type": "Seq Scan", "Relation Name": "a",
+                "Total Cost": 100.0, "Actual Total Time": 30.0 },
+              { "Node Type": "Hash", "Total Cost": 22.5,
+                "Actual Total Time": 5.0,
+                "Plans": [
+                  { "Node Type": "Seq Scan", "Relation Name": "b",
+                    "Total Cost": 22.5, "Actual Total Time": 4.0 }
+                ]
+              }
+            ]
+          }
+        }]"#;
+        let plan = crate::query::explain::parse(json).unwrap();
+        a.explain_plan = Some(plan);
+        a.mode = Mode::ExplainTree;
+        a
+    }
+
+    #[test]
+    fn flattened_explain_lists_each_node_once() {
+        let a = explain_app_with_plan();
+        let rows = a.flattened_explain_rows();
+        assert_eq!(rows.len(), 4); // root + 3 descendants
+        assert_eq!(rows[0].node_type, "Hash Join");
+        assert_eq!(rows[1].node_type, "Seq Scan");
+        assert_eq!(rows[2].node_type, "Hash");
+        assert_eq!(rows[3].node_type, "Seq Scan");
+        // Depths.
+        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[1].depth, 1);
+        assert_eq!(rows[2].depth, 1);
+        assert_eq!(rows[3].depth, 2);
+    }
+
+    #[test]
+    fn explain_enter_collapses_focused_node_and_hides_children() {
+        let mut a = explain_app_with_plan();
+        // Focus row 2 (the "Hash" node, which has children).
+        a.explain_cursor = 2;
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let rows = a.flattened_explain_rows();
+        // Hash's child Seq Scan is hidden now.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[2].node_type, "Hash");
+        assert!(rows[2].collapsed);
+        // Toggle back.
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let rows = a.flattened_explain_rows();
+        assert_eq!(rows.len(), 4);
+    }
+
+    #[test]
+    fn explain_jk_moves_cursor_g_jumps_to_ends() {
+        let mut a = explain_app_with_plan();
+        // j down to last row.
+        for _ in 0..10 {
+            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        }
+        assert_eq!(a.explain_cursor, 3); // clamped to last
+        a.on_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(a.explain_cursor, 0);
+        a.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+        assert_eq!(a.explain_cursor, 3);
+    }
+
+    #[test]
+    fn explain_esc_returns_to_normal() {
+        let mut a = explain_app_with_plan();
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn explain_enter_on_leaf_node_is_a_noop() {
+        let mut a = explain_app_with_plan();
+        a.explain_cursor = 1; // leaf Seq Scan on `a`
+        let before = a.flattened_explain_rows().len();
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let after = a.flattened_explain_rows().len();
+        assert_eq!(before, after);
+        assert!(a.explain_collapsed.is_empty());
     }
 
     #[test]

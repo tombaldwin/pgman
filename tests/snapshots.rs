@@ -125,7 +125,10 @@ fn grid_with_filter_active() {
 fn help_overlay() {
     let mut a = settle_app();
     a.mode = Mode::Help;
-    let buf = render(&mut a, 100, 50);
+    // Tall viewport — the help popup is centered_pct(area, 70, 70)
+    // so the visible content area is ~70% of the test height. With
+    // ~70 help lines we need ~100 rows to fit them all.
+    let buf = render(&mut a, 100, 110);
     insta::assert_snapshot!(dump(&buf));
 }
 
@@ -200,6 +203,39 @@ fn completion_popup_with_candidates() {
         selected: None,
     });
     let buf = render(&mut a, 80, 18);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
+fn explain_tree_renders_hash_join_plan() {
+    let mut a = settle_app();
+    let json = r#"[{
+      "Plan": {
+        "Node Type": "Hash Join",
+        "Total Cost": 200.0,
+        "Actual Total Time": 50.0,
+        "Plan Rows": 5000,
+        "Actual Rows": 4500,
+        "Hash Cond": "(o.user_id = u.id)",
+        "Plans": [
+          { "Node Type": "Seq Scan", "Relation Name": "orders",
+            "Alias": "o", "Total Cost": 100.0,
+            "Actual Total Time": 30.0, "Plan Rows": 10000 },
+          { "Node Type": "Hash", "Total Cost": 22.5,
+            "Actual Total Time": 5.0,
+            "Plans": [
+              { "Node Type": "Seq Scan", "Relation Name": "users",
+                "Alias": "u", "Total Cost": 22.5,
+                "Actual Total Time": 4.0 }
+            ]
+          }
+        ]
+      }
+    }]"#;
+    a.explain_plan = Some(pgman::query::explain::parse(json).unwrap());
+    a.mode = Mode::ExplainTree;
+    a.explain_cursor = 0; // root highlighted
+    let buf = render(&mut a, 100, 24);
     insta::assert_snapshot!(dump(&buf));
 }
 

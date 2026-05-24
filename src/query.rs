@@ -11,6 +11,7 @@
 
 pub mod clause;
 pub mod complete;
+pub mod explain;
 pub mod highlight;
 pub mod select_list;
 pub mod vocabulary;
