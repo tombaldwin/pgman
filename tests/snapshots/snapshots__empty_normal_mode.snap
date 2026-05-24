@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- q quit · ? help · e editor · c change conn · h/l col · s sort · / filter · Y ex
+ q quit · ? help · e editor · S schema · c change conn · h/l col · s sort · / fi
