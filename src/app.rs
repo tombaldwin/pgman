@@ -1054,6 +1054,11 @@ impl App {
             KeyCode::Char('e') | KeyCode::Char('i') | KeyCode::Tab => {
                 self.mode = Mode::Editor;
             }
+            // `c` opens the connection picker mid-session — psql's
+            // `\c` equivalent. Requires at least one discovered data
+            // source to be useful; with zero we surface a status hint
+            // rather than dropping into an empty picker.
+            KeyCode::Char('c') => self.start_connection_change(),
             KeyCode::Char('j') | KeyCode::Down => self.scroll(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll(-1),
             KeyCode::Char('g') | KeyCode::Home => self.select_row(0),
@@ -1948,6 +1953,28 @@ impl App {
         self.request_run(RunKind::Run);
         self.editor_buffer = saved_buffer;
         self.editor_cursor = saved_cursor.min(self.editor_buffer.len());
+    }
+
+    /// Open the data-source picker mid-session so the operator can
+    /// switch connections without quitting. Requires at least one
+    /// discovered data source — without that there's nothing
+    /// meaningful to pick. Cancels any running query first so we
+    /// don't waste a fire-and-forget run against a connection we're
+    /// about to abandon. The picker's existing Enter handler does
+    /// the actual reconnect.
+    fn start_connection_change(&mut self) {
+        if self.data_source_picks.is_empty() {
+            self.last_status = Some(
+                "no data sources to pick — pass --dsn or add `[[connections]]` to pgman.toml"
+                    .into(),
+            );
+            return;
+        }
+        if self.query_running {
+            self.cancel_running_query();
+        }
+        self.data_source_pick_index = 0;
+        self.mode = Mode::ConnPick;
     }
 
     fn cancel_running_query(&mut self) {
@@ -3165,6 +3192,43 @@ mod tests {
         let (p, a) = split_editor_command("  emacs   -nw  ");
         assert_eq!(p, "emacs");
         assert_eq!(a, vec!["-nw"]);
+    }
+
+    #[test]
+    fn start_connection_change_with_picks_opens_picker() {
+        let pick = DataSourcePick {
+            name: "primary".into(),
+            origin: "test",
+            dsn: Dsn::parse("postgres://app@db/x").unwrap(),
+        };
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            vec![pick],
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Normal;
+        a.start_connection_change();
+        assert_eq!(a.mode, Mode::ConnPick);
+        assert_eq!(a.data_source_pick_index, 0);
+    }
+
+    #[test]
+    fn start_connection_change_with_no_picks_surfaces_hint() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Normal;
+        a.start_connection_change();
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("no data sources"));
     }
 
     #[test]

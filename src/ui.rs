@@ -514,7 +514,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · j/k scroll · g/G top/bottom",
+                Mode::Normal => "q quit · ? help · e editor · c change conn · j/k scroll · g/G top/bottom",
             }
         };
         Line::from(Span::styled(
@@ -1432,6 +1432,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    q             quit (esc is a no-op here so a reflex press doesn't lose your session)"),
         Line::from("    ?             toggle this help"),
         Line::from("    e / i / tab   focus editor"),
+        Line::from("    c             change connection (opens the picker mid-session)"),
         Line::from("    j / k  ↑ ↓    move selection"),
         Line::from("    g / G         first / last row"),
         Line::from("    enter         expand selected row (psql \\x style)"),

@@ -338,6 +338,21 @@ fn spawn_connection_driver<S, T>(
     });
 }
 
+/// Connect to `dsn` and apply the safety session settings, but skip
+/// the bootstrap-query + schema-cache fetch that the TUI needs. Used
+/// by batch / pipe mode (`--batch`), which exits as soon as the
+/// operator's SQL finishes — paying the schema-fetch cost there
+/// would just delay scripted runs for nothing.
+pub async fn connect_only(
+    dsn: Dsn,
+    read_only: bool,
+    statement_timeout_ms: u64,
+    notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+) -> Result<(Arc<tokio_postgres::Client>, Option<crate::tunnel::SshTunnel>), String> {
+    let (client, tunnel) = connect_inner(dsn, read_only, statement_timeout_ms, notice_tx).await?;
+    Ok((Arc::new(client), tunnel))
+}
+
 pub async fn connect_and_bootstrap(
     dsn: Dsn,
     read_only: bool,
@@ -345,6 +360,43 @@ pub async fn connect_and_bootstrap(
     bootstrap_sql: String,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
 ) -> Result<Booted, String> {
+    let (client, tunnel) = connect_inner(
+        dsn,
+        read_only,
+        statement_timeout_ms,
+        notice_tx,
+    )
+    .await?;
+    let server_version = client
+        .query_one("SHOW server_version", &[])
+        .await
+        .ok()
+        .and_then(|row| row.try_get::<usize, String>(0).ok())
+        .unwrap_or_else(|| "unknown".to_string());
+    let client = Arc::new(client);
+    let grid = run_query(&client, &bootstrap_sql).await?;
+    let schema_cache = crate::query::schema::fetch(&client).await;
+    Ok(Booted {
+        server_version,
+        grid,
+        client,
+        schema_cache,
+        tunnel,
+    })
+}
+
+/// Shared connect path for both `connect_only` and
+/// `connect_and_bootstrap`. Opens the SSH tunnel (if any), builds the
+/// `tokio_postgres::Config`, runs the handshake (TLS or NoTls
+/// fallback), spawns the notice-aware connection driver, and applies
+/// the read-only / statement-timeout session settings. Returns a raw
+/// (non-Arc) client so callers can choose how to wrap it.
+async fn connect_inner(
+    dsn: Dsn,
+    read_only: bool,
+    statement_timeout_ms: u64,
+    notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+) -> Result<(tokio_postgres::Client, Option<crate::tunnel::SshTunnel>), String> {
     // Open the SSH tunnel (if configured) BEFORE building the
     // postgres Config — the host/port we hand to tokio-postgres point
     // at the local forward, not the real Postgres server. The tunnel
@@ -442,27 +494,7 @@ pub async fn connect_and_bootstrap(
             .map_err(|e| chain_message(&e))?;
     }
 
-    let server_version = client
-        .query_one("SHOW server_version", &[])
-        .await
-        .ok()
-        .and_then(|row| row.try_get::<usize, String>(0).ok())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let client = Arc::new(client);
-    let grid = run_query(&client, &bootstrap_sql).await?;
-    // Schema cache for Tab-completion. Best-effort — its own helper
-    // swallows query errors and returns an empty cache, so a session
-    // without `pg_catalog` SELECT (rare but possible on locked-down
-    // managed instances) just disables completion.
-    let schema_cache = crate::query::schema::fetch(&client).await;
-    Ok(Booted {
-        server_version,
-        grid,
-        client,
-        schema_cache,
-        tunnel,
-    })
+    Ok((client, tunnel))
 }
 
 /// Run `sql` and collect the result into a `Grid`, handling both row-returning

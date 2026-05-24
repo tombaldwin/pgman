@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use pgman::app::DataSourcePick;
-use pgman::{app, conn, creds, font_probe, project, safety, theme, tui, upgrade, util};
+use pgman::{app, batch, conn, creds, font_probe, project, safety, theme, tui, upgrade, util};
 
 #[derive(Parser)]
 #[command(name = "pgman", version, about = "k9s-style Postgres TUI for Java/AWS shops")]
@@ -19,6 +19,20 @@ struct Cli {
     /// pgman was installed from a local path (`cargo install --path …`).
     #[arg(long)]
     upgrade: bool,
+
+    /// Batch / pipe mode: run a SQL statement and write the result to
+    /// stdout, then exit. No TUI. Suitable for shell scripts and CI.
+    #[arg(long)]
+    batch: bool,
+
+    /// The SQL statement to run in `--batch` mode. If omitted, stdin
+    /// is read until EOF.
+    #[arg(long)]
+    sql: Option<String>,
+
+    /// Output format for `--batch`: csv (default) | tsv | json | expanded.
+    #[arg(long, default_value = "csv")]
+    format: String,
 }
 
 #[tokio::main]
@@ -29,6 +43,14 @@ async fn main() -> anyhow::Result<()> {
     // before we set up logging / probe the terminal.
     if cli.upgrade {
         return upgrade::run();
+    }
+
+    // `--batch` is the other non-TUI path. Don't init the rolling-file
+    // logger either — keep tracing quiet so script output isn't
+    // polluted; errors go to stderr in run().
+    if cli.batch {
+        let code = run_batch(&cli).await;
+        std::process::exit(code);
     }
 
     init_logging();
@@ -134,6 +156,92 @@ async fn main() -> anyhow::Result<()> {
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
 /// defaulting to `info`.
+/// Resolve a DSN for `--batch` from `--dsn` first, then a single
+/// project-config / IntelliJ / Spring pick. Multiple candidates fail
+/// fast — batch mode can't prompt — so the operator must disambiguate
+/// with `--dsn`.
+fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
+    if let Some(raw) = cli.dsn.as_deref() {
+        return conn::Dsn::parse(raw).map_err(|e| format!("invalid --dsn: {e}"));
+    }
+    let mut picks: Vec<DataSourcePick> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some((_, cfg)) = project::load_from(&cwd) {
+            for c in &cfg.connections {
+                if let Some(d) = project::connection_to_dsn(c) {
+                    picks.push(DataSourcePick {
+                        name: c.name.clone(),
+                        origin: "project",
+                        dsn: d,
+                    });
+                }
+            }
+        }
+        if creds::spring::detect_java_project(&cwd) {
+            discover_spring_datasources(&cwd, &mut picks);
+        }
+        if creds::intellij::detect_intellij_project(&cwd) {
+            discover_intellij_datasources(&cwd, &mut picks);
+        }
+    }
+    match picks.len() {
+        0 => Err("no DSN — pass --dsn or run from a project with .pgman/pgman.toml / dataSources.xml".into()),
+        1 => Ok(picks.into_iter().next().unwrap().dsn),
+        n => Err(format!(
+            "found {n} candidate data sources — pass --dsn to disambiguate in batch mode"
+        )),
+    }
+}
+
+async fn run_batch(cli: &Cli) -> i32 {
+    let dsn = match resolve_batch_dsn(cli) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let format = match batch::Format::parse(&cli.format) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let sql = match cli.sql.clone() {
+        Some(s) => s,
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+                eprintln!("failed to read SQL from stdin: {e}");
+                return 2;
+            }
+            buf
+        }
+    };
+    if sql.trim().is_empty() {
+        eprintln!("no SQL provided (pass --sql or pipe via stdin)");
+        return 2;
+    }
+    let safety_cfg = load_safety_config();
+    let profile = safety_cfg.profile_for(&dsn.dbname);
+    let opts = batch::Opts {
+        dsn,
+        sql,
+        format,
+        read_only: profile.read_only,
+        statement_timeout_ms: profile.statement_timeout_ms,
+    };
+    match batch::run(opts).await {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("connect failed: {e}");
+            2
+        }
+    }
+}
+
 fn init_logging() {
     let dir = util::cache_dir();
     let _ = std::fs::create_dir_all(&dir);
