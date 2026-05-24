@@ -988,7 +988,7 @@ impl App {
         self.editor_cursor += cleaned.len();
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
+    pub fn on_key(&mut self, key: KeyEvent) {
         // Any key cancels an active `\watch` session — psql-style.
         // Done BEFORE the Ctrl-C-quits arm so Ctrl-C-while-watching
         // doesn't also tear down the session.
