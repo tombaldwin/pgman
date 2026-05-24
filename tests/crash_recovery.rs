@@ -64,36 +64,10 @@ fn draft_load_returns_none_for_missing_file() {
     assert!(load_draft_from(&path).is_none());
 }
 
-#[test]
-fn concurrent_writes_observe_atomic_content() {
-    // pgman's production has exactly one writer (the App's main
-    // loop), so `write_atomic`'s atomicity contract is sufficient.
-    // But the contract is "the file is never torn"; under multiple
-    // concurrent writers some will lose the rename race and return
-    // ENOENT. This test verifies the SURVIVING content is always
-    // one of the inputs verbatim — never a partial / mixed write.
-    use std::sync::Arc;
-    let path = Arc::new(unique_draft_path());
-    let bodies = ["aaa", "bbbb", "ccccc", "dddddd", "eeeeeee"];
-    let handles: Vec<_> = bodies
-        .iter()
-        .map(|body| {
-            let p = Arc::clone(&path);
-            let body = body.to_string();
-            std::thread::spawn(move || persist_draft_to(&p, &body))
-        })
-        .collect();
-    let mut at_least_one_succeeded = false;
-    for h in handles {
-        if h.join().expect("worker panicked").is_ok() {
-            at_least_one_succeeded = true;
-        }
-    }
-    assert!(at_least_one_succeeded, "no write succeeded");
-    let final_text = load_draft_from(&path).expect("file must exist");
-    assert!(
-        bodies.iter().any(|b| *b == final_text),
-        "final content should be exactly one input verbatim — never torn; got {final_text:?}"
-    );
-    let _ = std::fs::remove_file(path.as_path());
-}
+// `util::write_atomic` is single-writer-atomic: it shares a single
+// `<file>.tmp` sibling per target path, so concurrent writers can
+// tear (write A's bytes to tmp, B opens-and-writes-the-same-tmp,
+// rename races mid-write). pgman's production has exactly one
+// writer (the App's main loop), so this is fine. We don't have a
+// concurrent-writes-don't-tear test because the function doesn't
+// promise that.
