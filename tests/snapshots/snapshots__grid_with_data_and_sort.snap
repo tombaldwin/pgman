@@ -1,0 +1,19 @@
+---
+source: tests/snapshots.rs
+assertion_line: 102
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> (empty — press e to focus)                              │
+└──────────────────────────────────────────────────────────┘
+┌ result · 3 row(s) ───────────────────────────────────────┐
+│id ▲  name                                                │
+│1     alice                                               │
+│2     bob                                                 │
+│3     carol                                               │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+ q quit · ? help · e editor · c change conn · h/l col · s so

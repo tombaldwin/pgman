@@ -1,0 +1,55 @@
+---
+source: tests/snapshots.rs
+assertion_line: 129
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> (empty — press e to focus)                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ result ──────────────────────────────────────────────────────────────────────────────────────────┐
+│(no rows)                                                                                         │
+│                                                                                                  │
+│              ┌────────────────────────────────────────────────────────────────────┐              │
+│              │                                                                    │              │
+│              │ pgman — keys                                                       │              │
+│              │                                                                    │              │
+│              │   grid                                                             │              │
+│              │     q             quit (esc is a no-op here so a reflex press      │              │
+│              │ doesn't lose your session)                                         │              │
+│              │     ?             toggle this help                                 │              │
+│              │     e / i / tab   focus editor                                     │              │
+│              │     c             change connection (opens the picker mid-session) │              │
+│              │     h / l  ← →    move column cursor                               │              │
+│              │     s             cycle sort on focused column (off → ASC → DESC)  │              │
+│              │     /             live row filter (n/N step through matches)       │              │
+│              │     Y             copy the (filtered) grid to clipboard as CSV     │              │
+│              │     j / k  ↑ ↓    move selection                                   │              │
+│              │     g / G         first / last row                                 │              │
+│              │     enter         expand selected row (psql \x style)              │              │
+│              │     A             about pgman (version, credits)                   │              │
+│              │                                                                    │              │
+│              │   editor                                                           │              │
+│              │     F5 / ctrl-↵   run the statement (through safety guards)        │              │
+│              │     ctrl-c         cancel the running query (while in-flight)      │              │
+│              │     ctrl-e / F6   EXPLAIN  (never executes)                        │              │
+│              │     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)    │              │
+│              │     ctrl-r         reverse-incremental history search              │              │
+│              │     ctrl-w         \watch — re-run every 2s, any key stops         │              │
+│              │     ctrl-x         open the buffer in $EDITOR (\e)                 │              │
+│              │     ctrl-f         pg_format the buffer (requires pgformatter)     │              │
+│              │     ctrl-l / F8   parse buffer as log → pick a reconstructed query │              │
+│              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
+│              │ script                                                             │              │
+│              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
+│              │ ↓ 38 more below                                                    │              │
+│              │                                                                    │              │
+│              └────────────────────────────────────────────────────────────────────┘              │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ esc / ?  close help
