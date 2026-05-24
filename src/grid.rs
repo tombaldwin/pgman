@@ -44,6 +44,24 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
         .collect()
 }
 
+/// Compare two rendered cells for sorting. Numeric-aware: when both
+/// parse as `f64`, compare as numbers (so `2` sorts before `10`).
+/// Empty strings (the renderer's representation of SQL NULL) sort
+/// AFTER non-empty values, matching Postgres's default `NULLS LAST`
+/// for `ORDER BY … ASC`.
+pub fn cmp_cells(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        _ => match (a.parse::<f64>(), b.parse::<f64>()) {
+            (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or_else(|| a.cmp(b)),
+            _ => a.cmp(b),
+        },
+    }
+}
+
 /// Truncate `s` to `width` display columns, marking a cut with `…`.
 pub fn truncate_cell(s: &str, width: usize) -> String {
     if width == 0 {
@@ -104,5 +122,29 @@ mod tests {
         // Multi-byte chars count as one column each.
         assert_eq!(truncate_cell("héllo", 5), "héllo");
         assert_eq!(truncate_cell("héllo", 3), "hé…");
+    }
+
+    #[test]
+    fn cmp_cells_numbers_sort_numerically() {
+        use std::cmp::Ordering;
+        assert_eq!(cmp_cells("2", "10"), Ordering::Less);
+        assert_eq!(cmp_cells("100", "20"), Ordering::Greater);
+        assert_eq!(cmp_cells("1.5", "1.05"), Ordering::Greater);
+    }
+
+    #[test]
+    fn cmp_cells_falls_back_to_string_when_either_non_numeric() {
+        use std::cmp::Ordering;
+        assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);
+        // One number, one text: lexicographic.
+        assert_eq!(cmp_cells("10", "alice"), Ordering::Less);
+    }
+
+    #[test]
+    fn cmp_cells_empty_string_is_null_last() {
+        use std::cmp::Ordering;
+        assert_eq!(cmp_cells("", "anything"), Ordering::Greater);
+        assert_eq!(cmp_cells("anything", ""), Ordering::Less);
+        assert_eq!(cmp_cells("", ""), Ordering::Equal);
     }
 }

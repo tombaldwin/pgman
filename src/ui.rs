@@ -1,7 +1,7 @@
 //! Rendering. `draw` is the single entry point, called once per frame.
 
 use crate::app::{App, ConnState, Mode};
-use crate::grid::{self, Grid};
+use crate::grid;
 use crate::query::complete::Candidate;
 use crate::splash;
 use crate::theme::Theme;
@@ -9,7 +9,7 @@ use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -308,7 +308,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     area,
                 );
             } else {
-                draw_grid(f, area, &app.grid, &mut app.grid_state, &app.theme);
+                draw_grid(f, area, app);
             }
         }
     }
@@ -383,22 +383,47 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     );
 }
 
-fn draw_grid(
-    f: &mut Frame,
-    area: Rect,
-    grid: &Grid,
-    state: &mut TableState,
-    theme: &Theme,
-) {
+fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
+    let grid = &app.grid;
+    let theme = &app.theme;
     let widths = grid::column_widths(grid, 48);
-    let header = Row::new(grid.columns.iter().map(|c| Cell::from(c.clone()))).style(
-        Style::default()
-            .fg(theme.title)
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows: Vec<Row> = grid
-        .rows
+
+    // Header: bold the column under the cursor; append a ▲ / ▼ to
+    // whichever column is currently the sort key.
+    let header_cells: Vec<Cell> = grid
+        .columns
         .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let sort_marker = match app.grid_sort {
+                Some((col, true)) if col == i => " ▲",
+                Some((col, false)) if col == i => " ▼",
+                _ => "",
+            };
+            let text = format!("{c}{sort_marker}");
+            let mut style = Style::default()
+                .fg(theme.title)
+                .add_modifier(Modifier::BOLD);
+            // Focused column reverses to make column nav visible at
+            // a glance. App mode doesn't matter — h/l is only useful
+            // in Normal mode but the indicator persists so the
+            // operator knows "the sort key will target this column".
+            if i == app.grid_col_cursor {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+            Cell::from(text).style(style)
+        })
+        .collect();
+    let header = Row::new(header_cells);
+
+    // Walk only the visible rows (post-filter, post-sort). When no
+    // filter has ever been applied, `grid_visible_rows` was
+    // initialised to `0..rows.len()` so this branch handles the
+    // unfiltered path too.
+    let rows: Vec<Row> = app
+        .grid_visible_rows
+        .iter()
+        .filter_map(|&i| grid.rows.get(i))
         .map(|r| {
             Row::new(r.iter().enumerate().map(|(i, c)| {
                 let w = widths.get(i).copied().unwrap_or(0);
@@ -408,6 +433,13 @@ fn draw_grid(
         .collect();
     let constraints: Vec<Constraint> =
         widths.iter().map(|w| Constraint::Length(*w as u16)).collect();
+    let visible = app.grid_visible_rows.len();
+    let total = grid.row_count();
+    let title = if app.grid_filter.is_some() && visible != total {
+        format!(" result · {visible}/{total} row(s) (filtered) ")
+    } else {
+        format!(" result · {total} row(s) ")
+    };
     let table = Table::new(rows, constraints)
         .header(header)
         .column_spacing(2)
@@ -416,12 +448,9 @@ fn draw_grid(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.border_idle))
-                .title(Span::styled(
-                    format!(" result · {} row(s) ", grid.row_count()),
-                    Style::default().fg(theme.title),
-                )),
+                .title(Span::styled(title, Style::default().fg(theme.title))),
         );
-    f.render_stateful_widget(table, area, state);
+    f.render_stateful_widget(table, area, &mut app.grid_state);
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -514,7 +543,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · c change conn · j/k scroll · g/G top/bottom",
+                Mode::Normal => "q quit · ? help · e editor · c change conn · h/l col · s sort · / filter · Y export",
+                Mode::GridFilter => "type to filter live · enter accept · esc clear",
             }
         };
         Line::from(Span::styled(
@@ -1263,7 +1293,7 @@ pub(crate) fn auto_scroll_to_field(
 /// value to the system clipboard.
 fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let Some(idx) = app.grid_state.selected() else {
+    let Some(idx) = app.selected_grid_row_idx() else {
         return;
     };
     let Some(row) = app.grid.rows.get(idx).cloned() else {
@@ -1422,7 +1452,7 @@ fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
 /// value gets actual space; scroll independently with j/k/g/G/PageUp/Down.
 fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let Some(idx) = app.grid_state.selected() else {
+    let Some(idx) = app.selected_grid_row_idx() else {
         return;
     };
     let Some(row) = app.grid.rows.get(idx).cloned() else {
@@ -1598,6 +1628,10 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    ?             toggle this help"),
         Line::from("    e / i / tab   focus editor"),
         Line::from("    c             change connection (opens the picker mid-session)"),
+        Line::from("    h / l  ← →    move column cursor"),
+        Line::from("    s             cycle sort on focused column (off → ASC → DESC)"),
+        Line::from("    /             live row filter (n/N step through matches)"),
+        Line::from("    Y             copy the (filtered) grid to clipboard as CSV"),
         Line::from("    j / k  ↑ ↓    move selection"),
         Line::from("    g / G         first / last row"),
         Line::from("    enter         expand selected row (psql \\x style)"),
