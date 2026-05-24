@@ -59,6 +59,16 @@ pub enum AppMsg {
         generation: u64,
         notice: crate::conn::NoticeMsg,
     },
+    /// `pg_stat_statements` snapshot finished loading.
+    SlowQueriesLoaded {
+        generation: u64,
+        result: Result<Vec<crate::query::slow_queries::SlowQueryRow>, String>,
+    },
+    /// `pg_stat_activity` snapshot finished loading.
+    SessionsLoaded {
+        generation: u64,
+        result: Result<Vec<crate::query::sessions::SessionRow>, String>,
+    },
 }
 
 impl AppMsg {
@@ -70,7 +80,9 @@ impl AppMsg {
             | AppMsg::QueryOk { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
-            | AppMsg::Notice { generation, .. } => *generation,
+            | AppMsg::Notice { generation, .. }
+            | AppMsg::SlowQueriesLoaded { generation, .. }
+            | AppMsg::SessionsLoaded { generation, .. } => *generation,
         }
     }
 }

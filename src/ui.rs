@@ -70,6 +70,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::SchemaBrowser {
         draw_schema_browser(f, area, app);
     }
+    if app.mode == Mode::SlowQueries {
+        draw_slow_queries(f, area, app);
+    }
+    if app.mode == Mode::Sessions {
+        draw_sessions(f, area, app);
+    }
 }
 
 /// Theme colour for a sprite pixel — `None` for empty (transparent).
@@ -559,10 +565,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · c change conn · h/l col · s sort · / filter · Y export",
+                Mode::Normal => "q quit · ? help · e editor · S schema · T slow · L sessions · c change conn · s sort · / filter · Y export",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
                 Mode::SchemaBrowser => "j/k navigate · enter expand schema · g/G top/bottom · q / esc close",
+                Mode::SlowQueries => "j/k navigate · enter copy to editor · r refresh · q / esc close",
+                Mode::Sessions => "j/k navigate · r refresh · q / esc close",
             }
         };
         Line::from(Span::styled(
@@ -1647,6 +1655,8 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    e / i / tab   focus editor"),
         Line::from("    c             change connection (opens the picker mid-session)"),
         Line::from("    S             schema browser (psql `\\d` equivalent)"),
+        Line::from("    T             slow queries (pg_stat_statements top-N)"),
+        Line::from("    L             active sessions + locks (pg_stat_activity)"),
         Line::from("    h / l  ← →    move column cursor"),
         Line::from("    s             cycle sort on focused column (off → ASC → DESC)"),
         Line::from("    /             live row filter (n/N step through matches)"),
@@ -2031,6 +2041,187 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
         }
     }
     f.render_widget(Paragraph::new(Text::from(right_lines)), right);
+}
+
+/// Slow-query top-N panel. Top section: one-line summary per
+/// stored statement, sorted by total exec time desc. Bottom
+/// section: full SQL for the focused row + key shortcuts.
+fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " slow queries — pg_stat_statements — r refresh · enter copy · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if app.slow_queries.is_empty() {
+        // Either still loading, or genuinely no rows. last_status
+        // carries the right phrasing either way; render it inside
+        // the popup so the operator doesn't have to look down at
+        // the footer.
+        let msg = app
+            .last_status
+            .clone()
+            .unwrap_or_else(|| "no rows".into());
+        f.render_widget(
+            Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
+            inner,
+        );
+        return;
+    }
+
+    let split = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(8)])
+        .split(inner);
+    let list_area = split[0];
+    let detail_area = split[1];
+
+    // Top: rows as `total_ms  mean_ms  calls  rows  query`.
+    let visible_h = list_area.height as usize;
+    let scroll = if app.slow_queries_cursor >= visible_h {
+        app.slow_queries_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    // Header row.
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>10}  {:>9}  {:>8}  {:>8}  {}",
+            "total ms", "mean ms", "calls", "rows", "query"
+        ),
+        Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+    )));
+    for (i, row) in app.slow_queries.iter().enumerate().skip(scroll).take(visible_h.saturating_sub(1)) {
+        let is_focus = i == app.slow_queries_cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        // Truncate query to fit; the full text is shown in the
+        // detail pane below.
+        let one_line: String = row
+            .query
+            .chars()
+            .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
+            .collect();
+        let line = format!(
+            "  {:>10.2}  {:>9.2}  {:>8}  {:>8}  {}",
+            row.total_ms, row.mean_ms, row.calls, row.rows, one_line
+        );
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), list_area);
+
+    // Bottom: full SQL for the focused row.
+    let focused_sql = app
+        .slow_queries
+        .get(app.slow_queries_cursor)
+        .map(|r| r.query.clone())
+        .unwrap_or_default();
+    f.render_widget(
+        Paragraph::new(focused_sql)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(theme.text))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(theme.border_idle)),
+            ),
+        detail_area,
+    );
+}
+
+/// Active-sessions + locks panel. Rows ordered by blocked-first;
+/// the renderer flags blockers in the same colour as the hottest-
+/// node highlight in the EXPLAIN tree (red) so visual scanning
+/// matches between the two.
+fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " active sessions — pg_stat_activity — r refresh · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if app.sessions.is_empty() {
+        let msg = app
+            .last_status
+            .clone()
+            .unwrap_or_else(|| "no rows".into());
+        f.render_widget(
+            Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
+            inner,
+        );
+        return;
+    }
+
+    let visible_h = inner.height as usize;
+    let scroll = if app.sessions_cursor >= visible_h {
+        app.sessions_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>6}  {:>20}  {:>10}  {:>8}  {:>8}  {}",
+            "pid", "user/app", "state", "age(s)", "blocked", "query"
+        ),
+        Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+    )));
+    for (i, row) in app.sessions.iter().enumerate().skip(scroll).take(visible_h.saturating_sub(1)) {
+        let is_focus = i == app.sessions_cursor;
+        let is_blocked = row.is_blocked();
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if is_blocked {
+            Style::default()
+                .fg(theme.health_red)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let user_app = if row.application.is_empty() {
+            row.user.clone()
+        } else {
+            format!("{}/{}", row.user, row.application)
+        };
+        let one_line: String = row
+            .query
+            .chars()
+            .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
+            .collect();
+        let blocked_disp = if is_blocked { row.blocked_by.as_str() } else { "-" };
+        let line = format!(
+            "  {:>6}  {:>20}  {:>10}  {:>8.1}  {:>8}  {}",
+            row.pid, user_app, row.state, row.age_secs, blocked_disp, one_line
+        );
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// A centred `w`%×`h`% rectangle within `area`.

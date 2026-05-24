@@ -1,0 +1,23 @@
+---
+source: tests/snapshots.rs
+assertion_line: 264
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
+│> (┌ active sessions — pg_stat_activity — r refresh · q close ─────────────────────────────────────────┐    │
+└───│     pid              user/app       state    age(s)   blocked  query                              │────┘
+┌ re│    1234            alice/psql      active      12.5      5678  UPDATE accounts SET balance = 0    │────┐
+│(no│    5678             bob/pgman  idle in transaction     300.0         -  BEGIN                     │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   │                                                                                                   │    │
+│   └───────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ j/k navigate · r refresh · q / esc close

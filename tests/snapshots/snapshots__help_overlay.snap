@@ -30,6 +30,8 @@ expression: dump(&buf)
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │
 │              │     S             schema browser (psql `\d` equivalent)            │              │
+│              │     T             slow queries (pg_stat_statements top-N)          │              │
+│              │     L             active sessions + locks (pg_stat_activity)       │              │
 │              │     h / l  ← →    move column cursor                               │              │
 │              │     s             cycle sort on focused column (off → ASC → DESC)  │              │
 │              │     /             live row filter (n/N step through matches)       │              │
@@ -91,9 +93,7 @@ expression: dump(&buf)
 │              │                                                                    │              │
 │              │   schema browser                                                   │              │
 │              │     j / k  ↑ ↓    navigate schemas / tables                        │              │
-│              │     enter         expand / collapse focused schema                 │              │
-│              │     g / G         jump to top / bottom                             │              │
-│              │ ↓ 9 more below                                                     │              │
+│              │ ↓ 11 more below                                                    │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

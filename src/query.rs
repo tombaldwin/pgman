@@ -22,4 +22,6 @@ pub mod nplus1;
 pub mod pglog;
 pub mod reconstruct;
 pub mod schema;
+pub mod sessions;
+pub mod slow_queries;
 pub mod subst;
