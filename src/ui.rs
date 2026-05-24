@@ -537,6 +537,144 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
 ///   so the cursor sits on the last visible row
 /// - otherwise hold; clamp to `total.saturating_sub(visible)` so we
 ///   don't reveal blank rows past the buffer's end
+/// Walk the highlighter spans that overlap `[line_start, line_end)`,
+/// emitting one styled ratatui `Span` per highlight segment. When
+/// `cursor_byte_in_line` is `Some`, that single char inside the line
+/// renders with the `REVERSED` modifier so the cursor stays visible
+/// regardless of which syntax colour the underlying byte sits in.
+fn push_highlighted_line<'a>(
+    out: &mut Vec<Span<'a>>,
+    buf: &'a str,
+    spans: &[crate::query::highlight::Span],
+    line_start: usize,
+    line_end: usize,
+    cursor_byte_in_line: Option<usize>,
+    theme: &'a Theme,
+) {
+    use crate::query::highlight::TokenClass;
+    let line_text = &buf[line_start..line_end];
+
+    // No highlight spans (unclassified path, e.g. empty cache fallback
+    // before we connect). Render plain.
+    if spans.is_empty() {
+        push_with_cursor(out, line_text, theme.text, cursor_byte_in_line);
+        return;
+    }
+
+    let color_for = |c: TokenClass| -> ratatui::style::Color {
+        match c {
+            TokenClass::Keyword => theme.title,
+            TokenClass::Function => theme.accent,
+            TokenClass::String => theme.syn_string,
+            TokenClass::Comment | TokenClass::Number => theme.muted,
+            TokenClass::UnknownIdent => theme.syn_unknown,
+            TokenClass::KnownIdent
+            | TokenClass::Identifier
+            | TokenClass::Operator
+            | TokenClass::Whitespace => theme.text,
+        }
+    };
+
+    let mut byte_in_line = 0usize;
+    for s in spans {
+        // Clip to the line range. Skip spans entirely outside.
+        if s.end <= line_start {
+            continue;
+        }
+        if s.start >= line_end {
+            break;
+        }
+        let clip_start = s.start.max(line_start);
+        let clip_end = s.end.min(line_end);
+        if clip_start >= clip_end {
+            continue;
+        }
+        let in_line_start = clip_start - line_start;
+        let in_line_end = clip_end - line_start;
+        if in_line_start > byte_in_line {
+            // Defensive: a gap shouldn't happen (tokenize covers every
+            // byte), but if one does, render it plain.
+            push_with_cursor(
+                out,
+                &line_text[byte_in_line..in_line_start],
+                theme.text,
+                cursor_byte_in_line.map(|c| c.checked_sub(byte_in_line).unwrap_or(c)),
+            );
+        }
+        let segment = &line_text[in_line_start..in_line_end];
+        let color = color_for(s.class);
+        // Offset the cursor position into this segment's coords if it
+        // falls inside; otherwise pass None.
+        let cursor_here = match cursor_byte_in_line {
+            Some(c) if c >= in_line_start && c < in_line_end => Some(c - in_line_start),
+            _ => None,
+        };
+        push_with_cursor(out, segment, color, cursor_here);
+        byte_in_line = in_line_end;
+    }
+    // Trailing range with no spans (cursor at EOL on an empty line).
+    if byte_in_line < line_text.len() {
+        push_with_cursor(
+            out,
+            &line_text[byte_in_line..],
+            theme.text,
+            cursor_byte_in_line.and_then(|c| c.checked_sub(byte_in_line)),
+        );
+    }
+    // Empty line with the cursor parked on it — show a single-space
+    // REVERSED block so the cursor doesn't vanish.
+    if line_text.is_empty() {
+        if let Some(0) = cursor_byte_in_line {
+            out.push(Span::styled(
+                " ".to_string(),
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+        }
+    }
+}
+
+/// Render `segment` in `color`. When `cursor_byte` is `Some(n)` and
+/// `n` is inside the segment, split it into [before, cursor-char,
+/// after] so the cursor char gets the REVERSED modifier while still
+/// inheriting the segment's syntax colour for the before / after
+/// portions.
+fn push_with_cursor<'a>(
+    out: &mut Vec<Span<'a>>,
+    segment: &str,
+    color: ratatui::style::Color,
+    cursor_byte: Option<usize>,
+) {
+    if segment.is_empty() {
+        return;
+    }
+    let style = Style::default().fg(color);
+    match cursor_byte {
+        Some(c) if c < segment.len() => {
+            // Walk to the next char boundary so we slice cleanly past
+            // a multi-byte codepoint.
+            let mut next = c + 1;
+            while next < segment.len() && !segment.is_char_boundary(next) {
+                next += 1;
+            }
+            out.push(Span::styled(segment[..c].to_string(), style));
+            out.push(Span::styled(
+                segment[c..next].to_string(),
+                style.add_modifier(Modifier::REVERSED),
+            ));
+            out.push(Span::styled(segment[next..].to_string(), style));
+        }
+        Some(_at_or_past_end) => {
+            // Cursor sits at the very end of this segment — render
+            // the segment as normal; the next push (or the empty-line
+            // tail) handles the cursor.
+            out.push(Span::styled(segment.to_string(), style));
+        }
+        None => {
+            out.push(Span::styled(segment.to_string(), style));
+        }
+    }
+}
+
 pub(crate) fn clamp_editor_scroll(scroll: u16, cur_line: u16, total: u16, visible: u16) -> u16 {
     if visible == 0 {
         return 0;
@@ -604,38 +742,63 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
+    // Lex + semantic-classify the buffer once per frame. Cheap
+    // (single pass, no allocations beyond the span vec) and we'd
+    // otherwise re-derive the same colour for every line render.
+    // Unfocused panes get the muted text colour for everything —
+    // syntax highlighting is for the active edit surface.
+    let highlight_spans = if focused {
+        let raw = crate::query::highlight::tokenize(buf);
+        // Classify only when we have a schema cache to resolve against;
+        // without one, identifiers fall back to the default text
+        // colour rather than turning everything red.
+        if app.schema_cache.is_empty() {
+            raw
+        } else {
+            let from_before =
+                crate::query::from_parse::parse_from_tables_resolved(buf, &app.schema_cache);
+            let ctes = crate::query::clause::extract_ctes_resolved(buf, &app.schema_cache);
+            crate::query::highlight::classify(
+                raw,
+                buf,
+                &app.schema_cache,
+                &from_before,
+                &ctes,
+            )
+        }
+    } else {
+        Vec::new()
+    };
+
     let mut lines: Vec<Line> = Vec::new();
+    let mut line_start_byte: usize = 0;
     for (i, line_text) in buf.split('\n').enumerate() {
         let prompt = if i == 0 { "> " } else { "  " };
         let mut spans: Vec<Span> =
             vec![Span::styled(prompt.to_string(), Style::default().fg(theme.muted))];
 
-        if focused && i == cur_line {
-            // Find byte offset of `cur_col` chars into this line.
-            let byte_at_col = line_text
-                .char_indices()
-                .nth(cur_col)
-                .map(|(b, _)| b)
-                .unwrap_or(line_text.len());
-            let before = line_text[..byte_at_col].to_string();
-            let (cursor_char, after) = if byte_at_col < line_text.len() {
-                let mut next = byte_at_col + 1;
-                while next < line_text.len() && !line_text.is_char_boundary(next) {
-                    next += 1;
-                }
-                (
-                    line_text[byte_at_col..next].to_string(),
-                    line_text[next..].to_string(),
-                )
+        let line_end_byte = line_start_byte + line_text.len();
+        if focused {
+            // Cursor split — we still need to overlay the REVERSED
+            // glyph on top of whatever syntax colour the byte sits in.
+            let byte_at_col = if i == cur_line {
+                line_text
+                    .char_indices()
+                    .nth(cur_col)
+                    .map(|(b, _)| b)
+                    .unwrap_or(line_text.len())
             } else {
-                (" ".to_string(), String::new())
+                usize::MAX
             };
-            spans.push(Span::styled(before, Style::default().fg(text_color)));
-            spans.push(Span::styled(
-                cursor_char,
-                Style::default().add_modifier(Modifier::REVERSED),
-            ));
-            spans.push(Span::styled(after, Style::default().fg(text_color)));
+            push_highlighted_line(
+                &mut spans,
+                buf,
+                &highlight_spans,
+                line_start_byte,
+                line_end_byte,
+                if i == cur_line { Some(byte_at_col) } else { None },
+                theme,
+            );
         } else {
             spans.push(Span::styled(
                 line_text.to_string(),
@@ -643,6 +806,8 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             ));
         }
         lines.push(Line::from(spans));
+        // +1 for the newline we split on (except after the last line).
+        line_start_byte = line_end_byte + 1;
     }
 
     // Vertical scroll: keep the cursor's line visible inside the pane's
@@ -1446,6 +1611,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    ctrl-r         reverse-incremental history search"),
         Line::from("    ctrl-w         \\watch — re-run every 2s, any key stops"),
         Line::from("    ctrl-x         open the buffer in $EDITOR (\\e)"),
+        Line::from("    ctrl-f         pg_format the buffer (requires pgformatter)"),
         Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
         Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
         Line::from("    tab / ctrl-spc identifier completion (cycles on repeat tab)"),

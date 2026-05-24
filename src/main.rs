@@ -148,6 +148,12 @@ async fn main() -> anyhow::Result<()> {
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
     let mut application = app::App::new(theme, dsn, data_source_picks, safety_config);
     application.dsn_origin = dsn_origin;
+    // Restore the editor draft from the last session (best-effort).
+    // Cursor lands at the end so the operator can keep typing.
+    if let Some(draft) = app::load_draft() {
+        application.editor_cursor = draft.len();
+        application.editor_buffer = draft;
+    }
     let mut term = tui::Tui::enter()?;
     let result = application.run(&mut term).await;
     drop(term); // restore the terminal before surfacing any error

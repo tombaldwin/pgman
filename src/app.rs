@@ -431,6 +431,12 @@ impl App {
                 self.run_external_editor(tui);
             }
         }
+        // Persist the editor draft so the next launch can restore
+        // whatever the operator had in flight. Best-effort: failure
+        // logs and moves on — the loop is already finishing.
+        if let Err(e) = persist_draft(&self.editor_buffer) {
+            tracing::warn!("could not save editor draft: {e}");
+        }
         Ok(())
     }
 
@@ -1151,6 +1157,10 @@ impl App {
             // open auto_tx — watch would otherwise pile up runs on
             // a paused session.
             KeyCode::Char('w') if ctrl => self.start_watch(),
+            // Ctrl-F → pretty-print the buffer via `pg_format`.
+            // Errors when pg_format isn't installed and points the
+            // operator at the install command for their OS.
+            KeyCode::Char('f') if ctrl => self.reformat_buffer(),
             // Ctrl-X → `\e` external editor. Sets a flag so the main
             // `run()` loop can do the suspend / spawn / resume dance
             // (which needs `&mut Tui`).
@@ -1884,6 +1894,80 @@ impl App {
     /// operator hits any other key. Refused when a query is in
     /// flight or an auto_tx is open: piling up runs against a
     /// half-committed session would be a footgun.
+    /// Ctrl-F → run `pg_format` over the editor buffer and replace
+    /// the contents with its prettyprinted output. `pg_format` is a
+    /// widely-deployed Perl tool (`brew install pgformatter`, `apt
+    /// install pgformatter`); a missing binary surfaces an
+    /// actionable error rather than a silent no-op.
+    ///
+    /// Done inline — `pg_format` is sub-second on any realistic
+    /// buffer; the alternative (`spawn_blocking` + message round-
+    /// trip) adds more plumbing than the operation deserves.
+    fn reformat_buffer(&mut self) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        if self.editor_buffer.trim().is_empty() {
+            self.last_status = Some("nothing to format".into());
+            return;
+        }
+        let mut child = match Command::new("pg_format")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                self.last_error = Some(
+                    "pg_format not on PATH (brew install pgformatter \
+                     or apt install pgformatter)"
+                        .into(),
+                );
+                return;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(self.editor_buffer.as_bytes()) {
+                self.last_error = Some(format!("pg_format stdin: {e}"));
+                let _ = child.kill();
+                return;
+            }
+            // Dropping `stdin` closes the pipe so pg_format reads
+            // EOF and emits its output.
+        }
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => {
+                self.last_error = Some(format!("pg_format failed: {e}"));
+                return;
+            }
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            self.last_error = Some(format!(
+                "pg_format error ({}): {}",
+                output.status,
+                stderr.trim()
+            ));
+            return;
+        }
+        let formatted = match String::from_utf8(output.stdout) {
+            Ok(s) => s,
+            Err(e) => {
+                self.last_error = Some(format!("pg_format produced non-UTF8: {e}"));
+                return;
+            }
+        };
+        let formatted = formatted.trim_end_matches('\n').to_string();
+        let chars = formatted.len();
+        self.editor_buffer = formatted;
+        self.editor_cursor = self.editor_buffer.len();
+        self.editor_preferred_col = None;
+        self.history_pos = None;
+        self.last_status = Some(format!("formatted via pg_format · {chars} char(s)"));
+    }
+
     fn start_watch(&mut self) {
         if self.query_running || self.tx_open {
             self.last_error =
@@ -2380,6 +2464,34 @@ fn line_end_byte(buffer: &str, cursor: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Path to the auto-saved editor draft. Lives under
+/// `util::data_dir()` (persistent across upgrades), separate from
+/// the log cache.
+fn draft_path() -> std::path::PathBuf {
+    crate::util::data_dir().join("draft.sql")
+}
+
+/// Best-effort restore of the editor buffer from the last session.
+/// `None` when the file is absent or unreadable — the operator gets
+/// a fresh blank buffer in either case rather than a startup error.
+pub fn load_draft() -> Option<String> {
+    let path = draft_path();
+    let text = std::fs::read_to_string(&path).ok()?;
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Write the buffer atomically (via `util::write_atomic`) on quit.
+/// Empty buffers still get written so a deliberate Ctrl-U + quit
+/// clears the saved draft.
+pub(crate) fn persist_draft(buf: &str) -> std::io::Result<()> {
+    let path = draft_path();
+    crate::util::write_atomic(&path, buf)
 }
 
 /// Split `$EDITOR` into program + initial args by whitespace. Matches
@@ -3230,6 +3342,12 @@ mod tests {
             .unwrap_or("")
             .contains("no data sources"));
     }
+
+    // Draft persistence is exercised end-to-end via util::write_atomic
+    // (which has its own roundtrip test) + the trivial wrapper here.
+    // A test that touches the real `draft_path` races against parallel
+    // tests since they all share the same HOME-derived location;
+    // skipping in favour of the util-level coverage.
 
     #[test]
     fn pg_notice_lands_in_status_and_history() {
