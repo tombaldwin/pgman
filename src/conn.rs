@@ -16,6 +16,12 @@ pub struct Dsn {
     pub password: Option<String>,
     pub dbname: String,
     pub params: Vec<(String, String)>,
+    /// Optional SSH-tunnel target. Set from the URL param
+    /// `ssh_tunnel=[user@]host[:port]` or from a project-config
+    /// `Connection.ssh_tunnel`. When present, `connect_and_bootstrap`
+    /// opens the tunnel first and rewrites the wire connect to
+    /// `127.0.0.1:<local-port>`.
+    pub ssh_tunnel: Option<crate::tunnel::SshTunnelSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,7 +104,7 @@ impl Dsn {
         } else {
             path.to_string()
         };
-        let params = match query {
+        let raw_params: Vec<(String, String)> = match query {
             Some(q) => q
                 .split('&')
                 .filter(|s| !s.is_empty())
@@ -110,6 +116,26 @@ impl Dsn {
             None => Vec::new(),
         };
 
+        // Split out `ssh_tunnel=` if present so the rest of the params
+        // list stays Postgres-only. Parse failures fall back to "no
+        // tunnel" with a tracing warning rather than failing the DSN —
+        // a typo in the tunnel spec shouldn't lock the operator out of
+        // a connection that might be reachable directly.
+        let mut params: Vec<(String, String)> = Vec::with_capacity(raw_params.len());
+        let mut ssh_tunnel: Option<crate::tunnel::SshTunnelSpec> = None;
+        for (k, v) in raw_params {
+            if k.eq_ignore_ascii_case("ssh_tunnel") {
+                match crate::tunnel::SshTunnelSpec::parse(&v) {
+                    Ok(spec) => ssh_tunnel = Some(spec),
+                    Err(e) => {
+                        tracing::warn!("ignoring malformed ssh_tunnel={v:?}: {e}");
+                    }
+                }
+            } else {
+                params.push((k, v));
+            }
+        }
+
         Ok(Dsn {
             host,
             port,
@@ -117,19 +143,27 @@ impl Dsn {
             password,
             dbname,
             params,
+            ssh_tunnel,
         })
     }
 
     /// A human-readable form with the password masked — safe to log or show in
-    /// the UI (see CLAUDE.md "never log credentials").
+    /// the UI (see CLAUDE.md "never log credentials"). Appends the SSH
+    /// tunnel target when one is configured so provenance lines surface
+    /// the path the operator is actually taking (no creds, just the
+    /// bastion host).
     pub fn redacted(&self) -> String {
         let userinfo = match (&self.user, &self.password) {
             (Some(u), Some(_)) => format!("{u}:***@"),
             (Some(u), None) => format!("{u}@"),
             (None, _) => String::new(),
         };
+        let tunnel = match &self.ssh_tunnel {
+            Some(s) => format!(" via ssh://{}", s.to_display()),
+            None => String::new(),
+        };
         format!(
-            "postgres://{userinfo}{}:{}/{}",
+            "postgres://{userinfo}{}:{}/{}{tunnel}",
             self.host, self.port, self.dbname
         )
     }
@@ -154,6 +188,12 @@ pub struct Booted {
     /// when the catalog query failed (e.g. permissions) — that just
     /// disables completion, the connection itself is still usable.
     pub schema_cache: crate::query::schema::SchemaCache,
+    /// SSH tunnel keeping the connection alive when `dsn.ssh_tunnel`
+    /// was set. App must hold this for as long as `client` lives —
+    /// dropping the tunnel SIGTERMs the ssh subprocess, which closes
+    /// the local forward and (typically) terminates the postgres
+    /// connection. `None` when the connection is direct.
+    pub tunnel: Option<crate::tunnel::SshTunnel>,
 }
 
 /// Connect to `dsn`, apply the safety session settings, then run `bootstrap_sql`
@@ -176,8 +216,53 @@ pub async fn connect_and_bootstrap(
     statement_timeout_ms: u64,
     bootstrap_sql: String,
 ) -> Result<Booted, String> {
+    // Open the SSH tunnel (if configured) BEFORE building the
+    // postgres Config — the host/port we hand to tokio-postgres point
+    // at the local forward, not the real Postgres server. The tunnel
+    // handle lives in `Booted` so the App keeps it alive for the
+    // session.
+    //
+    // `spawn_blocking` because `SshTunnel::open` polls with
+    // `TcpStream::connect_timeout` and `thread::sleep`, which would
+    // block the tokio reactor if called inline.
+    let tunnel = match dsn.ssh_tunnel.clone() {
+        Some(spec) => {
+            let remote_host = dsn.host.clone();
+            let remote_port = dsn.port;
+            let opened = tokio::task::spawn_blocking(move || {
+                crate::tunnel::SshTunnel::open(&spec, &remote_host, remote_port)
+            })
+            .await
+            .map_err(|e| format!("ssh tunnel task panicked: {e}"))??;
+            tracing::info!(
+                "SSH tunnel up — 127.0.0.1:{} → {}:{}",
+                opened.local_port,
+                dsn.host,
+                dsn.port
+            );
+            Some(opened)
+        }
+        None => None,
+    };
+
     let mut cfg = tokio_postgres::Config::new();
-    cfg.host(&dsn.host).port(dsn.port).dbname(&dsn.dbname);
+    match &tunnel {
+        Some(t) => {
+            // `host` is the canonical name — used for TLS SNI and cert
+            // verification — and stays as the real server we'd be
+            // talking to without the tunnel. `hostaddr` overrides
+            // where the TCP connection actually goes: 127.0.0.1 +
+            // the local forward port. That keeps TLS-through-the-
+            // tunnel working without disabling hostname checks.
+            cfg.host(&dsn.host)
+                .hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+                .port(t.local_port)
+                .dbname(&dsn.dbname);
+        }
+        None => {
+            cfg.host(&dsn.host).port(dsn.port).dbname(&dsn.dbname);
+        }
+    }
     if let Some(user) = &dsn.user {
         cfg.user(user);
     }
@@ -255,6 +340,7 @@ pub async fn connect_and_bootstrap(
         grid,
         client,
         schema_cache,
+        tunnel,
     })
 }
 
@@ -614,6 +700,22 @@ pub fn chain_message(err: &(dyn std::error::Error + 'static)) -> String {
 /// when nothing in the message looks familiar. Pure — pattern-match only.
 pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
     let lower = err.to_ascii_lowercase();
+    // SSH-tunnel failures come back from `SshTunnel::open` before we
+    // ever talk to Postgres — surface concrete next steps. The
+    // patterns match the error strings we emit ourselves.
+    if lower.contains("ssh exited before the tunnel was ready")
+        || lower.contains("ssh tunnel didn't open")
+        || lower.contains("failed to spawn ssh")
+    {
+        let target = dsn
+            .ssh_tunnel
+            .as_ref()
+            .map(|s| s.to_display())
+            .unwrap_or_else(|| "(unknown)".to_string());
+        return Some(format!(
+            "ssh tunnel via {target} didn't come up. try `ssh -v {target}` manually — pgman runs with BatchMode=yes so an unloaded key / agent will fail fast"
+        ));
+    }
     if lower.contains("connection refused") {
         return Some(format!(
             "nothing is listening at {}:{}. is the server running, and is the port right?",
@@ -726,6 +828,46 @@ mod tests {
         assert_eq!(
             Dsn::parse("postgres://h:not-a-port/db"),
             Err(DsnError::BadPort("not-a-port".to_string()))
+        );
+    }
+
+    #[test]
+    fn ssh_tunnel_url_param_extracted_into_field_and_dropped_from_params() {
+        let dsn = Dsn::parse(
+            "postgres://app@db.internal:5432/app?sslmode=require&ssh_tunnel=tom@bastion:2222",
+        )
+        .unwrap();
+        let spec = dsn.ssh_tunnel.as_ref().expect("ssh_tunnel set");
+        assert_eq!(spec.user.as_deref(), Some("tom"));
+        assert_eq!(spec.host, "bastion");
+        assert_eq!(spec.port, Some(2222));
+        // The non-tunnel param survives; the tunnel param is filtered
+        // out so apply_ssl_mode etc. don't see a stale key.
+        assert!(dsn
+            .params
+            .iter()
+            .any(|(k, v)| k == "sslmode" && v == "require"));
+        assert!(!dsn.params.iter().any(|(k, _)| k == "ssh_tunnel"));
+    }
+
+    #[test]
+    fn malformed_ssh_tunnel_param_warns_and_leaves_field_unset() {
+        // Malformed tunnel doesn't fail the DSN — operator may still
+        // reach the db directly. Field stays None, the param is
+        // dropped, and the warning lands in tracing.
+        let dsn = Dsn::parse("postgres://db/app?ssh_tunnel=:bad-port:99999").unwrap();
+        assert!(dsn.ssh_tunnel.is_none());
+        assert!(!dsn.params.iter().any(|(k, _)| k == "ssh_tunnel"));
+    }
+
+    #[test]
+    fn redacted_appends_ssh_tunnel_when_present() {
+        let dsn = Dsn::parse("postgres://app:pw@db/app?ssh_tunnel=tom@bastion").unwrap();
+        let s = dsn.redacted();
+        assert!(s.contains("***"), "password should be masked: {s}");
+        assert!(
+            s.contains("via ssh://tom@bastion"),
+            "tunnel target should appear: {s}"
         );
     }
 
@@ -844,6 +986,7 @@ mod tests {
             password: None,
             dbname: db.to_string(),
             params: Vec::new(),
+            ssh_tunnel: None,
         }
     }
 
@@ -880,5 +1023,22 @@ mod tests {
     fn connect_hint_returns_none_for_unknown_errors() {
         let d = dsn_for("h", "x", None);
         assert!(connect_hint("something weird happened", &d).is_none());
+    }
+
+    #[test]
+    fn connect_hint_recognises_ssh_tunnel_failure() {
+        let mut d = dsn_for("db.internal", "app", None);
+        d.ssh_tunnel = Some(crate::tunnel::SshTunnelSpec {
+            user: Some("tom".into()),
+            host: "bastion".into(),
+            port: None,
+        });
+        let h = connect_hint(
+            "ssh exited before the tunnel was ready (status 255): permission denied",
+            &d,
+        )
+        .expect("ssh tunnel failure should map to a hint");
+        assert!(h.contains("tom@bastion"), "hint should name the target: {h}");
+        assert!(h.contains("ssh -v"), "hint should suggest manual verify: {h}");
     }
 }

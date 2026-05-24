@@ -16,6 +16,7 @@ pub mod safety;
 pub mod splash;
 pub mod theme;
 pub mod tui;
+pub mod tunnel;
 pub mod ui;
 pub mod upgrade;
 pub mod util;

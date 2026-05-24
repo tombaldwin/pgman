@@ -245,6 +245,10 @@ pub struct App {
     /// the newest entry).
     history_draft: String,
     client: Option<Arc<tokio_postgres::Client>>,
+    /// SSH tunnel paired with `client` — non-None when the connection
+    /// went via a bastion. Held here so its `Drop` (which terminates
+    /// the ssh subprocess) only fires when the App loses the client.
+    tunnel: Option<crate::tunnel::SshTunnel>,
     safety_config: SafetyConfig,
     read_only: bool,
     statement_timeout_ms: u64,
@@ -314,6 +318,7 @@ impl App {
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
+            tunnel: None,
             safety_config,
             read_only,
             statement_timeout_ms,
@@ -425,6 +430,7 @@ impl App {
                     grid: b.grid,
                     client: b.client,
                     schema_cache: b.schema_cache,
+                    tunnel: b.tunnel,
                 },
                 Err(error) => AppMsg::BootFailed { generation, error },
             };
@@ -444,10 +450,16 @@ impl App {
                 grid,
                 client,
                 schema_cache,
+                tunnel,
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
                 self.client = Some(client);
+                // Hold the tunnel (if any) so its Drop fires when the
+                // App loses the client — typically on a reconnect, or
+                // at quit. Old tunnel is dropped here, terminating
+                // that ssh subprocess before the new one comes up.
+                self.tunnel = tunnel;
                 self.grid = grid;
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
