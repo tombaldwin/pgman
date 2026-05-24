@@ -207,6 +207,64 @@ fn completion_popup_with_candidates() {
 }
 
 #[test]
+fn slow_queries_renders_top_n_panel() {
+    use pgman::query::slow_queries::SlowQueryRow;
+    let mut a = settle_app();
+    a.mode = Mode::SlowQueries;
+    a.slow_queries = vec![
+        SlowQueryRow {
+            query: "SELECT * FROM users WHERE active = true".into(),
+            calls: 1_000_000,
+            total_ms: 12345.6,
+            mean_ms: 12.34,
+            rows: 1_000_000,
+        },
+        SlowQueryRow {
+            query: "UPDATE orders SET status = $1 WHERE id = $2".into(),
+            calls: 250,
+            total_ms: 800.0,
+            mean_ms: 3.2,
+            rows: 250,
+        },
+    ];
+    a.slow_queries_cursor = 0;
+    let buf = render(&mut a, 110, 26);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
+fn sessions_renders_blocked_then_idle() {
+    use pgman::query::sessions::SessionRow;
+    let mut a = settle_app();
+    a.mode = Mode::Sessions;
+    a.sessions = vec![
+        SessionRow {
+            pid: 1234,
+            user: "alice".into(),
+            application: "psql".into(),
+            state: "active".into(),
+            wait_event: Some("Lock:transactionid".into()),
+            blocked_by: "5678".into(),
+            query: "UPDATE accounts SET balance = 0".into(),
+            age_secs: 12.5,
+        },
+        SessionRow {
+            pid: 5678,
+            user: "bob".into(),
+            application: "pgman".into(),
+            state: "idle in transaction".into(),
+            wait_event: None,
+            blocked_by: String::new(),
+            query: "BEGIN".into(),
+            age_secs: 300.0,
+        },
+    ];
+    a.sessions_cursor = 0;
+    let buf = render(&mut a, 110, 18);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
 fn schema_browser_renders_focused_table_details() {
     use pgman::query::schema::{ConstraintMeta, SchemaCache, TableMeta};
     let mut a = settle_app();
