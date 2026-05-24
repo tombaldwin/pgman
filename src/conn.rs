@@ -121,10 +121,22 @@ impl Dsn {
         // tunnel" with a tracing warning rather than failing the DSN —
         // a typo in the tunnel spec shouldn't lock the operator out of
         // a connection that might be reachable directly.
+        //
+        // Duplicate `ssh_tunnel=` keys: first-set-wins (whether valid
+        // or not) so the resolution doesn't depend on later occurrences
+        // — typical URL-param convention.
         let mut params: Vec<(String, String)> = Vec::with_capacity(raw_params.len());
         let mut ssh_tunnel: Option<crate::tunnel::SshTunnelSpec> = None;
+        let mut saw_tunnel_key = false;
         for (k, v) in raw_params {
             if k.eq_ignore_ascii_case("ssh_tunnel") {
+                if saw_tunnel_key {
+                    tracing::warn!(
+                        "ignoring duplicate ssh_tunnel={v:?}; first occurrence wins"
+                    );
+                    continue;
+                }
+                saw_tunnel_key = true;
                 match crate::tunnel::SshTunnelSpec::parse(&v) {
                     Ok(spec) => ssh_tunnel = Some(spec),
                     Err(e) => {

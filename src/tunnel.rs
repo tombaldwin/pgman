@@ -60,10 +60,16 @@ impl SshTunnelSpec {
         if s.is_empty() {
             return Err(SpecError::Empty);
         }
-        // Split user@rest, if any.
+        // Split user@rest, if any. An empty user before `@` (i.e.
+        // `@bastion`) is treated as "no user, host=bastion" — the
+        // forgiving interpretation. Without this, `@bastion` would
+        // be parsed as host=`@bastion` and we'd hand ssh a literal
+        // `@bastion` argument that resolves to a confusing
+        // `Could not resolve hostname @bastion`.
         let (user, hostport) = match s.rsplit_once('@') {
             Some((u, hp)) if !u.is_empty() => (Some(u.to_string()), hp),
-            _ => (None, s),
+            Some((_, hp)) => (None, hp),
+            None => (None, s),
         };
         // Split host and port. Bracketed IPv6 wins; otherwise last `:`.
         let (host, port) = if let Some(stripped) = hostport.strip_prefix('[') {
@@ -191,10 +197,30 @@ impl SshTunnel {
             )
             .is_ok()
             {
+                // Drain ssh's stderr to tracing for the lifetime of
+                // the tunnel — otherwise the ~64 KiB kernel pipe
+                // buffer fills (ServerAlive warnings, `channel N: open
+                // failed` lines, anything verbose `~/.ssh/config`
+                // emits) and ssh blocks on its next stderr write,
+                // hanging the forwarded session mid-operation.
+                if let Some(stderr) = tunnel.child.stderr.take() {
+                    std::thread::spawn(move || {
+                        use std::io::{BufRead, BufReader};
+                        let reader = BufReader::new(stderr);
+                        for line in reader.lines().map_while(Result::ok) {
+                            tracing::debug!("ssh tunnel: {line}");
+                        }
+                    });
+                }
                 return Ok(tunnel);
             }
             if Instant::now() >= deadline {
+                // Kill + wait + then read stderr to EOF. Waiting
+                // before draining guarantees the pipe is closed so
+                // `read_to_end` returns promptly instead of relying on
+                // SIGKILL having already torn down the pipe.
                 let _ = tunnel.child.kill();
+                let _ = tunnel.child.wait();
                 let stderr = tunnel.drain_stderr();
                 return Err(format!(
                     "ssh tunnel didn't open within 10s{}{stderr}",
@@ -205,8 +231,12 @@ impl SshTunnel {
         }
     }
 
-    /// Best-effort read of the child's stderr, used only on failure.
-    /// Non-blocking: we read what's already buffered and stop.
+    /// Read the child's stderr to EOF. **Blocks** until the pipe is
+    /// closed — so only call this after the child has exited or been
+    /// killed-and-waited. We use this on the failure paths inside
+    /// `open` to assemble a useful error message; the live-session
+    /// stderr stream is drained by a separate background reader
+    /// spawned at the end of a successful open.
     fn drain_stderr(&mut self) -> String {
         use std::io::Read;
         if let Some(mut err) = self.child.stderr.take() {
@@ -308,17 +338,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_orphan_user_at() {
-        // `@host` shouldn't parse as "user empty, host=host"; reject as
-        // malformed instead. Our impl treats it as no-user, host="@host"
-        // which is wrong-but-harmless — but the rsplit_once gate
-        // explicitly requires non-empty user on the left, so we get
-        // host="@host" parsing... let's verify the actual behaviour
-        // matches expectations.
+    fn orphan_at_means_no_user_not_at_in_host() {
+        // `@bastion` is forgiving-parsed as user=None, host=bastion
+        // (rather than the prior wrong behaviour of host=`@bastion`,
+        // which made ssh emit "Could not resolve hostname @bastion").
         let s = SshTunnelSpec::parse("@bastion").unwrap();
-        // Confirms current behaviour: empty user means no user prefix.
         assert_eq!(s.user, None);
-        assert_eq!(s.host, "@bastion");
+        assert_eq!(s.host, "bastion");
     }
 
     #[test]
