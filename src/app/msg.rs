@@ -18,6 +18,10 @@ pub enum AppMsg {
         grid: Grid,
         client: Arc<tokio_postgres::Client>,
         schema_cache: SchemaCache,
+        /// SSH tunnel kept alive for the session when the connection
+        /// went via a bastion. App owns it after this message lands;
+        /// dropping it terminates the ssh subprocess.
+        tunnel: Option<crate::tunnel::SshTunnel>,
     },
     /// Connection or the bootstrap query failed.
     BootFailed { generation: u64, error: String },
