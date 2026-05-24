@@ -241,6 +241,53 @@ pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<
     }
 }
 
+/// Cancel-side of the database connection. Trait-abstracted so
+/// `cancel_running_query` is unit-testable without a real
+/// `tokio_postgres::Client`: production wires
+/// [`PgCancelDispatcher`] from the live `CancelToken`; tests
+/// inject a recording fake.
+///
+/// The dispatcher is fire-and-forget: the actual `CancelRequest`
+/// TCP runs on a spawned task because the cancel can sit behind
+/// network latency.
+pub trait CancelDispatcher: std::fmt::Debug + Send + Sync {
+    fn dispatch(&self);
+}
+
+/// Production cancel dispatcher backed by a `tokio_postgres::CancelToken`.
+/// Each `dispatch` clones the token and spawns the actual
+/// `CancelRequest` send so the App's main loop doesn't block.
+pub struct PgCancelDispatcher {
+    token: tokio_postgres::CancelToken,
+}
+
+impl std::fmt::Debug for PgCancelDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PgCancelDispatcher").finish_non_exhaustive()
+    }
+}
+
+impl PgCancelDispatcher {
+    pub fn new(token: tokio_postgres::CancelToken) -> Self {
+        Self { token }
+    }
+}
+
+impl CancelDispatcher for PgCancelDispatcher {
+    fn dispatch(&self) {
+        let token = self.token.clone();
+        tokio::spawn(async move {
+            // CancelRequest is an unauthenticated short packet;
+            // servers always accept it plaintext. `NoTls` saves
+            // the cost of a fresh TLS handshake just to interrupt
+            // a query.
+            if let Err(e) = token.cancel_query(tokio_postgres::NoTls).await {
+                tracing::warn!("CancelRequest failed: {e}");
+            }
+        });
+    }
+}
+
 /// Pure decision: should the splash dismiss at `now`? `until` is
 /// the absolute deadline set at App start (3s after launch);
 /// `conn_resolved` reflects whether the connection is no longer in
@@ -513,6 +560,11 @@ pub struct App {
     /// the newest entry).
     history_draft: String,
     client: Option<Arc<tokio_postgres::Client>>,
+    /// Cancel-side of the live connection. Set on every `Booted`
+    /// alongside `client`. Cleared on disconnect. Trait-abstracted so
+    /// tests can inject a recording fake to verify Ctrl-C routes
+    /// through it without going through tokio_postgres.
+    cancel_dispatcher: Option<Box<dyn CancelDispatcher>>,
     /// SSH tunnel paired with `client` — non-None when the connection
     /// went via a bastion. Held here so its `Drop` (which terminates
     /// the ssh subprocess) only fires when the App loses the client.
@@ -597,6 +649,7 @@ impl App {
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
+            cancel_dispatcher: None,
             tunnel: None,
             safety_config,
             read_only,
@@ -856,6 +909,12 @@ impl App {
                 ..
             } => {
                 self.conn_state = ConnState::Connected { server_version };
+                // Pre-build the cancel dispatcher so Ctrl-C can fire
+                // without touching the Client. Replaced on every new
+                // Booted so the dispatcher always matches the live
+                // backend PID.
+                self.cancel_dispatcher =
+                    Some(Box::new(PgCancelDispatcher::new(client.cancel_token())));
                 self.client = Some(client);
                 // Hold the new tunnel (if any) so its Drop fires when
                 // the App loses the client at quit / next reconnect.
@@ -1679,9 +1738,22 @@ impl App {
         let Some(cycle) = self.completion.take() else {
             return;
         };
-        self.editor_buffer
-            .replace_range(cycle.start..cycle.end, &cycle.origin);
-        self.editor_cursor = cycle.origin_cursor;
+        // If the operator backspaced past the cycle's start, the
+        // stored range no longer points at valid bytes — bail on
+        // the restore but still drop the cycle. Same for cursor: a
+        // refresh-narrow may have shrunk the buffer below the
+        // pre-Tab cursor position; clamp to current buffer length
+        // (which is always a valid char boundary).
+        if cycle.start <= self.editor_buffer.len()
+            && cycle.end <= self.editor_buffer.len()
+            && cycle.start <= cycle.end
+            && self.editor_buffer.is_char_boundary(cycle.start)
+            && self.editor_buffer.is_char_boundary(cycle.end)
+        {
+            self.editor_buffer
+                .replace_range(cycle.start..cycle.end, &cycle.origin);
+        }
+        self.editor_cursor = cycle.origin_cursor.min(self.editor_buffer.len());
         self.last_status = Some("completion cancelled".to_string());
     }
 
@@ -2299,21 +2371,11 @@ impl App {
     }
 
     fn cancel_running_query(&mut self) {
-        let Some(client) = self.client.clone() else {
+        let Some(dispatcher) = self.cancel_dispatcher.as_ref() else {
             return;
         };
         self.last_status = Some("cancelling query…".to_string());
-        let cancel_token = client.cancel_token();
-        tokio::spawn(async move {
-            // CancelRequest is itself an unauthenticated short
-            // packet; servers always accept it plaintext. Using
-            // `NoTls` here is intentional — we don't carry creds
-            // and don't need the round-trip cost of a fresh TLS
-            // handshake to interrupt a query.
-            if let Err(e) = cancel_token.cancel_query(tokio_postgres::NoTls).await {
-                tracing::warn!("CancelRequest failed: {e}");
-            }
-        });
+        dispatcher.dispatch();
     }
 
     /// User requested a run. Classify, evaluate safety, and either run, prompt,
@@ -4062,6 +4124,80 @@ mod tests {
     // A test that touches the real `draft_path` races against parallel
     // tests since they all share the same HOME-derived location;
     // skipping in favour of the util-level coverage.
+
+    /// Recording fake cancel-dispatcher. The actual `dispatch`
+    /// closure is fire-and-forget in production; in tests we just
+    /// count calls.
+    #[derive(Debug, Default)]
+    struct RecordingDispatcher {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl CancelDispatcher for RecordingDispatcher {
+        fn dispatch(&self) {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn cancel_running_query_dispatches_through_injected_handler() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+            calls: calls.clone(),
+        }));
+        a.query_running = true;
+        a.mode = Mode::Editor;
+
+        // Ctrl-C with a running query routes through the dispatcher.
+        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(a.last_status.as_deref(), Some("cancelling query…"));
+    }
+
+    #[test]
+    fn cancel_running_query_no_dispatcher_no_op() {
+        // Without a dispatcher (e.g. not connected) Ctrl-C is a
+        // silent no-op rather than a panic.
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.cancel_dispatcher = None;
+        a.query_running = true;
+        a.mode = Mode::Editor;
+        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        // No panic, status not flipped (function returned at the
+        // `None` guard before setting it).
+        assert!(a.last_status.is_none());
+    }
+
+    #[test]
+    fn cancel_running_query_idle_skips_dispatcher() {
+        // Ctrl-C only fires the cancel when `query_running` — gated
+        // at the keybinding level. With no running query, the
+        // dispatcher should not be called.
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+            calls: calls.clone(),
+        }));
+        a.query_running = false;
+        a.mode = Mode::Editor;
+        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn pg_notice_lands_in_status_and_history() {

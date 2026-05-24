@@ -220,6 +220,113 @@ proptest! {
     }
 }
 
+// ----- App state-machine fuzzer ----------------------------------------------
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use pgman::app::{App, ConnState, Mode};
+use pgman::theme::Theme;
+
+/// Random key event covering the keys an operator can plausibly hit.
+/// Avoid keys that interact with external state (the dispatcher /
+/// process). Includes Tab/Enter/Esc/Backspace/Char + Ctrl/Shift mods.
+fn arbitrary_key_event() -> impl Strategy<Value = KeyEvent> {
+    let codes = prop_oneof![
+        Just(KeyCode::Tab),
+        Just(KeyCode::Enter),
+        Just(KeyCode::Esc),
+        Just(KeyCode::Backspace),
+        Just(KeyCode::Delete),
+        Just(KeyCode::Up),
+        Just(KeyCode::Down),
+        Just(KeyCode::Left),
+        Just(KeyCode::Right),
+        Just(KeyCode::Home),
+        Just(KeyCode::End),
+        // ASCII printable subset — covers the editor / normal /
+        // grid keybindings without dragging in every codepoint.
+        (32u8..=126u8).prop_map(|b| KeyCode::Char(b as char)),
+    ];
+    let mods = prop_oneof![
+        Just(KeyModifiers::NONE),
+        Just(KeyModifiers::SHIFT),
+        Just(KeyModifiers::CONTROL),
+    ];
+    (codes, mods).prop_map(|(c, m)| KeyEvent::new(c, m))
+}
+
+fn settled_app() -> App {
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        pgman::safety::SafetyConfig::default(),
+    );
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a
+}
+
+proptest! {
+    /// The app state machine should never panic regardless of what
+    /// keys the operator mashes, and a handful of invariants should
+    /// hold after every single keystroke.
+    #[test]
+    fn app_key_sequence_preserves_invariants(
+        events in proptest::collection::vec(arbitrary_key_event(), 0..120),
+        seed_buffer in "[a-zA-Z0-9 \n_]{0,40}",
+        seed_history in proptest::collection::vec("[a-z ]{0,30}", 0..6),
+    ) {
+        let mut a = settled_app();
+        a.mode = Mode::Editor;
+        // Seed non-trivial starting state so the test exercises
+        // history search, filter, completion, and cursor placement
+        // over a wider envelope than "empty buffer, no history".
+        a.editor_buffer = seed_buffer;
+        a.editor_cursor = a.editor_buffer.len();
+        a.history = seed_history;
+        for ev in events {
+            a.on_key(ev);
+
+            // Cursor never leaves a char boundary in the editor
+            // buffer (we slice by byte; this is the panic-prone
+            // invariant).
+            prop_assert!(
+                a.editor_buffer.is_char_boundary(a.editor_cursor),
+                "cursor {} not on char boundary in {:?}",
+                a.editor_cursor,
+                a.editor_buffer
+            );
+            // Cursor is in range.
+            prop_assert!(a.editor_cursor <= a.editor_buffer.len());
+
+            // grid_visible_rows is a subset of 0..rows.len() (the
+            // filter helper guarantees this, but the random key
+            // sequence has typed `/` and `n`/`N` etc. — make sure
+            // it's still respected).
+            for &i in &a.grid_visible_rows {
+                prop_assert!(i < a.grid.rows.len().max(1));
+            }
+            // Selected row (if any) points into the visible set.
+            if let Some(sel) = a.grid_state.selected() {
+                prop_assert!(
+                    sel < a.grid_visible_rows.len().max(1),
+                    "selected {sel} out of visible_rows len {}",
+                    a.grid_visible_rows.len()
+                );
+            }
+            // Mode is one of the legal variants (this would panic
+            // at the `match` if it weren't, but assertion as a
+            // documenting checkpoint).
+            let _: Mode = a.mode;
+        }
+        // If we reached here without a panic across the sequence,
+        // the App is robust to arbitrary key mashing.
+    }
+}
+
 // ----- Grid sort stability ---------------------------------------------------
 
 proptest! {

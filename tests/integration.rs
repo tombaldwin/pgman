@@ -107,6 +107,78 @@ fn batch_query_failure_exits_one_and_writes_stderr() {
 }
 
 #[test]
+fn batch_surfaces_server_notice_on_stderr() {
+    // DO block with RAISE NOTICE — the connection driver's poll_message
+    // loop should pick it up and route through the notice channel,
+    // which the batch path drains to stderr.
+    let out = Command::new(pgman_binary())
+        .args([
+            "--batch",
+            "--dsn",
+            DSN,
+            "--sql",
+            "DO $$ BEGIN RAISE NOTICE 'pgman-test-notice'; END $$",
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("pgman-test-notice"),
+        "notice should land on stderr; got: {stderr:?}"
+    );
+    // Status flag carries the severity, surfaced via the `[SEVERITY] message` shape.
+    assert!(
+        stderr.contains("NOTICE"),
+        "severity tag should appear; got: {stderr:?}"
+    );
+}
+
+#[tokio::test]
+async fn cancel_token_aborts_pg_sleep() {
+    // End-to-end: run a long pg_sleep, send a real CancelRequest,
+    // verify the query returns with a cancellation error before the
+    // sleep completes. This is what Ctrl-C actually does — the
+    // unit tests cover the routing; this one covers the wire.
+    use pgman::conn::{connect_only, NoticeMsg};
+    use std::time::{Duration, Instant};
+
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("parse DSN");
+    let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel::<NoticeMsg>();
+    let (client, _tunnel) = connect_only(dsn, false, 0, notice_tx)
+        .await
+        .expect("connect");
+
+    let cancel = client.cancel_token();
+    let started = Instant::now();
+    // Schedule a cancel 200ms in; the sleep is for 10s so it can
+    // only finish via the cancel.
+    let cancel_handle = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = cancel.cancel_query(tokio_postgres::NoTls).await;
+    });
+
+    let res = pgman::conn::run_statement(&client, "SELECT pg_sleep(10)").await;
+    let _ = cancel_handle.await;
+    let elapsed = started.elapsed();
+
+    assert!(
+        res.is_err(),
+        "pg_sleep should have been cancelled, but returned Ok"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "should have cancelled in well under 10s; took {elapsed:?}"
+    );
+    let err = res.unwrap_err().msg;
+    assert!(
+        err.to_lowercase().contains("cancel")
+            || err.to_lowercase().contains("statement terminated"),
+        "expected cancellation message; got: {err}"
+    );
+}
+
+#[test]
 fn batch_expanded_format_renders_one_record_per_block() {
     let out = Command::new(pgman_binary())
         .args([
