@@ -50,6 +50,13 @@ pub enum AppMsg {
         committed: bool,
         error: Option<String>,
     },
+    /// Server-emitted notice (`RAISE NOTICE`, `RAISE WARNING`, …)
+    /// piped through the connection driver. Not generation-tagged:
+    /// notices outlive individual queries and a stale notice from a
+    /// disconnected session is rare enough to ignore cleanly.
+    Notice {
+        notice: crate::conn::NoticeMsg,
+    },
 }
 
 impl AppMsg {
@@ -61,6 +68,10 @@ impl AppMsg {
             | AppMsg::QueryOk { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. } => *generation,
+            // Notices aren't generation-tagged — return the App's
+            // current generation so the dispatcher never drops them
+            // as stale. Caller in `on_msg` re-checks for this branch.
+            AppMsg::Notice { .. } => u64::MAX,
         }
     }
 }
