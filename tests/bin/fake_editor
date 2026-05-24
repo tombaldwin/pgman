@@ -1,0 +1,15 @@
+#!/bin/sh
+# fake_editor — pretends to be $EDITOR for integration tests.
+# Real editors (vim, code --wait, …) take the file as their LAST
+# argument; mimic that so we can also exercise the "extra args"
+# whitespace-split path.
+set -e
+# POSIX way to grab the last positional argument: iterate, leaving
+# `last` set to whatever the loop saw most recently.
+for last; do :; done
+file="$last"
+content="$(cat "$file")"
+{
+  printf '%s\n' '-- edited by fake_editor'
+  printf '%s' "$content"
+} > "$file"

@@ -386,7 +386,17 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
 fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let grid = &app.grid;
     let theme = &app.theme;
-    let widths = grid::column_widths(grid, 48);
+    let mut widths = grid::column_widths(grid, 48);
+    // The sort marker (` ▲` / ` ▼`) is appended to the header cell
+    // BEFORE width clamping, so columns hosting the sort key need
+    // two extra chars of room. Without this the marker would be
+    // truncated off and the operator would think nothing happened
+    // when they pressed `s`.
+    if let Some((col, _)) = app.grid_sort {
+        if let Some(w) = widths.get_mut(col) {
+            *w = (*w + 2).min(48);
+        }
+    }
 
     // Header: bold the column under the cursor; append a ▲ / ▼ to
     // whichever column is currently the sort key.

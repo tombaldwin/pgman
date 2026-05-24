@@ -87,6 +87,22 @@ output live.
 If you installed via `cargo install --git`, `--upgrade` will tell you to
 reinstall manually — it can't know the git URL.
 
+## Testing
+
+```bash
+cargo test                              # unit + render snapshots + subprocess stubs
+docker compose -f docker-compose.test.yml up -d
+cargo test --features integration       # adds the Postgres-driving tests
+docker compose -f docker-compose.test.yml down
+```
+
+The integration tests cover end-to-end batch / pipe mode against a
+real Postgres on `127.0.0.1:55432`. Subprocess paths (`\e` editor,
+`pg_format`) are covered without integration by PATH-stubbed
+`tests/bin/fake_*` shell scripts. Render-path snapshots use
+ratatui's `TestBackend` and inspect specific cells / strings rather
+than full snapshots, so they survive minor layout shifts.
+
 ## Status
 
 Pre-v1. See `BACKLOG.md` for what's shipped and what's next.

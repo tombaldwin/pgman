@@ -1,0 +1,19 @@
+# Postgres for integration tests. Brought up with
+# `docker compose -f docker-compose.test.yml up -d` and torn down
+# with `docker compose -f docker-compose.test.yml down`. Bound to a
+# non-standard host port so it doesn't clash with a developer's
+# local postgres.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: pgman_test
+      POSTGRES_USER: pgman_test
+      POSTGRES_DB: pgman_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgman_test -d pgman_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
