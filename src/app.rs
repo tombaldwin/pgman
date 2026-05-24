@@ -297,6 +297,13 @@ pub struct App {
     /// and reload the buffer. The action needs `&mut Tui`, which the
     /// editor key handler doesn't have — so it's deferred here.
     pub external_edit_pending: bool,
+    /// `Instant` of the last successful `persist_draft`. The main
+    /// loop saves at most every 500ms when the buffer is dirty, so a
+    /// panic mid-typing loses at most half a second of work.
+    pub draft_last_save: Option<Instant>,
+    /// Set whenever the buffer is mutated; cleared on save. Avoids
+    /// `write_atomic`-ing a buffer that hasn't changed.
+    pub draft_dirty: bool,
     /// Column under the cursor in the results grid. h/l move it; sort
     /// + future column-aware actions operate on this column.
     pub grid_col_cursor: usize,
@@ -394,6 +401,8 @@ impl App {
             watch: None,
             notices: Vec::new(),
             external_edit_pending: false,
+            draft_last_save: None,
+            draft_dirty: false,
             grid_col_cursor: 0,
             grid_sort: None,
             grid_raw_rows: None,
@@ -457,6 +466,21 @@ impl App {
             if self.external_edit_pending {
                 self.external_edit_pending = false;
                 self.run_external_editor(tui);
+            }
+            // Periodic auto-save: persist at most every 500 ms when
+            // the buffer is dirty, so a panic in any spawned task
+            // loses at most half a second of work. Cheap atomic
+            // write via rename; not even a syscall when not dirty.
+            if self.draft_dirty {
+                let ready = match self.draft_last_save {
+                    Some(t) => t.elapsed() > Duration::from_millis(500),
+                    None => true,
+                };
+                if ready {
+                    let _ = persist_draft(&self.editor_buffer);
+                    self.draft_last_save = Some(Instant::now());
+                    self.draft_dirty = false;
+                }
             }
         }
         // Persist the editor draft so the next launch can restore
@@ -591,9 +615,14 @@ impl App {
         let (notice_tx, mut notice_rx) =
             tokio::sync::mpsc::unbounded_channel::<conn::NoticeMsg>();
         let forward_tx = tx.clone();
+        let notice_generation = generation;
         tokio::spawn(async move {
             while let Some(notice) = notice_rx.recv().await {
-                if forward_tx.send(AppMsg::Notice { notice }).is_err() {
+                let msg = AppMsg::Notice {
+                    generation: notice_generation,
+                    notice,
+                };
+                if forward_tx.send(msg).is_err() {
                     break;
                 }
             }
@@ -624,11 +653,7 @@ impl App {
 
     /// Apply a finished message from a spawned task.
     fn on_msg(&mut self, msg: AppMsg) {
-        // Notices flow on the same channel but aren't tied to a
-        // run / connect generation — let them through unconditionally.
-        if !matches!(msg, AppMsg::Notice { .. })
-            && msg.generation() != self.generation
-        {
+        if msg.generation() != self.generation {
             tracing::debug!("dropping stale message from generation {}", msg.generation());
             return;
         }
@@ -699,14 +724,28 @@ impl App {
                 // Out-of-range positions are ignored (could happen
                 // for batches where we sent a transformed string).
                 if let Some(p) = position {
-                    let target_chars = p.saturating_sub(1) as usize;
-                    let byte_offset = self
+                    // Postgres reports a 1-indexed CHAR position into
+                    // the string WE submitted. `request_run` trims
+                    // leading whitespace before submitting, so we
+                    // skip past the same trimmed prefix in the
+                    // editor buffer before counting chars. Without
+                    // this, `\n\nSELECT FROM x` with an error at
+                    // submitted position 8 lands the cursor 2 chars
+                    // off because the leading `\n\n` is in the
+                    // buffer but not in the submitted SQL.
+                    let trimmed_prefix_bytes = self
                         .editor_buffer
+                        .len()
+                        - self.editor_buffer.trim_start().len();
+                    let target_chars = (p.saturating_sub(1)) as usize;
+                    let after_trim = &self.editor_buffer[trimmed_prefix_bytes..];
+                    let inner_byte = after_trim
                         .char_indices()
                         .nth(target_chars)
                         .map(|(b, _)| b)
-                        .unwrap_or(self.editor_buffer.len());
-                    self.editor_cursor = byte_offset;
+                        .unwrap_or(after_trim.len());
+                    let byte_offset = trimmed_prefix_bytes + inner_byte;
+                    self.editor_cursor = byte_offset.min(self.editor_buffer.len());
                     self.editor_preferred_col = None;
                     if self.mode == Mode::Normal {
                         self.mode = Mode::Editor;
@@ -733,7 +772,7 @@ impl App {
                     }
                 }
             }
-            AppMsg::Notice { notice } => {
+            AppMsg::Notice { notice, .. } => {
                 // Surface server-emitted notices in the status footer,
                 // and stash recent ones so a follow-up "show notices"
                 // panel can render them. Severity goes first so a
@@ -817,14 +856,12 @@ impl App {
             // Fall through to the editor's on_editor_key for the
             // cancel-or-no-op logic.
         }
-        if was_watching
-            && matches!(key.code, KeyCode::Char('c'))
-            && key.modifiers.contains(KeyModifiers::CONTROL)
-        {
-            // Ctrl-C during watch is taken as "stop the watch" —
-            // don't also fall through to other handlers.
-            return;
-        }
+        // (No early return for Ctrl-C-while-watching here: if a
+        // query is also in flight, the editor handler's
+        // `cancel_running_query` arm below still needs to fire so
+        // one Ctrl-C stops the watch AND cancels the live query.
+        // With no in-flight query, the editor handler no-ops on
+        // Ctrl-C and we end up in the right place anyway.)
         // Any key dismisses the splash — but the key then flows through
         // to the mode dispatcher rather than being consumed. Snappy
         // users press a key to skip the elephant AND have that key do
@@ -1437,6 +1474,12 @@ impl App {
     fn editor_dirty(&mut self) {
         self.history_pos = None;
         self.editor_preferred_col = None;
+        // Mark the buffer dirty for the periodic auto-save in run().
+        // We don't persist inline because editor_dirty is called
+        // BEFORE the actual mutation at most call sites — the run-
+        // loop's "save when stable" pass picks up the post-mutation
+        // state.
+        self.draft_dirty = true;
     }
 
     /// Abandon an active completion cycle: restore the original buffer
@@ -2062,7 +2105,16 @@ impl App {
         let Some(state) = self.watch.as_ref() else {
             return;
         };
-        if self.query_running || self.tx_open {
+        // Suppress while a modal is up — the Confirm safety prompt,
+        // the open-tx commit/rollback chooser, the picker, RowDetail,
+        // etc. all expect single-shot operator input. Without this
+        // the 2-s tick would re-fire `request_run`, repeatedly
+        // overwriting `pending_run` underneath an in-flight Confirm.
+        if self.query_running
+            || self.tx_open
+            || self.pending_run.is_some()
+            || !matches!(self.mode, Mode::Editor | Mode::Normal)
+        {
             return;
         }
         if state.last_fire.elapsed() < state.interval {
@@ -2483,6 +2535,11 @@ impl App {
     /// matching row (only meaningful while a filter is active).
     fn filter_step(&mut self, forward: bool) {
         if self.grid_filter.is_none() {
+            // Make the no-op visible — vim muscle memory expects
+            // `n` to do something useful, and silent failure feels
+            // like the terminal is stuck.
+            self.last_status =
+                Some("no active filter (press `/` to start one)".into());
             return;
         }
         // visible_rows is already the filtered set in display order;
@@ -3719,9 +3776,11 @@ mod tests {
             detail: None,
             hint: None,
         };
-        // Push via the message channel so we exercise on_msg's
-        // notice-bypass-generation gate.
-        let _ = a.msg_tx.send(AppMsg::Notice { notice: n });
+        // Tag with the App's current generation so on_msg accepts it.
+        let _ = a.msg_tx.send(AppMsg::Notice {
+            generation: a.generation,
+            notice: n,
+        });
         if let Some(rx) = a.msg_rx.as_mut() {
             if let Ok(msg) = rx.try_recv() {
                 a.on_msg(msg);
@@ -3746,6 +3805,7 @@ mod tests {
         );
         for i in 0..60 {
             a.on_msg(AppMsg::Notice {
+                generation: a.generation,
                 notice: NoticeMsg {
                     severity: "NOTICE".into(),
                     message: format!("msg #{i}"),
