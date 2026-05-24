@@ -65,7 +65,18 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     )
     .await?;
 
-    match conn::run_statement(&client, &opts.sql).await {
+    // Multi-statement input (`pgman --batch --sql 'BEGIN; …; COMMIT'`)
+    // goes through the simple-query / batch path — `run_statement`
+    // uses `client.prepare` under the hood, which the extended-query
+    // protocol rejects for multi-command strings. `safety::split_statements`
+    // is the same splitter the interactive editor uses.
+    let statements = crate::safety::split_statements(&opts.sql);
+    let result = if statements.len() > 1 {
+        conn::run_batch(&client, &opts.sql).await
+    } else {
+        conn::run_statement(&client, &opts.sql).await
+    };
+    match result {
         Ok(grid) => {
             let text = match opts.format {
                 Format::Csv => format_csv(&grid),
@@ -328,5 +339,16 @@ mod tests {
     fn format_parse_accepts_aliases() {
         assert_eq!(Format::parse("X").unwrap(), Format::Expanded);
         assert_eq!(Format::parse("Json").unwrap(), Format::Json);
+    }
+
+    #[test]
+    fn run_routes_multistatement_through_batch_path() {
+        // `safety::split_statements` is what `run` consults to
+        // decide single-vs-batch. A guard: more than one statement
+        // yields >= 2 entries so the multi-stmt branch fires.
+        let many = "BEGIN; SELECT 1; COMMIT";
+        assert!(crate::safety::split_statements(many).len() >= 2);
+        let one = "SELECT 1";
+        assert_eq!(crate::safety::split_statements(one).len(), 1);
     }
 }
