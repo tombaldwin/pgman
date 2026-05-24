@@ -46,40 +46,6 @@ under Done, no matter which milestone it came from.
 - Per-database `CleanMode` config (which truncate strategy each db
   uses for DBUnit apply).
 
-### psql parity — table-stakes credibility gaps
-These are basics every Postgres user expects on day one. Until they
-land, pgman loses the first-5-minutes evaluation vs `psql` regardless
-of the niche features.
-- **Cancel running query** — Ctrl-C during a long-running statement
-  sends a `tokio_postgres::CancelToken`-based CancelRequest. The
-  most embarrassing gap today: a runaway query holds the session
-  hostage until it times out.
-- **Connection switching mid-session** — `\c [db [user [host]]]`-
-  equivalent (`:connect <picker entry>` once the command palette
-  lands, or a Ctrl-X chord in the meantime). Rebuilds the
-  connection against the new DSN; preserves the editor buffer /
-  history. Today the operator must quit + restart.
-- **`\watch` / repeat query** — Ctrl-W re-runs the last query every
-  N seconds (default 2; configurable). Stops on any keypress. Lets
-  you watch `pg_stat_activity` or a count without leaving the tool.
-- **NOTICE / WARNING / RAISE surfacing** — server-side `RAISE
-  NOTICE 'foo'` from functions / DO blocks should appear in the
-  status footer (or a notice strip). Verify behaviour first — today
-  these may be silently dropped.
-- **Error position cursor jump** — when Postgres returns `at
-  character 47`, move the editor cursor to byte 46 (1-indexed). One
-  of those tiny things pgcli does and you miss it instantly when
-  it's gone.
-- **`\e` external editor** — open the buffer in `$EDITOR`, reload
-  the content on save. Our editor's fine but operators with
-  nvim/emacs muscle memory want the escape hatch.
-- **History search (Ctrl-R)** — reverse-incremental search through
-  query history. Today Ctrl-P / Ctrl-N is sequential only.
-- **Batch / pipe mode** — `pgman --batch --sql "…"` (or SQL via
-  stdin) writes results to stdout in a chosen format (`--format
-  csv|json|tsv|expanded`) and exits. Makes pgman usable from CI and
-  shell scripts. The single biggest "we can't be used here" gap.
-
 ### Editor — authoring polish
 - **Syntax highlighting (semantic)** — keywords / strings / comments
   / numbers from a hand-rolled lexer in a new `query::highlight`
@@ -399,6 +365,64 @@ Historical record. Newest at the top within each section.
 - **Bracketed paste** — terminal wraps pasted text in escape codes;
   crossterm delivers `Event::Paste(String)` instead of streaming
   each char. CRLF / CR normalised to LF.
+
+### psql parity (table-stakes credibility gaps)
+
+The eight basics every Postgres user expects on day one. Shipped as a
+unified pass after the SSH-tunnel work.
+
+- **Cancel running query** (Ctrl-C) — sends a PostgreSQL
+  `CancelRequest` via `tokio_postgres::CancelToken`; the original
+  `execute` future resolves with the cancellation error and lands as
+  the normal `QueryFailed` message. In tunneled sessions the cancel
+  TCP inherits the parent `Config` so it rides through the same ssh
+  forward. Top-level Ctrl-C still quits in non-Editor modes; in
+  Editor it cancels mid-query or no-ops on idle.
+- **Error position cursor jump** — `conn::QueryErr` extracts
+  `as_db_error().position()` from `tokio_postgres::Error`; the
+  `QueryFailed` handler converts the 1-indexed char position to a
+  byte offset (multibyte-safe via `char_indices`) and moves the
+  editor cursor. EXPLAIN / EXPLAIN ANALYZE wrappers shift the
+  position back by the wrapper prefix so the cursor lands inside
+  the user's buffer.
+- **History search (Ctrl-R)** — new `Mode::HistorySearch` +
+  `HistorySearchState`. Reverse-incremental substring match
+  (case-insensitive). Buffer mirrors the current match so the
+  operator previews before Enter. Ctrl-R again walks older. Esc
+  restores the pre-search snapshot. Bash-style status:
+  `(reverse-i-search) 'q'` / `(failed reverse-i-search) 'q'`. Run
+  rebinds to F5-only + Ctrl-Enter / Ctrl-J to free Ctrl-R.
+- **`\watch` / repeat query** (Ctrl-W) — re-runs the buffer (or
+  last history entry) every 2 s, routed through the same safety
+  pipeline. Any key stops. Refused during an open auto_tx so we
+  can't pile up runs on a paused session.
+- **NOTICE / WARNING / RAISE surfacing** — connection driver
+  switched from `connection.await` to `Connection::poll_message`,
+  intercepting `AsyncMessage::Notice` and forwarding via an
+  unbounded channel. App pumps through `AppMsg::Notice` to a
+  bounded ring buffer (50 entries) + status footer; tracing
+  captures detail / hint at info level.
+- **`\e` external editor** (Ctrl-X) — pending-flag pattern: editor
+  key handler sets the flag; main `run()` loop suspends the TUI
+  (new `Tui::suspend` / `Tui::resume`), writes the buffer to a
+  per-pid temp file, execs `$EDITOR` (multi-word like `code --wait`
+  split on whitespace; falls back to `$VISUAL`, then `vi`), reads
+  back on save. Always resumes the TUI even if the editor errored.
+- **Connection switching mid-session** — `c` in Normal mode opens
+  the existing `ConnPick` picker. Cancels any in-flight query
+  first. The picker's Enter handler already does the reconnect
+  (`start_connect` after swapping `self.dsn`); on Booted the new
+  client + tunnel land and the old tunnel drops on a worker
+  thread.
+- **Batch / pipe mode** — `pgman --batch --sql "…" --format
+  csv|tsv|json|expanded`. SQL via `--sql` or stdin. New
+  `conn::connect_only` skips the schema fetch / bootstrap that
+  the TUI needs. `batch::run` writes the formatted result to
+  stdout; notices go to stderr. Exit 0 on success, 1 on query
+  failure, 2 on connect / arg failure. Pure formatters
+  (`format_csv` / `tsv` / `json` / `expanded`) are unit-tested
+  with RFC-4180 quoting, control-char escaping, and `\x`-style
+  column padding.
 
 ### Completion
 

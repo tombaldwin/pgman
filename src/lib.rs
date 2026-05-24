@@ -5,6 +5,7 @@
 //! `BACKLOG.md` for the milestone plan.
 
 pub mod app;
+pub mod batch;
 pub mod conn;
 pub mod creds;
 pub mod dbunit;
