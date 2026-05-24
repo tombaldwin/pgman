@@ -46,25 +46,6 @@ under Done, no matter which milestone it came from.
 - Per-database `CleanMode` config (which truncate strategy each db
   uses for DBUnit apply).
 
-### Editor — authoring polish
-- **Syntax highlighting (semantic)** — keywords / strings / comments
-  / numbers from a hand-rolled lexer in a new `query::highlight`
-  module reusing the tokenizer state machine we already have for
-  `statement_start` / the FROM parser. Identifiers resolve against
-  the schema cache + in-scope tables / CTEs / aliases: known →
-  default colour, unknown → red (the typo-flag). Loose resolution
-  to start (any cache hit anywhere counts), with a path to strict
-  (in-scope only) once we see how noisy it is mid-typing. Theme
-  grows ~3 fields (`syn_string`, `syn_unknown`, plus reuse of
-  `title` / `muted` / `accent` for keywords / comments / numbers).
-- **Auto-save editor buffer** on quit, restore on restart. Persist
-  under `util::data_dir()/draft.sql`. Trivial; prevents losing a
-  half-written query to a reflex quit.
-- **`pg_format`-style buffer reformat** — Ctrl-F prettyprints the
-  current statement. Either shell out to `pg_format` if present, or
-  do a focused in-house formatter (just clause keywords + indent).
-  Loved by anyone who pastes ugly logged SQL.
-
 ### Result grid
 - **Sort by column** — `<` / `>` cycles ASC / DESC / none on the
   focused column. Cheap; massive ergonomic delta from `\g`.
@@ -423,6 +404,37 @@ unified pass after the SSH-tunnel work.
   (`format_csv` / `tsv` / `json` / `expanded`) are unit-tested
   with RFC-4180 quoting, control-char escaping, and `\x`-style
   column padding.
+
+### Editor — authoring polish
+
+Three quality-of-life features after the psql-parity sweep.
+
+- **Semantic syntax highlighting.** New `query::highlight` module:
+  pure two-pass lex + classify. Keywords / functions / strings /
+  comments / numbers / identifiers via hand-rolled lexer (handles
+  `'`-escapes, dollar-quoted `$tag$ … $tag$`, nested block
+  comments, multi-byte safe). Identifiers then resolve against the
+  schema cache + in-scope tables / aliases / CTEs / virtual columns
+  — known stays default-coloured, unknown turns red (typo flag).
+  Loose resolution: any cache hit anywhere counts. Theme grows two
+  fields (`syn_string`, `syn_unknown`) for the dark / light /
+  high-contrast variants; everything else reuses existing colours.
+  The editor render walks per-line spans and overlays the cursor's
+  REVERSED glyph on top of whatever syntax colour it sits in. 17
+  unit tests cover the lexer.
+- **Auto-save editor buffer.** `util::data_dir()` (new helper —
+  `~/.local/share/pgman`) holds `draft.sql`; on quit we
+  `write_atomic` the current buffer there, on startup `main` reads
+  it back and seeds `editor_buffer` + cursor. Empty buffer clears
+  the persisted draft so a deliberate clean-out survives a restart.
+  Load lives in `main.rs` (not `App::new`) so unit tests don't
+  pull a live developer's draft from disk.
+- **`pg_format` buffer reformat (Ctrl-F).** Subprocess to
+  `pg_format` (the standard `pgformatter` Perl tool); buffer
+  piped to stdin, prettyprinted output replaces the editor. Missing
+  binary surfaces an actionable error (`brew install pgformatter
+  or apt install pgformatter`). Done inline since pg_format is
+  sub-second; spawn_blocking would just add plumbing.
 
 ### Completion
 

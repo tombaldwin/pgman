@@ -27,6 +27,13 @@ pub struct Theme {
     pub text: Color,
     pub accent: Color,
 
+    // SQL syntax highlighting in the editor.
+    /// String literal — `'foo'`, dollar-quoted, etc.
+    pub syn_string: Color,
+    /// Identifier that doesn't resolve in the schema cache /
+    /// in-scope tables — typo flag.
+    pub syn_unknown: Color,
+
     // Splash elephant palette (matches the Claude Design export)
     pub elephant_outline: Color,
     pub elephant_body: Color,
@@ -84,6 +91,9 @@ impl Theme {
             muted: Color::Rgb(150, 155, 170),
             text: Color::Rgb(220, 222, 230),
             accent: Color::Rgb(255, 200, 120),
+
+            syn_string: Color::Rgb(180, 220, 140),
+            syn_unknown: Color::Rgb(240, 140, 130),
 
             elephant_outline: Color::Rgb(14, 22, 56),
             elephant_body: Color::Rgb(125, 166, 230),
@@ -143,6 +153,9 @@ impl Theme {
             text: Color::Rgb(30, 32, 40),
             accent: Color::Rgb(180, 90, 0),
 
+            syn_string: Color::Rgb(40, 120, 40),
+            syn_unknown: Color::Rgb(180, 40, 40),
+
             elephant_outline: Color::Rgb(14, 22, 56),
             elephant_body: Color::Rgb(125, 166, 230),
             elephant_shade: Color::Rgb(77, 123, 194),
@@ -200,6 +213,9 @@ impl Theme {
             muted: Color::Rgb(220, 220, 220),
             text: Color::Rgb(255, 255, 255),
             accent: Color::Rgb(255, 180, 0),
+
+            syn_string: Color::Rgb(120, 240, 120),
+            syn_unknown: Color::Rgb(255, 80, 80),
 
             elephant_outline: Color::Rgb(0, 0, 0),
             elephant_body: Color::Rgb(125, 166, 230),
