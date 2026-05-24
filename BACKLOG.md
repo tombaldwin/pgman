@@ -68,12 +68,13 @@ under Done, no matter which milestone it came from.
   `y` yanks the focused path (`.foo[0].bar`); Enter expands /
   collapses. Today they render as flat wrapped text.
 
-### Schema browser
-- **`:schema` tree view** — schemas → tables → cols / indexes /
-  constraints / FKs. Left pane is the tree; right pane shows DDL +
-  a sample-rows preview + table size for the focused node. Removes
-  the "what was that table called again" lookup that's currently
-  served only by completion.
+### Schema browser — follow-ups
+- DDL preview pane (live `pg_get_tabledef`-ish query) for the
+  focused table.
+- Sample-rows preview (live `SELECT * FROM tbl LIMIT 5`).
+- Table size (`pg_relation_size` + `pg_total_relation_size`).
+- Indexes listed alongside constraints (cache.indexes is already
+  populated; just thread it through).
 - One-key actions on the focused node: copy DDL, generate
   `SELECT * FROM …`, generate `INSERT INTO … (cols) VALUES (…)`
   template.
@@ -424,6 +425,19 @@ Three quality-of-life features after the psql-parity sweep.
   binary surfaces an actionable error (`brew install pgformatter
   or apt install pgformatter`). Done inline since pg_format is
   sub-second; spawn_blocking would just add plumbing.
+
+### Schema browser
+
+- **`S` schema browser** — new `Mode::SchemaBrowser` overlay. Left
+  pane: tree of schemas → tables (collapsed by default; Enter
+  toggles each schema). Right pane: details for the focused
+  row — `schema: X · N tables` for schemas, `schema.table` with
+  column list + constraint list (from `cache.constraints`) for
+  tables. Pure flatten helper (`flatten_schema_browser`) — no
+  live queries, served entirely from the schema cache. j/k
+  navigate, Enter expand, g/G jump, q/esc close. Five unit tests
+  + one insta snapshot. Live DDL / sample-rows / table size are
+  follow-ups in the Open section above.
 
 ### EXPLAIN plan visualizer
 

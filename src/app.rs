@@ -70,6 +70,11 @@ pub enum Mode {
     /// Opened automatically when Ctrl-E / Ctrl-A succeeds and the
     /// JSON parses; j/k navigate, Enter expand/collapse, Esc closes.
     ExplainTree,
+    /// Schema browser overlay (`S` from Normal). Tree of schemas →
+    /// tables on the left; columns + constraints for the focused
+    /// table on the right. psql `\d` equivalent, served from the
+    /// schema cache so no live queries are issued.
+    SchemaBrowser,
 }
 
 /// Connection lifecycle state.
@@ -243,6 +248,75 @@ pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<
                 .collect()
         }
     }
+}
+
+/// One visible row in the flattened schema browser. Schemas are
+/// always present; tables only appear when their schema has been
+/// expanded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaBrowserRow {
+    Schema {
+        name: String,
+        expanded: bool,
+        table_count: usize,
+    },
+    Table {
+        schema: String,
+        name: String,
+    },
+}
+
+/// Pure: walk the cache and emit visible rows in display order
+/// (schemas alphabetical; under each expanded schema, its tables
+/// alphabetical). When `expanded` is empty every schema renders
+/// collapsed — the tree starts at the schema level.
+pub fn flatten_schema_browser(
+    cache: &crate::query::schema::SchemaCache,
+    expanded: &std::collections::HashSet<String>,
+) -> Vec<SchemaBrowserRow> {
+    // Tables grouped by schema, sorted by name within each. Walk
+    // `cache.schemas` (alphabetical via the catalog fetch) so the
+    // output order is stable.
+    let mut by_schema: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for t in &cache.tables {
+        by_schema
+            .entry(t.schema.as_str())
+            .or_default()
+            .push(t.name.as_str());
+    }
+    for tables in by_schema.values_mut() {
+        tables.sort_unstable();
+    }
+    let mut out = Vec::new();
+    let mut schemas: Vec<&str> = cache.schemas.iter().map(String::as_str).collect();
+    // Some schemas (e.g. `pg_catalog`) only appear in the cache's
+    // tables list, not in `schemas`. Fold those in so the operator
+    // sees every namespace they can query.
+    for &s in by_schema.keys() {
+        if !schemas.contains(&s) {
+            schemas.push(s);
+        }
+    }
+    schemas.sort_unstable();
+    for s in schemas {
+        let tables = by_schema.get(s).cloned().unwrap_or_default();
+        let is_expanded = expanded.contains(s);
+        out.push(SchemaBrowserRow::Schema {
+            name: s.to_string(),
+            expanded: is_expanded,
+            table_count: tables.len(),
+        });
+        if is_expanded {
+            for t in tables {
+                out.push(SchemaBrowserRow::Table {
+                    schema: s.to_string(),
+                    name: t.to_string(),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// One visible row in the flattened EXPLAIN tree. Carries enough
@@ -631,6 +705,12 @@ pub struct App {
     /// the operator has collapsed. The renderer hides anything below
     /// these.
     pub explain_collapsed: std::collections::HashSet<Vec<usize>>,
+    /// Schema browser cursor — index into the flattened
+    /// (post-expand-state) row list.
+    pub schema_browser_cursor: usize,
+    /// Names of schemas the operator has expanded. Schemas start
+    /// collapsed; the operator picks which to drill into.
+    pub schema_browser_expanded: std::collections::HashSet<String>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -725,6 +805,8 @@ impl App {
             explain_plan: None,
             explain_cursor: 0,
             explain_collapsed: std::collections::HashSet::new(),
+            schema_browser_cursor: 0,
+            schema_browser_expanded: std::collections::HashSet::new(),
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -1239,6 +1321,7 @@ impl App {
             Mode::HistorySearch => self.on_history_search_key(key),
             Mode::GridFilter => self.on_grid_filter_key(key),
             Mode::ExplainTree => self.on_explain_tree_key(key),
+            Mode::SchemaBrowser => self.on_schema_browser_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -1512,6 +1595,7 @@ impl App {
             }
             KeyCode::Enter => self.open_row_detail(),
             KeyCode::Char('A') => self.mode = Mode::About,
+            KeyCode::Char('S') => self.start_schema_browser(),
             _ => {}
         }
     }
@@ -2873,6 +2957,63 @@ impl App {
         let mut path = Vec::new();
         flatten_plan(plan, &mut path, 0, &self.explain_collapsed, &mut out);
         out
+    }
+
+    /// Re-flatten the schema browser against the live cache +
+    /// expand state. The renderer and the key handler both consult
+    /// this; pulling it onto App keeps the two in sync.
+    pub fn flattened_schema_browser(&self) -> Vec<SchemaBrowserRow> {
+        flatten_schema_browser(&self.schema_cache, &self.schema_browser_expanded)
+    }
+
+    /// `S` from Normal — opens the schema browser. No-op when the
+    /// cache is empty (disconnected / permission failure on the
+    /// `pg_catalog` fetch).
+    fn start_schema_browser(&mut self) {
+        if self.schema_cache.is_empty() {
+            self.last_status = Some(
+                "schema cache empty — connect to a database first".into(),
+            );
+            return;
+        }
+        self.schema_browser_cursor = 0;
+        self.mode = Mode::SchemaBrowser;
+    }
+
+    fn on_schema_browser_key(&mut self, key: KeyEvent) {
+        let rows = self.flattened_schema_browser();
+        let last = rows.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.schema_browser_cursor = (self.schema_browser_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.schema_browser_cursor =
+                    self.schema_browser_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.schema_browser_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.schema_browser_cursor = last,
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Right | KeyCode::Left => {
+                // On a schema row: toggle expanded. On a table row:
+                // no-op for v1 (sample-rows / DDL preview is a
+                // follow-up).
+                if let Some(SchemaBrowserRow::Schema { name, expanded, .. }) =
+                    rows.get(self.schema_browser_cursor)
+                {
+                    let name = name.clone();
+                    if *expanded {
+                        self.schema_browser_expanded.remove(&name);
+                    } else {
+                        self.schema_browser_expanded.insert(name);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn on_explain_tree_key(&mut self, key: KeyEvent) {
@@ -4237,6 +4378,123 @@ mod tests {
         assert_eq!(a.grid_visible_rows, vec![0, 1, 3]);
         a.grid_state.select(Some(1)); // second visible row → alice
         assert_eq!(a.selected_grid_row_idx(), Some(1));
+    }
+
+    fn app_with_schemas() -> App {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        let mut cache = crate::query::schema::SchemaCache::default();
+        cache.schemas = vec!["audit".into(), "public".into()];
+        cache.tables = vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "users".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "audit".into(),
+                name: "events".into(),
+            },
+        ];
+        cache.columns_by_table.insert(
+            ("public".into(), "users".into()),
+            vec!["id".into(), "email".into()],
+        );
+        a.schema_cache = cache;
+        a
+    }
+
+    #[test]
+    fn schema_browser_flat_starts_with_schemas_collapsed() {
+        let a = app_with_schemas();
+        let rows = a.flattened_schema_browser();
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(
+            rows[0],
+            SchemaBrowserRow::Schema {
+                ref name,
+                expanded: false,
+                ..
+            } if name == "audit"
+        ));
+        assert!(matches!(
+            rows[1],
+            SchemaBrowserRow::Schema {
+                ref name,
+                ..
+            } if name == "public"
+        ));
+    }
+
+    #[test]
+    fn schema_browser_enter_expands_focused_schema() {
+        let mut a = app_with_schemas();
+        a.mode = Mode::SchemaBrowser;
+        // Focus row 1 (public).
+        a.schema_browser_cursor = 1;
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let rows = a.flattened_schema_browser();
+        // Now: audit (collapsed), public (expanded), orders, users.
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(
+            rows[1],
+            SchemaBrowserRow::Schema {
+                expanded: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            rows[2],
+            SchemaBrowserRow::Table { ref name, .. } if name == "orders"
+        ));
+        assert!(matches!(
+            rows[3],
+            SchemaBrowserRow::Table { ref name, .. } if name == "users"
+        ));
+    }
+
+    #[test]
+    fn schema_browser_jk_nav_clamps_to_visible() {
+        let mut a = app_with_schemas();
+        a.mode = Mode::SchemaBrowser;
+        for _ in 0..10 {
+            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        }
+        // Only 2 visible rows (schemas collapsed); cursor at 1.
+        assert_eq!(a.schema_browser_cursor, 1);
+    }
+
+    #[test]
+    fn schema_browser_esc_returns_to_normal() {
+        let mut a = app_with_schemas();
+        a.mode = Mode::SchemaBrowser;
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn start_schema_browser_with_empty_cache_surfaces_hint() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Normal;
+        a.start_schema_browser();
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("schema cache empty"));
     }
 
     fn explain_app_with_plan() -> App {

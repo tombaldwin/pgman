@@ -67,6 +67,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::ExplainTree {
         draw_explain_tree(f, area, app);
     }
+    if app.mode == Mode::SchemaBrowser {
+        draw_schema_browser(f, area, app);
+    }
 }
 
 /// Theme colour for a sprite pixel — `None` for empty (transparent).
@@ -556,9 +559,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · c change conn · h/l col · s sort · / filter · Y export",
+                Mode::Normal => "q quit · ? help · e editor · S schema · c change conn · h/l col · s sort · / filter · Y export",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
+                Mode::SchemaBrowser => "j/k navigate · enter expand schema · g/G top/bottom · q / esc close",
             }
         };
         Line::from(Span::styled(
@@ -1642,6 +1646,7 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    ?             toggle this help"),
         Line::from("    e / i / tab   focus editor"),
         Line::from("    c             change connection (opens the picker mid-session)"),
+        Line::from("    S             schema browser (psql `\\d` equivalent)"),
         Line::from("    h / l  ← →    move column cursor"),
         Line::from("    s             cycle sort on focused column (off → ASC → DESC)"),
         Line::from("    /             live row filter (n/N step through matches)"),
@@ -1699,6 +1704,12 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    PageUp/Down   scroll by 10"),
         Line::from("    y             yank value to clipboard"),
         Line::from("    esc / enter   back to row detail"),
+        Line::from(""),
+        Line::from(Span::styled("  schema browser", Style::default().fg(theme.accent))),
+        Line::from("    j / k  ↑ ↓    navigate schemas / tables"),
+        Line::from("    enter         expand / collapse focused schema"),
+        Line::from("    g / G         jump to top / bottom"),
+        Line::from("    esc / q       close"),
         Line::from(""),
         Line::from(Span::styled("  EXPLAIN tree", Style::default().fg(theme.accent))),
         Line::from("    j / k  ↑ ↓    navigate plan nodes"),
@@ -1889,6 +1900,137 @@ fn draw_explain_tree(f: &mut Frame, area: Rect, app: &App) {
         }
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Schema browser modal. Two panes inside a centered overlay:
+/// the left holds the schema → table tree, the right holds the
+/// columns / constraints for the focused table (or a one-line
+/// summary for a focused schema). Static — driven entirely by the
+/// schema cache; no live queries.
+fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
+    use crate::app::SchemaBrowserRow;
+    let theme = &app.theme;
+    let rows = app.flattened_schema_browser();
+    let popup = centered_pct(area, 88, 80);
+    f.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " schema browser — q / esc close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let split = Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(inner);
+    let left = split[0];
+    let right = split[1];
+
+    // Left: scrollable tree.
+    let visible_h = left.height as usize;
+    let scroll = if app.schema_browser_cursor >= visible_h {
+        app.schema_browser_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, row) in rows.iter().enumerate().skip(scroll).take(visible_h) {
+        let is_focus = i == app.schema_browser_cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let text = match row {
+            SchemaBrowserRow::Schema {
+                name,
+                expanded,
+                table_count,
+            } => {
+                let marker = if *expanded { "▼" } else { "▶" };
+                format!("{marker} {name}  ({table_count})")
+            }
+            SchemaBrowserRow::Table { name, .. } => format!("    {name}"),
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), left);
+
+    // Right: details for the focused row.
+    let mut right_lines: Vec<Line> = Vec::new();
+    match rows.get(app.schema_browser_cursor) {
+        Some(SchemaBrowserRow::Schema {
+            name, table_count, ..
+        }) => {
+            right_lines.push(Line::from(Span::styled(
+                format!("schema: {name}"),
+                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+            )));
+            right_lines.push(Line::from(""));
+            right_lines.push(Line::from(format!("{table_count} table(s)")));
+            right_lines.push(Line::from(""));
+            right_lines.push(Line::from(Span::styled(
+                "enter to expand — then arrow / j/k into the tables",
+                Style::default().fg(theme.muted),
+            )));
+        }
+        Some(SchemaBrowserRow::Table { schema, name }) => {
+            right_lines.push(Line::from(Span::styled(
+                format!("{schema}.{name}"),
+                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+            )));
+            right_lines.push(Line::from(""));
+            // Columns from the cache (ordered by attnum).
+            let cols = app
+                .schema_cache
+                .columns_by_table
+                .get(&(schema.clone(), name.clone()))
+                .cloned()
+                .unwrap_or_default();
+            right_lines.push(Line::from(Span::styled(
+                format!("columns ({})", cols.len()),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            )));
+            for c in &cols {
+                right_lines.push(Line::from(format!("  · {c}")));
+            }
+            // Constraints for this table.
+            let cons: Vec<&crate::query::schema::ConstraintMeta> = app
+                .schema_cache
+                .constraints
+                .iter()
+                .filter(|c| {
+                    c.schema.eq_ignore_ascii_case(schema)
+                        && c.table.eq_ignore_ascii_case(name)
+                })
+                .collect();
+            if !cons.is_empty() {
+                right_lines.push(Line::from(""));
+                right_lines.push(Line::from(Span::styled(
+                    format!("constraints ({})", cons.len()),
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                )));
+                for c in cons {
+                    right_lines.push(Line::from(format!("  · {}", c.name)));
+                }
+            }
+        }
+        None => {
+            right_lines.push(Line::from(Span::styled(
+                "no schemas loaded",
+                Style::default().fg(theme.muted),
+            )));
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(right_lines)), right);
 }
 
 /// A centred `w`%×`h`% rectangle within `area`.
