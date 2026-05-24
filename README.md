@@ -104,6 +104,18 @@ cargo llvm-cov --all-targets            # summary in the terminal
 cargo llvm-cov --all-targets --html     # writes target/llvm-cov/html/
 ```
 
+Fuzzing (requires nightly + `cargo install cargo-fuzz`):
+
+```bash
+cd fuzz
+cargo +nightly fuzz run dsn_parse       # also: tokenize, hibernate_parse,
+                                        # pglog_parse, project_parse,
+                                        # safety_classify
+```
+
+Property-based tests (`cargo test`) and benchmarks (`cargo bench`)
+both run on stable. See `benches/hot_paths.rs` for the perf baseline.
+
 The integration tests cover end-to-end batch / pipe mode against a
 real Postgres on `127.0.0.1:55432`. Subprocess paths (`\e` editor,
 `pg_format`) are covered without integration by PATH-stubbed
