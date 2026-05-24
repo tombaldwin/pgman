@@ -79,10 +79,6 @@ under Done, no matter which milestone it came from.
   template.
 
 ### Performance / DBA
-- **EXPLAIN plan visualizer** — tree view of the plan with the
-  hottest node highlighted (by `actual_total_time` for ANALYZE, or
-  `total_cost` for plain EXPLAIN). Collapsible subtrees. The single
-  feature most likely to make someone download pgman over psql.
 - **pg_stat_statements top-N panel** — `:slow` opens a sorted list
   of the worst queries in the DB by `total_exec_time` /
   `mean_exec_time` / `calls`. One key copies the representative SQL
@@ -428,6 +424,21 @@ Three quality-of-life features after the psql-parity sweep.
   binary surfaces an actionable error (`brew install pgformatter
   or apt install pgformatter`). Done inline since pg_format is
   sub-second; spawn_blocking would just add plumbing.
+
+### EXPLAIN plan visualizer
+
+- **EXPLAIN plan visualizer** — Ctrl-E / Ctrl-A now send
+  `EXPLAIN (FORMAT JSON) …` / `EXPLAIN (ANALYZE, FORMAT JSON) …`,
+  parse the JSON via new `query::explain::parse`, and pop a
+  dedicated `Mode::ExplainTree`. The tree renders one node per
+  line with indent + expand/collapse glyph (`▼` / `▶` / `·` for
+  leaves), node-type-aware stats (actual time / cost; actual rows
+  / plan rows), and the *hottest* node (highest `Actual Total
+  Time` under ANALYZE, else `Total Cost`) is red-bolded so the
+  bottleneck pops at a glance. j/k navigate; Enter toggles
+  collapse on the focused subtree; g/G jump to root/last; q/Esc
+  close. Per-node `extras` (Filter, Index Cond, Hash Cond, …)
+  show under the focused row only — keeps the tree readable.
 
 ### Result grid — sort / filter / export
 
