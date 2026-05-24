@@ -139,6 +139,83 @@ pub struct WatchState {
     pub last_fire: std::time::Instant,
 }
 
+/// Inputs that block a `\watch` tick from firing — extracted out so
+/// the decision can be unit-tested without a real Instant or a tokio
+/// runtime.
+#[derive(Debug, Clone, Copy)]
+pub struct WatchTickInputs {
+    pub query_running: bool,
+    pub tx_open: bool,
+    pub pending_run: bool,
+    /// True when the App is in a mode that should pause the watch
+    /// loop (Confirm, TxDecision, picker, RowDetail, etc.).
+    pub mode_blocks: bool,
+}
+
+/// Pure decision: should the next `\watch` tick dispatch a re-run?
+/// Returns `true` when the interval has elapsed AND nothing is
+/// blocking (no query in flight, no modal up, etc.).
+pub fn watch_should_fire(
+    state: &WatchState,
+    now: std::time::Instant,
+    inputs: WatchTickInputs,
+) -> bool {
+    if inputs.query_running || inputs.tx_open || inputs.pending_run || inputs.mode_blocks {
+        return false;
+    }
+    now.duration_since(state.last_fire) >= state.interval
+}
+
+/// Pure decision: next sort state when the operator presses `s` over
+/// `target_col`. Cycle is `None → Some((col, true)) → Some((col,
+/// false)) → None`. Pressing `s` over a *different* column jumps to
+/// ASC on the new column rather than continuing the prior cycle —
+/// matches how spreadsheet apps disambiguate "I want this column now".
+pub fn next_sort_state(
+    current: Option<(usize, bool)>,
+    target_col: usize,
+) -> Option<(usize, bool)> {
+    match current {
+        None => Some((target_col, true)),
+        Some((c, true)) if c == target_col => Some((target_col, false)),
+        Some((c, false)) if c == target_col => None,
+        _ => Some((target_col, true)),
+    }
+}
+
+/// Pure: filter `rows` by `pattern` (case-insensitive substring
+/// across every column). Returns the row indices that match, in
+/// original order. `None` pattern means "everything".
+pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<usize> {
+    match pattern {
+        None => (0..rows.len()).collect(),
+        Some(pat) => {
+            let needle = pat.to_ascii_lowercase();
+            (0..rows.len())
+                .filter(|i| {
+                    rows[*i]
+                        .iter()
+                        .any(|c| c.to_ascii_lowercase().contains(&needle))
+                })
+                .collect()
+        }
+    }
+}
+
+/// Pure: reverse-incremental history match. Starting from
+/// `from_exclusive` (or `history.len()` when `None`), walks backward
+/// to find the newest entry that contains `needle` (case-
+/// insensitively). Returns the index of the match.
+pub fn history_search_next(
+    history: &[String],
+    needle: &str,
+    from_exclusive: Option<usize>,
+) -> Option<usize> {
+    let n = needle.to_ascii_lowercase();
+    let start = from_exclusive.unwrap_or(history.len());
+    (0..start).rev().find(|&i| history[i].to_ascii_lowercase().contains(&n))
+}
+
 /// Reverse-incremental history search state (Ctrl-R). The match cursor
 /// walks `App::history` from newest to oldest, looking for entries whose
 /// text contains `query` (case-insensitive substring). On accept the
@@ -497,60 +574,34 @@ impl App {
     /// back, then resume the TUI. Errors land in `last_error` and the
     /// terminal is always restored.
     fn run_external_editor(&mut self, tui: &mut Tui) {
-        use std::process::Command;
         let editor_cmd = std::env::var("EDITOR")
             .ok()
             .or_else(|| std::env::var("VISUAL").ok())
             .unwrap_or_else(|| "vi".to_string());
-        let (prog, args) = split_editor_command(&editor_cmd);
-
-        // Write the current buffer to a per-process temp file. Same
-        // pid for repeated edits in one session — content is replaced
-        // each round, so no leak.
-        let path = std::env::temp_dir().join(format!("pgman-{}.sql", std::process::id()));
-        if let Err(e) = std::fs::write(&path, &self.editor_buffer) {
-            self.last_error = Some(format!("could not write temp file for $EDITOR: {e}"));
-            return;
-        }
 
         if let Err(e) = tui.suspend() {
             self.last_error = Some(format!("could not suspend TUI: {e}"));
             return;
         }
-
-        let status = Command::new(&prog).args(&args).arg(&path).status();
-
+        let result = external_edit_via(&self.editor_buffer, &editor_cmd);
         // Resume the TUI even if the editor errored — leaving the
         // operator stuck in a half-suspended terminal would be much
         // worse than a slightly delayed error message.
         let resume_err = tui.resume().err();
-
-        match status {
-            Ok(s) if s.success() => match std::fs::read_to_string(&path) {
-                Ok(text) => {
-                    // Strip the trailing newline editors add — typical
-                    // SQL doesn't end with one, and a stray newline
-                    // would shift the buffer's last-line context.
-                    self.editor_buffer = text.trim_end_matches('\n').to_string();
-                    self.editor_cursor = self.editor_buffer.len();
-                    self.editor_preferred_col = None;
-                    self.history_pos = None;
-                    self.last_status =
-                        Some(format!("loaded {} char(s) from $EDITOR", self.editor_buffer.len()));
-                }
-                Err(e) => {
-                    self.last_error = Some(format!("could not read $EDITOR temp file: {e}"));
-                }
-            },
-            Ok(s) => {
-                self.last_error =
-                    Some(format!("$EDITOR ({prog}) exited with status {s} — buffer unchanged"));
+        match result {
+            Ok(text) => {
+                self.editor_buffer = text;
+                self.editor_cursor = self.editor_buffer.len();
+                self.editor_preferred_col = None;
+                self.history_pos = None;
+                self.draft_dirty = true;
+                self.last_status =
+                    Some(format!("loaded {} char(s) from $EDITOR", self.editor_buffer.len()));
             }
             Err(e) => {
-                self.last_error = Some(format!("could not run $EDITOR ({prog}): {e}"));
+                self.last_error = Some(e);
             }
         }
-        let _ = std::fs::remove_file(&path);
         if let Some(e) = resume_err {
             self.last_error = Some(format!("TUI resume after $EDITOR failed: {e}"));
         }
@@ -1780,15 +1831,14 @@ impl App {
     /// cased query as a substring. Updates `state.matched` and the
     /// editor buffer in place.
     fn history_search_step(&mut self, from_index: Option<usize>) {
-        let Some(state) = self.history_search.as_mut() else {
+        let Some(state) = self.history_search.as_ref() else {
             return;
         };
-        let needle = state.query.to_ascii_lowercase();
-        let start = from_index.unwrap_or(self.history.len());
-        let found = (0..start).rev().find(|&i| {
-            self.history[i].to_ascii_lowercase().contains(&needle)
-        });
-        state.matched = found;
+        let found = history_search_next(&self.history, &state.query, from_index);
+        // Borrow `history_search` mutably for the write of `matched`.
+        if let Some(s) = self.history_search.as_mut() {
+            s.matched = found;
+        }
         if let Some(i) = found {
             self.editor_buffer = self.history[i].clone();
             self.editor_cursor = self.editor_buffer.len();
@@ -1993,68 +2043,22 @@ impl App {
     /// buffer; the alternative (`spawn_blocking` + message round-
     /// trip) adds more plumbing than the operation deserves.
     fn reformat_buffer(&mut self) {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-
         if self.editor_buffer.trim().is_empty() {
             self.last_status = Some("nothing to format".into());
             return;
         }
-        let mut child = match Command::new("pg_format")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => {
-                self.last_error = Some(
-                    "pg_format not on PATH (brew install pgformatter \
-                     or apt install pgformatter)"
-                        .into(),
-                );
-                return;
+        match pg_format_via(&self.editor_buffer, "pg_format") {
+            Ok(formatted) => {
+                let chars = formatted.len();
+                self.editor_buffer = formatted;
+                self.editor_cursor = self.editor_buffer.len();
+                self.editor_preferred_col = None;
+                self.history_pos = None;
+                self.last_status =
+                    Some(format!("formatted via pg_format · {chars} char(s)"));
             }
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(self.editor_buffer.as_bytes()) {
-                self.last_error = Some(format!("pg_format stdin: {e}"));
-                let _ = child.kill();
-                return;
-            }
-            // Dropping `stdin` closes the pipe so pg_format reads
-            // EOF and emits its output.
+            Err(e) => self.last_error = Some(e),
         }
-        let output = match child.wait_with_output() {
-            Ok(o) => o,
-            Err(e) => {
-                self.last_error = Some(format!("pg_format failed: {e}"));
-                return;
-            }
-        };
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            self.last_error = Some(format!(
-                "pg_format error ({}): {}",
-                output.status,
-                stderr.trim()
-            ));
-            return;
-        }
-        let formatted = match String::from_utf8(output.stdout) {
-            Ok(s) => s,
-            Err(e) => {
-                self.last_error = Some(format!("pg_format produced non-UTF8: {e}"));
-                return;
-            }
-        };
-        let formatted = formatted.trim_end_matches('\n').to_string();
-        let chars = formatted.len();
-        self.editor_buffer = formatted;
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
-        self.history_pos = None;
-        self.last_status = Some(format!("formatted via pg_format · {chars} char(s)"));
     }
 
     fn start_watch(&mut self) {
@@ -2105,19 +2109,16 @@ impl App {
         let Some(state) = self.watch.as_ref() else {
             return;
         };
-        // Suppress while a modal is up — the Confirm safety prompt,
-        // the open-tx commit/rollback chooser, the picker, RowDetail,
-        // etc. all expect single-shot operator input. Without this
-        // the 2-s tick would re-fire `request_run`, repeatedly
-        // overwriting `pending_run` underneath an in-flight Confirm.
-        if self.query_running
-            || self.tx_open
-            || self.pending_run.is_some()
-            || !matches!(self.mode, Mode::Editor | Mode::Normal)
-        {
-            return;
-        }
-        if state.last_fire.elapsed() < state.interval {
+        let inputs = WatchTickInputs {
+            query_running: self.query_running,
+            tx_open: self.tx_open,
+            pending_run: self.pending_run.is_some(),
+            // Editor / Normal are the only modes that pair with a
+            // running watch — every other mode is a single-shot
+            // prompt or overlay that we shouldn't fire under.
+            mode_blocks: !matches!(self.mode, Mode::Editor | Mode::Normal),
+        };
+        if !watch_should_fire(state, std::time::Instant::now(), inputs) {
             return;
         }
         let sql = state.sql.clone();
@@ -2397,20 +2398,8 @@ impl App {
     /// visible set is just `0..rows.len()` (kept materialised so the
     /// render path has one code path).
     fn rebuild_visible_rows(&mut self) {
-        let n = self.grid.rows.len();
-        self.grid_visible_rows = match &self.grid_filter {
-            None => (0..n).collect(),
-            Some(pat) => {
-                let needle = pat.to_ascii_lowercase();
-                (0..n)
-                    .filter(|i| {
-                        self.grid.rows[*i]
-                            .iter()
-                            .any(|c| c.to_ascii_lowercase().contains(&needle))
-                    })
-                    .collect()
-            }
-        };
+        self.grid_visible_rows =
+            compute_visible_rows(&self.grid.rows, self.grid_filter.as_deref());
         // Keep the selection in range.
         let visible = self.grid_visible_rows.len();
         if visible == 0 {
@@ -2430,13 +2419,7 @@ impl App {
             return;
         }
         let col = self.grid_col_cursor.min(self.grid.columns.len() - 1);
-        let next = match self.grid_sort {
-            None => Some((col, true)),
-            Some((c, true)) if c == col => Some((col, false)),
-            Some((c, false)) if c == col => None,
-            // Different column: jump straight to ASC on the new one.
-            _ => Some((col, true)),
-        };
+        let next = next_sort_state(self.grid_sort, col);
         match next {
             Some((col, asc)) => {
                 if self.grid_raw_rows.is_none() {
@@ -2783,6 +2766,89 @@ fn line_end_byte(buffer: &str, cursor: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Pipe `input` to `binary` over stdin and return its stdout. The
+/// extracted core of `\f` reformatting — taking the binary path as
+/// a parameter lets the integration test point at a PATH-stubbed
+/// `fake_pg_format` without rebinding `$PATH` process-wide.
+pub fn pg_format_via(input: &str, binary: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| {
+            format!(
+                "{binary} not on PATH (brew install pgformatter \
+                 or apt install pgformatter)"
+            )
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("{binary} stdin: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("{binary} failed: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "{binary} error ({}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    let formatted = String::from_utf8(output.stdout)
+        .map_err(|e| format!("{binary} produced non-UTF8: {e}"))?;
+    Ok(formatted.trim_end_matches('\n').to_string())
+}
+
+/// Write `input` to a temp file, invoke `editor_cmd` (with optional
+/// args, whitespace-split) against the file, read it back. The
+/// extracted core of `\e` external-editor handling — same shape as
+/// `pg_format_via`: takes the editor command as a parameter so the
+/// integration test can drive a stubbed editor without `$EDITOR` env
+/// gymnastics.
+pub fn external_edit_via(input: &str, editor_cmd: &str) -> Result<String, String> {
+    use std::process::Command;
+    let (prog, args) = split_editor_command(editor_cmd);
+    // Per-call temp file: pid + a monotonic counter so parallel
+    // invocations (cargo's test runner spawns several test threads in
+    // one process) don't collide on the same path. Cleaned up on
+    // every exit branch.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "pgman-edit-{}-{}.sql",
+        std::process::id(),
+        seq
+    ));
+    std::fs::write(&path, input)
+        .map_err(|e| format!("could not write temp file for {prog}: {e}"))?;
+    let status = Command::new(&prog)
+        .args(&args)
+        .arg(&path)
+        .status()
+        .map_err(|e| {
+            // Best-effort cleanup before surfacing the spawn failure.
+            let _ = std::fs::remove_file(&path);
+            format!("could not run {prog}: {e}")
+        })?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!(
+            "{prog} exited with status {status} — buffer unchanged"
+        ));
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("could not read {prog} output: {e}"))?;
+    let _ = std::fs::remove_file(&path);
+    Ok(text.trim_end_matches('\n').to_string())
 }
 
 /// Path to the auto-saved editor draft. Lives under
@@ -3623,6 +3689,92 @@ mod tests {
         let (p, a) = split_editor_command("  emacs   -nw  ");
         assert_eq!(p, "emacs");
         assert_eq!(a, vec!["-nw"]);
+    }
+
+    // ---- pure decision functions ----
+
+    #[test]
+    fn watch_should_fire_respects_interval_and_blockers() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let state = WatchState {
+            sql: "SELECT 1".into(),
+            interval: Duration::from_secs(2),
+            last_fire: now,
+        };
+        let clear = WatchTickInputs {
+            query_running: false,
+            tx_open: false,
+            pending_run: false,
+            mode_blocks: false,
+        };
+        // Same instant → interval not elapsed.
+        assert!(!watch_should_fire(&state, now, clear));
+        // Just past the interval → fire.
+        assert!(watch_should_fire(
+            &state,
+            now + Duration::from_secs(2),
+            clear
+        ));
+        // Any blocker prevents fire even past the interval.
+        let fire_time = now + Duration::from_secs(10);
+        for inputs in [
+            WatchTickInputs { query_running: true, ..clear },
+            WatchTickInputs { tx_open: true, ..clear },
+            WatchTickInputs { pending_run: true, ..clear },
+            WatchTickInputs { mode_blocks: true, ..clear },
+        ] {
+            assert!(
+                !watch_should_fire(&state, fire_time, inputs),
+                "blocker {inputs:?} should suppress fire"
+            );
+        }
+    }
+
+    #[test]
+    fn next_sort_state_cycles_through_target_column() {
+        assert_eq!(next_sort_state(None, 3), Some((3, true)));
+        assert_eq!(next_sort_state(Some((3, true)), 3), Some((3, false)));
+        assert_eq!(next_sort_state(Some((3, false)), 3), None);
+        // Different column → jump to ASC on the new one.
+        assert_eq!(next_sort_state(Some((3, true)), 5), Some((5, true)));
+        assert_eq!(next_sort_state(Some((3, false)), 5), Some((5, true)));
+    }
+
+    #[test]
+    fn compute_visible_rows_filters_case_insensitively_across_columns() {
+        let rows = vec![
+            vec!["1".into(), "alice".into()],
+            vec!["2".into(), "BOB".into()],
+            vec!["3".into(), "carol".into()],
+        ];
+        // No filter → all rows in order.
+        assert_eq!(compute_visible_rows(&rows, None), vec![0, 1, 2]);
+        // Match in column 1, case-insensitive.
+        assert_eq!(compute_visible_rows(&rows, Some("bo")), vec![1]);
+        // Match in column 0 (numeric column).
+        assert_eq!(compute_visible_rows(&rows, Some("3")), vec![2]);
+        // No matches.
+        assert!(compute_visible_rows(&rows, Some("xyz")).is_empty());
+    }
+
+    #[test]
+    fn history_search_next_walks_backward_case_insensitive() {
+        let history: Vec<String> = vec![
+            "SELECT 1".into(),
+            "INSERT INTO logs VALUES (1)".into(),
+            "SELECT * FROM users".into(),
+            "UPDATE accounts SET balance=0".into(),
+        ];
+        // From end, "sel" finds idx 2 (most recent SELECT).
+        assert_eq!(history_search_next(&history, "sel", None), Some(2));
+        // From before that match, finds idx 0.
+        assert_eq!(history_search_next(&history, "sel", Some(2)), Some(0));
+        // Past the earliest match → None.
+        assert_eq!(history_search_next(&history, "sel", Some(0)), None);
+        // Case-insensitive match.
+        assert_eq!(history_search_next(&history, "INSERT", None), Some(1));
+        assert_eq!(history_search_next(&history, "insert", None), Some(1));
     }
 
     fn app_with_grid(grid: Grid) -> App {
