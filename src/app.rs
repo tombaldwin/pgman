@@ -54,6 +54,13 @@ pub enum Mode {
     /// wrapped to popup width and scrollable — useful for JSON / large
     /// text fields that overflow the row-detail card.
     CellDetail,
+    /// Reverse-incremental history search (Ctrl-R from editor). The
+    /// operator types a substring; the editor buffer reflects the
+    /// most-recent matching history entry. Enter accepts (stays in
+    /// the editor with the match); Esc cancels (restores the
+    /// pre-search buffer / cursor). Ctrl-R again jumps to the next
+    /// older match.
+    HistorySearch,
 }
 
 /// Connection lifecycle state.
@@ -114,6 +121,22 @@ pub struct CompletionCycle {
     /// any specific candidate — the next Tab will pick `candidates[0]`.
     /// `Some(i)` means `candidates[i]` is currently in the buffer.
     pub selected: Option<usize>,
+}
+
+/// Reverse-incremental history search state (Ctrl-R). The match cursor
+/// walks `App::history` from newest to oldest, looking for entries whose
+/// text contains `query` (case-insensitive substring). On accept the
+/// matched history entry stays in the editor; on cancel the
+/// pre-search buffer and cursor are restored.
+#[derive(Debug, Clone, Default)]
+pub struct HistorySearchState {
+    /// The substring the operator has typed so far.
+    pub query: String,
+    /// Index into `App::history` of the current match, if any.
+    pub matched: Option<usize>,
+    /// Buffer + cursor at the moment the search started — restored on Esc.
+    pub saved_buffer: String,
+    pub saved_cursor: usize,
 }
 
 /// A data source the user can pick at startup. Built from external sources
@@ -240,6 +263,11 @@ pub struct App {
     /// more times in a row. Reset on any non-Tab editor keypress so a
     /// subsequent Tab starts a fresh cycle from the current cursor.
     pub completion: Option<CompletionCycle>,
+    /// Active reverse-incremental history search session (Ctrl-R).
+    /// When `Some`, `mode == Mode::HistorySearch` and the editor
+    /// buffer reflects the current match — Enter accepts, Esc
+    /// restores the saved buffer / cursor.
+    pub history_search: Option<HistorySearchState>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -315,6 +343,7 @@ impl App {
             cell_detail_max_scroll: 0,
             schema_cache: SchemaCache::default(),
             completion: None,
+            history_search: None,
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -495,10 +524,33 @@ impl App {
                     self.mode = Mode::TxDecision;
                 }
             }
-            AppMsg::QueryFailed { error, .. } => {
+            AppMsg::QueryFailed {
+                error, position, ..
+            } => {
                 self.query_running = false;
                 self.last_status = None;
                 self.last_error = Some(error);
+                // Postgres flagged a syntax error at a specific
+                // character — move the editor cursor there so the
+                // operator sees the offending token. The position is
+                // 1-indexed CHARS into the SQL we submitted; convert
+                // to a 0-indexed BYTE offset into `editor_buffer`.
+                // Out-of-range positions are ignored (could happen
+                // for batches where we sent a transformed string).
+                if let Some(p) = position {
+                    let target_chars = p.saturating_sub(1) as usize;
+                    let byte_offset = self
+                        .editor_buffer
+                        .char_indices()
+                        .nth(target_chars)
+                        .map(|(b, _)| b)
+                        .unwrap_or(self.editor_buffer.len());
+                    self.editor_cursor = byte_offset;
+                    self.editor_preferred_col = None;
+                    if self.mode == Mode::Normal {
+                        self.mode = Mode::Editor;
+                    }
+                }
             }
             AppMsg::TxClosed {
                 committed, error, ..
@@ -561,10 +613,18 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
-        // Ctrl-C always quits.
+        // Ctrl-C quits — UNLESS we're in the editor, where Ctrl-C
+        // cancels a running query (the editor's own handler picks it
+        // up below). An idle editor still falls through to the
+        // editor handler, which no-ops on Ctrl-C with no query — a
+        // reflex Ctrl-C in mid-typing shouldn't lose the buffer.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
-            return;
+            if self.mode != Mode::Editor {
+                self.should_quit = true;
+                return;
+            }
+            // Fall through to the editor's on_editor_key for the
+            // cancel-or-no-op logic.
         }
         // Any key dismisses the splash — but the key then flows through
         // to the mode dispatcher rather than being consumed. Snappy
@@ -585,6 +645,7 @@ impl App {
             Mode::RowDetail => self.on_row_detail_key(key),
             Mode::CellDetail => self.on_cell_detail_key(key),
             Mode::About => self.on_about_key(key),
+            Mode::HistorySearch => self.on_history_search_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -908,11 +969,22 @@ impl App {
             KeyCode::Esc => self.mode = Mode::Normal,
             // Run keys (Ctrl-* primary; F-keys are aliases for full-keyboard
             // users — F-keys on a MacBook need fn+). Enter inserts a newline.
-            KeyCode::Char('r') if ctrl => self.request_run(RunKind::Run),
+            // Ctrl-R is reverse-incremental history search (matches
+            // bash / readline / psql convention). Run moves to F5 and
+            // Ctrl-Enter (terminal-dependent) — see below.
+            KeyCode::Char('r') if ctrl => self.start_history_search(),
             KeyCode::Char('e') if ctrl => self.request_run(RunKind::Explain),
             KeyCode::Char('a') if ctrl => self.request_run(RunKind::ExplainAnalyze),
             KeyCode::Char('l') if ctrl => self.start_log_import(),
             KeyCode::Char('d') if ctrl => self.load_dbunit_fixture(),
+            // Some terminals report Ctrl-Enter; others fold it into
+            // Ctrl-J. Both run.
+            KeyCode::Enter if ctrl => self.request_run(RunKind::Run),
+            KeyCode::Char('j') if ctrl => self.request_run(RunKind::Run),
+            // Ctrl-C while a query is in flight sends a PostgreSQL
+            // CancelRequest to the same backend. No-op otherwise (we
+            // run in raw mode so Ctrl-C doesn't quit).
+            KeyCode::Char('c') if ctrl && self.query_running => self.cancel_running_query(),
             KeyCode::F(5) => self.request_run(RunKind::Run),
             KeyCode::F(6) => self.request_run(RunKind::Explain),
             KeyCode::F(7) => self.request_run(RunKind::ExplainAnalyze),
@@ -1383,6 +1455,121 @@ impl App {
         self.editor_preferred_col = None;
     }
 
+    /// Ctrl-R from the editor — enter reverse-incremental history
+    /// search. Snapshots the buffer/cursor so Esc can restore them;
+    /// then begins searching from the newest history entry. The
+    /// initial query is empty, so the most-recent entry shows by
+    /// default (matches bash's "Ctrl-R then Enter recalls the last
+    /// command" idiom). If history is empty, surface a status and
+    /// stay in editor mode.
+    fn start_history_search(&mut self) {
+        if self.history.is_empty() {
+            self.last_status = Some("history is empty".to_string());
+            return;
+        }
+        let saved_buffer = self.editor_buffer.clone();
+        let saved_cursor = self.editor_cursor;
+        let initial = self.history.len() - 1;
+        self.history_search = Some(HistorySearchState {
+            query: String::new(),
+            matched: Some(initial),
+            saved_buffer,
+            saved_cursor,
+        });
+        // Mirror the most-recent entry into the buffer so the
+        // operator can see what they'd commit to with Enter.
+        self.editor_buffer = self.history[initial].clone();
+        self.editor_cursor = self.editor_buffer.len();
+        self.mode = Mode::HistorySearch;
+        self.refresh_history_search_status();
+    }
+
+    /// Sync the footer status to the active history-search session —
+    /// `(reverse-i-search) 'query'` when there's a match, or
+    /// `(failed reverse-i-search) 'query'` when not (mirroring bash).
+    fn refresh_history_search_status(&mut self) {
+        let Some(state) = self.history_search.as_ref() else {
+            return;
+        };
+        self.last_status = Some(match state.matched {
+            Some(_) => format!("(reverse-i-search) '{}'", state.query),
+            None => format!("(failed reverse-i-search) '{}'", state.query),
+        });
+    }
+
+    /// Reverse-incremental search step: starting from
+    /// `state.matched.unwrap_or(history.len())`, walk backward (older)
+    /// looking for an entry whose lowercased text contains the lower-
+    /// cased query as a substring. Updates `state.matched` and the
+    /// editor buffer in place.
+    fn history_search_step(&mut self, from_index: Option<usize>) {
+        let Some(state) = self.history_search.as_mut() else {
+            return;
+        };
+        let needle = state.query.to_ascii_lowercase();
+        let start = from_index.unwrap_or(self.history.len());
+        let found = (0..start).rev().find(|&i| {
+            self.history[i].to_ascii_lowercase().contains(&needle)
+        });
+        state.matched = found;
+        if let Some(i) = found {
+            self.editor_buffer = self.history[i].clone();
+            self.editor_cursor = self.editor_buffer.len();
+        }
+        // If `found` is None we leave the buffer alone (showing the
+        // last good match) — same UX as bash, where a failed search
+        // displays `(failed reverse-i-search)` but keeps the prior
+        // match on screen.
+    }
+
+    /// Handle a key while in Mode::HistorySearch. Char/Backspace edit
+    /// the query and re-search from the latest match. Ctrl-R jumps to
+    /// the next-older match. Enter accepts (stays in Editor with the
+    /// matched buffer). Esc cancels (restores the snapshot).
+    fn on_history_search_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => {
+                if let Some(state) = self.history_search.take() {
+                    self.editor_buffer = state.saved_buffer;
+                    self.editor_cursor = state.saved_cursor;
+                }
+                self.last_status = None;
+                self.mode = Mode::Editor;
+            }
+            KeyCode::Enter => {
+                // Accept: keep whatever's in the buffer (the matched
+                // history entry) and exit back to Editor.
+                self.history_search = None;
+                self.last_status = None;
+                self.mode = Mode::Editor;
+            }
+            KeyCode::Char('r') if ctrl => {
+                // Jump to the next-older match. Start from the
+                // CURRENT match's index (exclusive) so we move
+                // backward through history.
+                let from = self.history_search.as_ref().and_then(|s| s.matched);
+                self.history_search_step(from);
+                self.refresh_history_search_status();
+            }
+            KeyCode::Backspace => {
+                if let Some(state) = self.history_search.as_mut() {
+                    state.query.pop();
+                }
+                self.history_search_step(None);
+                self.refresh_history_search_status();
+            }
+            KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(state) = self.history_search.as_mut() {
+                    state.query.push(c);
+                }
+                self.history_search_step(None);
+                self.refresh_history_search_status();
+            }
+            _ => {}
+        }
+    }
+
     fn on_confirm_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -1500,6 +1687,36 @@ impl App {
     }
 
     // -- run dispatch --
+
+    /// Ctrl-C while a query is in flight. Sends a PostgreSQL
+    /// `CancelRequest` to the backend by opening a fresh TCP
+    /// connection to the same Postgres process and emitting the
+    /// magic 16-byte packet — that's what `tokio_postgres`'s
+    /// `CancelToken::cancel_query` does. The original `execute`
+    /// future then resolves with a cancellation error and lands as
+    /// the normal `QueryFailed` message, which resets
+    /// `query_running` for us.
+    ///
+    /// Tunneled connections inherit the original `Config` (with
+    /// `hostaddr = 127.0.0.1` pointed at the local ssh-forward), so
+    /// the cancel TCP rides through the same tunnel.
+    fn cancel_running_query(&mut self) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        self.last_status = Some("cancelling query…".to_string());
+        let cancel_token = client.cancel_token();
+        tokio::spawn(async move {
+            // CancelRequest is itself an unauthenticated short
+            // packet; servers always accept it plaintext. Using
+            // `NoTls` here is intentional — we don't carry creds
+            // and don't need the round-trip cost of a fresh TLS
+            // handshake to interrupt a query.
+            if let Err(e) = cancel_token.cancel_query(tokio_postgres::NoTls).await {
+                tracing::warn!("CancelRequest failed: {e}");
+            }
+        });
+    }
 
     /// User requested a run. Classify, evaluate safety, and either run, prompt,
     /// or reject. Multi-statement buffers (e.g. DBUnit scripts) take the batch
@@ -1692,7 +1909,11 @@ impl App {
                     kind_label: kind.label().to_string(),
                     tx_open_after,
                 },
-                Err(error) => AppMsg::QueryFailed { generation, error },
+                Err(err) => AppMsg::QueryFailed {
+                    generation,
+                    error: err.msg,
+                    position: err.position,
+                },
             };
             let _ = tx.send(msg);
         });
@@ -1892,14 +2113,14 @@ async fn execute(
     kind: RunKind,
     decision: &Decision,
     is_batch: bool,
-) -> Result<Grid, String> {
+) -> Result<Grid, conn::QueryErr> {
     if is_batch {
         // Only plain Run makes sense for a multi-statement script.
         if !matches!(kind, RunKind::Run) {
-            return Err(format!(
+            return Err(conn::QueryErr::msg(format!(
                 "{} not supported for multi-statement scripts",
                 kind.label()
-            ));
+            )));
         }
         return if decision.wrap_in_tx {
             conn::run_batch_in_tx_open(client, sql).await
@@ -1919,17 +2140,28 @@ async fn execute(
         }
         RunKind::Explain => {
             let wrapped = format!("EXPLAIN {sql}");
-            conn::run_statement(client, &wrapped).await
+            conn::run_statement(client, &wrapped).await.map_err(|mut e| {
+                // Position came back relative to the wrapped string;
+                // shift it back into the user's buffer. `EXPLAIN ` =
+                // 8 chars; positions ≤ that point inside the wrapper
+                // itself, so drop them.
+                e.position = e.position.and_then(|p| p.checked_sub(8));
+                e
+            })
         }
         RunKind::ExplainAnalyze => {
             let wrapped = format!("EXPLAIN ANALYZE {sql}");
-            if decision.kind.is_write() {
+            let result = if decision.kind.is_write() {
                 // The DML inside EXPLAIN ANALYZE actually runs — wrap and
                 // rollback so it never lands.
                 conn::run_in_tx_rollback(client, &wrapped).await
             } else {
                 conn::run_statement(client, &wrapped).await
-            }
+            };
+            result.map_err(|mut e| {
+                e.position = e.position.and_then(|p| p.checked_sub(16)); // len("EXPLAIN ANALYZE ")
+                e
+            })
         }
     }
 }
@@ -2441,5 +2673,169 @@ mod tests {
         let cycle = a.completion.as_ref().expect("cycle should be alive");
         assert!(cycle.selected.is_none());
         assert_eq!(cycle.candidates.len(), 2);
+    }
+
+    #[test]
+    fn query_failed_with_position_jumps_editor_cursor() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        // Buffer with multibyte char before the position so we
+        // exercise char→byte conversion. `é` is 2 bytes; `id` is at
+        // chars 8..10. Postgres positions are 1-indexed chars, so
+        // position 9 points at `d`.
+        a.editor_buffer = "SELECT é, id FROM t".into();
+        a.editor_cursor = 0;
+        a.generation = 1;
+        let _ = a.msg_tx.send(AppMsg::QueryFailed {
+            generation: 1,
+            error: "ERROR: column \"d\" does not exist".into(),
+            position: Some(9),
+        });
+        // Pump the single queued message.
+        if let Some(rx) = a.msg_rx.as_mut() {
+            if let Ok(msg) = rx.try_recv() {
+                a.on_msg(msg);
+            }
+        }
+        // Position 9 (1-indexed char) → 0-indexed char 8. Byte
+        // offset of char 8 in "SELECT é, id FROM t" — chars are
+        // S(1) E(1) L(1) E(1) C(1) T(1) space(1) é(2)... so char 8
+        // is `,` at byte 9.
+        assert_eq!(a.editor_cursor, 9, "cursor should land at byte 9");
+        assert!(a.last_error.as_deref().unwrap().contains("does not exist"));
+    }
+
+    #[test]
+    fn history_search_finds_most_recent_match_and_walks_older() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.history = vec![
+            "SELECT * FROM users".into(),
+            "INSERT INTO logs VALUES (1)".into(),
+            "SELECT count(*) FROM orders".into(),
+            "UPDATE users SET active=true".into(),
+        ];
+        a.mode = Mode::Editor;
+        a.editor_buffer = "draft".into();
+        a.editor_cursor = a.editor_buffer.len();
+        a.start_history_search();
+        // Empty query → most-recent entry shown.
+        assert_eq!(a.mode, Mode::HistorySearch);
+        assert_eq!(a.editor_buffer, "UPDATE users SET active=true");
+        // Type 'sel' through on_key so the mode dispatcher routes
+        // each keystroke to the history-search handler.
+        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(a.editor_buffer, "SELECT count(*) FROM orders");
+        // Ctrl-R again → next-older match (index 0, `SELECT * FROM users`).
+        a.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        // Enter accepts: stays in Editor with the matched buffer.
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Editor);
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        assert!(a.history_search.is_none());
+    }
+
+    #[test]
+    fn history_search_esc_restores_pre_search_buffer() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.history = vec!["SELECT 1".into()];
+        a.mode = Mode::Editor;
+        a.editor_buffer = "draft in progress".into();
+        a.editor_cursor = 5;
+        a.start_history_search();
+        assert_eq!(a.editor_buffer, "SELECT 1");
+        // Esc: restore.
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(a.editor_buffer, "draft in progress");
+        assert_eq!(a.editor_cursor, 5);
+        assert_eq!(a.mode, Mode::Editor);
+    }
+
+    #[test]
+    fn history_search_no_match_keeps_last_good_buffer() {
+        // bash-like behaviour: a typo after a successful match keeps
+        // the prior match on screen and surfaces the failure in status.
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.history = vec!["SELECT * FROM users".into()];
+        a.mode = Mode::Editor;
+        a.start_history_search();
+        // 'sel' matches → buffer = SELECT...
+        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        // 'selz' doesn't match → buffer unchanged; status flags failure.
+        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
+        assert_eq!(a.editor_buffer, "SELECT * FROM users");
+        assert!(
+            a.last_status
+                .as_deref()
+                .unwrap_or("")
+                .contains("failed reverse-i-search"),
+            "expected failure status, got {:?}",
+            a.last_status
+        );
+    }
+
+    #[test]
+    fn ctrl_r_on_empty_history_no_ops_with_status() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::Editor;
+        // No history.
+        a.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert_eq!(a.mode, Mode::Editor);
+        assert!(a.history_search.is_none());
+        assert_eq!(a.last_status.as_deref(), Some("history is empty"));
+    }
+
+    #[test]
+    fn query_failed_with_position_past_buffer_clamps_to_end() {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.editor_buffer = "SELECT 1".into();
+        a.editor_cursor = 0;
+        a.generation = 1;
+        let _ = a.msg_tx.send(AppMsg::QueryFailed {
+            generation: 1,
+            error: "boom".into(),
+            position: Some(999),
+        });
+        if let Some(rx) = a.msg_rx.as_mut() {
+            if let Ok(msg) = rx.try_recv() {
+                a.on_msg(msg);
+            }
+        }
+        assert_eq!(a.editor_cursor, a.editor_buffer.len());
     }
 }
