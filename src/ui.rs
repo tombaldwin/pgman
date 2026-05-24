@@ -1443,6 +1443,8 @@ fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         Line::from("    ctrl-e / F6   EXPLAIN  (never executes)"),
         Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
         Line::from("    ctrl-r         reverse-incremental history search"),
+        Line::from("    ctrl-w         \\watch — re-run every 2s, any key stops"),
+        Line::from("    ctrl-x         open the buffer in $EDITOR (\\e)"),
         Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
         Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
         Line::from("    tab / ctrl-spc identifier completion (cycles on repeat tab)"),

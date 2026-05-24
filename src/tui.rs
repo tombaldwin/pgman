@@ -66,6 +66,31 @@ impl Tui {
         self.terminal.draw(|f| crate::ui::draw(f, app))?;
         Ok(())
     }
+
+    /// Step out of the alternate screen + raw mode so a child process
+    /// (like `$EDITOR`) can take over the terminal. The terminal
+    /// stays in this state until `resume()` is called or `Tui` is
+    /// dropped. Idempotent enough that a failed resume still leaves
+    /// the operator with a usable shell.
+    pub fn suspend(&mut self) -> io::Result<()> {
+        let mut stdout = io::stdout();
+        let _ = stdout.execute(DisableBracketedPaste);
+        disable_raw_mode()?;
+        stdout.execute(LeaveAlternateScreen)?;
+        Ok(())
+    }
+
+    /// Re-enter alt screen + raw mode after a `suspend()`. Caller
+    /// should call `terminal.clear()` (via the next `draw`) so the
+    /// display catches up after the child clobbered the screen.
+    pub fn resume(&mut self) -> io::Result<()> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        stdout.execute(EnterAlternateScreen)?;
+        let _ = stdout.execute(EnableBracketedPaste);
+        self.terminal.clear()?;
+        Ok(())
+    }
 }
 
 impl Drop for Tui {
