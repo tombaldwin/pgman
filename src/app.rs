@@ -455,10 +455,16 @@ impl App {
             } => {
                 self.conn_state = ConnState::Connected { server_version };
                 self.client = Some(client);
-                // Hold the tunnel (if any) so its Drop fires when the
-                // App loses the client — typically on a reconnect, or
-                // at quit. Old tunnel is dropped here, terminating
-                // that ssh subprocess before the new one comes up.
+                // Hold the new tunnel (if any) so its Drop fires when
+                // the App loses the client at quit / next reconnect.
+                // The PREVIOUS tunnel — if there was one — must be
+                // dropped off-thread: `SshTunnel::drop` does
+                // `child.kill()` + blocking `child.wait()`, and a
+                // wedged ssh subprocess (e.g. stuck ProxyCommand)
+                // would otherwise freeze the UI loop here.
+                if let Some(old) = self.tunnel.take() {
+                    tokio::task::spawn_blocking(move || drop(old));
+                }
                 self.tunnel = tunnel;
                 self.grid = grid;
                 self.grid_state
