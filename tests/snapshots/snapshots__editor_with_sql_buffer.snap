@@ -1,0 +1,21 @@
+---
+source: tests/snapshots.rs
+assertion_line: 82
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor ──────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email                                                            │
+│  FROM users                                                                  │
+│  WHERE active = true                                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ result ──────────────────────────────────────────────────────────────────────┐
+│(no rows)                                                                     │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ F5 run · ctrl-r history · ctrl-e EXPLAIN · ctrl-a ANALYZE · tab complete · ctrl
