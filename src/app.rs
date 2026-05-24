@@ -61,6 +61,11 @@ pub enum Mode {
     /// pre-search buffer / cursor). Ctrl-R again jumps to the next
     /// older match.
     HistorySearch,
+    /// Interactive row filter on the results grid (`/` from Normal).
+    /// Each char updates `grid_filter` and re-filters live so the
+    /// operator sees results as they type. Enter accepts; Esc
+    /// clears the filter.
+    GridFilter,
 }
 
 /// Connection lifecycle state.
@@ -292,6 +297,24 @@ pub struct App {
     /// and reload the buffer. The action needs `&mut Tui`, which the
     /// editor key handler doesn't have — so it's deferred here.
     pub external_edit_pending: bool,
+    /// Column under the cursor in the results grid. h/l move it; sort
+    /// + future column-aware actions operate on this column.
+    pub grid_col_cursor: usize,
+    /// Sort state for the grid: `None` = display order from the
+    /// query; `Some((col, asc))` = sorted by that column. Cycled by
+    /// `s` in Normal mode: off → ASC → DESC → off.
+    pub grid_sort: Option<(usize, bool)>,
+    /// The grid as it landed from the query — preserved so a "clear
+    /// sort" can restore the original row order without re-running.
+    pub grid_raw_rows: Option<Vec<Vec<String>>>,
+    /// Active row-filter pattern (case-insensitive substring across
+    /// all columns). `None` = no filter; rendered rows are
+    /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
+    pub grid_filter: Option<String>,
+    /// Indices into `grid.rows` for the currently-visible rows under
+    /// the active filter. Equal to `0..rows.len()` when no filter is
+    /// set. Rebuilt whenever filter / sort / grid changes.
+    pub grid_visible_rows: Vec<usize>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -371,6 +394,11 @@ impl App {
             watch: None,
             notices: Vec::new(),
             external_edit_pending: false,
+            grid_col_cursor: 0,
+            grid_sort: None,
+            grid_raw_rows: None,
+            grid_filter: None,
+            grid_visible_rows: Vec::new(),
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -629,6 +657,7 @@ impl App {
                 self.grid = grid;
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
+                self.reset_grid_view();
                 self.schema_cache = schema_cache;
                 // Splash stays up — `tick_splash` honours the 3s minimum.
             }
@@ -644,6 +673,7 @@ impl App {
                 self.grid = grid;
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
+                self.reset_grid_view();
                 self.query_running = false;
                 self.last_error = None;
                 self.last_status = Some(format!(
@@ -815,6 +845,7 @@ impl App {
             Mode::CellDetail => self.on_cell_detail_key(key),
             Mode::About => self.on_about_key(key),
             Mode::HistorySearch => self.on_history_search_key(key),
+            Mode::GridFilter => self.on_grid_filter_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -829,10 +860,18 @@ impl App {
         }
     }
 
+    /// Map the visible-row cursor (TableState index) to the actual
+    /// `grid.rows` index, honouring any active filter. Returns
+    /// `None` when nothing is selected or the visible set is empty.
+    pub(crate) fn selected_grid_row_idx(&self) -> Option<usize> {
+        let visible_idx = self.grid_state.selected()?;
+        self.grid_visible_rows.get(visible_idx).copied()
+    }
+
     /// Open the expanded view of the currently-selected grid row. No-op
     /// when the grid is empty or nothing is selected.
     fn open_row_detail(&mut self) {
-        let Some(idx) = self.grid_state.selected() else {
+        let Some(idx) = self.selected_grid_row_idx() else {
             return;
         };
         if self.grid.rows.get(idx).is_none() {
@@ -877,7 +916,7 @@ impl App {
     /// Zoom into the currently-focused field. No-op when the row or
     /// field cursor is out of bounds.
     fn open_cell_detail(&mut self) {
-        let Some(idx) = self.grid_state.selected() else {
+        let Some(idx) = self.selected_grid_row_idx() else {
             return;
         };
         let Some(row) = self.grid.rows.get(idx) else {
@@ -929,7 +968,7 @@ impl App {
     /// Copy the currently-focused field's value to the system clipboard.
     /// Surfaces success / failure via `last_status` / `last_error`.
     fn yank_focused_field(&mut self) {
-        let Some(idx) = self.grid_state.selected() else {
+        let Some(idx) = self.selected_grid_row_idx() else {
             return;
         };
         let Some(row) = self.grid.rows.get(idx) else {
@@ -1067,6 +1106,13 @@ impl App {
             KeyCode::Char('c') => self.start_connection_change(),
             KeyCode::Char('j') | KeyCode::Down => self.scroll(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll(-1),
+            KeyCode::Char('h') | KeyCode::Left => self.move_col_cursor(-1),
+            KeyCode::Char('l') | KeyCode::Right => self.move_col_cursor(1),
+            KeyCode::Char('s') => self.cycle_sort(),
+            KeyCode::Char('Y') => self.export_grid_to_clipboard(),
+            KeyCode::Char('/') => self.start_filter(),
+            KeyCode::Char('n') => self.filter_step(true),
+            KeyCode::Char('N') => self.filter_step(false),
             KeyCode::Char('g') | KeyCode::Home => self.select_row(0),
             KeyCode::Char('G') | KeyCode::End => {
                 self.select_row(self.grid.row_count().saturating_sub(1));
@@ -2282,6 +2328,222 @@ impl App {
 
     // -- grid nav --
 
+    /// Reset the per-grid view state — sort / filter / column cursor
+    /// — so a fresh result set starts clean. Called whenever a new
+    /// `Grid` lands on the App via `QueryOk` or `Booted`.
+    fn reset_grid_view(&mut self) {
+        self.grid_col_cursor = 0;
+        self.grid_sort = None;
+        self.grid_raw_rows = None;
+        self.grid_filter = None;
+        self.rebuild_visible_rows();
+    }
+
+    /// Recompute `grid_visible_rows` against the current `grid.rows`
+    /// and `grid_filter`. Filter is a case-insensitive substring
+    /// match across every column of each row. With no filter the
+    /// visible set is just `0..rows.len()` (kept materialised so the
+    /// render path has one code path).
+    fn rebuild_visible_rows(&mut self) {
+        let n = self.grid.rows.len();
+        self.grid_visible_rows = match &self.grid_filter {
+            None => (0..n).collect(),
+            Some(pat) => {
+                let needle = pat.to_ascii_lowercase();
+                (0..n)
+                    .filter(|i| {
+                        self.grid.rows[*i]
+                            .iter()
+                            .any(|c| c.to_ascii_lowercase().contains(&needle))
+                    })
+                    .collect()
+            }
+        };
+        // Keep the selection in range.
+        let visible = self.grid_visible_rows.len();
+        if visible == 0 {
+            self.grid_state.select(None);
+        } else {
+            let cur = self.grid_state.selected().unwrap_or(0);
+            self.grid_state.select(Some(cur.min(visible - 1)));
+        }
+    }
+
+    /// `s` in Normal mode — cycle sort on the focused column:
+    /// `off → ASC → DESC → off`. ASC takes a snapshot of the raw
+    /// row order so `off` can restore it without re-running the
+    /// query.
+    fn cycle_sort(&mut self) {
+        if self.grid.columns.is_empty() {
+            return;
+        }
+        let col = self.grid_col_cursor.min(self.grid.columns.len() - 1);
+        let next = match self.grid_sort {
+            None => Some((col, true)),
+            Some((c, true)) if c == col => Some((col, false)),
+            Some((c, false)) if c == col => None,
+            // Different column: jump straight to ASC on the new one.
+            _ => Some((col, true)),
+        };
+        match next {
+            Some((col, asc)) => {
+                if self.grid_raw_rows.is_none() {
+                    self.grid_raw_rows = Some(self.grid.rows.clone());
+                }
+                self.grid.rows.sort_by(|a, b| {
+                    let av = a.get(col).map(String::as_str).unwrap_or("");
+                    let bv = b.get(col).map(String::as_str).unwrap_or("");
+                    let ord = crate::grid::cmp_cells(av, bv);
+                    if asc {
+                        ord
+                    } else {
+                        ord.reverse()
+                    }
+                });
+                self.grid_sort = Some((col, asc));
+                let dir = if asc { "ASC" } else { "DESC" };
+                self.last_status = Some(format!(
+                    "sorted by {} {dir}",
+                    self.grid.columns[col]
+                ));
+            }
+            None => {
+                if let Some(raw) = self.grid_raw_rows.take() {
+                    self.grid.rows = raw;
+                }
+                self.grid_sort = None;
+                self.last_status = Some("sort cleared".into());
+            }
+        }
+        self.rebuild_visible_rows();
+    }
+
+    /// Move the column cursor by `delta`, clamped to the grid's
+    /// column range.
+    fn move_col_cursor(&mut self, delta: isize) {
+        let n = self.grid.columns.len();
+        if n == 0 {
+            return;
+        }
+        let cur = self.grid_col_cursor as isize;
+        let next = (cur + delta).clamp(0, n as isize - 1);
+        self.grid_col_cursor = next as usize;
+    }
+
+    /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
+    /// clipboard as CSV. `arboard` is already a dep for cell yank.
+    fn export_grid_to_clipboard(&mut self) {
+        if self.grid.columns.is_empty() {
+            self.last_status = Some("nothing to export".into());
+            return;
+        }
+        // Build a Grid that respects the active filter — sort is
+        // already baked into `self.grid.rows`. CSV is the only
+        // format here; format chooser is a follow-up.
+        let mut export = crate::grid::Grid {
+            columns: self.grid.columns.clone(),
+            rows: Vec::with_capacity(self.grid_visible_rows.len()),
+        };
+        for &i in &self.grid_visible_rows {
+            if let Some(row) = self.grid.rows.get(i) {
+                export.rows.push(row.clone());
+            }
+        }
+        let csv = crate::batch::format_csv(&export);
+        match arboard::Clipboard::new() {
+            Ok(mut cb) => match cb.set_text(csv) {
+                Ok(()) => {
+                    self.last_status = Some(format!(
+                        "copied {} row(s) to clipboard as CSV",
+                        export.rows.len()
+                    ));
+                }
+                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
+            },
+            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
+        }
+    }
+
+    /// `/` in Normal — enter the live grid-filter input.
+    fn start_filter(&mut self) {
+        if self.grid.is_empty() {
+            self.last_status = Some("nothing to filter".into());
+            return;
+        }
+        // Start from an empty pattern; whatever was previously set is
+        // discarded so each `/` is a fresh search. The footer's
+        // status reflects the live pattern.
+        self.grid_filter = Some(String::new());
+        self.rebuild_visible_rows();
+        self.mode = Mode::GridFilter;
+        self.refresh_filter_status();
+    }
+
+    /// `n` / `N` in Normal — step the row cursor to the next / prev
+    /// matching row (only meaningful while a filter is active).
+    fn filter_step(&mut self, forward: bool) {
+        if self.grid_filter.is_none() {
+            return;
+        }
+        // visible_rows is already the filtered set in display order;
+        // step the existing cursor through it.
+        let visible = self.grid_visible_rows.len();
+        if visible == 0 {
+            return;
+        }
+        let cur = self.grid_state.selected().unwrap_or(0);
+        let next = if forward {
+            (cur + 1).min(visible - 1)
+        } else {
+            cur.saturating_sub(1)
+        };
+        self.grid_state.select(Some(next));
+    }
+
+    /// Update the footer to reflect the live filter state, bash-style.
+    fn refresh_filter_status(&mut self) {
+        let pat = self.grid_filter.as_deref().unwrap_or("");
+        let n = self.grid_visible_rows.len();
+        let total = self.grid.rows.len();
+        self.last_status = Some(format!(
+            "filter: /{pat}  · {n}/{total} row(s) · enter accept · esc clear"
+        ));
+    }
+
+    /// Mode::GridFilter handler. Char / Backspace edit the pattern
+    /// and re-filter live; Enter accepts (stays in Normal with the
+    /// filter still applied); Esc clears + returns to Normal.
+    fn on_grid_filter_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => {
+                self.grid_filter = None;
+                self.rebuild_visible_rows();
+                self.last_status = Some("filter cleared".into());
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Backspace => {
+                if let Some(f) = self.grid_filter.as_mut() {
+                    f.pop();
+                }
+                self.rebuild_visible_rows();
+                self.refresh_filter_status();
+            }
+            KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                if let Some(f) = self.grid_filter.as_mut() {
+                    f.push(c);
+                }
+                self.rebuild_visible_rows();
+                self.refresh_filter_status();
+            }
+            _ => {}
+        }
+    }
+
     fn scroll(&mut self, delta: isize) {
         let count = self.grid.row_count();
         if count == 0 {
@@ -3304,6 +3566,99 @@ mod tests {
         let (p, a) = split_editor_command("  emacs   -nw  ");
         assert_eq!(p, "emacs");
         assert_eq!(a, vec!["-nw"]);
+    }
+
+    fn app_with_grid(grid: Grid) -> App {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            SafetyConfig::default(),
+        );
+        a.grid = grid;
+        a.reset_grid_view();
+        a.grid_state.select(if a.grid.is_empty() { None } else { Some(0) });
+        a
+    }
+
+    fn sample_grid() -> Grid {
+        Grid {
+            columns: vec!["id".into(), "name".into()],
+            rows: vec![
+                vec!["3".into(), "carol".into()],
+                vec!["1".into(), "alice".into()],
+                vec!["10".into(), "bob".into()],
+                vec!["2".into(), "dave".into()],
+            ],
+        }
+    }
+
+    #[test]
+    fn cycle_sort_orders_numerically_asc_then_desc_then_off() {
+        let mut a = app_with_grid(sample_grid());
+        // Column cursor defaults to 0 (id). ASC: 1, 2, 3, 10.
+        a.cycle_sort();
+        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(ids, vec!["1", "2", "3", "10"]);
+        assert_eq!(a.grid_sort, Some((0, true)));
+        // DESC: 10, 3, 2, 1.
+        a.cycle_sort();
+        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(ids, vec!["10", "3", "2", "1"]);
+        // Off: original order restored.
+        a.cycle_sort();
+        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(ids, vec!["3", "1", "10", "2"]);
+        assert!(a.grid_sort.is_none());
+    }
+
+    #[test]
+    fn cycle_sort_on_different_column_jumps_to_asc() {
+        let mut a = app_with_grid(sample_grid());
+        a.cycle_sort(); // col 0 ASC
+        a.move_col_cursor(1);
+        a.cycle_sort(); // col 1 ASC (NOT col 0 DESC)
+        assert_eq!(a.grid_sort, Some((1, true)));
+        let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+        assert_eq!(names, vec!["alice", "bob", "carol", "dave"]);
+    }
+
+    #[test]
+    fn filter_narrows_visible_rows_case_insensitively() {
+        let mut a = app_with_grid(sample_grid());
+        a.start_filter();
+        // Type 'AL' — case-insensitive substring across all columns.
+        a.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        a.on_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE));
+        // Only `alice` (row idx 1) matches.
+        assert_eq!(a.grid_visible_rows, vec![1]);
+        // Enter accepts; filter persists.
+        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(a.mode, Mode::Normal);
+        assert_eq!(a.grid_filter.as_deref(), Some("aL"));
+    }
+
+    #[test]
+    fn filter_esc_clears_pattern_and_restores_visible_rows() {
+        let mut a = app_with_grid(sample_grid());
+        a.start_filter();
+        a.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(a.grid_visible_rows.is_empty());
+        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(a.grid_visible_rows.len(), 4);
+        assert!(a.grid_filter.is_none());
+    }
+
+    #[test]
+    fn selected_grid_row_idx_maps_through_filter() {
+        let mut a = app_with_grid(sample_grid());
+        a.grid_filter = Some("a".into()); // matches alice, carol, dave
+        a.rebuild_visible_rows();
+        // visible_rows holds indices into grid.rows for matches in
+        // original order: carol(0), alice(1), dave(3).
+        assert_eq!(a.grid_visible_rows, vec![0, 1, 3]);
+        a.grid_state.select(Some(1)); // second visible row → alice
+        assert_eq!(a.selected_grid_row_idx(), Some(1));
     }
 
     #[test]

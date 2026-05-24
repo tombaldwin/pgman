@@ -47,13 +47,6 @@ under Done, no matter which milestone it came from.
   uses for DBUnit apply).
 
 ### Result grid
-- **Sort by column** — `<` / `>` cycles ASC / DESC / none on the
-  focused column. Cheap; massive ergonomic delta from `\g`.
-- **Filter rows** — `/pattern` filters the displayed rows by a
-  regex match across all columns. `n` / `N` jumps to next/prev hit.
-- **Export results** — one-key to copy as CSV / JSON / SQL INSERTs
-  to the clipboard. Optional; defer if Result grid sort+filter is
-  enough.
 - **Yank focused row as INSERT** — generates `INSERT INTO <table>
   (col, …) VALUES (…)` for the focused row. Cell yank already
   exists; row-as-INSERT is the natural pair. Requires the result
@@ -435,6 +428,31 @@ Three quality-of-life features after the psql-parity sweep.
   binary surfaces an actionable error (`brew install pgformatter
   or apt install pgformatter`). Done inline since pg_format is
   sub-second; spawn_blocking would just add plumbing.
+
+### Result grid — sort / filter / export
+
+- **Sort by column.** `h` / `l` (and Left / Right) move the column
+  cursor — the focused header reverses so it's obvious which column
+  is targeted. `s` cycles: off → ASC → DESC → off. Snapshots the
+  raw row order before the first sort so the "off" state restores
+  it without re-running the query. Numeric-aware compare via
+  `grid::cmp_cells` (so `2` sorts before `10`); empty strings (NULL
+  renderings) sort last per Postgres's default `NULLS LAST`.
+- **Live row filter (`/`).** `Mode::GridFilter` — each char updates
+  `grid_filter` and rebuilds the visible-row index in place; the
+  status footer shows `filter: /pat · m/N row(s)`. Case-
+  insensitive substring across every cell. `n` / `N` step through
+  matches in the visible order. Enter accepts; Esc clears.
+- **Export to clipboard (`Y`).** Serialises the *visible* rows
+  (post-sort, post-filter) via the existing `batch::format_csv`
+  formatter and pushes to the system clipboard via `arboard`.
+  Status shows the copied row count.
+- **RowDetail / CellDetail correctness through filter+sort.** New
+  `App::selected_grid_row_idx()` maps the visible cursor index
+  through `grid_visible_rows` to the actual `grid.rows` index;
+  all three downstream features (row detail, cell zoom, cell
+  yank) go through it so a filtered or sorted view never opens
+  the wrong row.
 
 ### Completion
 
