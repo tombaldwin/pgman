@@ -34,6 +34,13 @@ arboard = "3"
 #       aws-sdk-cloudwatch, aws-sdk-cloudwatchlogs, mode_params.rs, mode_dashboard.rs
 #       aws-sdk-ssm, aws-sdk-secretsmanager    — creds/{ssm,secrets}.rs
 
+[features]
+# Tests that need a live Postgres (docker-compose.test.yml). Off by
+# default so a plain `cargo test` doesn't hang waiting for a server.
+# CI / local: `docker compose -f docker-compose.test.yml up -d` and
+# then `cargo test --features integration`.
+integration = []
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

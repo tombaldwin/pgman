@@ -1,0 +1,5 @@
+#!/bin/sh
+# fake_pg_format — pretends to be pgformatter for integration tests.
+# Reads stdin, emits a recognisable marker line followed by stdin.
+echo "-- FORMATTED BY FAKE PG_FORMAT"
+cat
