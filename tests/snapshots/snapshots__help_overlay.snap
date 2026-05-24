@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 129
+assertion_line: 132
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -9,6 +9,15 @@ expression: dump(&buf)
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result ──────────────────────────────────────────────────────────────────────────────────────────┐
 │(no rows)                                                                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 │                                                                                                  │
 │              ┌────────────────────────────────────────────────────────────────────┐              │
 │              │                                                                    │              │
@@ -32,7 +41,7 @@ expression: dump(&buf)
 │              │   editor                                                           │              │
 │              │     F5 / ctrl-↵   run the statement (through safety guards)        │              │
 │              │     ctrl-c         cancel the running query (while in-flight)      │              │
-│              │     ctrl-e / F6   EXPLAIN  (never executes)                        │              │
+│              │     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)     │              │
 │              │     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)    │              │
 │              │     ctrl-r         reverse-incremental history search              │              │
 │              │     ctrl-w         \watch — re-run every 2s, any key stops         │              │
@@ -42,9 +51,60 @@ expression: dump(&buf)
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
 │              │ script                                                             │              │
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
-│              │ ↓ 38 more below                                                    │              │
+│              │     .             auto-trigger qualified completion (users.|)      │              │
+│              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
+│              │     enter         insert newline                                   │              │
+│              │     ↑ ↓ ← →       move cursor (col remembered across lines)        │              │
+│              │     home / end    start / end of current line                      │              │
+│              │     ctrl-p / -n   prev / next history entry                        │              │
+│              │     ctrl-u        clear the buffer                                 │              │
+│              │     esc           back to grid                                     │              │
+│              │                                                                    │              │
+│              │   confirm                                                          │              │
+│              │     y             run the guarded statement                        │              │
+│              │     n / esc       cancel                                           │              │
+│              │                                                                    │              │
+│              │   tx open                                                          │              │
+│              │     y             commit the transaction                           │              │
+│              │     n / esc       roll back                                        │              │
+│              │                                                                    │              │
+│              │   log pick                                                         │              │
+│              │     ↑ ↓ / j / k   navigate                                         │              │
+│              │     enter         load selected query into the editor              │              │
+│              │     esc / q       cancel                                           │              │
+│              │                                                                    │              │
+│              │   row detail                                                       │              │
+│              │     j / k  ↑ ↓    move to next / previous field                    │              │
+│              │     g / G         first / last field                               │              │
+│              │     PageUp/Down   jump 10 fields                                   │              │
+│              │     enter         zoom into focused field (cell detail)            │              │
+│              │     y             yank focused field value to clipboard            │              │
+│              │     esc / q       close                                            │              │
+│              │                                                                    │              │
+│              │   cell detail (zoomed value)                                       │              │
+│              │     j / k  ↑ ↓    scroll                                           │              │
+│              │     g / G         top / bottom                                     │              │
+│              │     PageUp/Down   scroll by 10                                     │              │
+│              │     y             yank value to clipboard                          │              │
+│              │     esc / enter   back to row detail                               │              │
+│              │                                                                    │              │
+│              │   EXPLAIN tree                                                     │              │
+│              │     j / k  ↑ ↓    navigate plan nodes                              │              │
+│              │     enter         expand / collapse focused subtree                │              │
+│              │     g / G         jump to root / last visible node                 │              │
+│              │     esc / q       close                                            │              │
+│              │ ↓ 2 more below                                                     │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
