@@ -1,31 +1,29 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 232
+assertion_line: 403
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
 ┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
-│> (empty — press e to focus)                                                                                │
-└───┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ─────────────────────────────┐────┘
-┌ re│    total ms    mean ms     calls      rows  query                                                 │────┐
-│(no│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true               │    │
-│   │      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2           │    │
+│> (┌ schema wizard — y yank suggestion · r refresh · q close ──────────────────────────────────────────┐    │
+└───│  SEV    CODE     object                                            title                          │────┘
+┌ re│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or UN│────┐
+│(no│  HIGH   LINT001  public.events                                     table without PRIMARY KEY or UN│    │
+│   │  HIGH   LINT001  public.user                                       table without PRIMARY KEY or UN│    │
+│   │  MED    LINT002  public.OrderItems                                 mixed-case table identifier nee│    │
+│   │  MED    LINT003  public.user                                       table named after a SQL reserve│    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
-│   │                                                                                                   │    │
-│   │                                                                                                   │    │
-│   │                                                                                                   │    │
-│   │───────────────────────────────────────────────────────────────────────────────────────────────────│    │
-│   │SELECT * FROM users WHERE active = true                                                            │    │
-│   │                                                                                                   │    │
-│   │                                                                                                   │    │
-│   │                                                                                                   │    │
+│   │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                         │    │
+│   │  object: public.OrderItems                                                                        │    │
+│   │  no UNIQUE / PRIMARY KEY constraint found for public.OrderItems                                   │    │
+│   │  suggest: ALTER TABLE public.OrderItems ADD PRIMARY KEY (...);                                    │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   └───────────────────────────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close · F1 help
+ RO   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help

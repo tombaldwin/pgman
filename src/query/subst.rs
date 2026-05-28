@@ -198,7 +198,12 @@ mod tests {
     #[test]
     fn null_becomes_unquoted_null() {
         let params = [null(1, "VARCHAR")];
-        let out = apply("UPDATE t SET note = ?", &params, PlaceholderStyle::QuestionMark).unwrap();
+        let out = apply(
+            "UPDATE t SET note = ?",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
         assert_eq!(out, "UPDATE t SET note = NULL");
     }
 

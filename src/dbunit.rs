@@ -164,7 +164,9 @@ fn element_name(e: &quick_xml::events::BytesStart<'_>) -> String {
 fn row_columns(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
     let mut cols = Vec::new();
     for attr in e.attributes().flatten() {
-        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("").to_string();
+        let key = std::str::from_utf8(attr.key.as_ref())
+            .unwrap_or("")
+            .to_string();
         if key.is_empty() {
             continue;
         }

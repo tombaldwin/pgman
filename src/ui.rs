@@ -24,21 +24,29 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // the focused empty editor still has a visible content line.
     let editor_lines = app.editor_buffer.matches('\n').count() + 1;
     let editor_height: u16 = (editor_lines as u16 + 2).clamp(3, 12);
+    // Tab bar: one extra line iff we have more than one tab.
+    // Keeps the single-tab default UX byte-identical to the
+    // pre-multi-tab layout.
+    let tabbar_height: u16 = if app.tabs.len() > 1 { 1 } else { 0 };
     let chunks = Layout::vertical([
         Constraint::Length(1),             // header
+        Constraint::Length(tabbar_height), // optional tab bar
         Constraint::Length(editor_height), // editor pane (border + lines + border)
         Constraint::Min(0),                // results grid
         Constraint::Length(1),             // footer
     ])
     .split(area);
     draw_header(f, chunks[0], app);
-    draw_editor(f, chunks[1], app);
-    draw_body(f, chunks[2], app);
-    draw_footer(f, chunks[3], app);
+    if tabbar_height > 0 {
+        draw_tab_bar(f, chunks[1], app);
+    }
+    draw_editor(f, chunks[2], app);
+    draw_body(f, chunks[3], app);
+    draw_footer(f, chunks[4], app);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
-        draw_completion_popup(f, chunks[1], chunks[2], app);
+        draw_completion_popup(f, chunks[2], chunks[3], app);
     }
     if app.mode == Mode::Help {
         draw_help(f, area, app);
@@ -67,7 +75,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::ExplainTree {
         draw_explain_tree(f, area, app);
     }
-    if app.mode == Mode::SchemaBrowser {
+    if app.mode == Mode::SchemaBrowser || app.mode == Mode::SchemaBrowserFilter {
         draw_schema_browser(f, area, app);
     }
     if app.mode == Mode::SlowQueries {
@@ -75,6 +83,24 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.mode == Mode::Sessions {
         draw_sessions(f, area, app);
+    }
+    if app.mode == Mode::SchemaLint {
+        draw_schema_lint(f, area, app);
+    }
+    if app.mode == Mode::ErrorDetail {
+        draw_error_detail(f, area, app);
+    }
+    if app.mode == Mode::Notifications {
+        draw_notifications(f, area, app);
+    }
+    if app.mode == Mode::TapMonitor {
+        draw_tap_monitor(f, area, app);
+    }
+    if app.mode == Mode::SavedQueries {
+        draw_saved_queries(f, area, app);
+    }
+    if app.mode == Mode::SaveQueryPrompt {
+        draw_save_query_prompt(f, area, app);
     }
 }
 
@@ -190,14 +216,12 @@ fn draw_about(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = art_lines;
     lines.push(Line::from(""));
-    lines.push(Line::from(
-        Span::styled(
-            format!("pgman {}", env!("CARGO_PKG_VERSION")),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ));
+    lines.push(Line::from(Span::styled(
+        format!("pgman {}", env!("CARGO_PKG_VERSION")),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )));
     lines.push(Line::from(Span::styled(
         env!("CARGO_PKG_DESCRIPTION"),
         Style::default().fg(theme.text),
@@ -234,10 +258,7 @@ fn draw_about(f: &mut Frame, area: Rect, app: &App) {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.border_active))
                     .padding(Padding::uniform(1))
-                    .title(Span::styled(
-                        " about ",
-                        Style::default().fg(theme.title),
-                    )),
+                    .title(Span::styled(" about ", Style::default().fg(theme.title))),
             ),
         popup,
     );
@@ -251,9 +272,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         .map(|d| d.dbname.clone())
         .unwrap_or_else(|| "—".to_string());
     let (state, state_style) = match &app.conn_state {
-        ConnState::Disconnected => {
-            ("disconnected".to_string(), Style::default().fg(theme.muted))
-        }
+        ConnState::Disconnected => ("disconnected".to_string(), Style::default().fg(theme.muted)),
         ConnState::Connecting => {
             let sp = SPINNER[app.anim_tick % SPINNER.len()];
             (
@@ -265,7 +284,10 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             format!("connected · pg {server_version}"),
             Style::default().fg(theme.health_green),
         ),
-        ConnState::Failed(_) => ("connection failed".to_string(), Style::default().fg(theme.health_red)),
+        ConnState::Failed(_) => (
+            "connection failed".to_string(),
+            Style::default().fg(theme.health_red),
+        ),
     };
     let mut spans = vec![
         Span::styled(
@@ -449,18 +471,41 @@ fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .map(|r| {
             Row::new(r.iter().enumerate().map(|(i, c)| {
                 let w = widths.get(i).copied().unwrap_or(0);
-                Cell::from(grid::truncate_cell(c, w))
+                let (kept, marker) = grid::truncate_cell_parts(c, w);
+                if marker.is_empty() {
+                    Cell::from(kept)
+                } else {
+                    // Style the `…` truncation marker with `accent`
+                    // so the operator sees the cell has more behind
+                    // it (RowDetail / CellDetail reveals the rest).
+                    Cell::from(Line::from(vec![
+                        Span::raw(kept),
+                        Span::styled(
+                            marker,
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]))
+                }
             }))
         })
         .collect();
-    let constraints: Vec<Constraint> =
-        widths.iter().map(|w| Constraint::Length(*w as u16)).collect();
+    let constraints: Vec<Constraint> = widths
+        .iter()
+        .map(|w| Constraint::Length(*w as u16))
+        .collect();
     let visible = app.grid_visible_rows.len();
     let total = grid.row_count();
-    let title = if app.grid_filter.is_some() && visible != total {
-        format!(" result · {visible}/{total} row(s) (filtered) ")
+    let cap = if grid.truncated {
+        format!(" · capped at {}", crate::grid::MAX_ROWS)
     } else {
-        format!(" result · {total} row(s) ")
+        String::new()
+    };
+    let title = if app.grid_filter.is_some() && visible != total {
+        format!(" result · {visible}/{total} row(s) (filtered){cap} ")
+    } else {
+        format!(" result · {total} row(s){cap} ")
     };
     let table = Table::new(rows, constraints)
         .header(header)
@@ -473,6 +518,98 @@ fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                 .title(Span::styled(title, Style::default().fg(theme.title))),
         );
     f.render_stateful_widget(table, area, &mut app.grid_state);
+}
+
+/// Persistent state badges prepended to the footer line: `[RO]`
+/// when the connection is read-only, `[TX]` when an auto-tx is
+/// currently open. Each is rendered as a coloured pill with a
+/// trailing space, in stable order (RO before TX) so a stacked
+/// pair lines up consistently.
+pub(crate) fn footer_badges(app: &App, theme: &crate::theme::Theme) -> Vec<Span<'static>> {
+    footer_badges_with(app, theme, crate::tap::dropped_at_listener())
+}
+
+/// Test-friendly variant of [`footer_badges`] that lets the
+/// caller pin the listener-drop count. Production callers go
+/// through [`footer_badges`] which reads the process-global
+/// atomic; tests pass `0` to avoid cross-test leakage from a
+/// shared counter.
+pub(crate) fn footer_badges_with(
+    app: &App,
+    theme: &crate::theme::Theme,
+    dropped_at_listener: u64,
+) -> Vec<Span<'static>> {
+    let mut out: Vec<Span<'static>> = Vec::new();
+    if app.read_only {
+        out.push(Span::styled(
+            " RO ",
+            Style::default()
+                .bg(theme.health_green)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
+    if app.tx_open {
+        out.push(Span::styled(
+            " TX ",
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
+    // JDBC tap connection badge — flashed whenever the tap
+    // listener has seen at least one event this session. F4
+    // hint piggybacks on the badge so the operator knows where
+    // to look.
+    if app.tap_health.query_count > 0 || app.tap_health.heartbeat_count > 0 {
+        out.push(Span::styled(
+            " TAP ",
+            Style::default()
+                .bg(theme.health_green)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
+    // Backpressure: dropped-at-listener counter passed in via
+    // the function parameter so tests can pin to 0. Non-zero
+    // means the App couldn't keep up with the JAR / OTel agent
+    // and events were lost at the listener boundary. Amber
+    // badge for "you should look at this."
+    let dropped = dropped_at_listener;
+    if dropped > 0 {
+        out.push(Span::styled(
+            format!(" DROP ×{dropped} "),
+            Style::default()
+                .bg(theme.health_yellow)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
+    // N+1 alert badge — surfaces when the live detector finds
+    // bursts in the current ring. The count lets operators see
+    // multiple distinct N+1s at a glance ("N+1 ×3" = three
+    // separate burst signatures). Hidden while the TapMonitor
+    // panel is open (the operator can already see the findings
+    // there — the chrome badge is redundant).
+    if !matches!(app.mode, Mode::TapMonitor) {
+        let nplus1_count = app.current_nplus1().len();
+        if nplus1_count > 0 {
+            out.push(Span::styled(
+                format!(" N+1 ×{nplus1_count} "),
+                Style::default()
+                    .bg(theme.health_yellow)
+                    .fg(theme.row_alt_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            out.push(Span::raw(" "));
+        }
+    }
+    out
 }
 
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
@@ -501,10 +638,19 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     }
     // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
     let line = if let Some(err) = &app.last_error {
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled(" ⚠ ", Style::default().fg(theme.health_red)),
             Span::styled(err.clone(), Style::default().fg(theme.health_red)),
-        ])
+        ];
+        if app.last_error_detail.is_some() {
+            // F2 surfaces the rich detail — make the pointer
+            // visible so operators discover it.
+            spans.push(Span::styled(
+                "  · F2 detail",
+                Style::default().fg(theme.muted),
+            ));
+        }
+        Line::from(spans)
     } else if let Some(status) = &app.last_status {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {
@@ -520,14 +666,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // While the connection is failed we override Normal-mode hints with
         // recovery shortcuts so the operator sees them at the bottom of the
         // screen too, not just on the failure card.
-        let failed_normal = app.mode == Mode::Normal
-            && matches!(app.conn_state, ConnState::Failed(_));
+        let failed_normal =
+            app.mode == Mode::Normal && matches!(app.conn_state, ConnState::Failed(_));
         // While we're still mid-connect, surface that — the Normal hints
         // would suggest j/k/scroll affordances against a grid that
         // doesn't exist yet, and `r retry` wouldn't fire (only Failed
         // accepts r).
-        let connecting_normal = app.mode == Mode::Normal
-            && matches!(app.conn_state, ConnState::Connecting);
+        let connecting_normal =
+            app.mode == Mode::Normal && matches!(app.conn_state, ConnState::Connecting);
         let hints: &str = if failed_normal {
             if app.data_source_picks.len() >= 2 {
                 "r retry · p change connection · q quit · ? help"
@@ -552,33 +698,139 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "ctrl-c cancel running query"
                 }
                 Mode::Editor => {
-                    "F5 run · ctrl-r history · ctrl-e EXPLAIN · ctrl-a ANALYZE · tab complete · ctrl-l log · ctrl-d dbunit · esc"
+                    "F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · ctrl-e EXPLAIN · tab complete · ctrl-l log · esc"
                 }
                 Mode::HistorySearch => {
-                    "type to search · ctrl-r next-older match · enter accept · esc cancel"
+                    "type to search · ctrl-r next-older · ctrl-d delete · enter accept · esc cancel"
                 }
-                Mode::LogPick => "↑↓ / j/k navigate · enter load · esc cancel",
+                Mode::LogPick => "↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel",
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
             Mode::RowDetail => "↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close",
-            Mode::CellDetail => "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back",
+            Mode::CellDetail => {
+                if app.json_cell_rows.is_empty() {
+                    "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back"
+                } else {
+                    "j/k navigate · enter / space expand/collapse · y yank path · g/G top/bottom · esc back"
+                }
+            }
             Mode::About => "esc / enter / A close",
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · T slow · L sessions · c change conn · s sort · / filter · Y export",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · / filter · f find",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
+                Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
-                Mode::SchemaBrowser => "j/k navigate · enter expand schema · g/G top/bottom · q / esc close",
-                Mode::SlowQueries => "j/k navigate · enter copy to editor · r refresh · q / esc close",
-                Mode::Sessions => "j/k navigate · r refresh · q / esc close",
+                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · q close",
+                Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
+                Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
+                Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
+                Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
+                Mode::ErrorDetail => "esc / q / F2 close",
+                Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
+                Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
+                Mode::TapMonitor => "j/k navigate · v cycle 6 views · Shift-B baseline · s sort · c clear · q close",
+                Mode::SavedQueries => "j/k navigate · enter load · d delete · q / esc close",
+                Mode::SaveQueryPrompt => "type a name · enter persist · esc cancel",
             }
+        };
+        // Append a universal "F1 help" pointer to every non-modal
+        // hint so the help overlay is discoverable from any mode
+        // without the operator having to know `?` is the right
+        // key. Skip in modes that already mention help, in input
+        // modes where the user is typing literal characters, and
+        // in the y/n prompts (TxDecision returns early upstream;
+        // Confirm + Help are noisy with extra hints).
+        let appended;
+        let hints: &str = if matches!(
+            app.mode,
+            Mode::Help
+                | Mode::Confirm
+                | Mode::TxDecision
+                | Mode::GridFilter
+                | Mode::HistorySearch
+                | Mode::SchemaBrowserFilter
+                | Mode::GridFind
+                | Mode::SaveQueryPrompt
+        ) || failed_normal
+            || connecting_normal
+            || hints.contains("help")
+        {
+            hints
+        } else {
+            appended = format!("{hints} · F1 help");
+            &appended
         };
         Line::from(Span::styled(
             format!(" {hints}"),
             Style::default().fg(theme.muted),
         ))
     };
-    f.render_widget(Paragraph::new(line), area);
+    // Prepend persistent state badges: `[RO]` when read-only is in
+    // effect (per safety profile), `[TX]` when an auto-tx is open.
+    // Visible regardless of which footer branch (error / status /
+    // hint) is active — TxDecision pre-empted with its own render
+    // above, so we don't double up there.
+    let badges = footer_badges(app, theme);
+    let badge_width: u16 = badges
+        .iter()
+        .map(|s| s.content.chars().count() as u16)
+        .sum();
+    let mut combined: Vec<Span<'static>> = badges;
+    for s in line.spans {
+        combined.push(s);
+    }
+    f.render_widget(Paragraph::new(Line::from(combined)), area);
+
+    // Real terminal cursor for the typing modes whose input is
+    // surfaced through the footer (GridFilter, HistorySearch,
+    // SchemaBrowserFilter). The status text always renders into a
+    // single line at `area`; the leading " " prefix from the
+    // status branch above is accounted for via `LEADING_SPACE`,
+    // and any active `[RO]` / `[TX]` badges add their own width on
+    // top.
+    const LEADING_SPACE: u16 = 1;
+    let cursor_offset: Option<u16> = match app.mode {
+        Mode::GridFilter => app.grid_filter.as_ref().map(|f| {
+            // Status reads "filter: /<pat>  · …"; cursor sits just
+            // after the typed pattern.
+            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
+            PREFIX_CHARS + f.chars().count() as u16
+        }),
+        Mode::HistorySearch => app.history_search.as_ref().map(|s| {
+            // Two flavours, picked by `matched`:
+            //   "(reverse-i-search) '<q>'"
+            //   "(failed reverse-i-search) '<q>'"
+            let prefix: u16 = if s.matched.is_some() {
+                "(reverse-i-search) '".chars().count() as u16
+            } else {
+                "(failed reverse-i-search) '".chars().count() as u16
+            };
+            prefix + s.query.chars().count() as u16
+        }),
+        Mode::SchemaBrowserFilter => app.schema_browser_filter.as_ref().map(|f| {
+            // Status reads "filter: /<pat>  · …" — same shape as
+            // GridFilter.
+            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
+            PREFIX_CHARS + f.chars().count() as u16
+        }),
+        Mode::GridFind => app.grid_find.as_ref().map(|f| {
+            // Status reads "find: <pat>  · …".
+            const PREFIX_CHARS: u16 = "find: ".len() as u16;
+            PREFIX_CHARS + f.chars().count() as u16
+        }),
+        _ => None,
+    };
+    if let Some(offset) = cursor_offset {
+        let x = area
+            .x
+            .saturating_add(LEADING_SPACE)
+            .saturating_add(badge_width)
+            .saturating_add(offset);
+        if x < area.x.saturating_add(area.width) {
+            f.set_cursor_position((x, area.y));
+        }
+    }
 }
 
 /// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
@@ -754,8 +1006,7 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         theme.border_idle
     };
     let total_lines = app.editor_buffer.matches('\n').count() + 1;
-    let (cur_line_check, _) =
-        crate::app::cursor_position(&app.editor_buffer, app.editor_cursor);
+    let (cur_line_check, _) = crate::app::cursor_position(&app.editor_buffer, app.editor_cursor);
     let title_text = if focused {
         let base = match app.history_pos {
             None => "editor".to_string(),
@@ -814,13 +1065,7 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             let from_before =
                 crate::query::from_parse::parse_from_tables_resolved(buf, &app.schema_cache);
             let ctes = crate::query::clause::extract_ctes_resolved(buf, &app.schema_cache);
-            crate::query::highlight::classify(
-                raw,
-                buf,
-                &app.schema_cache,
-                &from_before,
-                &ctes,
-            )
+            crate::query::highlight::classify(raw, buf, &app.schema_cache, &from_before, &ctes)
         }
     } else {
         Vec::new()
@@ -830,8 +1075,10 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     let mut line_start_byte: usize = 0;
     for (i, line_text) in buf.split('\n').enumerate() {
         let prompt = if i == 0 { "> " } else { "  " };
-        let mut spans: Vec<Span> =
-            vec![Span::styled(prompt.to_string(), Style::default().fg(theme.muted))];
+        let mut spans: Vec<Span> = vec![Span::styled(
+            prompt.to_string(),
+            Style::default().fg(theme.muted),
+        )];
 
         let line_end_byte = line_start_byte + line_text.len();
         if focused {
@@ -852,7 +1099,11 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
                 &highlight_spans,
                 line_start_byte,
                 line_end_byte,
-                if i == cur_line { Some(byte_at_col) } else { None },
+                if i == cur_line {
+                    Some(byte_at_col)
+                } else {
+                    None
+                },
                 theme,
             );
         } else {
@@ -877,10 +1128,24 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         inner.height,
     );
     app.editor_scroll = scroll;
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).scroll((scroll, 0)),
-        inner,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)).scroll((scroll, 0)), inner);
+
+    // Real terminal cursor — the blinking one most operators expect.
+    // The REVERSED block underneath stays put so the column stays
+    // obvious even when the OS cursor blinks off (some terminals
+    // hide it during a long pause). Only shown when the editor is
+    // focused.
+    if focused {
+        let visible_y = (cur_line as u16).saturating_sub(scroll);
+        if visible_y < inner.height {
+            // 2-char prompt prefix on every line ("> " or "  ").
+            let x = inner.x.saturating_add(2).saturating_add(cur_col as u16);
+            let y = inner.y.saturating_add(visible_y);
+            if x < inner.x.saturating_add(inner.width) {
+                f.set_cursor_position((x, y));
+            }
+        }
+    }
 }
 
 /// Completion candidates popup. Anchored just under the editor pane,
@@ -888,12 +1153,7 @@ fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
 /// active one highlighted; "↑ N more" / "↓ N more" markers when the
 /// list is longer than the popup. Only the active cycle is rendered;
 /// any non-Tab editor key dismisses (see `App::editor_key`).
-fn draw_completion_popup(
-    f: &mut Frame,
-    editor_area: Rect,
-    body_area: Rect,
-    app: &App,
-) {
+fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area: Rect, app: &App) {
     let Some(cycle) = app.completion.as_ref() else {
         return;
     };
@@ -1147,50 +1407,137 @@ fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
 /// Log-import picker: lists reconstructed queries (`hibernate` / `pglog`
 /// sources), highlights the selection.
 fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
+    use crate::app::LogPickView;
     use crate::query::reconstruct::Source;
     let theme = &app.theme;
     let max_preview = 80usize;
-    let lines: Vec<Line> = app
-        .log_picks
-        .iter()
-        .enumerate()
-        .map(|(i, q)| {
-            let source = match q.source {
-                Source::HibernateLog => "hibernate",
-                Source::PostgresLog => "pglog",
-                Source::JdbcPaste => "jdbc",
-            };
-            let mut preview: String = q
-                .runnable_sql
-                .chars()
-                .take(max_preview)
-                .collect::<String>()
-                .replace('\n', " ");
-            if q.runnable_sql.chars().count() > max_preview {
-                preview.push('…');
-            }
-            let prefix = if i == app.log_pick_index { "▶ " } else { "  " };
-            let style = if i == app.log_pick_index {
-                Style::default()
-                    .bg(theme.row_selected_bg)
-                    .fg(theme.text)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            Line::from(Span::styled(
-                format!("{prefix}[{source:>9}] {preview}"),
-                style,
-            ))
-        })
-        .collect();
+    // One-line triage summary above the picker rows. Surfaces N+1
+    // hotspots that the per-row list buries.
+    let summary = crate::query::nplus1::summarize(&app.log_picks);
+    let mut lines: Vec<Line> = Vec::new();
+    let view_label = match app.log_pick_view {
+        LogPickView::AllQueries => "all queries",
+        LogPickView::Clusters => "N+1 clusters",
+    };
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {} · view: {} (press `c` to toggle)",
+            summary.one_line(),
+            view_label
+        ),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )));
+    if let (LogPickView::AllQueries, Some(top)) = (app.log_pick_view, summary.top_cluster.as_ref())
+    {
+        // In the all-queries view, surface the top cluster's leader
+        // SQL up top. The clusters view shows the same info as a
+        // first-class row, so this leader header would be redundant
+        // there.
+        let mut preview: String = top
+            .example
+            .chars()
+            .take(max_preview)
+            .collect::<String>()
+            .replace('\n', " ");
+        if top.example.chars().count() > max_preview {
+            preview.push('…');
+        }
+        lines.push(Line::from(Span::styled(
+            format!("  leader (×{}): {}", top.count, preview),
+            Style::default().fg(theme.muted),
+        )));
+    }
+    lines.push(Line::from(""));
+    let row_lines: Vec<Line> = match app.log_pick_view {
+        LogPickView::AllQueries => app
+            .log_picks
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let source = match q.source {
+                    Source::HibernateLog => "hibernate",
+                    Source::PostgresLog => "pglog",
+                    Source::JdbcPaste => "jdbc",
+                };
+                let mut preview: String = q
+                    .runnable_sql
+                    .chars()
+                    .take(max_preview)
+                    .collect::<String>()
+                    .replace('\n', " ");
+                if q.runnable_sql.chars().count() > max_preview {
+                    preview.push('…');
+                }
+                let prefix = if i == app.log_pick_index {
+                    "▶ "
+                } else {
+                    "  "
+                };
+                let style = if i == app.log_pick_index {
+                    Style::default()
+                        .bg(theme.row_selected_bg)
+                        .fg(theme.text)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                Line::from(Span::styled(
+                    format!("{prefix}[{source:>9}] {preview}"),
+                    style,
+                ))
+            })
+            .collect(),
+        LogPickView::Clusters => app
+            .log_pick_clusters
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let mut preview: String = c
+                    .example
+                    .chars()
+                    .take(max_preview)
+                    .collect::<String>()
+                    .replace('\n', " ");
+                if c.example.chars().count() > max_preview {
+                    preview.push('…');
+                }
+                let prefix = if i == app.log_pick_index {
+                    "▶ "
+                } else {
+                    "  "
+                };
+                let style = if i == app.log_pick_index {
+                    Style::default()
+                        .bg(theme.row_selected_bg)
+                        .fg(theme.text)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                Line::from(Span::styled(
+                    format!("{prefix}×{:<4} {preview}", c.count),
+                    style,
+                ))
+            })
+            .collect(),
+    };
+    lines.extend(row_lines);
 
+    let total = app.log_pick_visible_len();
     let title = format!(
         " log picks · {}/{} ",
-        app.log_pick_index + 1,
-        app.log_picks.len()
+        if total == 0 {
+            0
+        } else {
+            app.log_pick_index + 1
+        },
+        total,
     );
-    let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let h = (lines.len() as u16 + 2)
+        .min(area.height.saturating_sub(2))
+        .max(3);
     let w = 100u16.min(area.width.saturating_sub(2));
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
@@ -1212,6 +1559,87 @@ fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
 /// Wrap `s` to `width` columns, splitting on existing newlines first and
 /// then chunking by character. Returns an empty-string vector for an empty
 /// input so the caller still emits a visible row. Pure / testable.
+/// Render the JSONB cell-detail tree into a list of styled Lines.
+/// The cursor row is highlighted; containers get a ▼/▶ marker;
+/// scalars are coloured by JSON type. Each row also shows its
+/// jq-style path in dim text on the right so the operator can read
+/// off the path without yanking.
+pub(crate) fn render_json_tree(app: &App, width: usize) -> Vec<Line<'static>> {
+    use crate::query::json_cell::{ContainerKind, JsonDisplay};
+    let theme = &app.theme;
+    let mut out = Vec::with_capacity(app.json_cell_rows.len());
+    for (i, row) in app.json_cell_rows.iter().enumerate() {
+        let indent = "  ".repeat(row.depth);
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let base_style = if i == app.json_cell_cursor {
+            Style::default()
+                .bg(theme.row_selected_bg)
+                .fg(theme.text)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        spans.push(Span::styled(indent, base_style));
+
+        match &row.display {
+            JsonDisplay::Container {
+                kind,
+                len,
+                expanded,
+            } => {
+                let marker = if *expanded { "▼ " } else { "▶ " };
+                spans.push(Span::styled(marker.to_string(), base_style));
+                if !row.key.is_empty() {
+                    spans.push(Span::styled(
+                        format!("{}: ", row.key),
+                        base_style.fg(theme.title),
+                    ));
+                }
+                let (open, close) = match kind {
+                    ContainerKind::Object => ("{", "}"),
+                    ContainerKind::Array => ("[", "]"),
+                };
+                let summary = if *expanded {
+                    format!("{open} {len} {close}")
+                } else {
+                    format!("{open}…{close}  ({len})")
+                };
+                spans.push(Span::styled(summary, base_style.fg(theme.muted)));
+            }
+            JsonDisplay::Scalar(text) => {
+                if !row.key.is_empty() {
+                    spans.push(Span::styled(
+                        format!("{}: ", row.key),
+                        base_style.fg(theme.title),
+                    ));
+                }
+                let v_style = if text == "null" {
+                    base_style.fg(theme.muted).add_modifier(Modifier::ITALIC)
+                } else if text == "true" || text == "false" {
+                    base_style.fg(theme.accent)
+                } else if text.starts_with('"') {
+                    base_style.fg(theme.text)
+                } else {
+                    base_style.fg(theme.accent)
+                };
+                spans.push(Span::styled(text.clone(), v_style));
+            }
+        }
+
+        // Pad and trim each line to width so the cursor row's
+        // background extends to the right edge of the popup (without
+        // it the highlight ends abruptly mid-line).
+        let rendered: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        let visible_len = rendered.chars().count();
+        if visible_len < width {
+            let pad: String = std::iter::repeat(' ').take(width - visible_len).collect();
+            spans.push(Span::styled(pad, base_style));
+        }
+        out.push(Line::from(spans));
+    }
+    out
+}
+
 pub(crate) fn wrap_value(s: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![s.to_string()];
@@ -1371,7 +1799,11 @@ fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let mut field_line_counts: Vec<u16> = Vec::with_capacity(layout.len());
     for (field_idx, field) in layout.iter().enumerate() {
         let is_focus = field_idx == focus;
-        let value_span_style_base = if field.is_empty { null_style } else { value_style };
+        let value_span_style_base = if field.is_empty {
+            null_style
+        } else {
+            value_style
+        };
         let (label_style_eff, sep_style_eff, value_style_eff) = if is_focus {
             (
                 label_style.bg(focus_bg),
@@ -1485,12 +1917,7 @@ fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
         return;
     };
     let field = app.row_detail_field;
-    let column = app
-        .grid
-        .columns
-        .get(field)
-        .cloned()
-        .unwrap_or_default();
+    let column = app.grid.columns.get(field).cloned().unwrap_or_default();
     let value = row.get(field).cloned().unwrap_or_default();
 
     // Nest inside the row-detail popup so the zoom reads as drilling in,
@@ -1499,37 +1926,67 @@ fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let inner_width = popup.width.saturating_sub(4) as usize; // borders + uniform(1) pad
     let inner_height = popup.height.saturating_sub(4);
     let is_empty = value.is_empty();
-    let body_lines: Vec<String> = if is_empty {
-        vec!["(empty)".to_string()]
+
+    let is_json = !app.json_cell_rows.is_empty();
+    let body_lines: Vec<Line> = if is_json {
+        render_json_tree(app, inner_width)
+    } else if is_empty {
+        vec![Line::from(Span::styled(
+            "(empty)",
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        ))]
     } else {
         wrap_value(&value, inner_width)
+            .into_iter()
+            .map(|l| Line::from(Span::styled(l, Style::default().fg(theme.text))))
+            .collect()
     };
 
     let total_lines = body_lines.len() as u16;
     let max_scroll = total_lines.saturating_sub(inner_height);
     app.cell_detail_max_scroll = max_scroll;
-    let effective_scroll = app.cell_detail_scroll.min(max_scroll);
-
-    let value_style = if is_empty {
-        Style::default()
-            .fg(theme.muted)
-            .add_modifier(Modifier::ITALIC)
+    let effective_scroll = if is_json {
+        // Keep the focused tree row visible — auto-scroll like the
+        // grid does for its cursor.
+        let cursor = app.json_cell_cursor as u16;
+        let h = inner_height.max(1);
+        let scroll = if cursor < app.cell_detail_scroll {
+            cursor
+        } else if cursor >= app.cell_detail_scroll + h {
+            cursor + 1 - h
+        } else {
+            app.cell_detail_scroll
+        };
+        let scroll = scroll.min(max_scroll);
+        app.cell_detail_scroll = scroll;
+        scroll
     } else {
-        Style::default().fg(theme.text)
+        app.cell_detail_scroll.min(max_scroll)
     };
-    let lines: Vec<Line> = body_lines
-        .iter()
-        .map(|l| Line::from(Span::styled(l.clone(), value_style)))
-        .collect();
 
-    let title = format!(
-        " {} · row {} of {} · field {}/{} ",
-        column,
-        idx + 1,
-        app.grid.row_count(),
-        field + 1,
-        app.row_detail_field_count.max(1)
-    );
+    let lines: Vec<Line> = body_lines;
+
+    let title = if is_json {
+        format!(
+            " {} · row {} of {} · field {}/{} · JSON ",
+            column,
+            idx + 1,
+            app.grid.row_count(),
+            field + 1,
+            app.row_detail_field_count.max(1)
+        )
+    } else {
+        format!(
+            " {} · row {} of {} · field {}/{} ",
+            column,
+            idx + 1,
+            app.grid.row_count(),
+            field + 1,
+            app.row_detail_field_count.max(1)
+        )
+    };
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines))
@@ -1596,7 +2053,11 @@ fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, pick)| {
-            let prefix = if i == app.data_source_pick_index { "▶ " } else { "  " };
+            let prefix = if i == app.data_source_pick_index {
+                "▶ "
+            } else {
+                "  "
+            };
             let style = if i == app.data_source_pick_index {
                 Style::default()
                     .bg(theme.row_selected_bg)
@@ -1623,7 +2084,9 @@ fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         app.data_source_pick_index + 1,
         app.data_source_picks.len()
     );
-    let h = (lines.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let h = (lines.len() as u16 + 2)
+        .min(area.height.saturating_sub(2))
+        .max(3);
     let w = 100u16.min(area.width.saturating_sub(2));
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
@@ -1639,99 +2102,519 @@ fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
-    let theme = &app.theme;
-    let lines = vec![
+/// Build the help body: a flat `Vec<Line>` plus an anchor → row
+/// index map so callers can scroll to a named section.
+pub(crate) fn help_body(
+    theme: &crate::theme::Theme,
+) -> (
+    Vec<Line<'static>>,
+    std::collections::HashMap<&'static str, u16>,
+) {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut anchors: std::collections::HashMap<&'static str, u16> =
+        std::collections::HashMap::new();
+    let push = |line: Line<'static>, lines: &mut Vec<Line<'static>>| {
+        lines.push(line);
+    };
+    let heading = |label: &'static str,
+                   lines: &mut Vec<Line<'static>>,
+                   anchors: &mut std::collections::HashMap<&'static str, u16>| {
+        anchors.insert(label, lines.len() as u16);
+        lines.push(Line::from(Span::styled(
+            format!("  {label}"),
+            Style::default().fg(theme.accent),
+        )));
+    };
+    let row = |t: &'static str| -> Line<'static> { Line::from(t) };
+
+    push(
         Line::from(Span::styled(
-            "pgman — keys",
+            "pgman — keys (F1 help · F2 error detail · F3 notify · ? from grid)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
         )),
-        Line::from(""),
-        Line::from(Span::styled("  grid", Style::default().fg(theme.accent))),
-        Line::from("    q             quit (esc is a no-op here so a reflex press doesn't lose your session)"),
-        Line::from("    ?             toggle this help"),
-        Line::from("    e / i / tab   focus editor"),
-        Line::from("    c             change connection (opens the picker mid-session)"),
-        Line::from("    S             schema browser (psql `\\d` equivalent)"),
-        Line::from("    T             slow queries (pg_stat_statements top-N)"),
-        Line::from("    L             active sessions + locks (pg_stat_activity)"),
-        Line::from("    h / l  ← →    move column cursor"),
-        Line::from("    s             cycle sort on focused column (off → ASC → DESC)"),
-        Line::from("    /             live row filter (n/N step through matches)"),
-        Line::from("    Y             copy the (filtered) grid to clipboard as CSV"),
-        Line::from("    j / k  ↑ ↓    move selection"),
-        Line::from("    g / G         first / last row"),
-        Line::from("    enter         expand selected row (psql \\x style)"),
-        Line::from("    A             about pgman (version, credits)"),
-        Line::from(""),
-        Line::from(Span::styled("  editor", Style::default().fg(theme.accent))),
-        Line::from("    F5 / ctrl-↵   run the statement (through safety guards)"),
-        Line::from("    ctrl-c         cancel the running query (while in-flight)"),
-        Line::from("    ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)"),
-        Line::from("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
-        Line::from("    ctrl-r         reverse-incremental history search"),
-        Line::from("    ctrl-w         \\watch — re-run every 2s, any key stops"),
-        Line::from("    ctrl-x         open the buffer in $EDITOR (\\e)"),
-        Line::from("    ctrl-f         pg_format the buffer (requires pgformatter)"),
-        Line::from("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
-        Line::from("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
-        Line::from("    tab / ctrl-spc identifier completion (cycles on repeat tab)"),
-        Line::from("    .             auto-trigger qualified completion (users.|)"),
-        Line::from("    (in popup) type to narrow live · esc to restore typed prefix"),
-        Line::from("    enter         insert newline"),
-        Line::from("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
-        Line::from("    home / end    start / end of current line"),
-        Line::from("    ctrl-p / -n   prev / next history entry"),
-        Line::from("    ctrl-u        clear the buffer"),
-        Line::from("    esc           back to grid"),
-        Line::from(""),
-        Line::from(Span::styled("  confirm", Style::default().fg(theme.accent))),
-        Line::from("    y             run the guarded statement"),
-        Line::from("    n / esc       cancel"),
-        Line::from(""),
-        Line::from(Span::styled("  tx open", Style::default().fg(theme.accent))),
-        Line::from("    y             commit the transaction"),
-        Line::from("    n / esc       roll back"),
-        Line::from(""),
-        Line::from(Span::styled("  log pick", Style::default().fg(theme.accent))),
-        Line::from("    ↑ ↓ / j / k   navigate"),
-        Line::from("    enter         load selected query into the editor"),
-        Line::from("    esc / q       cancel"),
-        Line::from(""),
-        Line::from(Span::styled("  row detail", Style::default().fg(theme.accent))),
-        Line::from("    j / k  ↑ ↓    move to next / previous field"),
-        Line::from("    g / G         first / last field"),
-        Line::from("    PageUp/Down   jump 10 fields"),
-        Line::from("    enter         zoom into focused field (cell detail)"),
-        Line::from("    y             yank focused field value to clipboard"),
-        Line::from("    esc / q       close"),
-        Line::from(""),
-        Line::from(Span::styled("  cell detail (zoomed value)", Style::default().fg(theme.accent))),
-        Line::from("    j / k  ↑ ↓    scroll"),
-        Line::from("    g / G         top / bottom"),
-        Line::from("    PageUp/Down   scroll by 10"),
-        Line::from("    y             yank value to clipboard"),
-        Line::from("    esc / enter   back to row detail"),
-        Line::from(""),
-        Line::from(Span::styled("  schema browser", Style::default().fg(theme.accent))),
-        Line::from("    j / k  ↑ ↓    navigate schemas / tables"),
-        Line::from("    enter         expand / collapse focused schema"),
-        Line::from("    g / G         jump to top / bottom"),
-        Line::from("    esc / q       close"),
-        Line::from(""),
-        Line::from(Span::styled("  EXPLAIN tree", Style::default().fg(theme.accent))),
-        Line::from("    j / k  ↑ ↓    navigate plan nodes"),
-        Line::from("    enter         expand / collapse focused subtree"),
-        Line::from("    g / G         jump to root / last visible node"),
-        Line::from("    esc / q       close"),
-        Line::from(""),
-        Line::from(Span::styled("  help", Style::default().fg(theme.accent))),
-        Line::from("    j / k  ↑ ↓    scroll"),
-        Line::from("    g / G         jump to top / bottom"),
-        Line::from("    esc / ? / q   close"),
-    ];
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("grid", &mut lines, &mut anchors);
+    push(row("    q             quit (esc here is a no-op so a reflex press doesn't lose the session)"), &mut lines);
+    push(row("    ? / F1        toggle this help"), &mut lines);
+    push(
+        row("    A             about pgman (version, credits)"),
+        &mut lines,
+    );
+    push(row("    e / i / tab   focus editor"), &mut lines);
+    push(
+        row("    c             change connection (opens the picker mid-session)"),
+        &mut lines,
+    );
+    push(
+        row("    S             schema browser (psql `\\d` equivalent)"),
+        &mut lines,
+    );
+    push(
+        row("    W             schema wizard / lint (missing PK, mixed-case, reserved words …)"),
+        &mut lines,
+    );
+    push(
+        row("    Q             saved queries (named, persisted)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section"),
+        &mut lines,
+    );
+    push(
+        row("    T             slow queries (pg_stat_statements top-N)"),
+        &mut lines,
+    );
+    push(
+        row("    L             active sessions + locks (pg_stat_activity)"),
+        &mut lines,
+    );
+    push(
+        row("    F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
+        &mut lines,
+    );
+    push(row("    h / l  ← →    move column cursor"), &mut lines);
+    push(
+        row("    s             cycle sort on focused column (off → ASC → DESC)"),
+        &mut lines,
+    );
+    push(
+        row("    /             live row filter (HIDES non-matching rows)"),
+        &mut lines,
+    );
+    push(
+        row("    f             find within grid (HIGHLIGHTS / jumps; n/N step matches)"),
+        &mut lines,
+    );
+    push(row("    F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value"), &mut lines);
+    push(
+        row("    Y             copy the (filtered) grid to clipboard as CSV"),
+        &mut lines,
+    );
+    push(
+        row("    I             yank focused row as INSERT (single-table SELECTs)"),
+        &mut lines,
+    );
+    push(
+        row("    m<a-z>        set bookmark at focused (row, col)"),
+        &mut lines,
+    );
+    push(row("    '<a-z>        jump to bookmark"), &mut lines);
+    push(row("    j / k  ↑ ↓    move selection"), &mut lines);
+    push(row("    g / G         first / last row"), &mut lines);
+    push(
+        row("    enter         expand selected row (psql \\x style)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("editor", &mut lines, &mut anchors);
+    push(
+        row("    F5 / ctrl-↵   run the statement (through safety guards)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-z         undo last edit         ctrl-y / ctrl-shift-z  redo"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-c         cancel the running query (while in-flight)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-/         toggle `-- ` line comment on the current line"),
+        &mut lines,
+    );
+    push(
+        row("    ( [ {          autoclose — pairs the open with its close; cursor between"),
+        &mut lines,
+    );
+    push(row("    ctrl-r         reverse-incremental history search (ctrl-d in there deletes the focused entry)"), &mut lines);
+    push(
+        row("    ctrl-w         \\watch — re-run every 2 s; any key stops"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-x         open the buffer in $EDITOR (\\e)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-s         save the current buffer as a named saved query"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-o         open the saved-queries panel (load one in)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-f         pg_format the buffer (requires pgformatter)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-l / F8   parse buffer as log → pick a reconstructed query"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-d / F9   read buffer as DBUnit fixture path → load apply script"),
+        &mut lines,
+    );
+    push(
+        row("    tab / ctrl-spc identifier completion (cycles on repeat tab)"),
+        &mut lines,
+    );
+    push(
+        row("    .             auto-trigger qualified completion (users.|)"),
+        &mut lines,
+    );
+    push(
+        row("    (in popup) type to narrow live · esc to restore typed prefix"),
+        &mut lines,
+    );
+    push(row("    enter         insert newline"), &mut lines);
+    push(
+        row("    ↑ ↓ ← →       move cursor (col remembered across lines)"),
+        &mut lines,
+    );
+    push(
+        row("    home / end    start / end of current line"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-p / -n   prev / next history entry (history persists across restarts)"),
+        &mut lines,
+    );
+    push(row("    ctrl-u        clear the buffer"), &mut lines);
+    push(row("    esc           back to grid"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("confirm", &mut lines, &mut anchors);
+    push(
+        row("    y             run the guarded (or pre-flight-flagged) statement"),
+        &mut lines,
+    );
+    push(row("    n / esc       cancel"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("tx open", &mut lines, &mut anchors);
+    push(row("    y             commit the transaction"), &mut lines);
+    push(row("    n / esc       roll back"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("log pick", &mut lines, &mut anchors);
+    push(row("    ↑ ↓ / j / k   navigate"), &mut lines);
+    push(
+        row("    enter         load selected query into the editor"),
+        &mut lines,
+    );
+    push(
+        row("    c             toggle between all-queries and N+1-cluster views"),
+        &mut lines,
+    );
+    push(row("    esc / q       cancel"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("conn pick", &mut lines, &mut anchors);
+    push(row("    ↑ ↓ / j / k   navigate connections"), &mut lines);
+    push(
+        row("    enter         connect to focused entry"),
+        &mut lines,
+    );
+    push(row("    g / G         first / last"), &mut lines);
+    push(
+        row("    q             quit (esc is a no-op so a reflex press doesn't drop you out)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("row detail", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    move to next / previous field"),
+        &mut lines,
+    );
+    push(row("    g / G         first / last field"), &mut lines);
+    push(row("    PageUp/Down   jump 10 fields"), &mut lines);
+    push(
+        row("    enter         zoom into focused field (cell detail)"),
+        &mut lines,
+    );
+    push(
+        row("    y             yank focused field value to clipboard"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("cell detail", &mut lines, &mut anchors);
+    push(row("  text mode (non-JSON cells):"), &mut lines);
+    push(row("    j / k  ↑ ↓    scroll"), &mut lines);
+    push(
+        row("    g / G         top / bottom · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(row("    y             yank value to clipboard"), &mut lines);
+    push(row("    esc / enter   back to row detail"), &mut lines);
+    push(
+        row("  JSON mode (cell parses as object / array):"),
+        &mut lines,
+    );
+    push(row("    j / k         navigate the tree"), &mut lines);
+    push(
+        row("    enter / space / h / l   expand or collapse focused container"),
+        &mut lines,
+    );
+    push(
+        row("    y             yank the jq-style path (.foo[0].bar)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("schema browser", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    navigate schemas / tables / columns / constraints"),
+        &mut lines,
+    );
+    push(
+        row("    enter / space expand / collapse focused schema or table"),
+        &mut lines,
+    );
+    push(
+        row("    [ / ]         jump to previous / next schema (skip past table internals)"),
+        &mut lines,
+    );
+    push(
+        row("    + / −         expand-all / collapse-all (cursor stays on the focused path)"),
+        &mut lines,
+    );
+    push(row("    PageUp/Down   jump 10 rows"), &mut lines);
+    push(row("    /             in-tree filter (live; descendants of matches surface their ancestors)"), &mut lines);
+    push(
+        row("    s             yank SELECT * FROM <schema>.<table> LIMIT 100 template"),
+        &mut lines,
+    );
+    push(
+        row("    i             yank INSERT INTO … (cols) VALUES (NULL, …) template"),
+        &mut lines,
+    );
+    push(row("    g / G         jump to top / bottom"), &mut lines);
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("EXPLAIN tree", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    navigate plan nodes (hottest node highlighted in red)"),
+        &mut lines,
+    );
+    push(
+        row("    enter         expand / collapse focused subtree"),
+        &mut lines,
+    );
+    push(
+        row("    g / G         jump to root / last visible node"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("slow queries", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    navigate stored statements (sorted by total exec time)"),
+        &mut lines,
+    );
+    push(
+        row("    enter         copy focused SQL into the editor"),
+        &mut lines,
+    );
+    push(
+        row("    r             refresh from pg_stat_statements"),
+        &mut lines,
+    );
+    push(
+        row("    R             toggle auto-refresh (5 s polling)"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("active sessions", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    navigate sessions (blocked ones sort to the top, red)"),
+        &mut lines,
+    );
+    push(
+        row("    K             pg_terminate_backend the focused session (confirm first)"),
+        &mut lines,
+    );
+    push(
+        row("    r             refresh from pg_stat_activity"),
+        &mut lines,
+    );
+    push(
+        row("    R             toggle auto-refresh (5 s polling)"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("psql backslash commands", &mut lines, &mut anchors);
+    push(
+        row("    \\d              open schema browser (default view)"),
+        &mut lines,
+    );
+    push(
+        row("    \\d <name>       open schema browser filtered to <name>"),
+        &mut lines,
+    );
+    push(
+        row("    \\dt / \\dn       open schema browser (default view)"),
+        &mut lines,
+    );
+    push(row("    \\?  / \\h        open this help"), &mut lines);
+    push(row("    \\q              quit"), &mut lines);
+    push(
+        row("    \\timing [on/off]  toggle elapsed-ms in the status footer"),
+        &mut lines,
+    );
+    push(
+        row("    \\report [path]   write advisor + tap report (Markdown / HTML)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("tabs", &mut lines, &mut anchors);
+    push(
+        row("    ctrl-t        open a new tab (fresh editor + result)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-w        close the current tab (no-op on the last one)"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-tab      next tab · ctrl-shift-tab  previous"),
+        &mut lines,
+    );
+    push(row("    alt-1 .. 9    jump directly to tab N"), &mut lines);
+    push(
+        row("    (connection + schema cache + history + saved queries are SHARED across tabs)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("saved queries", &mut lines, &mut anchors);
+    push(
+        row("    Q             open the saved-queries panel (also Ctrl-O from editor)"),
+        &mut lines,
+    );
+    push(
+        row("    Ctrl-S        (editor) save the current buffer with a name"),
+        &mut lines,
+    );
+    push(
+        row("    j / k  ↑ ↓    navigate · enter load · d delete · esc / q close"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("notifications", &mut lines, &mut anchors);
+    push(
+        row("    F3            open the NOTIFY arrivals panel (works from any mode)"),
+        &mut lines,
+    );
+    push(
+        row("    j / k  ↑ ↓    navigate · g / G  first / last · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(
+        row("    y             yank focused payload to clipboard"),
+        &mut lines,
+    );
+    push(row("    c             clear the ring"), &mut lines);
+    push(row("    esc / q       close"), &mut lines);
+    push(
+        row("    (operator subscribes via `LISTEN <channel>` in the editor)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("schema wizard", &mut lines, &mut anchors);
+    push(
+        row("    W (from grid) open the lint panel — pure checks over the schema cache"),
+        &mut lines,
+    );
+    push(
+        row("    j / k  ↑ ↓    navigate findings (sorted HIGH → MED → LOW)"),
+        &mut lines,
+    );
+    push(
+        row("    y             yank the focused finding's SQL suggestion (if any)"),
+        &mut lines,
+    );
+    push(
+        row("    r             refresh (re-runs every check)"),
+        &mut lines,
+    );
+    push(
+        row("    PageUp/Down   jump 10 rows · g / G  first / last"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
+    push(row("    pure checks: LINT001 missing PK · 002 mixed-case · 003 reserved word · 004 mixed naming"), &mut lines);
+    push(
+        row("    live checks: LINT101 FK no index · 102 unused index · 103 duplicate indexes"),
+        &mut lines,
+    );
+    push(
+        row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading("help", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    scroll · g / G  top / bottom · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(
+        row("    esc / ? / q / F1   close (returns to the mode you opened help from)"),
+        &mut lines,
+    );
+
+    (lines, anchors)
+}
+
+fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = &app.theme;
+    let (lines, anchors) = help_body(theme);
+    // If we have a captured help_origin, pre-scroll to the matching
+    // section the first time draw runs (`help_scroll` is reset to 0
+    // by `open_help_from`; we detect that as "anchor not applied
+    // yet" and set it once, then clear the origin).
+    if let Some(origin) = app.help_origin {
+        if app.help_scroll == 0 {
+            if let Some(anchor) = App::help_anchor_for(origin) {
+                if let Some(&row) = anchors.get(anchor) {
+                    app.help_scroll = row;
+                }
+            }
+        }
+        // Consume the origin AFTER we've used it to position the
+        // scroll. Subsequent draws (j/k navigation) shouldn't snap
+        // back to the anchor.
+        app.help_origin = None;
+    }
     let popup = centered_pct(area, 70, 70);
     f.render_widget(Clear, popup);
     // Body height = popup height minus borders (top + bottom) minus padding
@@ -1968,7 +2851,38 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 let marker = if *expanded { "▼" } else { "▶" };
                 format!("{marker} {name}  ({table_count})")
             }
-            SchemaBrowserRow::Table { name, .. } => format!("    {name}"),
+            SchemaBrowserRow::Table {
+                name,
+                expanded,
+                column_count,
+                constraint_count,
+                ..
+            } => {
+                let marker = if *expanded { "▼" } else { "▶" };
+                format!("  {marker} {name}  ({column_count} col, {constraint_count} cons)")
+            }
+            SchemaBrowserRow::Column {
+                schema,
+                table,
+                name,
+            } => {
+                // Render `· id : integer NOT NULL` when the cache
+                // has type metadata (post-fetch); fall back to
+                // `· name` when it doesn't.
+                let meta = app
+                    .schema_cache
+                    .columns_meta_by_table
+                    .get(&(schema.clone(), table.clone()))
+                    .and_then(|v| v.iter().find(|m| m.name == *name));
+                match meta {
+                    Some(m) if !m.type_name.is_empty() => {
+                        let nn = if m.not_null { " NOT NULL" } else { "" };
+                        format!("      · {name} : {}{nn}", m.type_name)
+                    }
+                    _ => format!("      · {name}"),
+                }
+            }
+            SchemaBrowserRow::Constraint { name, .. } => format!("      ◆ {name}"),
         };
         lines.push(Line::from(Span::styled(text, style)));
     }
@@ -1982,7 +2896,9 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
         }) => {
             right_lines.push(Line::from(Span::styled(
                 format!("schema: {name}"),
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )));
             right_lines.push(Line::from(""));
             right_lines.push(Line::from(format!("{table_count} table(s)")));
@@ -1992,12 +2908,87 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(theme.muted),
             )));
         }
-        Some(SchemaBrowserRow::Table { schema, name }) => {
+        Some(SchemaBrowserRow::Column {
+            schema,
+            table,
+            name,
+        }) => {
             right_lines.push(Line::from(Span::styled(
-                format!("{schema}.{name}"),
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                format!("{schema}.{table}.{name}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )));
             right_lines.push(Line::from(""));
+            let meta = app
+                .schema_cache
+                .columns_meta_by_table
+                .get(&(schema.clone(), table.clone()))
+                .and_then(|v| v.iter().find(|m| m.name == *name));
+            match meta {
+                Some(m) if !m.type_name.is_empty() => {
+                    right_lines.push(Line::from(Span::styled(
+                        format!("type:  {}", m.type_name),
+                        Style::default().fg(theme.text),
+                    )));
+                    right_lines.push(Line::from(Span::styled(
+                        format!(
+                            "nullable: {}",
+                            if m.not_null { "NO (NOT NULL)" } else { "YES" }
+                        ),
+                        Style::default().fg(theme.text),
+                    )));
+                }
+                _ => {
+                    right_lines.push(Line::from(Span::styled(
+                        "column · type info unavailable (older cache?)",
+                        Style::default().fg(theme.muted),
+                    )));
+                }
+            }
+        }
+        Some(SchemaBrowserRow::Constraint {
+            schema,
+            table,
+            name,
+        }) => {
+            right_lines.push(Line::from(Span::styled(
+                format!("{schema}.{table} · {name}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            right_lines.push(Line::from(""));
+            right_lines.push(Line::from(Span::styled(
+                "unique / primary-key constraint",
+                Style::default().fg(theme.muted),
+            )));
+        }
+        Some(SchemaBrowserRow::Table { schema, name, .. }) => {
+            right_lines.push(Line::from(Span::styled(
+                format!("{schema}.{name}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            right_lines.push(Line::from(""));
+            // Size info (third-pass fetch). Missing entry =
+            // permission gap on pg_relation_size; render nothing.
+            if let Some(sz) = app
+                .schema_cache
+                .table_sizes
+                .get(&(schema.clone(), name.clone()))
+            {
+                right_lines.push(Line::from(Span::styled(
+                    format!(
+                        "size: total {}  ·  heap {}",
+                        crate::query::schema::format_bytes(sz.total_bytes),
+                        crate::query::schema::format_bytes(sz.table_bytes),
+                    ),
+                    Style::default().fg(theme.muted),
+                )));
+                right_lines.push(Line::from(""));
+            }
             // Columns from the cache (ordered by attnum).
             let cols = app
                 .schema_cache
@@ -2007,7 +2998,9 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .unwrap_or_default();
             right_lines.push(Line::from(Span::styled(
                 format!("columns ({})", cols.len()),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )));
             for c in &cols {
                 right_lines.push(Line::from(format!("  · {c}")));
@@ -2018,15 +3011,16 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .constraints
                 .iter()
                 .filter(|c| {
-                    c.schema.eq_ignore_ascii_case(schema)
-                        && c.table.eq_ignore_ascii_case(name)
+                    c.schema.eq_ignore_ascii_case(schema) && c.table.eq_ignore_ascii_case(name)
                 })
                 .collect();
             if !cons.is_empty() {
                 right_lines.push(Line::from(""));
                 right_lines.push(Line::from(Span::styled(
                     format!("constraints ({})", cons.len()),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 for c in cons {
                     right_lines.push(Line::from(format!("  · {}", c.name)));
@@ -2066,10 +3060,7 @@ fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
         // carries the right phrasing either way; render it inside
         // the popup so the operator doesn't have to look down at
         // the footer.
-        let msg = app
-            .last_status
-            .clone()
-            .unwrap_or_else(|| "no rows".into());
+        let msg = app.last_status.clone().unwrap_or_else(|| "no rows".into());
         f.render_widget(
             Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
             inner,
@@ -2098,9 +3089,17 @@ fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
             "  {:>10}  {:>9}  {:>8}  {:>8}  {}",
             "total ms", "mean ms", "calls", "rows", "query"
         ),
-        Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
     )));
-    for (i, row) in app.slow_queries.iter().enumerate().skip(scroll).take(visible_h.saturating_sub(1)) {
+    for (i, row) in app
+        .slow_queries
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
         let is_focus = i == app.slow_queries_cursor;
         let style = if is_focus {
             Style::default()
@@ -2164,10 +3163,7 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, popup);
 
     if app.sessions.is_empty() {
-        let msg = app
-            .last_status
-            .clone()
-            .unwrap_or_else(|| "no rows".into());
+        let msg = app.last_status.clone().unwrap_or_else(|| "no rows".into());
         f.render_widget(
             Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
             inner,
@@ -2187,9 +3183,17 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             "  {:>6}  {:>20}  {:>10}  {:>8}  {:>8}  {}",
             "pid", "user/app", "state", "age(s)", "blocked", "query"
         ),
-        Style::default().fg(theme.muted).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
     )));
-    for (i, row) in app.sessions.iter().enumerate().skip(scroll).take(visible_h.saturating_sub(1)) {
+    for (i, row) in app
+        .sessions
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
         let is_focus = i == app.sessions_cursor;
         let is_blocked = row.is_blocked();
         let style = if is_focus {
@@ -2214,7 +3218,11 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             .chars()
             .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
             .collect();
-        let blocked_disp = if is_blocked { row.blocked_by.as_str() } else { "-" };
+        let blocked_disp = if is_blocked {
+            row.blocked_by.as_str()
+        } else {
+            "-"
+        };
         let line = format!(
             "  {:>6}  {:>20}  {:>10}  {:>8.1}  {:>8}  {}",
             row.pid, user_app, row.state, row.age_secs, blocked_disp, one_line
@@ -2222,6 +3230,1276 @@ fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Schema-lint panel (the "wizard" — `W` from Normal). Top half:
+/// scrollable list of findings, severity-coloured. Bottom half:
+/// detail strip for the focused finding with its full `detail`
+/// text and any SQL suggestion.
+fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
+    use crate::query::lint::Severity;
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " schema wizard — y yank suggestion · r refresh · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if app.schema_lint_findings.is_empty() {
+        let msg = app
+            .last_status
+            .clone()
+            .unwrap_or_else(|| "no findings — schema looks clean".into());
+        f.render_widget(
+            Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
+            inner,
+        );
+        return;
+    }
+
+    let split = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(7)])
+        .split(inner);
+    let top = split[0];
+    let detail = split[1];
+
+    let visible_h = top.height as usize;
+    let scroll = if app.schema_lint_cursor >= visible_h {
+        app.schema_lint_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:<5}  {:<7}  {:<48}  {}",
+            "SEV", "CODE", "object", "title"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (i, finding) in app
+        .schema_lint_findings
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == app.schema_lint_cursor;
+        let sev_color = match finding.severity {
+            Severity::High => theme.health_red,
+            Severity::Medium => theme.health_yellow,
+            Severity::Low => theme.muted,
+        };
+        let base_style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let object = if finding.object.chars().count() > 48 {
+            let mut s: String = finding.object.chars().take(47).collect();
+            s.push('…');
+            s
+        } else {
+            finding.object.clone()
+        };
+        let spans = vec![
+            Span::styled("  ", base_style),
+            Span::styled(
+                format!("{:<5}", finding.severity.label()),
+                base_style.fg(sev_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  {:<7}  ", finding.code), base_style),
+            Span::styled(format!("{:<48}  ", object), base_style),
+            Span::styled(finding.title.clone(), base_style),
+        ];
+        lines.push(Line::from(spans));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), top);
+
+    // Detail strip for the focused finding.
+    let focused = &app.schema_lint_findings[app
+        .schema_lint_cursor
+        .min(app.schema_lint_findings.len() - 1)];
+    let mut detail_lines: Vec<Line> = Vec::new();
+    detail_lines.push(Line::from(Span::styled(
+        format!("  {} · {}", focused.code, focused.title),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
+    )));
+    detail_lines.push(Line::from(Span::styled(
+        format!("  object: {}", focused.object),
+        Style::default().fg(theme.muted),
+    )));
+    for chunk in wrap_value(&focused.detail, detail.width.saturating_sub(4) as usize) {
+        detail_lines.push(Line::from(Span::styled(
+            format!("  {chunk}"),
+            Style::default().fg(theme.text),
+        )));
+    }
+    if let Some(s) = &focused.suggestion {
+        detail_lines.push(Line::from(Span::styled(
+            format!("  suggest: {s}"),
+            Style::default().fg(theme.accent),
+        )));
+    }
+    f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+}
+
+/// Render the tab bar (one line above the editor). Active tab
+/// is reverse-styled. Tab labels are auto-derived from the
+/// buffer's first non-blank line (truncated), so the operator
+/// sees what each tab is doing without naming them.
+fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    spans.push(Span::raw(" "));
+    for (i, _) in app.tabs.iter().enumerate() {
+        let label = tab_label(app, i);
+        let style = if i == app.active_tab {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        spans.push(Span::styled(format!(" {} {label} ", i + 1), style));
+        spans.push(Span::raw(" "));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Derive a short label for tab `idx` from its editor buffer's
+/// first non-blank line. The ACTIVE tab reads from App's live
+/// fields; the rest read from their stashed snapshot. Empty
+/// buffers get the placeholder "(empty)" so the tab is still
+/// addressable.
+fn tab_label(app: &App, idx: usize) -> String {
+    let body: &str = if idx == app.active_tab {
+        &app.editor_buffer
+    } else {
+        app.tabs
+            .get(idx)
+            .map(|t| t.editor_buffer.as_str())
+            .unwrap_or("")
+    };
+    let first: String = body
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("(empty)")
+        .chars()
+        .take(20)
+        .collect();
+    first
+}
+
+/// Saved-queries panel — list view with body preview for the
+/// focused entry.
+fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 88, 80);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " saved queries — enter load · d delete · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if app.saved_queries.entries.is_empty() {
+        f.render_widget(
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled(
+                    "no saved queries",
+                    Style::default().fg(theme.muted),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Ctrl-S in the editor saves the current buffer with a name.",
+                    Style::default().fg(theme.muted),
+                )),
+            ])),
+            inner,
+        );
+        return;
+    }
+
+    let split = Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([Constraint::Min(5), Constraint::Length(10)])
+        .split(inner);
+    let top = split[0];
+    let detail = split[1];
+
+    let visible_h = top.height as usize;
+    let scroll = if app.saved_queries_cursor >= visible_h {
+        app.saved_queries_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, q) in app
+        .saved_queries
+        .entries
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h)
+    {
+        let is_focus = i == app.saved_queries_cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        // One-line preview of the body for context.
+        let preview: String = q
+            .body
+            .chars()
+            .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
+            .take(80)
+            .collect();
+        let line = format!("  {:<28}  {preview}", q.name);
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), top);
+
+    // Detail strip: focused query's full body, wrapped.
+    let focused = &app.saved_queries.entries[app
+        .saved_queries_cursor
+        .min(app.saved_queries.entries.len() - 1)];
+    let mut detail_lines: Vec<Line> = Vec::new();
+    detail_lines.push(Line::from(Span::styled(
+        format!("  {}", focused.name),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for chunk in wrap_value(&focused.body, detail.width.saturating_sub(4) as usize) {
+        detail_lines.push(Line::from(Span::styled(
+            format!("  {chunk}"),
+            Style::default().fg(theme.text),
+        )));
+    }
+    f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+}
+
+/// Name-prompt overlay for `Ctrl-S` — small centred box; the
+/// editor stays visible behind it so the operator can re-check
+/// what they're about to save.
+fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let w = 70u16.min(area.width.saturating_sub(2));
+    let h = 5u16;
+    let popup = centered(area, w, h);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " save query · enter persist · esc cancel ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let lines = vec![
+        Line::from(Span::styled("name:", Style::default().fg(theme.muted))),
+        Line::from(Span::styled(
+            app.save_query_name.clone(),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Place the terminal cursor at end of the typed name.
+    let prefix = 0u16; // already on its own line, no leading indent here
+    let x = inner.x + prefix + app.save_query_name.chars().count() as u16;
+    let y = inner.y + 1; // second line of the popup body
+    if x < inner.x + inner.width {
+        f.set_cursor_position((x, y));
+    }
+}
+
+/// LISTEN/NOTIFY arrivals panel (`N` from Normal). Lists the
+/// ring buffer of recent NOTIFY arrivals; j/k navigate, `y`
+/// yanks the focused payload, `c` clears.
+fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 90, 80);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " NOTIFY arrivals — j/k · y yank · c clear · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    if app.notifications.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no NOTIFY arrivals yet",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "subscribe via `LISTEN <channel>` in the editor; arrivals stream here automatically.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+
+    let visible_h = inner.height as usize;
+    let scroll = if app.notifications_cursor >= visible_h {
+        app.notifications_cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!("  {:<20}  {:>6}  {}", "channel", "pid", "payload"),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (i, n) in app
+        .notifications
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == app.notifications_cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let payload: String = n.payload.chars().take(80).collect();
+        let line = format!("  {:<20}  {:>6}  {}", n.channel, n.pid, payload);
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// JDBC-tap event monitor (`F4` from anywhere). Dispatches
+/// to the recency list (L1) or the hotspots grouped view
+/// (L2) depending on `app.tap_view`. Shift-G toggles between
+/// them; `c` clears the ring; `q`/esc close.
+fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+    let dropped = app.tap_health.dropped_events_total;
+    let dropped_suffix = if dropped > 0 {
+        format!(" · {dropped} dropped")
+    } else {
+        String::new()
+    };
+    let view_label = match app.tap_view {
+        crate::app::TapView::List => "list",
+        crate::app::TapView::Hotspots => "hotspots",
+        crate::app::TapView::Callers => "callers",
+        crate::app::TapView::Transactions => "transactions",
+        crate::app::TapView::NplusOne => "N+1",
+        crate::app::TapView::Baseline => "baseline",
+    };
+    let sort_suffix = if matches!(
+        app.tap_view,
+        crate::app::TapView::Hotspots | crate::app::TapView::Callers
+    ) {
+        format!(" · sort: {}", app.tap_sort.label())
+    } else {
+        String::new()
+    };
+    let title = format!(
+        " JDBC tap — {} query · {} heartbeat{dropped_suffix} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close ",
+        app.tap_health.query_count, app.tap_health.heartbeat_count,
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(title, Style::default().fg(theme.title)));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    match app.tap_view {
+        crate::app::TapView::Hotspots => draw_tap_monitor_hotspots(f, inner, app),
+        crate::app::TapView::Callers => draw_tap_monitor_callers(f, inner, app),
+        crate::app::TapView::Transactions => draw_tap_monitor_txns(f, inner, app),
+        crate::app::TapView::NplusOne => draw_tap_monitor_nplus1(f, inner, app),
+        crate::app::TapView::Baseline => draw_tap_monitor_baseline(f, inner, app),
+        crate::app::TapView::List => draw_tap_monitor_list(f, inner, app),
+    }
+}
+
+fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    if app.tap_events.is_empty() {
+        let lines = if app.tap_health.heartbeat_count > 0 {
+            // pgman-tap JAR is connected but the JVM hasn't
+            // fired any queries — short, no setup hint needed.
+            vec![
+                Line::from(Span::styled(
+                    "no tap events yet",
+                    Style::default().fg(theme.muted),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "pgman-tap is connected (heartbeats received) but the JVM hasn't fired any queries yet.",
+                    Style::default().fg(theme.muted),
+                )),
+            ]
+        } else {
+            // No JAR connection seen. Render the setup hint —
+            // the operator wants to know "how do I light this
+            // panel up?" The OTel path works today; the
+            // pgman-tap JAR path is the higher-context option
+            // once that JAR ships.
+            tap_setup_hint_lines(theme)
+        };
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+
+    let visible_h = inner.height as usize;
+    // Cap cursor against the list len so a recent eviction
+    // doesn't park us past the end.
+    let cursor = app.tap_events_cursor.min(app.tap_events.len() - 1);
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>10}  {:>9}  {:<20}  {}",
+            "duration", "rows", "app", "sql / kind"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let sql_col = inner_w.saturating_sub(2 + 10 + 2 + 9 + 2 + 20 + 2);
+    for (i, e) in app
+        .tap_events
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if e.is_error() {
+            Style::default().fg(theme.health_red)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let dur = e.duration_micros.map(format_duration).unwrap_or_default();
+        let rows = e.rows.map(|r| r.to_string()).unwrap_or_default();
+        let app_name = e
+            .app
+            .as_deref()
+            .map(|s| s.chars().take(20).collect::<String>())
+            .unwrap_or_default();
+        let body = match e.kind {
+            crate::tap::TapKind::Query => e.sql_preview(sql_col),
+            crate::tap::TapKind::TxnBoundary => match e.txn_outcome {
+                Some(crate::tap::TxnOutcome::Commit) => format!(
+                    "[COMMIT] {}",
+                    e.txn.as_deref().unwrap_or("")
+                ),
+                Some(crate::tap::TxnOutcome::Rollback) => format!(
+                    "[ROLLBACK] {}",
+                    e.txn.as_deref().unwrap_or("")
+                ),
+                None => "[txn boundary]".into(),
+            },
+            // Heartbeats never land here (filtered upstream).
+            crate::tap::TapKind::Heartbeat => "[heartbeat]".into(),
+        };
+        let line = format!("  {dur:>10}  {rows:>9}  {app_name:<20}  {body}");
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// L2 hotspots view — groups the ring by SQL fingerprint and
+/// renders one row per bucket with count, p50/p95/p99 latency,
+/// and the most-recent caller frame.
+fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let hotspots = app.current_hotspots();
+    if hotspots.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no hotspots yet — waiting for query events",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Shift-G to switch back to the recency list.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let visible_h = inner.height as usize;
+    let cursor = app.tap_hotspots_cursor.min(hotspots.len() - 1);
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    // Header row first.
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>6}  {:>5}  {:>9}  {:>9}  {:>9}  {}",
+            "calls", "err", "p50", "p95", "p99", "fingerprint · last caller"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    // 2 + 6 + 2 + 5 + 2 + 9*3 + 2*3 + 2 = 50 (give or take); rest is for the
+    // fingerprint + caller column.
+    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 9 + 2);
+    for (i, h) in hotspots
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if h.error_count > 0 {
+            Style::default().fg(theme.health_red)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let body = match &h.last_caller {
+            Some(c) => format!("{} · {}", short_fingerprint(&h.fingerprint, body_col / 2), c),
+            None => short_fingerprint(&h.fingerprint, body_col),
+        };
+        let line = format!(
+            "  {count:>6}  {err:>5}  {p50:>9}  {p95:>9}  {p99:>9}  {body}",
+            count = h.count,
+            err = h.error_count,
+            p50 = format_duration(h.p50_micros),
+            p95 = format_duration(h.p95_micros),
+            p99 = format_duration(h.p99_micros),
+        );
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// L2 per-caller rollup view — groups the ring by innermost
+/// caller frame (`caller[0]`) and renders one row per app
+/// code path with count / errors / p50/p95/p99 / distinct
+/// fingerprint count / last fingerprint preview. Surfaces
+/// "which `@Service` method owns the DB time?" — the
+/// leverage point for refactors.
+fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let groups = app.current_callers();
+    if groups.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no caller frames yet — waiting for query events",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Tap events without a caller frame appear in the <unknown> bucket once they arrive.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let visible_h = inner.height as usize;
+    let cursor = app.tap_callers_cursor.min(groups.len() - 1);
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>6}  {:>5}  {:>9}  {:>9}  {:>4}  {}",
+            "calls", "err", "p50", "p95", "fps", "caller · last fingerprint"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let body_col =
+        inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2);
+    for (i, g) in groups
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if g.error_count > 0 {
+            Style::default().fg(theme.health_red)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let caller = short_fingerprint(&g.caller, body_col / 2);
+        let last_fp = g
+            .last_fingerprint
+            .as_deref()
+            .map(|fp| short_fingerprint(fp, body_col / 2))
+            .unwrap_or_default();
+        let body = if last_fp.is_empty() {
+            caller
+        } else {
+            format!("{caller} · {last_fp}")
+        };
+        let line = format!(
+            "  {count:>6}  {err:>5}  {p50:>9}  {p95:>9}  {fps:>4}  {body}",
+            count = g.count,
+            err = g.error_count,
+            p50 = format_duration(g.p50_micros),
+            p95 = format_duration(g.p95_micros),
+            fps = g.distinct_fingerprints,
+        );
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// L2 baseline-diff view — shows what changed since the
+/// operator captured a baseline with Shift-B. Each row is
+/// one fingerprint that's new, regressed (≥2× p95), or
+/// disappeared. Operators get instant "did my deploy break
+/// anything?" without opening a separate tool.
+fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let Some(baseline) = app.tap_baseline.as_ref() else {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no baseline captured yet",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press Shift-B from any tap view to freeze the current hotspots.",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Then iterate (deploy, refactor, retune) and come back to this view:",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "  · new fingerprints highlighted in green",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "  · ≥2× p95 regressions highlighted in red",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "  · disappeared fingerprints in yellow",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    };
+    let diffs = app.current_baseline_diff();
+    let captured_age = baseline_age_label(baseline.captured_at_unix_micros);
+    let header_lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            format!(
+                "baseline captured {captured_age} · {} fingerprint(s) · {} event(s) at capture",
+                baseline.hotspots.len(),
+                baseline.captured_event_count
+            ),
+            Style::default().fg(theme.muted),
+        )),
+        Line::from(Span::styled(
+            format!(
+                "current ring: {} event(s) · {} changed fingerprint(s) (Shift-B recaptures)",
+                app.tap_events.len(),
+                diffs.len()
+            ),
+            Style::default().fg(theme.muted),
+        )),
+        Line::from(""),
+    ];
+    if diffs.is_empty() {
+        let mut lines = header_lines;
+        lines.push(Line::from(Span::styled(
+            "no changes since baseline — nothing new, no regressions, no disappearances.",
+            Style::default().fg(theme.health_green),
+        )));
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let visible_h = inner.height as usize;
+    let header_h = header_lines.len();
+    let table_h = visible_h.saturating_sub(header_h + 1);
+    let cursor = app.tap_baseline_cursor.min(diffs.len() - 1);
+    let scroll = if cursor >= table_h {
+        cursor + 1 - table_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = header_lines;
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:<11}  {:>6}  {:>6}  {:>9}  {:>9}  {}",
+            "change", "Δcalls", "calls", "Δp95", "p95", "fingerprint"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let body_col = inner_w.saturating_sub(2 + 11 + 2 + 6 + 2 + 6 + 2 + 9 + 2 + 9 + 2);
+    for (i, d) in diffs
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(table_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let row_style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            match d.kind {
+                crate::tap::DiffKind::Regressed => Style::default().fg(theme.health_red),
+                crate::tap::DiffKind::New => Style::default().fg(theme.health_green),
+                crate::tap::DiffKind::Disappeared => Style::default().fg(theme.health_yellow),
+                crate::tap::DiffKind::Unchanged => Style::default().fg(theme.text),
+            }
+        };
+        let label = match d.kind {
+            crate::tap::DiffKind::Regressed => "regressed",
+            crate::tap::DiffKind::New => "new",
+            crate::tap::DiffKind::Disappeared => "disappeared",
+            crate::tap::DiffKind::Unchanged => "unchanged",
+        };
+        let delta_calls = signed_delta(d.current_count as i64 - d.baseline_count as i64);
+        let delta_p95 = if d.baseline_p95_micros == 0 {
+            "—".to_string()
+        } else {
+            let factor = d.current_p95_micros as f64 / d.baseline_p95_micros as f64;
+            format!("{factor:.1}×")
+        };
+        let line = format!(
+            "  {label:<11}  {delta:>6}  {calls:>6}  {dp95:>9}  {p95:>9}  {body}",
+            delta = delta_calls,
+            calls = d.current_count,
+            dp95 = delta_p95,
+            p95 = format_duration(d.current_p95_micros),
+            body = short_fingerprint(&d.fingerprint, body_col),
+        );
+        lines.push(Line::from(Span::styled(line, row_style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Pretty-print a signed delta with explicit + sign for
+/// growth — the baseline view leans hard on these numbers
+/// so the +/- prefix matters.
+fn signed_delta(d: i64) -> String {
+    match d.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("+{d}"),
+        _ => d.to_string(),
+    }
+}
+
+/// "Xs ago" / "Xm ago" / "Xh ago" label for the baseline
+/// capture timestamp. Capped at hours — older baselines are
+/// almost always stale and the operator should recapture.
+fn baseline_age_label(captured_unix_micros: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    if captured_unix_micros == 0 || now <= captured_unix_micros {
+        return "just now".into();
+    }
+    let secs = (now - captured_unix_micros) / 1_000_000;
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
+}
+
+/// L2 transactions view — one row per synthetic `txn` id
+/// (or per `conn` for autocommit traffic), surfaces
+/// long-held open transactions and the "47 SELECTs + 1
+/// COMMIT" N+1 shape at the txn level. Open transactions
+/// in `health_yellow` (likely diagnostic target),
+/// rollbacks in `health_red`, commits in default colour.
+fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let txns = app.current_txns();
+    if txns.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no transactions observed yet",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Transactions appear once the JAR emits events tagged with a `txn` id, or once",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "autocommit traffic groups by connection. Heartbeats don't count.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let visible_h = inner.height as usize;
+    let cursor = app.tap_txns_cursor.min(txns.len() - 1);
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:<10}  {:>6}  {:>5}  {:>10}  {:>10}  {:<12}  {}",
+            "state", "stmts", "fps", "span", "db-time", "pool", "txn / conn · last sql"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let body_col =
+        inner_w.saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2);
+    for (i, t) in txns
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let state_label = match t.outcome {
+            None => "open",
+            Some(crate::tap::TxnOutcome::Commit) => "commit",
+            Some(crate::tap::TxnOutcome::Rollback) => "rollback",
+        };
+        let row_style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            match t.outcome {
+                None => Style::default().fg(theme.health_yellow),
+                Some(crate::tap::TxnOutcome::Rollback) => Style::default().fg(theme.health_red),
+                Some(crate::tap::TxnOutcome::Commit) => Style::default().fg(theme.text),
+            }
+        };
+        let id_label = match t.txn.as_deref() {
+            Some(id) => id.to_string(),
+            None => format!(
+                "(autocommit · {})",
+                t.conn.as_deref().unwrap_or("?")
+            ),
+        };
+        let last_fp = t.last_fingerprint.as_deref().unwrap_or("");
+        let body = format!(
+            "{} · {}",
+            short_fingerprint(&id_label, body_col / 2),
+            short_fingerprint(last_fp, body_col / 2)
+        );
+        let pool_label = short_fingerprint(t.pool.as_deref().unwrap_or("—"), 12);
+        let line = format!(
+            "  {state:<10}  {stmts:>6}  {fps:>5}  {span:>10}  {dbt:>10}  {pool:<12}  {body}",
+            state = state_label,
+            stmts = t.statement_count,
+            fps = t.distinct_fingerprints,
+            pool = pool_label,
+            span = format_duration(t.span_micros),
+            dbt = format_duration(t.total_query_micros),
+        );
+        lines.push(Line::from(Span::styled(line, row_style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// L2 N+1 findings view — bursts of `(txn, fingerprint)`
+/// fired ≥5 times inside 200ms. Surfaces the most-recent
+/// caller frame so the operator can jump to the offending
+/// app code.
+fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let findings = app.current_nplus1();
+    if findings.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no N+1 bursts detected",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "A finding fires when 5+ events with the same fingerprint land in one transaction within 200ms.",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "v to cycle back to the list or hotspots view.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    let visible_h = inner.height as usize;
+    let cursor = app.tap_nplus1_cursor.min(findings.len() - 1);
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>6}  {:>10}  {:<18}  {}",
+            "calls", "span", "txn / conn", "caller · fingerprint"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 10 + 2 + 18 + 2);
+    for (i, fnd) in findings
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(visible_h.saturating_sub(1))
+    {
+        let is_focus = i == cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            // N+1 findings are warnings by nature; render in
+            // the health-yellow palette so they stand out from
+            // the recency list / hotspots views.
+            Style::default().fg(theme.health_yellow)
+        };
+        let group = fnd
+            .txn
+            .clone()
+            .or_else(|| fnd.conn.clone())
+            .unwrap_or_else(|| "—".into());
+        let caller = fnd.last_caller.as_deref().unwrap_or("?");
+        let body = format!(
+            "{} · {}",
+            caller,
+            short_fingerprint(&fnd.fingerprint, body_col.saturating_sub(caller.chars().count() + 3))
+        );
+        let line = format!(
+            "  {count:>6}  {span:>10}  {group:<18}  {body}",
+            count = fnd.count,
+            span = format_duration(fnd.span_micros),
+            group = short_fingerprint(&group, 18),
+        );
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Collapse + truncate a SQL fingerprint for one-line render.
+fn short_fingerprint(fp: &str, width: usize) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let chars: Vec<char> = fp.chars().collect();
+    if chars.len() <= width {
+        return fp.to_string();
+    }
+    let kept: String = chars.into_iter().take(width.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+/// Render the no-tap-yet onboarding hint for the TapMonitor
+/// empty state. Lays out two routes:
+/// - **OTLP/HTTP** (works today) — point any OTel-equipped
+///   JVM at pgman's OTLP listener.
+/// - **pgman-tap** (richer context; JAR ships separately) —
+///   the bespoke Spring Boot starter with caller / pool /
+///   txn data.
+///
+/// Pure (returns `Vec<Line>`) so the empty-state layout is
+/// renderer-agnostic and snapshot-testable.
+fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
+    let muted = Style::default().fg(theme.muted);
+    let title = Style::default()
+        .fg(theme.title)
+        .add_modifier(Modifier::BOLD);
+    let code = Style::default().fg(theme.text);
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled("no tap events yet", muted)));
+    lines.push(Line::from(""));
+
+    // Route 1 — OTLP (works today)
+    lines.push(Line::from(Span::styled(
+        "Route 1: OpenTelemetry (works today, any JVM)",
+        title,
+    )));
+    lines.push(Line::from(Span::styled("  start pgman with:", muted)));
+    lines.push(Line::from(Span::styled(
+        "    pgman --tap-otlp :4318",
+        code,
+    )));
+    lines.push(Line::from(Span::styled("  on the JVM side:", muted)));
+    lines.push(Line::from(Span::styled(
+        "    -javaagent:opentelemetry-javaagent.jar",
+        code,
+    )));
+    lines.push(Line::from(Span::styled(
+        "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
+        code,
+    )));
+    lines.push(Line::from(Span::styled(
+        "    OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
+        code,
+    )));
+    lines.push(Line::from(""));
+
+    // Route 2 — pgman-tap (richer context; JAR ships separately)
+    lines.push(Line::from(Span::styled(
+        "Route 2: pgman-tap (richer context — caller / pool / txn)",
+        title,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  add to build.gradle:",
+        muted,
+    )));
+    lines.push(Line::from(Span::styled(
+        "    implementation 'co.polymorphism:pgman-tap-spring-boot-starter:0.1.0'",
+        code,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  add to application.yml:",
+        muted,
+    )));
+    lines.push(Line::from(Span::styled(
+        "    pgman.tap.enabled: true",
+        code,
+    )));
+    lines.push(Line::from(Span::styled(
+        "    pgman.tap.endpoint: tcp://localhost:7432",
+        code,
+    )));
+    lines.push(Line::from(Span::styled(
+        "  (the JAR is in development — Route 1 works today)",
+        muted,
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Once events arrive: j/k navigate · v cycle views · s sort · F1 help",
+        muted,
+    )));
+    lines
+}
+
+/// Render a duration in microseconds as a compact
+/// human-readable string for the tap monitor.
+fn format_duration(micros: u64) -> String {
+    if micros < 1_000 {
+        format!("{micros}µs")
+    } else if micros < 1_000_000 {
+        format!("{:.1}ms", micros as f64 / 1_000.0)
+    } else {
+        format!("{:.2}s", micros as f64 / 1_000_000.0)
+    }
+}
+
+/// Rich error overlay (F2 after a query failure). Renders the
+/// full server-side `DbError` fields in a labelled vertical
+/// list. Read-only modal; closes on F2 / esc / q.
+fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 85, 70);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.health_red))
+        .title(Span::styled(
+            " error detail — F2 / esc / q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let inner_width = inner.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Severity / code header.
+    if let Some(detail) = &app.last_error_detail {
+        let header = match (&detail.severity, &detail.code) {
+            (Some(sev), Some(code)) => format!(" {sev} · SQLSTATE {code} "),
+            (Some(sev), None) => format!(" {sev} "),
+            (None, Some(code)) => format!(" SQLSTATE {code} "),
+            _ => " ERROR ".to_string(),
+        };
+        lines.push(Line::from(Span::styled(
+            header,
+            Style::default()
+                .bg(theme.health_red)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    // Primary message.
+    if let Some(msg) = &app.last_error {
+        push_kv(&mut lines, theme, "message", msg, inner_width);
+    }
+    if let Some(detail) = &app.last_error_detail {
+        if let Some(s) = &detail.detail {
+            push_kv(&mut lines, theme, "detail", s, inner_width);
+        }
+        if let Some(s) = &detail.hint {
+            push_kv(&mut lines, theme, "hint", s, inner_width);
+        }
+        if let Some(s) = &detail.r#where {
+            push_kv(&mut lines, theme, "where", s, inner_width);
+        }
+        // Affected object — only render the lines that are
+        // actually present.
+        let mut affected: Vec<(&str, &str)> = Vec::new();
+        if let Some(s) = &detail.schema {
+            affected.push(("schema", s));
+        }
+        if let Some(s) = &detail.table {
+            affected.push(("table", s));
+        }
+        if let Some(s) = &detail.column {
+            affected.push(("column", s));
+        }
+        if let Some(s) = &detail.constraint {
+            affected.push(("constraint", s));
+        }
+        if let Some(s) = &detail.data_type {
+            affected.push(("type", s));
+        }
+        if !affected.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "affected object:",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (k, v) in affected {
+                push_kv(&mut lines, theme, k, v, inner_width);
+            }
+        }
+    }
+    if app.last_error_detail.is_none() && app.last_error.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "(no extended detail — non-server error or DbError fields empty)",
+            Style::default().fg(theme.muted),
+        )));
+    }
+
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
+}
+
+/// Helper: push a `label: value` line pair, wrapping the value
+/// to `width`. Label is muted, value is wrapped onto continuation
+/// lines indented under the label.
+fn push_kv(
+    lines: &mut Vec<Line<'static>>,
+    theme: &crate::theme::Theme,
+    label: &'static str,
+    value: &str,
+    width: usize,
+) {
+    let prefix = format!("{label:>11}: ");
+    let value_width = width.saturating_sub(prefix.chars().count()).max(20);
+    let wrapped = wrap_value(value, value_width);
+    let mut first = true;
+    for chunk in wrapped {
+        let p = if first {
+            first = false;
+            prefix.clone()
+        } else {
+            " ".repeat(prefix.chars().count())
+        };
+        lines.push(Line::from(vec![
+            Span::styled(p, Style::default().fg(theme.muted)),
+            Span::styled(chunk, Style::default().fg(theme.text)),
+        ]));
+    }
 }
 
 /// A centred `w`%×`h`% rectangle within `area`.
@@ -2262,6 +4540,17 @@ fn bordered(theme: &Theme, title: &str) -> Block<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_duration_picks_unit_by_magnitude() {
+        assert_eq!(format_duration(0), "0µs");
+        assert_eq!(format_duration(999), "999µs");
+        assert_eq!(format_duration(1_000), "1.0ms");
+        assert_eq!(format_duration(1_500), "1.5ms");
+        assert_eq!(format_duration(999_999), "1000.0ms");
+        assert_eq!(format_duration(1_000_000), "1.00s");
+        assert_eq!(format_duration(3_500_000), "3.50s");
+    }
 
     #[test]
     fn wrap_value_splits_on_existing_newlines() {
@@ -2421,5 +4710,132 @@ mod tests {
         let scroll = auto_scroll_to_field(&counts, 0, 2, 0, 5);
         // body_height=0 → no-op except for the max_scroll clamp.
         assert_eq!(scroll, 2);
+    }
+
+    fn settled_app(read_only: bool, tx_open: bool) -> App {
+        use crate::safety::SafetyConfig;
+        use crate::theme::Theme;
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.read_only = read_only;
+        a.tx_open = tx_open;
+        a
+    }
+
+    #[test]
+    fn footer_badges_empty_when_nothing_to_signal() {
+        // Pin dropped=0 via the `_with` variant so a leaked
+        // count from another test running in the same process
+        // can't flip this assertion.
+        let a = settled_app(false, false);
+        assert!(footer_badges_with(&a, &a.theme, 0).is_empty());
+    }
+
+    #[test]
+    fn footer_badges_render_ro_then_tx_in_stable_order() {
+        let a = settled_app(true, true);
+        let spans = footer_badges_with(&a, &a.theme, 0);
+        // Pairs of (badge, space). Length 4: " RO ", " ", " TX ", " ".
+        assert_eq!(spans.len(), 4);
+        assert_eq!(spans[0].content, " RO ");
+        assert_eq!(spans[1].content, " ");
+        assert_eq!(spans[2].content, " TX ");
+    }
+
+    #[test]
+    fn footer_badges_show_only_active_ones() {
+        let a = settled_app(true, false);
+        let spans = footer_badges_with(&a, &a.theme, 0);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content, " RO ");
+        let a = settled_app(false, true);
+        let spans = footer_badges_with(&a, &a.theme, 0);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content, " TX ");
+    }
+
+    #[test]
+    fn footer_badges_drop_counter_surfaces_amber_badge() {
+        let a = settled_app(false, false);
+        let spans = footer_badges_with(&a, &a.theme, 42);
+        let labels: Vec<String> = spans
+            .iter()
+            .map(|s| s.content.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(
+            labels.iter().any(|l| l.contains("DROP ×42")),
+            "expected DROP badge with count 42: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
+        let theme = crate::theme::Theme::default();
+        let lines = tap_setup_hint_lines(&theme);
+        let dump: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Both routes named.
+        assert!(dump.contains("Route 1: OpenTelemetry"), "got:\n{dump}");
+        assert!(dump.contains("Route 2: pgman-tap"), "got:\n{dump}");
+        // The flag + env vars the operator needs.
+        assert!(dump.contains("--tap-otlp :4318"), "got:\n{dump}");
+        assert!(
+            dump.contains("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+            "got:\n{dump}"
+        );
+        assert!(dump.contains("OTEL_EXPORTER_OTLP_PROTOCOL"), "got:\n{dump}");
+        // Spring Boot starter snippet.
+        assert!(dump.contains("pgman-tap-spring-boot-starter"), "got:\n{dump}");
+        assert!(dump.contains("pgman.tap.enabled"), "got:\n{dump}");
+        // Honest about the JAR still being in development.
+        assert!(
+            dump.contains("Route 1 works today"),
+            "expected an honest note that Route 2 isn't shipped yet; got:\n{dump}"
+        );
+    }
+
+    #[test]
+    fn footer_badges_surface_tap_and_nplus1_when_findings_exist() {
+        let mut a = settled_app(false, false);
+        // Seed 6 same-shape events in one txn within window:
+        // detect_nplus1 fires one finding.
+        for i in 0..6u64 {
+            a.on_tap_event(crate::tap::TapEvent {
+                v: 1,
+                kind: crate::tap::TapKind::Query,
+                ts_unix_micros: i * 20_000,
+                received_at_unix_micros: i * 20_000,
+                app: Some("svc".into()),
+                pool: None,
+                conn: Some("c-1".into()),
+                txn: Some("c-1#1".into()),
+                sql: Some("SELECT * FROM t WHERE id = ?".into()),
+                params: None,
+                params_redacted: false,
+                duration_micros: Some(1),
+                rows: None,
+                error: None,
+                caller: None,
+                dropped_events_total: None,
+                txn_outcome: None,
+            });
+        }
+        let spans = footer_badges_with(&a, &a.theme, 0);
+        let labels: Vec<String> = spans
+            .iter()
+            .map(|s| s.content.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert!(
+            labels.iter().any(|l| l == "TAP"),
+            "expected TAP badge: {labels:?}"
+        );
+        assert!(
+            labels.iter().any(|l| l.contains("N+1 ×1")),
+            "expected N+1 ×1 badge: {labels:?}"
+        );
     }
 }

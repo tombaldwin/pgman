@@ -89,6 +89,7 @@ mod tests {
                 .iter()
                 .map(|r| r.iter().map(|s| (*s).to_string()).collect())
                 .collect(),
+            truncated: false,
         }
     }
 
@@ -133,6 +134,7 @@ mod tests {
         let g = Grid {
             columns: vec!["query".into(), "calls".into()],
             rows: vec![vec!["SELECT 1".into(), "5".into()]],
+            truncated: false,
         };
         let parsed = parse(&g);
         assert_eq!(parsed[0].query, "SELECT 1");

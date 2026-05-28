@@ -89,9 +89,7 @@ pub fn resolve_select_columns(sql: &str, schema: &SchemaCache) -> Vec<String> {
                 for t in &from {
                     if let Some(v) = &t.virtual_columns {
                         out.extend(v.iter().cloned());
-                    } else if let Some(cols) =
-                        schema.columns_for(t.schema.as_deref(), &t.name)
-                    {
+                    } else if let Some(cols) = schema.columns_for(t.schema.as_deref(), &t.name) {
                         out.extend(cols.iter().cloned());
                     }
                 }
@@ -102,8 +100,7 @@ pub fn resolve_select_columns(sql: &str, schema: &SchemaCache) -> Vec<String> {
                     if t.match_key() == q_lower {
                         if let Some(v) = &t.virtual_columns {
                             out.extend(v.iter().cloned());
-                        } else if let Some(cols) =
-                            schema.columns_for(t.schema.as_deref(), &t.name)
+                        } else if let Some(cols) = schema.columns_for(t.schema.as_deref(), &t.name)
                         {
                             out.extend(cols.iter().cloned());
                         }
@@ -129,8 +126,19 @@ fn first_select(tokens: &[Tok<'_>]) -> Option<usize> {
 /// at the next clause keyword (FROM / WHERE / ORDER / etc).
 fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<SelectItem> {
     let stop_words: &[&str] = &[
-        "FROM", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
-        "FETCH", "RETURNING", "UNION", "INTERSECT", "EXCEPT", "INTO",
+        "FROM",
+        "WHERE",
+        "GROUP",
+        "ORDER",
+        "HAVING",
+        "LIMIT",
+        "OFFSET",
+        "FETCH",
+        "RETURNING",
+        "UNION",
+        "INTERSECT",
+        "EXCEPT",
+        "INTO",
     ];
     let mut out: Vec<SelectItem> = Vec::new();
     let mut chunk: Vec<&Tok> = Vec::new();
@@ -143,8 +151,7 @@ fn walk_select_list(tokens: &[Tok<'_>], start: usize) -> Vec<SelectItem> {
         // an alias.
         if chunk.is_empty()
             && paren_depth == 0
-            && (tok.text.eq_ignore_ascii_case("DISTINCT")
-                || tok.text.eq_ignore_ascii_case("ALL"))
+            && (tok.text.eq_ignore_ascii_case("DISTINCT") || tok.text.eq_ignore_ascii_case("ALL"))
         {
             i += 1;
             // `DISTINCT ON ( … )` — skip the paren group too.
@@ -305,7 +312,10 @@ mod tests {
 
     #[test]
     fn star_yields_no_names() {
-        assert_eq!(extract_select_columns("SELECT * FROM users"), Vec::<String>::new());
+        assert_eq!(
+            extract_select_columns("SELECT * FROM users"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -319,9 +329,7 @@ mod tests {
         // Make sure WHERE / ORDER / etc don't accidentally get pulled
         // into the SELECT list.
         assert_eq!(
-            extract_select_columns(
-                "SELECT a, b FROM users WHERE id = 1 ORDER BY a LIMIT 10"
-            ),
+            extract_select_columns("SELECT a, b FROM users WHERE id = 1 ORDER BY a LIMIT 10"),
             vec!["a", "b"]
         );
     }
@@ -349,7 +357,10 @@ mod tests {
     #[test]
     fn partial_select_list_with_no_from_still_extracts() {
         // Operator mid-typing — no FROM yet.
-        assert_eq!(extract_select_columns("SELECT id, email"), vec!["id", "email"]);
+        assert_eq!(
+            extract_select_columns("SELECT id, email"),
+            vec!["id", "email"]
+        );
     }
 
     #[test]
@@ -357,9 +368,7 @@ mod tests {
         // The `,` inside COALESCE is at paren-depth 1 and must NOT
         // split items.
         assert_eq!(
-            extract_select_columns(
-                "SELECT id, COALESCE(name, email, 'anon') AS who FROM users"
-            ),
+            extract_select_columns("SELECT id, COALESCE(name, email, 'anon') AS who FROM users"),
             vec!["id", "who"]
         );
     }
@@ -435,10 +444,7 @@ mod tests {
             ("public".into(), "orders".into()),
             vec!["order_id".into(), "total".into()],
         );
-        let cols = resolve_select_columns(
-            "SELECT u.*, o.total FROM users u, orders o",
-            &cache,
-        );
+        let cols = resolve_select_columns("SELECT u.*, o.total FROM users u, orders o", &cache);
         assert_eq!(cols, vec!["id", "email", "total"]);
     }
 

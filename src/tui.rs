@@ -9,7 +9,10 @@
 use std::io::{self, Stdout};
 use std::sync::Once;
 
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -35,10 +38,18 @@ pub struct Tui {
 /// panic hook (errors are ignored). Used by both `Drop` and the panic
 /// hook so the two paths can't drift.
 fn restore_terminal() {
+    let _ = io::stdout().execute(PopKeyboardEnhancementFlags);
     let _ = io::stdout().execute(DisableBracketedPaste);
     let _ = disable_raw_mode();
     let _ = io::stdout().execute(LeaveAlternateScreen);
 }
+
+/// Keyboard enhancement flags we ask the terminal for. The kitty
+/// protocol (supported by kitty, alacritty, wezterm, foot, ghostty,
+/// and recent xterm) disambiguates chords like `Ctrl-Enter` that
+/// legacy terminals fold into plain Enter. Best-effort: terminals
+/// without the protocol silently ignore the enable sequence.
+const KBD_FLAGS: KeyboardEnhancementFlags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
 
 /// Wrap the existing panic hook so the terminal is restored *before* the
 /// default hook prints the backtrace — otherwise the trace lands inside
@@ -67,6 +78,12 @@ impl Tui {
         // — older terminals ignore the enable sequence; we just keep
         // pasting char-by-char in that case.
         let _ = stdout.execute(EnableBracketedPaste);
+        // Ask for kitty-protocol keyboard disambiguation so chords like
+        // Ctrl-Enter are reliably delivered as `KeyCode::Enter + CONTROL`
+        // instead of being folded to plain Enter (the legacy behaviour
+        // on most terminals). Best-effort; unsupported terminals ignore
+        // it and F5 remains the universal run shortcut.
+        let _ = stdout.execute(PushKeyboardEnhancementFlags(KBD_FLAGS));
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
         Ok(Self { terminal })
     }
@@ -84,6 +101,7 @@ impl Tui {
     /// the operator with a usable shell.
     pub fn suspend(&mut self) -> io::Result<()> {
         let mut stdout = io::stdout();
+        let _ = stdout.execute(PopKeyboardEnhancementFlags);
         let _ = stdout.execute(DisableBracketedPaste);
         disable_raw_mode()?;
         stdout.execute(LeaveAlternateScreen)?;
@@ -98,6 +116,7 @@ impl Tui {
         let mut stdout = io::stdout();
         stdout.execute(EnterAlternateScreen)?;
         let _ = stdout.execute(EnableBracketedPaste);
+        let _ = stdout.execute(PushKeyboardEnhancementFlags(KBD_FLAGS));
         self.terminal.clear()?;
         Ok(())
     }

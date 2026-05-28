@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 236
+assertion_line: 326
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -26,4 +26,4 @@ expression: dump(&buf)
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close
+ RO   j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close · F1 help

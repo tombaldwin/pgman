@@ -36,6 +36,18 @@ pub struct NoticeMsg {
     pub hint: Option<String>,
 }
 
+/// One LISTEN/NOTIFY arrival: the channel the operator
+/// subscribed to with `LISTEN <chan>`, the publisher's backend
+/// pid, and the payload (often empty). Surfaced in
+/// `Mode::Notifications` (the `N` panel) — App stores a ring
+/// buffer of recent ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationMsg {
+    pub channel: String,
+    pub pid: i32,
+    pub payload: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DsnError {
     /// No `scheme://` prefix.
@@ -68,10 +80,40 @@ impl std::error::Error for DsnError {}
 ///
 /// Display elides the position so existing call sites that just
 /// `.to_string()` keep working unchanged.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QueryErr {
     pub msg: String,
     pub position: Option<u32>,
+    /// Rich fields extracted from the server-side `DbError` when
+    /// the error came from Postgres. All `None` for non-Postgres
+    /// failures (TLS, IO, our own validation) or when the server
+    /// didn't populate the field. Surfaced by the "rich error
+    /// overlay" key (`Ctrl-E` after a failure).
+    pub detail: Option<QueryErrDetail>,
+}
+
+/// Postgres `DbError` fields worth showing in a rich overlay.
+/// Mirrors the libpq error message anatomy: a one-line summary
+/// (in `msg`) plus optional `detail` / `hint` / `where` /
+/// affected-object identifiers (`schema`, `table`, `column`,
+/// `constraint`, `data_type`) for FK / constraint / type errors.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct QueryErrDetail {
+    /// Five-letter SQLSTATE code (`23505` = unique_violation, …).
+    pub code: Option<String>,
+    /// `ERROR` / `FATAL` / `PANIC` / etc.
+    pub severity: Option<String>,
+    /// Secondary message providing more context.
+    pub detail: Option<String>,
+    /// Operator-actionable hint.
+    pub hint: Option<String>,
+    /// `where:` context — the call site that raised it.
+    pub r#where: Option<String>,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub column: Option<String>,
+    pub data_type: Option<String>,
+    pub constraint: Option<String>,
 }
 
 impl QueryErr {
@@ -81,22 +123,40 @@ impl QueryErr {
         Self {
             msg: msg.into(),
             position: None,
+            detail: None,
         }
     }
 }
 
 impl From<tokio_postgres::Error> for QueryErr {
     fn from(e: tokio_postgres::Error) -> Self {
-        let position = e
-            .as_db_error()
-            .and_then(|db| db.position())
-            .map(|p| match p {
-                tokio_postgres::error::ErrorPosition::Original(n)
-                | tokio_postgres::error::ErrorPosition::Internal { position: n, .. } => *n,
-            });
+        let db = e.as_db_error();
+        let position = db.and_then(|d| d.position()).map(|p| match p {
+            tokio_postgres::error::ErrorPosition::Original(n)
+            | tokio_postgres::error::ErrorPosition::Internal { position: n, .. } => *n,
+        });
+        let detail = db.map(|d| QueryErrDetail {
+            code: Some(d.code().code().to_string()),
+            severity: Some(d.severity().to_string()),
+            detail: d.detail().map(str::to_string),
+            hint: d.hint().map(str::to_string),
+            r#where: d.where_().map(str::to_string),
+            schema: d.schema().map(str::to_string),
+            table: d.table().map(str::to_string),
+            column: d.column().map(str::to_string),
+            data_type: d.datatype().map(str::to_string),
+            constraint: d.constraint().map(str::to_string),
+        });
+        // When DbError carries a message itself, prefer it (no `db
+        // error: ERROR:` wrapping) so the message line is clean.
+        // Fall through to the default Display for non-server errors.
+        let msg = db
+            .map(|d| d.message().to_string())
+            .unwrap_or_else(|| e.to_string());
         Self {
-            msg: e.to_string(),
+            msg,
             position,
+            detail,
         }
     }
 }
@@ -148,7 +208,9 @@ impl Dsn {
         };
         let (host, port) = match hostport.rsplit_once(':') {
             Some((h, p)) => {
-                let port = p.parse::<u16>().map_err(|_| DsnError::BadPort(p.to_string()))?;
+                let port = p
+                    .parse::<u16>()
+                    .map_err(|_| DsnError::BadPort(p.to_string()))?;
                 (h, port)
             }
             None => (hostport, 5432),
@@ -191,9 +253,7 @@ impl Dsn {
         for (k, v) in raw_params {
             if k.eq_ignore_ascii_case("ssh_tunnel") {
                 if saw_tunnel_key {
-                    tracing::warn!(
-                        "ignoring duplicate ssh_tunnel={v:?}; first occurrence wins"
-                    );
+                    tracing::warn!("ignoring duplicate ssh_tunnel={v:?}; first occurrence wins");
                     continue;
                 }
                 saw_tunnel_key = true;
@@ -297,6 +357,7 @@ pub struct Booted {
 fn spawn_connection_driver<S, T>(
     mut connection: tokio_postgres::Connection<S, T>,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+    notification_tx: tokio::sync::mpsc::UnboundedSender<NotificationMsg>,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -317,9 +378,16 @@ fn spawn_connection_driver<S, T>(
                             };
                             let _ = notice_tx.send(n);
                         }
-                        tokio_postgres::AsyncMessage::Notification(_) => {
-                            // LISTEN / NOTIFY — out of scope until the
-                            // backlog's LISTEN feature lands.
+                        tokio_postgres::AsyncMessage::Notification(notif) => {
+                            // LISTEN / NOTIFY arrival — forward into
+                            // the App's notification ring via the
+                            // dedicated channel.
+                            let n = NotificationMsg {
+                                channel: notif.channel().to_string(),
+                                pid: notif.process_id(),
+                                payload: notif.payload().to_string(),
+                            };
+                            let _ = notification_tx.send(n);
                         }
                         // `AsyncMessage` is #[non_exhaustive]; ignore
                         // anything we don't recognise.
@@ -348,8 +416,22 @@ pub async fn connect_only(
     read_only: bool,
     statement_timeout_ms: u64,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
-) -> Result<(Arc<tokio_postgres::Client>, Option<crate::tunnel::SshTunnel>), String> {
-    let (client, tunnel) = connect_inner(dsn, read_only, statement_timeout_ms, notice_tx).await?;
+    notification_tx: tokio::sync::mpsc::UnboundedSender<NotificationMsg>,
+) -> Result<
+    (
+        Arc<tokio_postgres::Client>,
+        Option<crate::tunnel::SshTunnel>,
+    ),
+    String,
+> {
+    let (client, tunnel) = connect_inner(
+        dsn,
+        read_only,
+        statement_timeout_ms,
+        notice_tx,
+        notification_tx,
+    )
+    .await?;
     Ok((Arc::new(client), tunnel))
 }
 
@@ -359,12 +441,14 @@ pub async fn connect_and_bootstrap(
     statement_timeout_ms: u64,
     bootstrap_sql: String,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+    notification_tx: tokio::sync::mpsc::UnboundedSender<NotificationMsg>,
 ) -> Result<Booted, String> {
     let (client, tunnel) = connect_inner(
         dsn,
         read_only,
         statement_timeout_ms,
         notice_tx,
+        notification_tx,
     )
     .await?;
     let server_version = client
@@ -396,6 +480,7 @@ async fn connect_inner(
     read_only: bool,
     statement_timeout_ms: u64,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
+    notification_tx: tokio::sync::mpsc::UnboundedSender<NotificationMsg>,
 ) -> Result<(tokio_postgres::Client, Option<crate::tunnel::SshTunnel>), String> {
     // Open the SSH tunnel (if configured) BEFORE building the
     // postgres Config — the host/port we hand to tokio-postgres point
@@ -463,7 +548,7 @@ async fn connect_inner(
                 .connect(connector)
                 .await
                 .map_err(|e| chain_message(&e))?;
-            spawn_connection_driver(connection, notice_tx.clone());
+            spawn_connection_driver(connection, notice_tx.clone(), notification_tx.clone());
             client
         }
         Err(tls_err) => {
@@ -475,7 +560,7 @@ async fn connect_inner(
                 .connect(tokio_postgres::NoTls)
                 .await
                 .map_err(|e| chain_message(&e))?;
-            spawn_connection_driver(connection, notice_tx.clone());
+            spawn_connection_driver(connection, notice_tx.clone(), notification_tx.clone());
             client
         }
     };
@@ -501,6 +586,10 @@ async fn connect_inner(
 /// statements (`SELECT`, `EXPLAIN`, `SHOW`, …) and non-row-returning ones
 /// (`UPDATE`, `DELETE`, DDL). Non-row statements yield a single-cell grid with
 /// the affected-row count.
+///
+/// Row-returning statements are streamed via `query_raw` and capped at
+/// `grid::MAX_ROWS`; if the underlying result is larger, the returned
+/// `Grid` carries `truncated: true` so the renderer can surface that.
 pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
     let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns = stmt.columns();
@@ -509,20 +598,45 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
         Ok(Grid {
             columns: vec!["status".to_string()],
             rows: vec![vec![format!("{affected} row(s) affected")]],
+            truncated: false,
         })
     } else {
         let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
-        let rows = client.query(&stmt, &[]).await.map_err(QueryErr::from)?;
-        let out_rows: Vec<Vec<String>> = rows
-            .iter()
-            .take(crate::grid::MAX_ROWS)
-            .map(|row| (0..row.len()).map(|i| cell_to_string(row, i)).collect())
-            .collect();
+        let (rows, truncated) = stream_rows(client, &stmt).await?;
         Ok(Grid {
             columns: column_names,
-            rows: out_rows,
+            rows,
+            truncated,
         })
     }
+}
+
+/// Stream rows from a prepared statement (no params) into string-rendered
+/// vectors, stopping at `grid::MAX_ROWS`. Returns `(rows, truncated)` where
+/// `truncated` is `true` iff at least one additional row existed past the cap.
+async fn stream_rows(
+    client: &tokio_postgres::Client,
+    stmt: &tokio_postgres::Statement,
+) -> Result<(Vec<Vec<String>>, bool), QueryErr> {
+    use futures::StreamExt;
+    use tokio_postgres::types::ToSql;
+    let params: [&(dyn ToSql + Sync); 0] = [];
+    let stream = client
+        .query_raw(stmt, params)
+        .await
+        .map_err(QueryErr::from)?;
+    let mut stream = Box::pin(stream);
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut truncated = false;
+    while let Some(row_res) = stream.next().await {
+        let row = row_res.map_err(QueryErr::from)?;
+        if out.len() >= crate::grid::MAX_ROWS {
+            truncated = true;
+            break;
+        }
+        out.push((0..row.len()).map(|i| cell_to_string(&row, i)).collect());
+    }
+    Ok((out, truncated))
 }
 
 /// Open a transaction and run `sql`. On success the transaction is **left
@@ -530,7 +644,10 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
 /// `COMMIT` or `ROLLBACK`. On error the transaction is rolled back immediately
 /// so the session doesn't sit aborted.
 pub async fn run_in_tx_open(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
-    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(QueryErr::from)?;
     match run_statement(client, sql).await {
         Ok(grid) => Ok(grid),
         Err(e) => {
@@ -555,7 +672,10 @@ pub async fn run_batch_in_tx_open(
     client: &tokio_postgres::Client,
     sql: &str,
 ) -> Result<Grid, QueryErr> {
-    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(QueryErr::from)?;
     match client.batch_execute(sql).await {
         Ok(()) => Ok(status_grid("batch ran — awaiting commit/rollback")),
         Err(e) => {
@@ -569,6 +689,7 @@ fn status_grid(msg: &str) -> Grid {
     Grid {
         columns: vec!["status".to_string()],
         rows: vec![vec![msg.to_string()]],
+        truncated: false,
     }
 }
 
@@ -594,13 +715,19 @@ pub async fn run_in_tx_rollback(
     client: &tokio_postgres::Client,
     sql: &str,
 ) -> Result<Grid, QueryErr> {
-    client.batch_execute("BEGIN").await.map_err(QueryErr::from)?;
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(QueryErr::from)?;
     let result = run_statement(client, sql).await;
     let _ = client.batch_execute("ROLLBACK").await;
     result
 }
 
 /// Run `sql` and collect the result into a `Grid` (capped at `grid::MAX_ROWS`).
+///
+/// Streams via `query_raw` and sets `Grid.truncated` if more rows existed
+/// past the cap.
 pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
     let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
     let columns: Vec<String> = stmt
@@ -608,15 +735,13 @@ pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
         .iter()
         .map(|c| c.name().to_string())
         .collect();
-    let rows = client.query(&stmt, &[]).await.map_err(|e| e.to_string())?;
-    let out_rows: Vec<Vec<String>> = rows
-        .iter()
-        .take(crate::grid::MAX_ROWS)
-        .map(|row| (0..row.len()).map(|i| cell_to_string(row, i)).collect())
-        .collect();
+    let (rows, truncated) = stream_rows(client, &stmt)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(Grid {
         columns,
-        rows: out_rows,
+        rows,
+        truncated,
     })
 }
 
@@ -711,9 +836,7 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> bool {
 /// / prefer) we install a no-op verifier that matches libpq's "encrypt
 /// without verifying" behaviour — without this, self-signed dev DBs
 /// would fail the handshake.
-fn build_tls_connector(
-    verify: bool,
-) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+fn build_tls_connector(verify: bool) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
     // Install the default crypto provider once per process — rustls 0.23
     // requires this before any ClientConfig is built.
     static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
@@ -954,7 +1077,10 @@ mod tests {
 
     #[test]
     fn rejects_missing_and_bad_scheme() {
-        assert_eq!(Dsn::parse("db.example.com/orders"), Err(DsnError::MissingScheme));
+        assert_eq!(
+            Dsn::parse("db.example.com/orders"),
+            Err(DsnError::MissingScheme)
+        );
         assert_eq!(
             Dsn::parse("mysql://h/db"),
             Err(DsnError::BadScheme("mysql".to_string()))
@@ -1100,7 +1226,10 @@ mod tests {
 
     #[test]
     fn chain_message_handles_no_source() {
-        let only = StubErr { msg: "boom", src: None };
+        let only = StubErr {
+            msg: "boom",
+            src: None,
+        };
         assert_eq!(chain_message(&only), "boom");
     }
 
@@ -1108,7 +1237,10 @@ mod tests {
     fn chain_message_avoids_duplicate_tail() {
         // Some libraries bake the cause into Display already; don't end up
         // with "io error: ECONNREFUSED: ECONNREFUSED".
-        let inner = StubErr { msg: "ECONNREFUSED", src: None };
+        let inner = StubErr {
+            msg: "ECONNREFUSED",
+            src: None,
+        };
         let outer = StubErr {
             msg: "io error: ECONNREFUSED",
             src: Some(Box::new(inner)),
@@ -1176,7 +1308,13 @@ mod tests {
             &d,
         )
         .expect("ssh tunnel failure should map to a hint");
-        assert!(h.contains("tom@bastion"), "hint should name the target: {h}");
-        assert!(h.contains("ssh -v"), "hint should suggest manual verify: {h}");
+        assert!(
+            h.contains("tom@bastion"),
+            "hint should name the target: {h}"
+        );
+        assert!(
+            h.contains("ssh -v"),
+            "hint should suggest manual verify: {h}"
+        );
     }
 }

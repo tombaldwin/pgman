@@ -140,23 +140,74 @@ fn finalize(
 }
 
 /// Split a log line into its level and the message after it. Returns `None`
-/// for continuation lines (no level token).
+/// for continuation lines (no level token at a record-header position).
+///
+/// A "record-header position" is one of:
+///   - directly after a `[<digits>] ` pid bracket near the start of the
+///     line (Postgres's standard `log_line_prefix` shape), or
+///   - the very start of the line (logs without a pid prefix).
+///
+/// This deliberately rejects level-token-shaped substrings that sit
+/// inside SQL on a continuation line — e.g. `WHERE note = 'LOG: x'` no
+/// longer mis-splits the statement.
 fn split_record(line: &str) -> Option<(&'static str, &str)> {
     const LEVELS: &[&str] = &[
-        "LOG", "DETAIL", "STATEMENT", "ERROR", "WARNING", "FATAL", "PANIC", "HINT", "CONTEXT",
-        "NOTICE", "INFO",
+        "LOG",
+        "DETAIL",
+        "STATEMENT",
+        "ERROR",
+        "WARNING",
+        "FATAL",
+        "PANIC",
+        "HINT",
+        "CONTEXT",
+        "NOTICE",
+        "INFO",
     ];
-    let mut best: Option<(usize, &'static str)> = None;
+    let header_start = find_after_pid_bracket(line).unwrap_or(0);
     for &lvl in LEVELS {
         let needle = format!("{lvl}:");
-        if let Some(pos) = line.find(&needle) {
-            if best.is_none_or(|(b, _)| pos < b) {
-                best = Some((pos, lvl));
-            }
+        if line[header_start..].starts_with(&needle) {
+            let after = header_start + needle.len();
+            return Some((lvl, line[after..].trim_start()));
         }
     }
-    let (pos, lvl) = best?;
-    Some((lvl, line[pos + lvl.len() + 1..].trim_start()))
+    None
+}
+
+/// Locate the byte position right after a `[<digits>] ` group near the
+/// start of `line` — the conventional pg log header terminator. Returns
+/// `None` if no such group exists, the bracket sits past a reasonable
+/// header length (so we don't match brackets buried inside SQL bodies),
+/// or anything before the bracket looks like SQL string content (a `'`
+/// is the giveaway).
+fn find_after_pid_bracket(line: &str) -> Option<usize> {
+    // Real pg log_line_prefix headers are short (timestamp + tz + pid
+    // ≈ 50 chars). Anything past 80 is almost certainly the message
+    // body — refuse to look there for `[…]`.
+    const MAX_HEADER: usize = 80;
+    let lb = line.find('[')?;
+    if lb > MAX_HEADER {
+        return None;
+    }
+    // Anything resembling a SQL string literal before the bracket is
+    // a strong signal we're inside a continuation line whose content
+    // happens to include `[…]`.
+    if line[..lb].contains('\'') {
+        return None;
+    }
+    let rb_rel = line[lb + 1..].find(']')?;
+    let inside = &line[lb + 1..lb + 1 + rb_rel];
+    if inside.is_empty() || !inside.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let after = lb + 1 + rb_rel + 1;
+    // Standard `[pid] LEVEL:` puts exactly one space here.
+    if line.as_bytes().get(after) == Some(&b' ') {
+        Some(after + 1)
+    } else {
+        None
+    }
 }
 
 /// Recognise a `LOG:` message as a statement, returning its kind and SQL.
@@ -388,6 +439,56 @@ mod tests {
         assert_eq!(q.len(), 2);
         assert_eq!(q[0].runnable_sql, "select * from t where id = 'one'");
         assert_eq!(q[1].runnable_sql, "select * from t where id = 'two'");
+    }
+
+    #[test]
+    fn split_record_ignores_bracket_with_non_digit_contents() {
+        // `[hello]` isn't a pid bracket — even if a LEVEL: word
+        // follows, it's not a real log header.
+        assert!(split_record("note = '[hello] LOG: bad'").is_none());
+    }
+
+    #[test]
+    fn split_record_ignores_bracket_buried_in_a_long_line() {
+        // A `[<digits>]` deep into a long SQL line is the message body,
+        // not a header. (Cap is 80.)
+        let prefix = "x".repeat(120);
+        let line = format!("{prefix}[101] LOG: bad");
+        assert!(split_record(&line).is_none());
+    }
+
+    #[test]
+    fn split_record_rejects_bracket_preceded_by_apostrophe() {
+        // A `'` before `[…]` strongly implies we're inside a SQL string
+        // literal continuation. Don't read the bracket as a pid.
+        assert!(split_record("WHERE note = '... [101] LOG: bad'").is_none());
+    }
+
+    #[test]
+    fn split_record_accepts_pid_only_header() {
+        // `[<pid>] LEVEL: ...` — no timestamp prefix; still a valid pg
+        // log header.
+        assert_eq!(
+            split_record("[7] LOG:  statement: select 1"),
+            Some(("LOG", "statement: select 1"))
+        );
+    }
+
+    #[test]
+    fn continuation_line_with_log_level_in_string_literal_is_joined() {
+        // A multi-line SQL whose continuation contains a literal
+        // matching a log-level pattern must NOT be split. Previously
+        // `split_record` found `LOG:` inside the string and started a
+        // bogus second statement.
+        let log = "\
+[5] LOG:  statement: SELECT id
+       FROM t WHERE note = 'something LOG: bad'
+[5] LOG:  statement: select 1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "expected 2 queries, got {q:?}");
+        assert!(q[0].raw_sql.contains("FROM t WHERE note"));
+        assert!(q[0].raw_sql.contains("'something LOG: bad'"));
+        assert_eq!(q[1].raw_sql, "select 1");
     }
 
     #[test]

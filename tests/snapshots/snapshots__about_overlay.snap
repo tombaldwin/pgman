@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 137
+assertion_line: 140
 expression: dump(&buf)
 ---
  pgman │ test  connected ·┌ about ───────────────────────────────────────┐
@@ -30,4 +30,4 @@ expression: dump(&buf)
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
 └─────────────────────────│                                              │─────────────────────────┘
- esc / enter / A close    └──────────────────────────────────────────────┘
+ RO   esc / enter / A clos└──────────────────────────────────────────────┘

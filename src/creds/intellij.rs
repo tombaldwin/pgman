@@ -248,18 +248,13 @@ pub fn expand_to_dsns(
         .user
         .clone()
         .or_else(|| source.user.clone().filter(|s| !s.is_empty()))
-        .or_else(|| {
-            local
-                .and_then(|m| m.user.clone())
-                .filter(|s| !s.is_empty())
-        });
+        .or_else(|| local.and_then(|m| m.user.clone()).filter(|s| !s.is_empty()));
 
     // Effective password: URL > PGPASSWORD
-    let effective_password = base.password.clone().or_else(|| {
-        std::env::var("PGPASSWORD")
-            .ok()
-            .filter(|s| !s.is_empty())
-    });
+    let effective_password = base
+        .password
+        .clone()
+        .or_else(|| std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty()));
 
     let databases: Vec<Option<String>> = if url_has_dbname {
         // Trust the URL — one entry, dbname pulled from base.
@@ -297,7 +292,10 @@ fn url_has_explicit_path(url: &str) -> bool {
         None => return false,
     };
     // Strip ?query so a `?` doesn't get mistaken for path content.
-    let auth_path = after_scheme.split_once('?').map(|(a, _)| a).unwrap_or(after_scheme);
+    let auth_path = after_scheme
+        .split_once('?')
+        .map(|(a, _)| a)
+        .unwrap_or(after_scheme);
     match auth_path.split_once('/') {
         Some((_, path)) => !path.is_empty(),
         None => false,

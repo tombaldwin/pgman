@@ -27,18 +27,44 @@
 /// shift the cursor's classification.
 pub const STATEMENT_KEYWORDS: &[&str] = &[
     // DQL / DML
-    "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "WITH", "VALUES",
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "MERGE",
+    "WITH",
+    "VALUES",
     // DDL
-    "CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT",
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "TRUNCATE",
+    "COMMENT",
     // Plan / inspection
-    "EXPLAIN", "SHOW", "VACUUM", "ANALYZE", "REINDEX", "CLUSTER",
+    "EXPLAIN",
+    "SHOW",
+    "VACUUM",
+    "ANALYZE",
+    "REINDEX",
+    "CLUSTER",
     // Session / transaction
-    "BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "END",
-    "SET", "RESET",
+    "BEGIN",
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE",
+    "END",
+    "SET",
+    "RESET",
     // Permissions
-    "GRANT", "REVOKE",
+    "GRANT",
+    "REVOKE",
     // Misc
-    "COPY", "LISTEN", "NOTIFY", "UNLISTEN", "CHECKPOINT",
+    "COPY",
+    "LISTEN",
+    "NOTIFY",
+    "UNLISTEN",
+    "CHECKPOINT",
 ];
 
 /// Aggregate functions surfaced in `SelectList` (and `RETURNING`).
@@ -48,9 +74,18 @@ pub const STATEMENT_KEYWORDS: &[&str] = &[
 /// To add a new aggregate (e.g. when Postgres adds one): append the
 /// uppercase name here.
 pub const AGGREGATE_FUNCTIONS: &[&str] = &[
-    "COUNT", "SUM", "AVG", "MIN", "MAX",
-    "ARRAY_AGG", "STRING_AGG", "BOOL_AND", "BOOL_OR",
-    "JSON_AGG", "JSONB_AGG", "JSON_OBJECT_AGG",
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+    "ARRAY_AGG",
+    "STRING_AGG",
+    "BOOL_AND",
+    "BOOL_OR",
+    "JSON_AGG",
+    "JSONB_AGG",
+    "JSON_OBJECT_AGG",
 ];
 
 /// Scalar functions commonly used in SELECT lists / expressions —
@@ -58,31 +93,87 @@ pub const AGGREGATE_FUNCTIONS: &[&str] = &[
 /// as aggregates (`NAME(`).
 pub const SCALAR_FUNCTIONS: &[&str] = &[
     // Conditional / null handling
-    "COALESCE", "NULLIF", "GREATEST", "LEAST", "CAST",
+    "COALESCE",
+    "NULLIF",
+    "GREATEST",
+    "LEAST",
+    "CAST",
     // Time
-    "NOW", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME",
-    "EXTRACT", "DATE_TRUNC", "AGE", "TO_CHAR", "TO_DATE", "TO_TIMESTAMP",
+    "NOW",
+    "CURRENT_TIMESTAMP",
+    "CURRENT_DATE",
+    "CURRENT_TIME",
+    "EXTRACT",
+    "DATE_TRUNC",
+    "AGE",
+    "TO_CHAR",
+    "TO_DATE",
+    "TO_TIMESTAMP",
     // String
-    "LENGTH", "CHAR_LENGTH", "LOWER", "UPPER", "INITCAP",
-    "TRIM", "LTRIM", "RTRIM", "BTRIM",
-    "SUBSTRING", "POSITION", "REPLACE", "REGEXP_REPLACE",
-    "REGEXP_MATCH", "REGEXP_MATCHES", "REGEXP_SPLIT_TO_ARRAY",
-    "CONCAT", "CONCAT_WS", "FORMAT", "REPEAT", "REVERSE", "SPLIT_PART",
+    "LENGTH",
+    "CHAR_LENGTH",
+    "LOWER",
+    "UPPER",
+    "INITCAP",
+    "TRIM",
+    "LTRIM",
+    "RTRIM",
+    "BTRIM",
+    "SUBSTRING",
+    "POSITION",
+    "REPLACE",
+    "REGEXP_REPLACE",
+    "REGEXP_MATCH",
+    "REGEXP_MATCHES",
+    "REGEXP_SPLIT_TO_ARRAY",
+    "CONCAT",
+    "CONCAT_WS",
+    "FORMAT",
+    "REPEAT",
+    "REVERSE",
+    "SPLIT_PART",
     // Numeric / math
-    "ABS", "CEIL", "CEILING", "FLOOR", "ROUND", "TRUNC",
-    "POWER", "SQRT", "MOD", "DIV", "RANDOM",
+    "ABS",
+    "CEIL",
+    "CEILING",
+    "FLOOR",
+    "ROUND",
+    "TRUNC",
+    "POWER",
+    "SQRT",
+    "MOD",
+    "DIV",
+    "RANDOM",
     // Array
-    "ARRAY_LENGTH", "ARRAY_POSITION", "ARRAY_AGG", "UNNEST", "CARDINALITY",
+    "ARRAY_LENGTH",
+    "ARRAY_POSITION",
+    "ARRAY_AGG",
+    "UNNEST",
+    "CARDINALITY",
     // JSON / JSONB
-    "JSONB_BUILD_OBJECT", "JSON_BUILD_OBJECT",
-    "JSONB_BUILD_ARRAY", "JSON_BUILD_ARRAY",
-    "JSONB_OBJECT_KEYS", "JSONB_PATH_QUERY", "JSONB_SET",
-    "TO_JSONB", "TO_JSON",
+    "JSONB_BUILD_OBJECT",
+    "JSON_BUILD_OBJECT",
+    "JSONB_BUILD_ARRAY",
+    "JSON_BUILD_ARRAY",
+    "JSONB_OBJECT_KEYS",
+    "JSONB_PATH_QUERY",
+    "JSONB_SET",
+    "TO_JSONB",
+    "TO_JSON",
     // Postgres catalog / introspection — high-signal for ops queries
-    "VERSION", "CURRENT_DATABASE", "CURRENT_SCHEMA", "CURRENT_USER",
-    "SESSION_USER", "PG_BACKEND_PID", "PG_TYPEOF",
-    "PG_RELATION_SIZE", "PG_TOTAL_RELATION_SIZE", "PG_SIZE_PRETTY",
-    "PG_TABLE_SIZE", "PG_INDEXES_SIZE", "PG_DATABASE_SIZE",
+    "VERSION",
+    "CURRENT_DATABASE",
+    "CURRENT_SCHEMA",
+    "CURRENT_USER",
+    "SESSION_USER",
+    "PG_BACKEND_PID",
+    "PG_TYPEOF",
+    "PG_RELATION_SIZE",
+    "PG_TOTAL_RELATION_SIZE",
+    "PG_SIZE_PRETTY",
+    "PG_TABLE_SIZE",
+    "PG_INDEXES_SIZE",
+    "PG_DATABASE_SIZE",
     "TXID_CURRENT",
 ];
 
@@ -92,8 +183,17 @@ pub const SCALAR_FUNCTIONS: &[&str] = &[
 /// whether they type `OVER` after the call, which we can't tell at
 /// suggestion time.
 pub const WINDOW_FUNCTIONS: &[&str] = &[
-    "ROW_NUMBER", "RANK", "DENSE_RANK", "PERCENT_RANK", "CUME_DIST",
-    "LAG", "LEAD", "FIRST_VALUE", "LAST_VALUE", "NTH_VALUE", "NTILE",
+    "ROW_NUMBER",
+    "RANK",
+    "DENSE_RANK",
+    "PERCENT_RANK",
+    "CUME_DIST",
+    "LAG",
+    "LEAD",
+    "FIRST_VALUE",
+    "LAST_VALUE",
+    "NTH_VALUE",
+    "NTILE",
 ];
 
 /// Word-shaped operators / connectives that the operator naturally
@@ -104,10 +204,21 @@ pub const WINDOW_FUNCTIONS: &[&str] = &[
 /// Multi-word phrases (`IS NULL`, `IS NOT NULL`, `NOT IN`) are
 /// emitted as single candidates so Tab once gets the whole shape.
 pub const PREDICATE_OPERATORS: &[&str] = &[
-    "AND", "OR", "NOT",
-    "LIKE", "ILIKE", "IN", "BETWEEN", "EXISTS",
-    "IS NULL", "IS NOT NULL", "NOT IN", "NOT LIKE", "NOT ILIKE",
-    "IS DISTINCT FROM", "IS NOT DISTINCT FROM",
+    "AND",
+    "OR",
+    "NOT",
+    "LIKE",
+    "ILIKE",
+    "IN",
+    "BETWEEN",
+    "EXISTS",
+    "IS NULL",
+    "IS NOT NULL",
+    "NOT IN",
+    "NOT LIKE",
+    "NOT ILIKE",
+    "IS DISTINCT FROM",
+    "IS NOT DISTINCT FROM",
     "SIMILAR TO",
 ];
 
@@ -115,11 +226,7 @@ pub const PREDICATE_OPERATORS: &[&str] = &[
 /// statement. `IF EXISTS` actually goes BEFORE the name; the others
 /// come after. Surfaced in `ClauseContext::DropTarget` alongside
 /// table / schema names.
-pub const DROP_CONTINUATIONS: &[&str] = &[
-    "IF EXISTS",
-    "CASCADE",
-    "RESTRICT",
-];
+pub const DROP_CONTINUATIONS: &[&str] = &["IF EXISTS", "CASCADE", "RESTRICT"];
 
 /// Postgres SQL type names — surfaced inside `CAST(expr AS |)` and
 /// DDL column-type positions. Covers the common built-in types; add
@@ -128,30 +235,68 @@ pub const DROP_CONTINUATIONS: &[&str] = &[
 /// you actually want to commit to disk).
 pub const TYPE_NAMES: &[&str] = &[
     // Numeric
-    "smallint", "integer", "bigint", "decimal", "numeric",
-    "real", "double precision", "smallserial", "serial", "bigserial",
+    "smallint",
+    "integer",
+    "bigint",
+    "decimal",
+    "numeric",
+    "real",
+    "double precision",
+    "smallserial",
+    "serial",
+    "bigserial",
     "money",
     // Character
-    "character varying", "varchar", "character", "char", "text",
+    "character varying",
+    "varchar",
+    "character",
+    "char",
+    "text",
     // Binary
     "bytea",
     // Date / time
-    "timestamp", "timestamp with time zone", "timestamptz",
-    "date", "time", "time with time zone", "timetz", "interval",
+    "timestamp",
+    "timestamp with time zone",
+    "timestamptz",
+    "date",
+    "time",
+    "time with time zone",
+    "timetz",
+    "interval",
     // Boolean
-    "boolean", "bool",
+    "boolean",
+    "bool",
     // Enumerated / network / monetary / geometric (selected)
-    "uuid", "inet", "cidr", "macaddr", "macaddr8",
-    "point", "line", "lseg", "box", "path", "polygon", "circle",
+    "uuid",
+    "inet",
+    "cidr",
+    "macaddr",
+    "macaddr8",
+    "point",
+    "line",
+    "lseg",
+    "box",
+    "path",
+    "polygon",
+    "circle",
     // JSON / XML
-    "json", "jsonb", "xml",
+    "json",
+    "jsonb",
+    "xml",
     // Arrays — operator usually qualifies with [] manually
     // Range types
-    "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange",
+    "int4range",
+    "int8range",
+    "numrange",
+    "tsrange",
+    "tstzrange",
+    "daterange",
     // Text search
-    "tsvector", "tsquery",
+    "tsvector",
+    "tsquery",
     // Bit strings
-    "bit", "bit varying",
+    "bit",
+    "bit varying",
 ];
 
 /// Universal values usable on the right-hand side of `SET <param> = |`.
@@ -159,9 +304,7 @@ pub const TYPE_NAMES: &[&str] = &[
 /// `true` / `false`. Any GUC accepts `default` to revert. String / enum
 /// GUCs need per-parameter vocab not yet modeled — operators type the
 /// value manually for those.
-pub const GUC_VALUES: &[&str] = &[
-    "on", "off", "true", "false", "default",
-];
+pub const GUC_VALUES: &[&str] = &["on", "off", "true", "false", "default"];
 
 /// Common Postgres GUC (Grand Unified Configuration) parameter names.
 /// Surfaced in `SHOW |` and `SET |` completion. Not exhaustive —
@@ -174,31 +317,68 @@ pub const GUC_PARAMETERS: &[&str] = &[
     // Tab the operator skips past.
     "all",
     // Session basics
-    "search_path", "timezone", "client_encoding", "client_min_messages",
-    "datestyle", "intervalstyle", "application_name", "role", "session_user",
+    "search_path",
+    "timezone",
+    "client_encoding",
+    "client_min_messages",
+    "datestyle",
+    "intervalstyle",
+    "application_name",
+    "role",
+    "session_user",
     // Transactions / isolation
-    "default_transaction_isolation", "default_transaction_read_only",
-    "default_transaction_deferrable", "transaction_isolation",
-    "transaction_read_only", "transaction_deferrable", "idle_in_transaction_session_timeout",
+    "default_transaction_isolation",
+    "default_transaction_read_only",
+    "default_transaction_deferrable",
+    "transaction_isolation",
+    "transaction_read_only",
+    "transaction_deferrable",
+    "idle_in_transaction_session_timeout",
     // Limits / safety
-    "statement_timeout", "lock_timeout", "deadlock_timeout",
-    "work_mem", "maintenance_work_mem", "temp_buffers",
-    "max_connections", "max_parallel_workers", "max_parallel_workers_per_gather",
-    "max_wal_size", "min_wal_size",
+    "statement_timeout",
+    "lock_timeout",
+    "deadlock_timeout",
+    "work_mem",
+    "maintenance_work_mem",
+    "temp_buffers",
+    "max_connections",
+    "max_parallel_workers",
+    "max_parallel_workers_per_gather",
+    "max_wal_size",
+    "min_wal_size",
     // Planner
-    "enable_seqscan", "enable_indexscan", "enable_bitmapscan",
-    "enable_hashjoin", "enable_mergejoin", "enable_nestloop",
-    "random_page_cost", "seq_page_cost", "cpu_tuple_cost",
-    "effective_cache_size", "default_statistics_target",
-    "join_collapse_limit", "from_collapse_limit",
+    "enable_seqscan",
+    "enable_indexscan",
+    "enable_bitmapscan",
+    "enable_hashjoin",
+    "enable_mergejoin",
+    "enable_nestloop",
+    "random_page_cost",
+    "seq_page_cost",
+    "cpu_tuple_cost",
+    "effective_cache_size",
+    "default_statistics_target",
+    "join_collapse_limit",
+    "from_collapse_limit",
     // Logging / observability
-    "log_statement", "log_duration", "log_min_duration_statement",
-    "log_lock_waits", "log_temp_files",
+    "log_statement",
+    "log_duration",
+    "log_min_duration_statement",
+    "log_lock_waits",
+    "log_temp_files",
     // Server info (read-mostly, common in SHOW)
-    "server_version", "server_version_num", "server_encoding",
-    "data_directory", "config_file", "hba_file", "ident_file",
-    "shared_buffers", "wal_level", "max_wal_senders",
-    "synchronous_commit", "wal_compression",
+    "server_version",
+    "server_version_num",
+    "server_encoding",
+    "data_directory",
+    "config_file",
+    "hba_file",
+    "ident_file",
+    "shared_buffers",
+    "wal_level",
+    "max_wal_senders",
+    "synchronous_commit",
+    "wal_compression",
 ];
 
 /// Postgres `EXPLAIN (option, option, ...)` flags. Surfaced inside
@@ -210,9 +390,18 @@ pub const GUC_PARAMETERS: &[&str] = &[
 /// `pg_explain_options` doesn't exist, but Postgres release notes
 /// flag any addition to this list).
 pub const EXPLAIN_OPTIONS: &[&str] = &[
-    "ANALYZE", "VERBOSE", "COSTS", "SETTINGS", "BUFFERS",
-    "WAL", "TIMING", "SUMMARY", "FORMAT", "GENERIC_PLAN",
-    "SERIALIZE", "MEMORY",
+    "ANALYZE",
+    "VERBOSE",
+    "COSTS",
+    "SETTINGS",
+    "BUFFERS",
+    "WAL",
+    "TIMING",
+    "SUMMARY",
+    "FORMAT",
+    "GENERIC_PLAN",
+    "SERIALIZE",
+    "MEMORY",
 ];
 
 /// Postgres `VACUUM (option, ...) [table]` flags. Same shape as
@@ -220,10 +409,19 @@ pub const EXPLAIN_OPTIONS: &[&str] = &[
 /// subset of these in its own `(...)` option list, so the same
 /// vocabulary is reused for both.
 pub const VACUUM_OPTIONS: &[&str] = &[
-    "FULL", "FREEZE", "VERBOSE", "ANALYZE",
-    "DISABLE_PAGE_SKIPPING", "SKIP_LOCKED", "INDEX_CLEANUP",
-    "PROCESS_TOAST", "TRUNCATE", "PARALLEL",
-    "BUFFER_USAGE_LIMIT", "SKIP_DATABASE_STATS", "ONLY_DATABASE_STATS",
+    "FULL",
+    "FREEZE",
+    "VERBOSE",
+    "ANALYZE",
+    "DISABLE_PAGE_SKIPPING",
+    "SKIP_LOCKED",
+    "INDEX_CLEANUP",
+    "PROCESS_TOAST",
+    "TRUNCATE",
+    "PARALLEL",
+    "BUFFER_USAGE_LIMIT",
+    "SKIP_DATABASE_STATS",
+    "ONLY_DATABASE_STATS",
 ];
 
 /// JOIN variants surfaced as multi-word completions in `TableRef`
@@ -232,11 +430,17 @@ pub const VACUUM_OPTIONS: &[&str] = &[
 pub const JOIN_VARIANTS: &[&str] = &[
     "JOIN",
     "INNER JOIN",
-    "LEFT JOIN", "LEFT OUTER JOIN",
-    "RIGHT JOIN", "RIGHT OUTER JOIN",
-    "FULL JOIN", "FULL OUTER JOIN",
-    "CROSS JOIN", "NATURAL JOIN",
-    "LATERAL JOIN", "LEFT JOIN LATERAL", "INNER JOIN LATERAL",
+    "LEFT JOIN",
+    "LEFT OUTER JOIN",
+    "RIGHT JOIN",
+    "RIGHT OUTER JOIN",
+    "FULL JOIN",
+    "FULL OUTER JOIN",
+    "CROSS JOIN",
+    "NATURAL JOIN",
+    "LATERAL JOIN",
+    "LEFT JOIN LATERAL",
+    "INNER JOIN LATERAL",
 ];
 
 /// "What clause keyword can follow this position." Drives the
@@ -255,22 +459,38 @@ pub mod continuations {
     /// After a FROM / JOIN clause — JOIN variants, WHERE, GROUP BY,
     /// ORDER BY, LIMIT, RETURNING (when inside an UPDATE / DELETE).
     pub const AFTER_TABLE_REF: &[&str] = &[
-        "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
-        "FETCH FIRST", "RETURNING", "ON CONFLICT", "UNION", "INTERSECT", "EXCEPT",
+        "WHERE",
+        "GROUP BY",
+        "ORDER BY",
+        "HAVING",
+        "LIMIT",
+        "OFFSET",
+        "FETCH FIRST",
+        "RETURNING",
+        "ON CONFLICT",
+        "UNION",
+        "INTERSECT",
+        "EXCEPT",
         // Aliasing keywords
         "AS",
     ];
 
     /// After WHERE / HAVING / ON — the typical next clauses.
     pub const AFTER_PREDICATE: &[&str] = &[
-        "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET", "RETURNING",
-        "UNION", "INTERSECT", "EXCEPT",
+        "GROUP BY",
+        "ORDER BY",
+        "HAVING",
+        "LIMIT",
+        "OFFSET",
+        "RETURNING",
+        "UNION",
+        "INTERSECT",
+        "EXCEPT",
     ];
 
     /// After ORDER BY / GROUP BY — pagination + RETURNING.
-    pub const AFTER_ORDER_OR_GROUP: &[&str] = &[
-        "LIMIT", "OFFSET", "FETCH FIRST", "HAVING", "ORDER BY",
-    ];
+    pub const AFTER_ORDER_OR_GROUP: &[&str] =
+        &["LIMIT", "OFFSET", "FETCH FIRST", "HAVING", "ORDER BY"];
 
     /// After UPDATE … SET col = … — the natural continuations.
     pub const AFTER_UPDATE_ASSIGN: &[&str] = &["WHERE", "RETURNING", "FROM"];
@@ -377,10 +597,7 @@ mod tests {
         for (label, table) in labelled {
             let mut seen = std::collections::BTreeSet::new();
             for word in *table {
-                assert!(
-                    seen.insert(*word),
-                    "{label} contains duplicate {word:?}"
-                );
+                assert!(seen.insert(*word), "{label} contains duplicate {word:?}");
             }
         }
     }

@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 235
+assertion_line: 293
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -8,8 +8,8 @@ expression: dump(&buf)
 │> (em┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
 └─────│▶ audit  (1)                      public.users                                        │─────┘
 ┌ resu│▼ public  (2)                                                                         │─────┐
-│(no r│    orders                        columns (3)                                         │     │
-│     │    users                           · id                                              │     │
+│(no r│  ▶ orders  (0 col, 0 cons)       columns (3)                                         │     │
+│     │  ▶ users  (3 col, 1 cons)          · id                                              │     │
 │     │                                    · email                                           │     │
 │     │                                    · active                                          │     │
 │     │                                                                                      │     │
@@ -26,4 +26,4 @@ expression: dump(&buf)
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- j/k navigate · enter expand schema · g/G top/bottom · q / esc close
+ RO   j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · q

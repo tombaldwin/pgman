@@ -56,10 +56,16 @@ fn focus_editor_type_select_and_back_to_normal() {
     drive(
         &mut a,
         &[
-            k('e'),                       // Normal → Editor
-            k('S'), k('E'), k('L'), k('E'), k('C'), k('T'),
-            k(' '), k('1'),
-            special(KeyCode::Esc),        // Editor → Normal
+            k('e'), // Normal → Editor
+            k('S'),
+            k('E'),
+            k('L'),
+            k('E'),
+            k('C'),
+            k('T'),
+            k(' '),
+            k('1'),
+            special(KeyCode::Esc), // Editor → Normal
         ],
     );
     assert_eq!(a.mode, Mode::Normal);
@@ -85,7 +91,9 @@ fn enter_editor_then_backspace_back_to_empty() {
         &mut a,
         &[
             k('i'), // Normal → Editor (alternate binding)
-            k('x'), k('y'), k('z'),
+            k('x'),
+            k('y'),
+            k('z'),
             special(KeyCode::Backspace),
             special(KeyCode::Backspace),
             special(KeyCode::Backspace),
@@ -119,9 +127,11 @@ fn history_search_opens_and_loads_matching_entry() {
     drive(
         &mut a,
         &[
-            ctrl('r'),                  // open reverse-i-search
-            k('s'), k('e'), k('l'),     // narrows to most-recent SELECT
-            special(KeyCode::Enter),    // accept
+            ctrl('r'), // open reverse-i-search
+            k('s'),
+            k('e'),
+            k('l'),                  // narrows to most-recent SELECT
+            special(KeyCode::Enter), // accept
         ],
     );
     assert_eq!(a.mode, Mode::Editor);
@@ -151,14 +161,15 @@ fn grid_filter_typing_narrows_visible_rows() {
             vec!["bob".into()],
             vec!["carol".into()],
         ],
+        truncated: false,
     };
     a.grid_visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
     drive(
         &mut a,
         &[
-            k('/'),                  // enter filter
-            k('o'),                  // matches `bob` and `carol`
+            k('/'), // enter filter
+            k('o'), // matches `bob` and `carol`
         ],
     );
     assert_eq!(a.mode, Mode::GridFilter);
@@ -195,6 +206,7 @@ fn grid_sort_cycle_through_three_states() {
     a.grid = Grid {
         columns: vec!["id".into()],
         rows: vec![vec!["3".into()], vec!["1".into()], vec!["2".into()]],
+        truncated: false,
     };
     a.grid_visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
@@ -233,5 +245,8 @@ fn ctrl_c_quits_in_normal_mode_but_not_in_editor() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
     drive(&mut a, &[ctrl('c')]);
-    assert!(!a.should_quit, "Ctrl-C in Editor with no running query should NOT quit");
+    assert!(
+        !a.should_quit,
+        "Ctrl-C in Editor with no running query should NOT quit"
+    );
 }

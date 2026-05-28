@@ -1380,6 +1380,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "tb-tui-common",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
@@ -2110,6 +2111,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tb-tui-common"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2d3947fa28cecab807fc9c1d06ec10a76f1a5f16476c9a065f89880cf4d1021"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "tracing",
 ]
 
 [[package]]

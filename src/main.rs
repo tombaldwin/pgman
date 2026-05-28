@@ -1,11 +1,15 @@
 //! pgman binary entry point — argument parsing, logging, then the TUI.
 
 use clap::Parser;
-use pgman::app::DataSourcePick;
-use pgman::{app, batch, conn, creds, font_probe, project, safety, theme, tui, upgrade, util};
+use pgman::app::{AppMsg, DataSourcePick};
+use pgman::{app, batch, conn, creds, font_probe, project, safety, tap, theme, tui, upgrade, util};
 
 #[derive(Parser)]
-#[command(name = "pgman", version, about = "k9s-style Postgres TUI for Java/AWS shops")]
+#[command(
+    name = "pgman",
+    version,
+    about = "k9s-style Postgres TUI for Java/AWS shops"
+)]
 struct Cli {
     /// Connect using a postgres:// DSN.
     #[arg(long)]
@@ -33,6 +37,51 @@ struct Cli {
     /// Output format for `--batch`: csv (default) | tsv | json | expanded.
     #[arg(long, default_value = "csv")]
     format: String,
+
+    /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON
+    /// events). Use `--tap-listen 127.0.0.1:7432` (or `:7432` for the
+    /// same). When set, the listener starts before the TUI loop; events
+    /// stream into `Mode::TapMonitor` (F4 from any mode). Omit to skip
+    /// the listener entirely — pgman runs as a normal DB-side TUI.
+    #[arg(long, value_name = "ADDR")]
+    tap_listen: Option<String>,
+
+    /// Bind an OTLP/HTTP listener so any OpenTelemetry-equipped JVM
+    /// can stream Postgres spans straight into pgman without the
+    /// pgman-tap JAR. Accepts `POST /v1/traces` with JSON bodies on
+    /// the default OTLP port 4318. Example:
+    /// `--tap-otlp :4318` then set
+    /// `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318` and
+    /// `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` on the JVM.
+    #[arg(long, value_name = "ADDR")]
+    tap_otlp: Option<String>,
+
+    /// Replay a captured tap event stream from a JSONL file (one
+    /// `TapEvent` JSON object per line). Each event is fed into the
+    /// same pipeline the live listeners use, so the TapMonitor /
+    /// hotspots / N+1 views work identically against replayed data.
+    /// Useful for demos and for exercising downstream layers
+    /// (advisor, evidence-handoff) without a live JVM.
+    #[arg(long, value_name = "PATH")]
+    tap_replay: Option<std::path::PathBuf>,
+
+    /// Bind a UDP listener for fire-and-forget tap events (one
+    /// `TapEvent` JSON per datagram, no framing). Opt-in
+    /// alternative to `--tap-listen` (TCP) for cases where the
+    /// JVM side must never block on telemetry. UDP is lossy:
+    /// dropped events are silently gone, with no
+    /// `dropped_events_total` accounting on the receive side.
+    #[arg(long, value_name = "ADDR")]
+    tap_udp: Option<String>,
+
+    /// Append every incoming TapEvent to this JSONL file (one
+    /// event per line). Useful for capturing a real workload
+    /// and replaying it later via `--tap-replay`. Captures
+    /// from any active transport (TCP / UDP / OTLP). The file
+    /// is opened append-only, so multiple sessions stack
+    /// cleanly; rotate manually when it grows.
+    #[arg(long, value_name = "PATH")]
+    tap_record: Option<std::path::PathBuf>,
 }
 
 #[tokio::main]
@@ -92,6 +141,11 @@ async fn main() -> anyhow::Result<()> {
     // override the explicit choice.
     let mut data_source_picks: Vec<DataSourcePick> = Vec::new();
     let mut project_safety: Option<project::ProjectSafety> = None;
+    // Tracks whether we saw a Spring / Java project in the cwd —
+    // used to auto-enable the tap-tcp listener so the operator
+    // doesn't have to remember `--tap-listen`. Explicit flags
+    // still win (they make the bound port visible).
+    let mut java_project_detected = false;
     if let Ok(cwd) = std::env::current_dir() {
         if let Some((root, project_cfg)) = project::load_from(&cwd) {
             tracing::info!("project root: {}", root.display());
@@ -116,6 +170,7 @@ async fn main() -> anyhow::Result<()> {
         }
         if creds::spring::detect_java_project(&cwd) {
             tracing::info!("Java project detected at {}", cwd.display());
+            java_project_detected = true;
             discover_spring_datasources(&cwd, &mut data_source_picks);
         }
         if creds::intellij::detect_intellij_project(&cwd) {
@@ -154,10 +209,363 @@ async fn main() -> anyhow::Result<()> {
         application.editor_cursor = draft.len();
         application.editor_buffer = draft;
     }
+    // Restore query history (Ctrl-R, Ctrl-P/N) from the last session.
+    // Best-effort: a missing or unreadable file means we start with
+    // no history.
+    application.history = app::load_history();
+    application.saved_queries = pgman::saved::load_from(&app::saved_queries_path());
+
+    // JDBC tap listeners — spawned before the TUI loop so
+    // events start flowing as soon as the JAR / OTel agent
+    // connects. Listener failures are surfaced as startup
+    // warnings but don't block the TUI: pgman is still useful
+    // as a DB-side tool when the tap is unavailable.
+    //
+    // Auto-enable rule: when we detected a Java project in the
+    // cwd AND the operator didn't pass --tap-listen, bind
+    // 127.0.0.1:7432 by default. Explicit `--tap-listen` (any
+    // value) wins. OTLP stays opt-in via `--tap-otlp` because
+    // its port (4318) collides with the standard OTel
+    // collector, so we don't surprise-bind it. The startup log
+    // is explicit about what got auto-enabled.
+    let tap_listen_effective: Option<String> = cli.tap_listen.clone().or_else(|| {
+        if java_project_detected {
+            tracing::info!(
+                "tap: Java project detected — auto-enabling --tap-listen :7432 (pass --tap-listen explicitly to override)"
+            );
+            Some(":7432".into())
+        } else {
+            None
+        }
+    });
+    //
+    // Both --tap-listen and --tap-otlp share one adapter task
+    // that translates `tap::TapEvent` → `AppMsg::TapEvent`
+    // so the tap module stays App-agnostic.
+    // --tap-record alone wouldn't see any events (it sits on
+    // the adapter, which only gets fed from a transport).
+    // Surface that as a startup warning so the operator
+    // notices missing data immediately, not later.
+    if cli.tap_record.is_some()
+        && tap_listen_effective.is_none()
+        && cli.tap_otlp.is_none()
+        && cli.tap_replay.is_none()
+        && cli.tap_udp.is_none()
+    {
+        eprintln!(
+            "warning: --tap-record set but no tap transport active — \
+             nothing will be written. Pass --tap-listen / --tap-otlp / \
+             --tap-udp / --tap-replay."
+        );
+    }
+    let needs_tap_adapter = tap_listen_effective.is_some()
+        || cli.tap_otlp.is_some()
+        || cli.tap_replay.is_some()
+        || cli.tap_udp.is_some();
+    let tap_event_tx = if needs_tap_adapter {
+        let app_tx = application.msg_tx_clone();
+        // Bounded channel — see tap::TAP_CHANNEL_CAPACITY for
+        // the cap rationale. Replaces the original
+        // `unbounded_channel` that could OOM under sustained
+        // JAR throughput if the consumer stalled. Drops are
+        // counted in `tap::DROPPED_AT_LISTENER` and surfaced
+        // in the chrome.
+        let (tap_tx, mut tap_rx) =
+            tokio::sync::mpsc::channel::<tap::TapEvent>(tap::TAP_CHANNEL_CAPACITY);
+        // Open the capture file once and own it inside the
+        // adapter task. The previous version used `std::fs`
+        // sync writes + `BufWriter` + per-event flush — those
+        // are blocking syscalls on a tokio worker, which under
+        // load (slow disk / NFS / 1k QPS JAR) would stall the
+        // runtime. Switch to `tokio::fs` so the I/O hops off
+        // the worker; still flush per-event so a Ctrl-C
+        // doesn't lose the tail. Capture rate is low relative
+        // to ring throughput so the per-write overhead is
+        // bounded.
+        let record_path = cli.tap_record.clone();
+        // BufWriter was here previously but per-event flush
+        // made it dead weight and risked losing the tail on
+        // shutdown — the post-loop final flush isn't reached
+        // when the tokio runtime drops the adapter at `.await`.
+        // Write directly to the underlying file; the kernel
+        // buffers small appends adequately.
+        let mut record_file: Option<tokio::fs::File> =
+            match record_path.as_ref() {
+                None => None,
+                Some(path) => {
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            // tokio::fs so a slow NFS doesn't
+                            // block the runtime worker at startup.
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                    }
+                    match tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .await
+                    {
+                        Ok(f) => {
+                            tracing::info!(
+                                "tap-record: appending events to {}",
+                                path.display()
+                            );
+                            Some(f)
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "invalid --tap-record {}: {e}",
+                                path.display()
+                            );
+                            std::process::exit(2);
+                        }
+                    }
+                }
+            };
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            // Track the global drop counter so we can emit a
+            // synthetic heartbeat line into the capture
+            // whenever events were shed at the listener
+            // boundary. Replay against such a file then folds
+            // these into tap_health.dropped_events_total —
+            // the diagnostic survives the round trip.
+            let mut last_drop_seen = tap::dropped_at_listener();
+            while let Some(event) = tap_rx.recv().await {
+                // Send to the live App side FIRST so a slow
+                // disk on the record path can't starve the
+                // TUI. The capture write is best-effort: it
+                // happens AFTER the live forward, and a write
+                // failure disables the recorder for this
+                // session (rather than spamming the log for
+                // every subsequent event).
+                let app_send = app_tx.send(AppMsg::TapEvent {
+                    event: event.clone(),
+                });
+                if let Some(f) = record_file.as_mut() {
+                    // Drop-marker: when the listener has
+                    // dropped events since the last write, write
+                    // a synthetic heartbeat that carries the
+                    // updated cumulative count. Replay folds
+                    // this into tap_health on the receiving
+                    // pgman so the "X% missing" signal survives
+                    // the file round-trip.
+                    let cur_drops = tap::dropped_at_listener();
+                    if cur_drops > last_drop_seen {
+                        let marker = tap::TapEvent {
+                            v: 1,
+                            kind: tap::TapKind::Heartbeat,
+                            ts_unix_micros: event.ts_unix_micros,
+                            received_at_unix_micros: 0,
+                            app: None,
+                            pool: None,
+                            conn: None,
+                            txn: None,
+                            sql: None,
+                            params: None,
+                            params_redacted: false,
+                            duration_micros: None,
+                            rows: None,
+                            error: None,
+                            caller: None,
+                            dropped_events_total: Some(cur_drops),
+                            txn_outcome: None,
+                        };
+                        if let Ok(line) = tap::record_line(&marker) {
+                            let mut bytes = line.into_bytes();
+                            bytes.push(b'\n');
+                            let _ = f.write_all(&bytes).await;
+                        }
+                        last_drop_seen = cur_drops;
+                    }
+                    match tap::record_line(&event) {
+                        Ok(line) => {
+                            // Build the line + newline as one
+                            // write so a panic mid-format can't
+                            // leave a torn line.
+                            let mut bytes = line.into_bytes();
+                            bytes.push(b'\n');
+                            // Write + flush sequentially. A
+                            // failure disables the recorder so
+                            // we don't spam logs every event.
+                            let write_ok =
+                                match f.write_all(&bytes).await {
+                                    Ok(()) => true,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "tap-record: write failed; disabling capture for this session: {e}"
+                                        );
+                                        false
+                                    }
+                                };
+                            if write_ok {
+                                if let Err(e) = f.flush().await {
+                                    tracing::warn!(
+                                        "tap-record: flush failed; disabling capture for this session: {e}"
+                                    );
+                                    record_file = None;
+                                }
+                            } else {
+                                record_file = None;
+                            }
+                        }
+                        Err(e) => tracing::warn!("tap-record: serialize failed: {e}"),
+                    }
+                }
+                if app_send.is_err() {
+                    break; // app has shut down
+                }
+            }
+            // Final flush on shutdown so the tail definitely
+            // lands when the loop exits naturally (all senders
+            // dropped). Not reached when the tokio runtime
+            // cancels the task at the recv().await — but
+            // without a BufWriter on top of tokio::fs::File the
+            // kernel-side append is durable per-event anyway.
+            if let Some(mut f) = record_file.take() {
+                let _ = f.flush().await;
+            }
+        });
+        Some(tap_tx)
+    } else {
+        None
+    };
+    if let Some(addr_raw) = tap_listen_effective.as_deref() {
+        match parse_tap_addr(addr_raw) {
+            Ok(addr) => {
+                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                tokio::spawn(async move {
+                    if let Err(e) = tap::run_tcp_listener(addr, tap_tx).await {
+                        tracing::error!("tap-tcp listener bind failed: {e}");
+                    }
+                });
+                tracing::info!("tap: listening on {addr} (tcp)");
+            }
+            Err(e) => {
+                eprintln!("invalid --tap-listen {addr_raw:?}: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(addr_raw) = cli.tap_udp.as_deref() {
+        match parse_tap_addr(addr_raw) {
+            Ok(addr) => {
+                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                tokio::spawn(async move {
+                    if let Err(e) = tap::run_udp_listener(addr, tap_tx).await {
+                        tracing::error!("tap-udp listener bind failed: {e}");
+                    }
+                });
+                tracing::info!("tap: listening on {addr} (udp)");
+            }
+            Err(e) => {
+                eprintln!("invalid --tap-udp {addr_raw:?}: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(addr_raw) = cli.tap_otlp.as_deref() {
+        match parse_tap_addr(addr_raw) {
+            Ok(addr) => {
+                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                tokio::spawn(async move {
+                    if let Err(e) = tap::run_otlp_listener(addr, tap_tx).await {
+                        tracing::error!("tap-otlp listener bind failed: {e}");
+                    }
+                });
+                tracing::info!("tap: OTLP/HTTP listening on {addr}");
+            }
+            Err(e) => {
+                eprintln!("invalid --tap-otlp {addr_raw:?}: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(path) = cli.tap_replay.clone() {
+        let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+        tokio::spawn(async move {
+            match tap::run_replay_file(&path, tap_tx).await {
+                Ok(n) => tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display()),
+                Err(e) => tracing::error!("tap-replay: failed to read {}: {e}", path.display()),
+            }
+        });
+    }
+    // Drop the keepalive sender so the adapter task exits
+    // cleanly when all listeners + the replay task have shut
+    // down on app exit.
+    drop(tap_event_tx);
+
     let mut term = tui::Tui::enter()?;
     let result = application.run(&mut term).await;
     drop(term); // restore the terminal before surfacing any error
     result
+}
+
+/// Parse the `--tap-listen` value. Accepts `host:port`, `:port`
+/// (binds 127.0.0.1 by default — local-only, since the wire
+/// shape doesn't yet authenticate), or bare `port`. Returns a
+/// useful error message on parse failure so the operator sees
+/// what went wrong without grepping logs.
+fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix(':') {
+        let port: u16 = rest
+            .parse()
+            .map_err(|e| format!("port {rest:?}: {e}"))?;
+        return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+    }
+    if !raw.contains(':') {
+        // Bare port — same shape, default to localhost.
+        let port: u16 = raw
+            .parse()
+            .map_err(|e| format!("port {raw:?}: {e}"))?;
+        return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+    }
+    raw.parse::<SocketAddr>()
+        .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test]
+    fn parse_tap_addr_accepts_colon_port() {
+        let got = parse_tap_addr(":7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_bare_port() {
+        let got = parse_tap_addr("7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_full_host_port() {
+        let got = parse_tap_addr("0.0.0.0:7432").unwrap();
+        assert_eq!(got.ip().to_string(), "0.0.0.0");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_garbage() {
+        let err = parse_tap_addr("not-an-address").unwrap_err();
+        assert!(err.contains("port"), "expected port-parse error: {err}");
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_oversize_port() {
+        let err = parse_tap_addr(":99999").unwrap_err();
+        assert!(
+            err.contains("port"),
+            "expected port-range error: {err}"
+        );
+    }
 }
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
@@ -191,7 +599,10 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
         }
     }
     match picks.len() {
-        0 => Err("no DSN — pass --dsn or run from a project with .pgman/pgman.toml / dataSources.xml".into()),
+        0 => Err(
+            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml / dataSources.xml"
+                .into(),
+        ),
         1 => Ok(picks.into_iter().next().unwrap().dsn),
         n => Err(format!(
             "found {n} candidate data sources — pass --dsn to disambiguate in batch mode"
@@ -336,11 +747,9 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
             p.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| {
-                    let known_prefix =
-                        n.starts_with("application") || n.starts_with("bootstrap");
-                    let known_ext = n.ends_with(".properties")
-                        || n.ends_with(".yml")
-                        || n.ends_with(".yaml");
+                    let known_prefix = n.starts_with("application") || n.starts_with("bootstrap");
+                    let known_ext =
+                        n.ends_with(".properties") || n.ends_with(".yml") || n.ends_with(".yaml");
                     known_prefix && known_ext
                 })
                 .unwrap_or(false)

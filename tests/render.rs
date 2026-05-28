@@ -8,11 +8,9 @@
 //! seed any state the scenario needs, then render once into a
 //! `TestBackend` and inspect the resulting buffer.
 
-use pgman::app::{
-    compute_visible_rows, App, ConnState, DataSourcePick, HistorySearchState, Mode,
-};
-use pgman::grid::cmp_cells;
+use pgman::app::{compute_visible_rows, App, ConnState, DataSourcePick, HistorySearchState, Mode};
 use pgman::conn::Dsn;
+use pgman::grid::cmp_cells;
 use pgman::grid::Grid;
 use pgman::query::schema::TableMeta;
 use pgman::safety::SafetyConfig;
@@ -116,8 +114,8 @@ fn editor_flags_unknown_identifier_in_syn_unknown() {
     });
     let theme = a.theme.clone();
     let buf = render(&mut a, 80, 16);
-    let (x, y) = find_cell(&buf, "zzz_definitely_not_a_table")
-        .expect("unknown identifier should appear");
+    let (x, y) =
+        find_cell(&buf, "zzz_definitely_not_a_table").expect("unknown identifier should appear");
     let cell = &buf[(x, y)];
     assert_eq!(
         cell.fg, theme.syn_unknown,
@@ -136,6 +134,7 @@ fn grid_render_shows_sort_marker_on_focused_column() {
             vec!["1".into(), "alice".into()],
             vec!["2".into(), "bob".into()],
         ],
+        truncated: false,
     };
     // Initialise the view state the way the run-loop would after a
     // QueryOk lands (visible rows + sort state).
@@ -152,6 +151,224 @@ fn grid_render_shows_sort_marker_on_focused_column() {
 }
 
 #[test]
+fn tap_monitor_baseline_empty_prompts_for_shift_b() {
+    let mut a = settle_app();
+    a.mode = Mode::TapMonitor;
+    a.tap_view = pgman::app::TapView::Baseline;
+    let buf = render(&mut a, 120, 30);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("Shift-B"),
+        "expected baseline-capture prompt; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
+    let mut a = settle_app();
+    // Seed two events, capture, then add a new one.
+    a.on_tap_event(pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 1,
+        received_at_unix_micros: 1,
+        app: Some("svc".into()),
+        pool: None,
+        conn: None,
+        txn: None,
+        sql: Some("SELECT * FROM accounts".into()),
+        params: None,
+        params_redacted: false,
+        duration_micros: Some(50),
+        rows: None,
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: None,
+    });
+    a.tap_baseline = Some(pgman::app::TapBaseline {
+        captured_at_unix_micros: 1,
+        captured_event_count: 1,
+        hotspots: a.current_hotspots(),
+    });
+    a.on_tap_event(pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 2,
+        received_at_unix_micros: 2,
+        app: Some("svc".into()),
+        pool: None,
+        conn: None,
+        txn: None,
+        sql: Some("SELECT * FROM new_table".into()),
+        params: None,
+        params_redacted: false,
+        duration_micros: Some(50),
+        rows: None,
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: None,
+    });
+    a.mode = Mode::TapMonitor;
+    a.tap_view = pgman::app::TapView::Baseline;
+    let buf = render(&mut a, 140, 30);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("baseline captured"),
+        "expected capture summary; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("change"),
+        "expected diff column header; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("new"),
+        "expected `new` change-label for the post-baseline fingerprint; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn tap_monitor_empty_state_renders_setup_hint_with_both_routes() {
+    let mut a = settle_app();
+    a.mode = Mode::TapMonitor;
+    // No events and no heartbeats — the "no JAR connected"
+    // branch, which must render the setup hint.
+    let buf = render(&mut a, 120, 40);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("Route 1: OpenTelemetry"),
+        "expected OTel route hint; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("--tap-otlp :4318"),
+        "expected pgman flag hint; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("pgman-tap-spring-boot-starter"),
+        "expected Spring Boot starter snippet; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn tap_monitor_list_renders_recent_events_with_title() {
+    let mut a = settle_app();
+    let evt = pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 0,
+        received_at_unix_micros: 1,
+        app: Some("billing-service".into()),
+        pool: None,
+        conn: None,
+        txn: None,
+        sql: Some("SELECT * FROM accounts WHERE id = ?".into()),
+        params: None,
+        params_redacted: false,
+        duration_micros: Some(4_521),
+        rows: Some(17),
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: None,
+    };
+    a.on_tap_event(evt);
+    a.mode = Mode::TapMonitor;
+    let buf = render(&mut a, 120, 24);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("JDBC tap"),
+        "expected title; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("view: list"),
+        "expected view label in title; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("billing-service"),
+        "expected app name; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("4.5ms"),
+        "expected formatted duration; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn tap_monitor_hotspots_view_groups_and_shows_sort() {
+    let mut a = settle_app();
+    // Three events that fingerprint to one shape.
+    for i in 0..3 {
+        a.on_tap_event(pgman::tap::TapEvent {
+            v: 1,
+            kind: pgman::tap::TapKind::Query,
+            ts_unix_micros: i,
+            received_at_unix_micros: i,
+            app: Some("svc".into()),
+            pool: None,
+            conn: None,
+            txn: None,
+            sql: Some(format!("SELECT * FROM t WHERE id = {i}")),
+            params: None,
+            params_redacted: false,
+            duration_micros: Some(100 * (i + 1)),
+            rows: Some(1),
+            error: None,
+            caller: Some(vec!["svc.Foo.bar:1".into()]),
+            dropped_events_total: None,
+            txn_outcome: None,
+        });
+    }
+    a.mode = Mode::TapMonitor;
+    a.tap_view = pgman::app::TapView::Hotspots;
+    a.tap_sort = pgman::tap::HotspotSort::CallCount;
+    let buf = render(&mut a, 140, 24);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("view: hotspots"),
+        "expected hotspots view label; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("sort: call count"),
+        "expected sort label; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("svc.Foo.bar:1"),
+        "expected last-caller column; full render:\n{rendered}"
+    );
+    // Three events collapsed into one bucket → one rendered
+    // row with calls=3 alongside the caller frame. The popup
+    // border chars sit at the line start, so check for the
+    // calls/err columns appearing together with the caller.
+    let has_three_row = rendered
+        .lines()
+        .any(|l| l.contains("svc.Foo.bar:1") && l.contains("3 ") && l.contains("200µs"));
+    assert!(
+        has_three_row,
+        "expected one row with calls=3 and the caller; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn grid_render_shows_capped_hint_when_truncated() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.grid = Grid {
+        columns: vec!["id".into()],
+        rows: vec![vec!["1".into()], vec!["2".into()]],
+        truncated: true,
+    };
+    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    let buf = render(&mut a, 60, 18);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains(&format!("capped at {}", pgman::grid::MAX_ROWS)),
+        "expected `capped at {}` in title; full render:\n{rendered}",
+        pgman::grid::MAX_ROWS,
+    );
+}
+
+#[test]
 fn grid_render_shows_filtered_count_in_title() {
     let mut a = settle_app();
     a.mode = Mode::Normal;
@@ -162,6 +379,7 @@ fn grid_render_shows_filtered_count_in_title() {
             vec!["bob".into()],
             vec!["carol".into()],
         ],
+        truncated: false,
     };
     a.grid_filter = Some("a".into());
     a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
@@ -184,7 +402,9 @@ fn help_overlay_lists_key_bindings() {
     a.mode = Mode::Help;
     // Tall viewport so the whole help text fits without scrolling —
     // the assertions below cover bindings from multiple sections.
-    let buf = render(&mut a, 120, 60);
+    // Help body grew with the schema wizard / lint / bookmarks etc.
+    // — bump the height to accommodate.
+    let buf = render(&mut a, 120, 200);
     let rendered = dump(&buf);
     for binding in &["ctrl-r", "ctrl-w", "ctrl-x", "ctrl-f", "F5"] {
         assert!(

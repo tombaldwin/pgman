@@ -9,19 +9,22 @@
 //! [`subst`] does the type-aware placeholder substitution shared by all three.
 //! [`nplus1`] clusters reconstructed queries to surface N+1 selects.
 
+pub mod backslash;
 pub mod clause;
 pub mod complete;
 pub mod explain;
-pub mod highlight;
-pub mod select_list;
-pub mod vocabulary;
 pub mod from_parse;
 pub mod hibernate;
+pub mod highlight;
 pub mod jdbc;
+pub mod json_cell;
+pub mod lint;
 pub mod nplus1;
 pub mod pglog;
 pub mod reconstruct;
 pub mod schema;
+pub mod select_list;
 pub mod sessions;
 pub mod slow_queries;
 pub mod subst;
+pub mod vocabulary;

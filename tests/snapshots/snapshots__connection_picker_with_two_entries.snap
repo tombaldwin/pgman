@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 226
+assertion_line: 372
 expression: dump(&buf)
 ---
  pgman │ —  disconnected
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- ↑↓ / j/k navigate · enter connect · q quit
+ RO   ↑↓ / j/k navigate · enter connect · q quit · F1 help

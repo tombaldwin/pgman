@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- F5 run · ctrl-r history · ctrl-e EXPLAIN · ctrl-a ANALYZE · tab complete · ctrl
+ RO   F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · ctrl-e EXPLAIN · tab

@@ -43,6 +43,11 @@ pub enum AppMsg {
         /// cursor to this position so the operator sees the offending
         /// token highlighted.
         position: Option<u32>,
+        /// Full server-side error detail (hint / detail / where /
+        /// affected schema/table/column/constraint/type). `None`
+        /// for non-Postgres failures (TLS, IO, our own validation).
+        /// Stashed on App so the rich-error overlay can render it.
+        detail: Option<crate::conn::QueryErrDetail>,
     },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     TxClosed {
@@ -59,6 +64,13 @@ pub enum AppMsg {
         generation: u64,
         notice: crate::conn::NoticeMsg,
     },
+    /// A `NOTIFY` arrival from the server for a channel the
+    /// operator subscribed to with `LISTEN`. Appended to App's
+    /// notification ring; surfaced in `Mode::Notifications`.
+    Notification {
+        generation: u64,
+        notification: crate::conn::NotificationMsg,
+    },
     /// `pg_stat_statements` snapshot finished loading.
     SlowQueriesLoaded {
         generation: u64,
@@ -69,10 +81,40 @@ pub enum AppMsg {
         generation: u64,
         result: Result<Vec<crate::query::sessions::SessionRow>, String>,
     },
+    /// Schema-lint live-query checks (LINT101+) finished. Merged
+    /// into `schema_lint_findings` if the operator is still on
+    /// the lint panel; silently dropped otherwise (a follow-on
+    /// open re-fires the fetch). Failures surface in the status
+    /// footer but don't disturb the already-displayed pure
+    /// findings.
+    LiveLintLoaded {
+        generation: u64,
+        result: Result<Vec<crate::query::lint::Finding>, String>,
+    },
+    /// Pre-flight `EXPLAIN (FORMAT JSON)` finished. The handler
+    /// decides between proceeding directly (estimate under
+    /// threshold) and opening a Confirm prompt (over threshold).
+    /// `estimated` carries either the top-node row estimate or an
+    /// error string (EXPLAIN itself failed); either way the run
+    /// proceeds — a failed pre-flight isn't a hard stop.
+    CostPreviewLoaded {
+        generation: u64,
+        sql: String,
+        decision: crate::safety::Decision,
+        estimated: Result<f64, String>,
+        threshold: u64,
+    },
+    /// One JDBC-tap event from the pgman-tap JAR (query,
+    /// heartbeat, or txn boundary). The tap listener is bound
+    /// at app startup and is independent of the DB connection,
+    /// so tap events are NOT generation-tagged — they always
+    /// process. `generation()` returns 0 for this variant.
+    TapEvent { event: crate::tap::TapEvent },
 }
 
 impl AppMsg {
-    /// The generation this message was produced for.
+    /// The generation this message was produced for. Tap events
+    /// return 0 (they aren't tied to a connection generation).
     pub fn generation(&self) -> u64 {
         match self {
             AppMsg::Booted { generation, .. }
@@ -81,8 +123,12 @@ impl AppMsg {
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
             | AppMsg::Notice { generation, .. }
+            | AppMsg::Notification { generation, .. }
             | AppMsg::SlowQueriesLoaded { generation, .. }
-            | AppMsg::SessionsLoaded { generation, .. } => *generation,
+            | AppMsg::SessionsLoaded { generation, .. }
+            | AppMsg::CostPreviewLoaded { generation, .. }
+            | AppMsg::LiveLintLoaded { generation, .. } => *generation,
+            AppMsg::TapEvent { .. } => 0,
         }
     }
 }

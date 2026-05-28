@@ -93,6 +93,7 @@ fn grid_with_data_and_sort() {
             vec!["2".into(), "bob".into()],
             vec!["3".into(), "carol".into()],
         ],
+        truncated: false,
     };
     a.grid_visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_col_cursor = 0;
@@ -113,6 +114,7 @@ fn grid_with_filter_active() {
             vec!["bob".into()],
             vec!["carol".into()],
         ],
+        truncated: false,
     };
     a.grid_filter = Some("a".into());
     a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
@@ -271,9 +273,18 @@ fn schema_browser_renders_focused_table_details() {
     let mut cache = SchemaCache::default();
     cache.schemas = vec!["audit".into(), "public".into()];
     cache.tables = vec![
-        TableMeta { schema: "public".into(), name: "users".into() },
-        TableMeta { schema: "public".into(), name: "orders".into() },
-        TableMeta { schema: "audit".into(), name: "events".into() },
+        TableMeta {
+            schema: "public".into(),
+            name: "users".into(),
+        },
+        TableMeta {
+            schema: "public".into(),
+            name: "orders".into(),
+        },
+        TableMeta {
+            schema: "audit".into(),
+            name: "events".into(),
+        },
     ];
     cache.columns_by_table.insert(
         ("public".into(), "users".into()),
@@ -327,6 +338,28 @@ fn explain_tree_renders_hash_join_plan() {
 }
 
 #[test]
+fn cell_detail_json_tree_renders_object_with_cursor_on_root() {
+    let mut a = settle_app();
+    a.grid = Grid {
+        columns: vec!["data".into()],
+        rows: vec![vec![r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into()]],
+        truncated: false,
+    };
+    a.grid_visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.row_detail_field = 0;
+    a.row_detail_field_count = 1;
+    a.mode = Mode::RowDetail;
+    // Drive the open path so json_cell_rows / value get populated.
+    a.on_key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Enter,
+    ));
+    assert_eq!(a.mode, Mode::CellDetail);
+    let buf = render(&mut a, 80, 20);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
 fn connection_picker_with_two_entries() {
     let theme = Theme::default();
     let picks = vec![
@@ -346,5 +379,36 @@ fn connection_picker_with_two_entries() {
     a.splash_until = None;
     a.mode = Mode::ConnPick;
     let buf = render(&mut a, 80, 16);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
+fn schema_wizard_renders_findings_sorted_by_severity() {
+    let mut a = settle_app();
+    let mut cache = pgman::query::schema::SchemaCache::default();
+    cache.schemas = vec!["public".into()];
+    cache.tables = vec![
+        // events → no constraints (LINT001 High)
+        pgman::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "events".into(),
+        },
+        // OrderItems → mixed-case (LINT002 Med) AND in a schema
+        // that mixes naming with `events` (LINT004 Low).
+        pgman::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "OrderItems".into(),
+        },
+        // user → reserved keyword (LINT003 Med)
+        pgman::query::schema::TableMeta {
+            schema: "public".into(),
+            name: "user".into(),
+        },
+    ];
+    a.schema_cache = cache;
+    a.schema_lint_findings = pgman::query::lint::run_all(&a.schema_cache);
+    a.schema_lint_cursor = 0;
+    a.mode = Mode::SchemaLint;
+    let buf = render(&mut a, 110, 24);
     insta::assert_snapshot!(dump(&buf));
 }
