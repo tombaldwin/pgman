@@ -189,6 +189,7 @@ fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
     a.tap_baseline = Some(pgman::app::TapBaseline {
         captured_at_unix_micros: 1,
         captured_event_count: 1,
+        captured_listener_dropped: 0,
         hotspots: a.current_hotspots(),
     });
     a.on_tap_event(pgman::tap::TapEvent {
