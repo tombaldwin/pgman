@@ -733,6 +733,22 @@ Historical record. Newest at the top within each section.
 
 ### JDBC tap
 
+- **Refactor — split `tap.rs` into a directory.** The single
+  file had grown past 4,300 lines, mixing wire schema, L1
+  transports (TCP / UDP / OTLP / replay), and L2 insights
+  (Hotspots / Callers / Transactions / N+1 / baseline diff)
+  in one module. Split into `src/tap/` with `mod.rs` (schema
+  + `parse` + `forward_or_drop` + drop atomics + the shared
+  `now_unix_micros`), `insights.rs` (Hotspots / Callers /
+  Transactions / diff / N+1 detector), `replay.rs`
+  (`parse_replay_line` / `record_line` / `run_replay_file`),
+  `otlp.rs` (OTLP parser + HTTP server), and `listener.rs`
+  (TCP + UDP listeners). `pub use submod::*;` keeps the
+  public API identical so every callsite (and the ~237
+  tests still in `mod.rs`) is unchanged. Build green, all
+  tests pass. Tests remain in `mod.rs` for now — moving
+  them alongside their submodules is a follow-up.
+
 - **L2 — pool column in Transactions view + report.**
   `TxnStats` gains `pool: Option<String>` (populated from
   the first event in the bucket that carries one). Both
