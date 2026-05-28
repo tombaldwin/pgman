@@ -262,15 +262,19 @@ async fn main() -> anyhow::Result<()> {
         || cli.tap_otlp.is_some()
         || cli.tap_replay.is_some()
         || cli.tap_udp.is_some();
-    let tap_event_tx = if needs_tap_adapter {
+    let tap_channels = if needs_tap_adapter {
         let app_tx = application.msg_tx_clone();
-        // Bounded channel — see tap::TAP_CHANNEL_CAPACITY for
-        // the cap rationale. Replaces the original
-        // `unbounded_channel` that could OOM under sustained
-        // JAR throughput if the consumer stalled. Drops are
-        // counted in `tap::DROPPED_AT_LISTENER` and surfaced
-        // in the chrome.
-        let (tap_tx, mut tap_rx) =
+        // Two bounded channels so replay can't starve the live
+        // transports. Live (TCP / UDP / OTLP) listeners share
+        // `live_tap_tx` and try_send through forward_or_drop —
+        // they drop on full. Replay gets its own channel and
+        // uses `.send().await` for delivery guarantee; if it
+        // backs up that's fine because it ONLY blocks the
+        // replay file pump, not the listeners. The single
+        // adapter task selects from both rx.
+        let (live_tap_tx, mut live_rx) =
+            tokio::sync::mpsc::channel::<tap::TapEvent>(tap::TAP_CHANNEL_CAPACITY);
+        let (replay_tap_tx, mut replay_rx) =
             tokio::sync::mpsc::channel::<tap::TapEvent>(tap::TAP_CHANNEL_CAPACITY);
         // Open the capture file once and own it inside the
         // adapter task. The previous version used `std::fs`
@@ -332,7 +336,16 @@ async fn main() -> anyhow::Result<()> {
             // these into tap_health.dropped_events_total —
             // the diagnostic survives the round trip.
             let mut last_drop_seen = tap::dropped_at_listener();
-            while let Some(event) = tap_rx.recv().await {
+            loop {
+                // Select fairly between live and replay
+                // sources. When both channels close we exit
+                // the loop naturally and the post-loop flush
+                // runs.
+                let event = tokio::select! {
+                    Some(e) = live_rx.recv() => e,
+                    Some(e) = replay_rx.recv() => e,
+                    else => break,
+                };
                 // Send to the live App side FIRST so a slow
                 // disk on the record path can't starve the
                 // TUI. The capture write is best-effort: it
@@ -427,14 +440,18 @@ async fn main() -> anyhow::Result<()> {
                 let _ = f.flush().await;
             }
         });
-        Some(tap_tx)
+        Some((live_tap_tx, replay_tap_tx))
     } else {
         None
     };
     if let Some(addr_raw) = tap_listen_effective.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_tcp_listener(addr, tap_tx).await {
                         tracing::error!("tap-tcp listener bind failed: {e}");
@@ -451,7 +468,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr_raw) = cli.tap_udp.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_udp_listener(addr, tap_tx).await {
                         tracing::error!("tap-udp listener bind failed: {e}");
@@ -468,7 +489,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr_raw) = cli.tap_otlp.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_otlp_listener(addr, tap_tx).await {
                         tracing::error!("tap-otlp listener bind failed: {e}");
@@ -483,18 +508,24 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     if let Some(path) = cli.tap_replay.clone() {
-        let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+        // Replay uses its own channel so backpressure on the
+        // replay file pump can't starve live transports.
+        let replay_tx = tap_channels
+            .as_ref()
+            .expect("adapter spawned above")
+            .1
+            .clone();
         tokio::spawn(async move {
-            match tap::run_replay_file(&path, tap_tx).await {
+            match tap::run_replay_file(&path, replay_tx).await {
                 Ok(n) => tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display()),
                 Err(e) => tracing::error!("tap-replay: failed to read {}: {e}", path.display()),
             }
         });
     }
-    // Drop the keepalive sender so the adapter task exits
-    // cleanly when all listeners + the replay task have shut
-    // down on app exit.
-    drop(tap_event_tx);
+    // Drop both keepalive senders so the adapter's select
+    // exits cleanly when all listeners + the replay task have
+    // shut down on app exit.
+    drop(tap_channels);
 
     let mut term = tui::Tui::enter()?;
     let result = application.run(&mut term).await;

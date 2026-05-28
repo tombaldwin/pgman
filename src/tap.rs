@@ -85,23 +85,20 @@ use serde::{Deserialize, Serialize};
 /// panel rows.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Default capacity for the bounded mpsc channel between
-/// listeners and the App-side adapter.
+/// Default capacity for each of the bounded mpsc channels
+/// between listeners and the App-side adapter.
 ///
-/// **This is the TOTAL capacity shared across all four
-/// transports** — TCP, UDP, OTLP, and replay each hold a
-/// clone of the same `Sender`. At 1 active transport the
-/// budget is "few hundred ms at 1000 QPS"; with four active
-/// transports the per-transport effective budget is a
-/// quarter of that. Sized for a typical local-dev / staging
-/// deployment with one primary transport; production with
-/// concurrent listeners may want to scale this constant up.
+/// `main.rs` sets up **two** channels with this capacity:
+/// one shared by the live transports (TCP / UDP / OTLP), one
+/// dedicated to replay. This avoids replay backpressure
+/// starving the live transports. Within the live channel,
+/// each transport tries to `try_send` and DROPS on full —
+/// see [`DROPPED_AT_LISTENER`]. The replay channel uses
+/// `.send().await` for delivery guarantee.
 ///
-/// Over-the-cap events are dropped (with a counter, see
-/// [`DROPPED_AT_LISTENER`]) rather than buffered without
-/// bound. The previous design used `unbounded_channel`; in
-/// production that was an OOM risk the JAR-side
-/// `dropped_events_total` accounting couldn't see.
+/// Sized for "few hundred ms at 1000 QPS" on one transport;
+/// production with concurrent live transports may want to
+/// scale this up.
 pub const TAP_CHANNEL_CAPACITY: usize = 4_096;
 
 /// Process-global counter of events the listener side dropped
@@ -121,11 +118,14 @@ pub fn dropped_at_listener() -> u64 {
 /// Used by listeners to forward an event into the bounded
 /// channel. On `Full` the event is dropped + counted. On
 /// `Closed` we return `Err(())` so the listener can exit.
-/// Centralised so all four transports (TCP / UDP / OTLP)
-/// share the same backpressure semantics. `replay` does NOT
-/// go through here — it uses `.send().await` to block on
-/// backpressure, since replay events are operator-initiated
-/// and the operator wants them to land.
+/// Centralised so the live transports (TCP / UDP / OTLP)
+/// share the same backpressure semantics.
+///
+/// Replay does NOT go through here, and runs on its OWN
+/// bounded channel (set up in `main.rs`). It uses
+/// `.send().await` for delivery guarantee — backpressure
+/// blocks the replay file pump but cannot starve the live
+/// transports, which contend for a different channel.
 fn forward_or_drop(
     tx: &tokio::sync::mpsc::Sender<TapEvent>,
     event: TapEvent,
