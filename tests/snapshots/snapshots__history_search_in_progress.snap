@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 155
+assertion_line: 158
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- (reverse-i-search) 'sel'
+ RO   (reverse-i-search) 'sel'

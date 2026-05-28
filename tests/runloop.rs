@@ -44,7 +44,8 @@ async fn run_loop_typing_and_quit_terminates() {
 
     // Type "hi\n", then Esc to return to Normal, then `q` to quit.
     for code in ["h", "i"].iter() {
-        tx.send(key(KeyCode::Char(code.chars().next().unwrap()))).unwrap();
+        tx.send(key(KeyCode::Char(code.chars().next().unwrap())))
+            .unwrap();
     }
     tx.send(key(KeyCode::Esc)).unwrap();
     tx.send(key(KeyCode::Char('q'))).unwrap();
@@ -58,7 +59,10 @@ async fn run_loop_typing_and_quit_terminates() {
     assert!(app.should_quit);
     assert_eq!(app.editor_buffer, "hi");
     // Drew at least the initial frame + after each event.
-    assert!(tui.draws >= 1, "HeadlessTui should have rendered at least once");
+    assert!(
+        tui.draws >= 1,
+        "HeadlessTui should have rendered at least once"
+    );
 }
 
 #[tokio::test]
@@ -107,7 +111,7 @@ async fn run_loop_external_edit_flag_triggers_suspend_resume() {
     let mut tui = HeadlessTui::default();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     tx.send(ctrl_key('x')).unwrap(); // \e
-    // Followed by something to give the loop another iteration.
+                                     // Followed by something to give the loop another iteration.
     tx.send(key(KeyCode::Char('a'))).unwrap();
     drop(tx);
 
@@ -122,10 +126,7 @@ async fn run_loop_external_edit_flag_triggers_suspend_resume() {
     // file → buffer becomes whatever was in it (empty here), and the
     // status reports loaded N char(s).
     assert!(
-        app.last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("loaded"),
+        app.last_status.as_deref().unwrap_or("").contains("loaded"),
         "status: {:?}",
         app.last_status
     );

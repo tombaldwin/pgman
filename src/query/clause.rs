@@ -60,6 +60,13 @@ pub enum ClauseContext {
     /// Inside `CAST(expr AS |)` — the operator is naming a SQL type.
     /// Wants entries from `vocabulary::TYPE_NAMES`.
     TypeName,
+    /// `CREATE TABLE t (|` — column-name position (just after `(` or
+    /// `,`). No completion: the operator is naming a fresh column and
+    /// we have nothing useful to offer.
+    CreateTableColumns,
+    /// `CREATE TABLE t (id |` — type-name position (just after a
+    /// column name). Wants entries from `vocabulary::TYPE_NAMES`.
+    CreateTableColumnType,
     /// `ON CONFLICT ON CONSTRAINT | …` — the operator is naming a
     /// unique / primary-key constraint on the INSERT target. The
     /// completion engine filters `SchemaCache::constraints` by the
@@ -236,6 +243,13 @@ struct ScopeState {
     /// etc.) leave the ctx unchanged — no useful candidates from the
     /// current cache.
     pending_drop_kind: bool,
+    /// `CREATE` seen at this scope. The next `TABLE` token (possibly
+    /// after `TEMP` / `UNLOGGED` / `IF NOT EXISTS`) selects the
+    /// CREATE TABLE path.
+    pending_create_kind: bool,
+    /// `CREATE TABLE <name>` seen; the next `(` opens the column
+    /// definition list.
+    expecting_create_table_paren: bool,
 }
 
 impl ScopeState {
@@ -252,6 +266,8 @@ impl ScopeState {
             is_cast_scope: false,
             in_on_conflict: false,
             pending_drop_kind: false,
+            pending_create_kind: false,
+            expecting_create_table_paren: false,
         }
     }
 }
@@ -281,6 +297,8 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
                 ExplainOptions
             } else if parent.expecting_vacuum_paren {
                 VacuumOptions
+            } else if parent.expecting_create_table_paren {
+                CreateTableColumns
             } else if parent.expecting_insert_paren {
                 InsertColumns(parent.active_table.clone().unwrap_or(QualifiedTable {
                     schema: None,
@@ -301,6 +319,7 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             parent_mut.expecting_explain_paren = false;
             parent_mut.expecting_vacuum_paren = false;
             parent_mut.expecting_cast_paren = false;
+            parent_mut.expecting_create_table_paren = false;
             parent_mut.pending_table_ref = false;
             parent_mut.pending_by = false;
             entered_via_values = matches!(new_ctx, Values);
@@ -317,7 +336,18 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             i += 1;
             continue;
         }
-        if tok.text == "," || tok.text == "." {
+        if tok.text == "," {
+            // Inside a CREATE TABLE column list, `,` returns us to the
+            // column-name slot from a column-type slot. Other clauses
+            // don't toggle on commas.
+            let scope = scopes.last_mut().expect("scope stack invariant");
+            if matches!(scope.ctx, CreateTableColumnType) {
+                scope.ctx = CreateTableColumns;
+            }
+            i += 1;
+            continue;
+        }
+        if tok.text == "." {
             i += 1;
             continue;
         }
@@ -367,6 +397,19 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             continue;
         }
 
+        // `expecting_create_table_paren` is a one-shot expectation
+        // that the NEXT token is the `(` of a CREATE TABLE column
+        // list. The `(` handler at the top of the loop consumes it.
+        // If we reach the keyword match instead, the next token is
+        // something other than `(` — clear the flag so a later
+        // subquery `(` (e.g. `CREATE TABLE t AS SELECT … FROM (…)`)
+        // doesn't get treated as a column-definition paren. Keep
+        // the flag while `pending_table_ref` is still active (the
+        // window between `TABLE` and the table name; intermediate
+        // modifiers like `IF NOT EXISTS` sit there).
+        if !scope.pending_table_ref {
+            scope.expecting_create_table_paren = false;
+        }
         // Clause-introducing keywords. With the scope stack, none of
         // these need a paren_depth guard — each scope is locally at
         // "depth 0".
@@ -496,6 +539,19 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             // need the cache extending — leave ctx alone (vocab
             // continuations + nothing else) so we don't suggest
             // misleading table names there.
+            "CREATE" => {
+                scope.pending_create_kind = true;
+            }
+            "TABLE" if scope.pending_create_kind => {
+                // CREATE TABLE <name> ( … — the `(` opens the column-
+                // definition list. Reuse pending_table_ref so the next
+                // identifier is read as the table name; set the paren
+                // gate so the `(` knows what kind of scope to open.
+                scope.ctx = TableRef;
+                scope.pending_table_ref = true;
+                scope.expecting_create_table_paren = true;
+                scope.pending_create_kind = false;
+            }
             "TABLE" | "VIEW" if scope.pending_drop_kind => {
                 scope.ctx = DropTarget(DropKind::Table);
                 scope.pending_drop_kind = false;
@@ -526,6 +582,14 @@ fn classify_tokens(tokens: &[crate::query::from_parse::Tok<'_>]) -> Classificati
             // classified specifically; once `=` appears the ctx falls
             // back to Unknown (which yields vocabulary fallbacks).
             "SHOW" | "SET" => scope.ctx = GucParameter,
+            // Inside a CREATE TABLE column list, the first identifier
+            // we see after `(` or `,` is the column name — the next
+            // position is the type. Flip on any non-keyword identifier
+            // so `(id ` and `(id INT, name ` both land on TypeName for
+            // the position after the name.
+            other if matches!(scope.ctx, CreateTableColumns) && is_identifier_like(other) => {
+                scope.ctx = CreateTableColumnType;
+            }
             _ => {}
         }
         i += 1;
@@ -674,10 +738,7 @@ pub fn extract_cte_names(buf: &str) -> Vec<String> {
 /// Like `extract_ctes` but expands `SELECT *` against the schema
 /// cache. Use this from the completion engine — `extract_ctes` stays
 /// pure for tests / future callers that don't have a cache.
-pub fn extract_ctes_resolved(
-    buf: &str,
-    schema: &crate::query::schema::SchemaCache,
-) -> Vec<CteDef> {
+pub fn extract_ctes_resolved(buf: &str, schema: &crate::query::schema::SchemaCache) -> Vec<CteDef> {
     let tokens = tokenize(buf);
     let mut out: Vec<CteDef> = Vec::new();
     let mut i = 0;
@@ -713,9 +774,7 @@ pub fn extract_ctes_resolved(
                     explicit_columns
                 } else {
                     body_text
-                        .map(|body| {
-                            crate::query::select_list::resolve_select_columns(body, schema)
-                        })
+                        .map(|body| crate::query::select_list::resolve_select_columns(body, schema))
                         .unwrap_or_default()
                 };
                 out.push(CteDef {
@@ -740,10 +799,7 @@ pub fn extract_ctes_resolved(
 
 /// Read identifier names from a `( a, b, c )` group starting at
 /// `tokens[i] == "("`. Skips anything that isn't a plain identifier.
-fn read_paren_ident_list(
-    tokens: &[crate::query::from_parse::Tok<'_>],
-    i: usize,
-) -> Vec<String> {
+fn read_paren_ident_list(tokens: &[crate::query::from_parse::Tok<'_>], i: usize) -> Vec<String> {
     let mut out = Vec::new();
     if tokens.get(i).map(|t| t.text) != Some("(") {
         return out;
@@ -891,10 +947,7 @@ fn extract_paren_body<'a>(
 /// How many `(` tokens (as the tokenizer sees them) appear at-or-before
 /// index `i`. Used by `extract_paren_body` to translate a token index
 /// into a byte index in the original buffer.
-fn count_lparens_through_token(
-    tokens: &[crate::query::from_parse::Tok<'_>],
-    i: usize,
-) -> usize {
+fn count_lparens_through_token(tokens: &[crate::query::from_parse::Tok<'_>], i: usize) -> usize {
     tokens.iter().take(i + 1).filter(|t| t.text == "(").count()
 }
 
@@ -961,10 +1014,7 @@ mod tests {
 
     #[test]
     fn where_enters_predicate() {
-        assert_eq!(
-            classify("SELECT * FROM u WHERE "),
-            ClauseContext::Predicate
-        );
+        assert_eq!(classify("SELECT * FROM u WHERE "), ClauseContext::Predicate);
         assert_eq!(
             classify("SELECT * FROM u WHERE id ="),
             ClauseContext::Predicate
@@ -1081,10 +1131,7 @@ mod tests {
 
     #[test]
     fn semicolon_starts_a_fresh_statement() {
-        assert_eq!(
-            classify("SELECT * FROM u; "),
-            ClauseContext::StatementStart
-        );
+        assert_eq!(classify("SELECT * FROM u; "), ClauseContext::StatementStart);
         assert_eq!(
             classify("SELECT * FROM u; SELECT "),
             ClauseContext::SelectList
@@ -1096,10 +1143,7 @@ mod tests {
         // Regression: `INSERT INTO foo VALUES (` used to flip the `(`
         // into InsertColumns because expecting_insert_paren wasn't
         // cleared by VALUES.
-        assert_eq!(
-            classify("INSERT INTO foo VALUES ("),
-            ClauseContext::Values
-        );
+        assert_eq!(classify("INSERT INTO foo VALUES ("), ClauseContext::Values);
     }
 
     #[test]
@@ -1156,14 +1200,20 @@ mod tests {
         // it can offer foo's columns inside WHERE without a FROM.
         let c = classify_at("UPDATE foo SET x = 1 WHERE ", 27);
         assert_eq!(c.ctx, ClauseContext::Predicate);
-        assert_eq!(c.write_target.as_ref().map(|t| &t.name), Some(&"foo".to_string()));
+        assert_eq!(
+            c.write_target.as_ref().map(|t| &t.name),
+            Some(&"foo".to_string())
+        );
     }
 
     #[test]
     fn write_target_carried_through_delete_where() {
         let c = classify_at("DELETE FROM foo WHERE ", 22);
         assert_eq!(c.ctx, ClauseContext::Predicate);
-        assert_eq!(c.write_target.as_ref().map(|t| &t.name), Some(&"foo".to_string()));
+        assert_eq!(
+            c.write_target.as_ref().map(|t| &t.name),
+            Some(&"foo".to_string())
+        );
     }
 
     #[test]
@@ -1250,13 +1300,22 @@ mod tests {
 
     #[test]
     fn drop_table_enters_drop_target() {
-        assert_eq!(classify("DROP TABLE "), ClauseContext::DropTarget(DropKind::Table));
-        assert_eq!(classify("DROP TABLE us"), ClauseContext::DropTarget(DropKind::Table));
+        assert_eq!(
+            classify("DROP TABLE "),
+            ClauseContext::DropTarget(DropKind::Table)
+        );
+        assert_eq!(
+            classify("DROP TABLE us"),
+            ClauseContext::DropTarget(DropKind::Table)
+        );
     }
 
     #[test]
     fn drop_view_enters_drop_target() {
-        assert_eq!(classify("DROP VIEW "), ClauseContext::DropTarget(DropKind::Table));
+        assert_eq!(
+            classify("DROP VIEW "),
+            ClauseContext::DropTarget(DropKind::Table)
+        );
     }
 
     #[test]
@@ -1285,7 +1344,10 @@ mod tests {
 
     #[test]
     fn drop_index_enters_drop_target_index() {
-        assert_eq!(classify("DROP INDEX "), ClauseContext::DropTarget(DropKind::Index));
+        assert_eq!(
+            classify("DROP INDEX "),
+            ClauseContext::DropTarget(DropKind::Index)
+        );
     }
 
     #[test]
@@ -1322,6 +1384,76 @@ mod tests {
     }
 
     #[test]
+    fn create_table_paren_starts_at_column_name_position() {
+        // Right after `(` — operator is naming a fresh column; no
+        // completion.
+        assert_eq!(
+            classify("CREATE TABLE t ("),
+            ClauseContext::CreateTableColumns
+        );
+    }
+
+    #[test]
+    fn create_table_after_column_name_flips_to_type_position() {
+        // After `(id ` (column name typed, space) we're at the type
+        // position. Wants TYPE_NAMES.
+        assert_eq!(
+            classify("CREATE TABLE t (id "),
+            ClauseContext::CreateTableColumnType
+        );
+    }
+
+    #[test]
+    fn create_table_comma_returns_to_column_name_position() {
+        // `(id INT, ` — after the comma we're naming the next column.
+        assert_eq!(
+            classify("CREATE TABLE t (id INT, "),
+            ClauseContext::CreateTableColumns
+        );
+    }
+
+    #[test]
+    fn create_table_second_column_type_position() {
+        // `(id INT, name ` — second column's type slot.
+        assert_eq!(
+            classify("CREATE TABLE t (id INT, name "),
+            ClauseContext::CreateTableColumnType
+        );
+    }
+
+    #[test]
+    fn create_table_as_select_subquery_does_not_steal_create_paren() {
+        // `CREATE TABLE t AS SELECT * FROM (SELECT * FROM x WHERE |` —
+        // the inner `(` opens a subquery, not a CREATE TABLE column
+        // list. The create-paren expectation must be cleared once we
+        // pass AS / SELECT.
+        let buf = "CREATE TABLE t AS SELECT * FROM (SELECT * FROM x WHERE ";
+        assert_eq!(classify(buf), ClauseContext::Predicate);
+    }
+
+    #[test]
+    fn create_table_as_select_open_paren_is_subquery_not_columns() {
+        // Cursor right at the inner `(` — without the deferred-clear
+        // fix, this would land on `CreateTableColumns` (the stale
+        // create-paren expectation gets consumed by the subquery's
+        // `(`). The classifier must clear the expectation once we've
+        // moved past the table name into other clauses.
+        let buf = "CREATE TABLE t AS SELECT * FROM (";
+        assert_ne!(classify(buf), ClauseContext::CreateTableColumns);
+    }
+
+    #[test]
+    fn create_table_temp_keyword_does_not_block_classification() {
+        // `CREATE TEMP TABLE t (id ` still routes through the create-
+        // table path (TEMP / UNLOGGED / IF NOT EXISTS sit between
+        // CREATE and TABLE).
+        assert_eq!(
+            classify("CREATE TEMP TABLE t (id "),
+            ClauseContext::CreateTableColumnType
+        );
+    }
+
+    #[test]
     fn on_inside_on_conflict_does_not_trigger_predicate() {
         // `INSERT INTO foo (a) VALUES (1) ON CONFLICT ON CONSTRAINT |`
         // — the second ON belongs to "ON CONSTRAINT", not a Predicate
@@ -1344,9 +1476,7 @@ mod tests {
 
     #[test]
     fn on_conflict_do_update_set_enters_update_assign_of_target() {
-        let ctx = classify(
-            "INSERT INTO foo (a) VALUES (1) ON CONFLICT (id) DO UPDATE SET ",
-        );
+        let ctx = classify("INSERT INTO foo (a) VALUES (1) ON CONFLICT (id) DO UPDATE SET ");
         match ctx {
             ClauseContext::UpdateAssign(t) => assert_eq!(t.name, "foo"),
             other => panic!("expected UpdateAssign(foo), got {other:?}"),

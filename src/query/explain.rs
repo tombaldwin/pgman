@@ -73,8 +73,8 @@ impl PlanNode {
 /// practice — multi-statement EXPLAIN isn't reachable from our
 /// run path).
 pub fn parse(json: &str) -> Result<PlanNode, String> {
-    let root: Value = serde_json::from_str(json)
-        .map_err(|e| format!("EXPLAIN JSON parse failed: {e}"))?;
+    let root: Value =
+        serde_json::from_str(json).map_err(|e| format!("EXPLAIN JSON parse failed: {e}"))?;
     let plans = root
         .as_array()
         .and_then(|a| a.first())

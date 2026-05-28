@@ -75,14 +75,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(q.params.len(), 2);
-        assert_eq!(q.runnable_sql, "select * from t where id = 42 and name = 'Alice'");
+        assert_eq!(
+            q.runnable_sql,
+            "select * from t where id = 42 and name = 'Alice'"
+        );
         assert_eq!(q.source, Source::JdbcPaste);
     }
 
     #[test]
     fn null_value_substitutes_unquoted_null() {
-        let q = parse("update t set note = ? where id = ?", "VARCHAR:NULL\nINTEGER:9")
-            .unwrap();
+        let q = parse(
+            "update t set note = ? where id = ?",
+            "VARCHAR:NULL\nINTEGER:9",
+        )
+        .unwrap();
         assert_eq!(q.runnable_sql, "update t set note = NULL where id = 9");
     }
 

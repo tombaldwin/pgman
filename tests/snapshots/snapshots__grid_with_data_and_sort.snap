@@ -16,4 +16,4 @@ expression: dump(&buf)
 │                                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
- q quit · ? help · e editor · S schema · T slow · L sessions
+ RO   q quit · ? help · e editor · S schema · W wizard · Q s

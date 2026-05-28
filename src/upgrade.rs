@@ -65,8 +65,7 @@ pub fn run() -> anyhow::Result<()> {
 #[cfg(unix)]
 fn relaunch() -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
     let args: Vec<String> = std::env::args()
         .skip(1)
         .filter(|a| a != "--upgrade")
@@ -78,8 +77,7 @@ fn relaunch() -> anyhow::Result<()> {
 
 #[cfg(not(unix))]
 fn relaunch() -> anyhow::Result<()> {
-    let exe = std::env::current_exe()
-        .map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow::anyhow!("locate current exe: {e}"))?;
     let args: Vec<String> = std::env::args()
         .skip(1)
         .filter(|a| a != "--upgrade")

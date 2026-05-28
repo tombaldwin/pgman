@@ -47,13 +47,21 @@ pub struct Opts {
 /// Returns `Ok(0)` on success and the formatted error / `Ok(1)` on
 /// failure so `main` can map it to a process exit code.
 pub async fn run(opts: Opts) -> Result<i32, String> {
-    // Discard notices in batch mode — they'd interleave with the
-    // result on stdout. Surface them on stderr via tracing instead.
-    let (notice_tx, mut notice_rx) =
-        tokio::sync::mpsc::unbounded_channel::<conn::NoticeMsg>();
+    // Discard notices + notifications in batch mode — they'd
+    // interleave with the result on stdout. Surface notices on
+    // stderr; LISTEN/NOTIFY arrivals are silently dropped (a
+    // one-shot batch isn't a sensible subscriber).
+    let (notice_tx, mut notice_rx) = tokio::sync::mpsc::unbounded_channel::<conn::NoticeMsg>();
     tokio::spawn(async move {
         while let Some(n) = notice_rx.recv().await {
             eprintln!("[{}] {}", n.severity, n.message);
+        }
+    });
+    let (notification_tx, mut notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<conn::NotificationMsg>();
+    tokio::spawn(async move {
+        while notification_rx.recv().await.is_some() {
+            // drop
         }
     });
 
@@ -62,6 +70,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
         opts.read_only,
         opts.statement_timeout_ms,
         notice_tx,
+        notification_tx,
     )
     .await?;
 
@@ -109,6 +118,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
 /// let g = Grid {
 ///     columns: vec!["id".into(), "name".into()],
 ///     rows: vec![vec!["1".into(), "has, comma".into()]],
+///     truncated: false,
 /// };
 /// assert_eq!(format_csv(&g), "id,name\n1,\"has, comma\"\n");
 /// ```
@@ -147,9 +157,7 @@ fn push_delim_row(buf: &mut String, fields: &[String], delim: char, csv_quote: b
 }
 
 fn push_csv_field(buf: &mut String, field: &str) {
-    let needs_quote = field
-        .chars()
-        .any(|c| matches!(c, ',' | '"' | '\n' | '\r'));
+    let needs_quote = field.chars().any(|c| matches!(c, ',' | '"' | '\n' | '\r'));
     if needs_quote {
         buf.push('"');
         for c in field.chars() {
@@ -187,6 +195,7 @@ fn push_tsv_field(buf: &mut String, field: &str) {
 /// let g = Grid {
 ///     columns: vec!["id".into()],
 ///     rows: vec![vec!["1".into()], vec!["2".into()]],
+///     truncated: false,
 /// };
 /// assert_eq!(format_json(&g), "[{\"id\":\"1\"},{\"id\":\"2\"}]\n");
 /// ```
@@ -274,6 +283,7 @@ mod tests {
                 .iter()
                 .map(|r| r.iter().map(|s| (*s).to_string()).collect())
                 .collect(),
+            truncated: false,
         }
     }
 
@@ -303,10 +313,7 @@ mod tests {
 
     #[test]
     fn tsv_escapes_control_chars_no_quoting() {
-        let g = grid(
-            &["a", "b"],
-            &[&["x\ty", "z\nw"], &["back\\slash", "ok"]],
-        );
+        let g = grid(&["a", "b"], &[&["x\ty", "z\nw"], &["back\\slash", "ok"]]);
         let out = format_tsv(&g);
         assert_eq!(out, "a\tb\nx\\ty\tz\\nw\nback\\\\slash\tok\n");
     }
@@ -333,10 +340,7 @@ mod tests {
 
     #[test]
     fn expanded_pads_column_names_per_record() {
-        let g = grid(
-            &["id", "much_longer_column"],
-            &[&["1", "v1"], &["2", "v2"]],
-        );
+        let g = grid(&["id", "much_longer_column"], &[&["1", "v1"], &["2", "v2"]]);
         let out = format_expanded(&g);
         // The shorter column name should be padded so that the `|`
         // separators line up.

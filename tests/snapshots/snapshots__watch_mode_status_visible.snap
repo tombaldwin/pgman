@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 171
+assertion_line: 174
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- \watch every 2s · any key to stop
+ RO   \watch every 2s · any key to stop

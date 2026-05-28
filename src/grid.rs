@@ -8,10 +8,15 @@
 pub const MAX_ROWS: usize = 1000;
 
 /// A result set: column headers plus string-rendered rows.
+///
+/// `truncated` is set when the underlying source had more rows than
+/// `MAX_ROWS` — the renderer surfaces this so the user knows the view
+/// is partial.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Grid {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
 }
 
 impl Grid {
@@ -72,14 +77,26 @@ pub fn cmp_cells(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Truncate `s` to `width` display columns, marking a cut with `…`.
 pub fn truncate_cell(s: &str, width: usize) -> String {
+    let (kept, suffix) = truncate_cell_parts(s, width);
+    let mut out = kept;
+    out.push_str(suffix);
+    out
+}
+
+/// Like `truncate_cell` but returns the kept text and the suffix
+/// marker (`…` or empty) separately so a renderer can style the
+/// marker distinctly from the value. The kept-text part has no
+/// trailing marker; concatenating the two recreates `truncate_cell`'s
+/// output. Pure / testable.
+pub fn truncate_cell_parts(s: &str, width: usize) -> (String, &'static str) {
     if width == 0 {
-        return String::new();
+        return (String::new(), "");
     }
     if s.chars().count() <= width {
-        return s.to_string();
+        return (s.to_string(), "");
     }
     let kept: String = s.chars().take(width.saturating_sub(1)).collect();
-    format!("{kept}…")
+    (kept, "…")
 }
 
 #[cfg(test)]
@@ -93,6 +110,7 @@ mod tests {
                 vec!["1".into(), "alice".into()],
                 vec!["1000".into(), "bob".into()],
             ],
+            truncated: false,
         }
     }
 
@@ -130,6 +148,40 @@ mod tests {
         // Multi-byte chars count as one column each.
         assert_eq!(truncate_cell("héllo", 5), "héllo");
         assert_eq!(truncate_cell("héllo", 3), "hé…");
+    }
+
+    #[test]
+    fn truncate_cell_parts_returns_empty_suffix_when_not_truncated() {
+        assert_eq!(truncate_cell_parts("abc", 5), ("abc".into(), ""));
+        assert_eq!(truncate_cell_parts("abc", 3), ("abc".into(), ""));
+        assert_eq!(truncate_cell_parts("", 5), (String::new(), ""));
+    }
+
+    #[test]
+    fn truncate_cell_parts_returns_ellipsis_when_truncated() {
+        assert_eq!(truncate_cell_parts("abcdef", 4), ("abc".into(), "…"));
+        assert_eq!(truncate_cell_parts("abcdef", 1), (String::new(), "…"));
+        // Empty kept-text is intentional: width=1 leaves room only
+        // for the marker.
+    }
+
+    #[test]
+    fn truncate_cell_parts_zero_width_is_all_empty() {
+        assert_eq!(truncate_cell_parts("abc", 0), (String::new(), ""));
+    }
+
+    #[test]
+    fn truncate_cell_matches_truncate_cell_parts_concat() {
+        for (s, w) in [
+            ("abc", 0),
+            ("abc", 3),
+            ("abc", 5),
+            ("abcdef", 4),
+            ("héllo", 3),
+        ] {
+            let (kept, marker) = truncate_cell_parts(s, w);
+            assert_eq!(truncate_cell(s, w), format!("{kept}{marker}"));
+        }
     }
 
     #[test]

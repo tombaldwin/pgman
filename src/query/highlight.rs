@@ -170,8 +170,7 @@ pub fn tokenize(buf: &str) -> Vec<Span> {
 
         // Number: digit (or `.` followed by digit). Consume digits,
         // optional `.<digits>`, optional `e[+-]?<digits>`.
-        if b.is_ascii_digit()
-            || (b == b'.' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
+        if b.is_ascii_digit() || (b == b'.' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit())
         {
             let start = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -204,9 +203,7 @@ pub fn tokenize(buf: &str) -> Vec<Span> {
         if b.is_ascii_alphabetic() || b == b'_' {
             let start = i;
             i += 1;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-            {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
             }
             let text = &buf[start..i];
@@ -296,11 +293,7 @@ fn identifier_known(
         return true;
     }
     // Schemas.
-    if schema
-        .schemas
-        .iter()
-        .any(|s| s.eq_ignore_ascii_case(name))
-    {
+    if schema.schemas.iter().any(|s| s.eq_ignore_ascii_case(name)) {
         return true;
     }
     // Any column anywhere in the cache.
@@ -356,12 +349,8 @@ fn classify_word(text: &str, bytes: &[u8], following_byte_idx: usize) -> TokenCl
         || PREDICATE_OPERATORS
             .iter()
             .any(|k| k.eq_ignore_ascii_case(&upper))
-        || JOIN_VARIANTS
-            .iter()
-            .any(|k| k.eq_ignore_ascii_case(&upper))
-        || TYPE_NAMES
-            .iter()
-            .any(|k| k.eq_ignore_ascii_case(&upper))
+        || JOIN_VARIANTS.iter().any(|k| k.eq_ignore_ascii_case(&upper))
+        || TYPE_NAMES.iter().any(|k| k.eq_ignore_ascii_case(&upper))
         || matches_extra_keyword(&upper)
     {
         return TokenClass::Keyword;

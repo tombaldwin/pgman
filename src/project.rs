@@ -112,9 +112,7 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
         .as_deref()
         .and_then(|var| std::env::var(var).ok())
         .filter(|s| !s.is_empty());
-    let pg_pw = std::env::var("PGPASSWORD")
-        .ok()
-        .filter(|s| !s.is_empty());
+    let pg_pw = std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty());
     if let Some(pw) = env_pw {
         dsn.password = Some(pw);
     } else if let Some(pw) = pg_pw {
@@ -168,7 +166,10 @@ pub fn load_from(start: &Path) -> Option<(PathBuf, ProjectConfig)> {
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) => {
-            tracing::warn!("found .pgman/ at {} but couldn't read pgman.toml: {e}", root.display());
+            tracing::warn!(
+                "found .pgman/ at {} but couldn't read pgman.toml: {e}",
+                root.display()
+            );
             return None;
         }
     };
@@ -182,7 +183,10 @@ pub fn load_from(start: &Path) -> Option<(PathBuf, ProjectConfig)> {
             Some((root, cfg))
         }
         Err(e) => {
-            tracing::warn!("project config at {} parse error ({e}); ignoring", path.display());
+            tracing::warn!(
+                "project config at {} parse error ({e}); ignoring",
+                path.display()
+            );
             None
         }
     }
@@ -341,7 +345,9 @@ statement_timeout_ms = 5000
     #[test]
     fn merge_safety_with_no_project_returns_global_unchanged() {
         let mut global = SafetyConfig::default();
-        global.databases.insert("prod".into(), SafetyProfile::default());
+        global
+            .databases
+            .insert("prod".into(), SafetyProfile::default());
         let merged = merge_safety(global.clone(), None);
         assert_eq!(merged.databases.len(), global.databases.len());
     }

@@ -57,13 +57,10 @@ pub struct Theme {
     pub icons: IconStyle,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IconStyle {
-    Unicode,
-    Ascii,
-    /// Opt-in glyph set for terminals using a Powerline-patched or Nerd Font.
-    Powerline,
-}
+// `IconStyle` now lives in the shared `tb-tui-common` crate. The
+// re-export keeps the canonical path `crate::theme::IconStyle`
+// stable for every existing call site.
+pub use tui_common::theme::IconStyle;
 
 impl Default for Theme {
     fn default() -> Self {

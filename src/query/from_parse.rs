@@ -76,9 +76,8 @@ pub fn parse_from_tables_resolved(
                         .collect::<Vec<_>>()
                         .join(" ");
                     if let Some(entry) = out.get_mut(entry_idx) {
-                        let cols = crate::query::select_list::resolve_select_columns(
-                            &body_text, schema,
-                        );
+                        let cols =
+                            crate::query::select_list::resolve_select_columns(&body_text, schema);
                         if !cols.is_empty() {
                             entry.virtual_columns = Some(cols);
                         }
@@ -168,8 +167,11 @@ pub fn parse_from_tables(sql: &str) -> Vec<TableRefInQuery> {
                         // Pull the subquery body's SELECT list so the
                         // outer query can complete `sub.col` against it.
                         let body_tokens = &tokens[i + 1..close - 1];
-                        let body_text: String =
-                            body_tokens.iter().map(|t| t.text).collect::<Vec<_>>().join(" ");
+                        let body_text: String = body_tokens
+                            .iter()
+                            .map(|t| t.text)
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         let cols = crate::query::select_list::extract_select_columns(&body_text);
                         let virtual_columns = if cols.is_empty() { None } else { Some(cols) };
                         out.push(TableRefInQuery {
@@ -315,9 +317,7 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
         // Identifier / keyword
         if c.is_ascii_alphabetic() || c == b'_' {
             let start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-            {
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;
             }
             out.push(Tok {
@@ -328,9 +328,7 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
         // Number — gather digits + dot + exponent; treated as one token
         if c.is_ascii_digit() {
             let start = i;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_digit() || bytes[i] == b'.')
-            {
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
                 i += 1;
             }
             out.push(Tok {
@@ -346,9 +344,7 @@ pub(crate) fn tokenize(sql: &str) -> Vec<Tok<'_>> {
         while end < bytes.len() && !sql.is_char_boundary(end) {
             end += 1;
         }
-        out.push(Tok {
-            text: &sql[i..end],
-        });
+        out.push(Tok { text: &sql[i..end] });
         i = end;
     }
     out
@@ -392,9 +388,27 @@ fn take_table_ref(tokens: &[Tok], i: usize) -> Option<(TableName, usize)> {
 /// but rejects words that introduce the next clause / next FROM-item.
 fn take_alias(tokens: &[Tok], i: usize) -> (Option<String>, usize) {
     let stop_words = [
-        "ON", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "FETCH",
-        "OFFSET", "UNION", "INTERSECT", "EXCEPT", "JOIN", "INNER", "LEFT",
-        "RIGHT", "FULL", "CROSS", "OUTER", "USING", "AS", "RETURNING",
+        "ON",
+        "WHERE",
+        "GROUP",
+        "HAVING",
+        "ORDER",
+        "LIMIT",
+        "FETCH",
+        "OFFSET",
+        "UNION",
+        "INTERSECT",
+        "EXCEPT",
+        "JOIN",
+        "INNER",
+        "LEFT",
+        "RIGHT",
+        "FULL",
+        "CROSS",
+        "OUTER",
+        "USING",
+        "AS",
+        "RETURNING",
     ];
     if let Some(t) = tokens.get(i) {
         let upper = t.text.to_ascii_uppercase();
@@ -403,9 +417,7 @@ fn take_alias(tokens: &[Tok], i: usize) -> (Option<String>, usize) {
                 let alias_upper = alias.text.to_ascii_uppercase();
                 // Reject keywords after AS — `FROM users AS JOIN orders`
                 // should not consume `JOIN` as the alias of `users`.
-                if is_identifier_like(alias.text)
-                    && !stop_words.contains(&alias_upper.as_str())
-                {
+                if is_identifier_like(alias.text) && !stop_words.contains(&alias_upper.as_str()) {
                     return (Some(alias.text.to_string()), i + 2);
                 }
             }
@@ -497,9 +509,7 @@ mod tests {
 
     #[test]
     fn skips_string_literals_and_comments() {
-        let got = refs(
-            "SELECT 'FROM hidden' /* FROM also-hidden */ -- FROM also\nFROM users u",
-        );
+        let got = refs("SELECT 'FROM hidden' /* FROM also-hidden */ -- FROM also\nFROM users u");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "users");
     }
@@ -571,7 +581,9 @@ mod tests {
     #[test]
     fn subquery_alias_without_as_is_in_scope() {
         let got = refs("SELECT * FROM (SELECT a FROM users) sub JOIN orders o ON true");
-        assert!(got.iter().any(|t| t.name == "sub" && t.alias.as_deref() == Some("sub")));
+        assert!(got
+            .iter()
+            .any(|t| t.name == "sub" && t.alias.as_deref() == Some("sub")));
         assert!(got.iter().any(|t| t.name == "orders"));
     }
 

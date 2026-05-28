@@ -329,10 +329,7 @@ spring.datasource.username = svc_orders
 spring.application.name=orders-api
 ";
         let ds = parse_properties(text);
-        assert_eq!(
-            ds.url.as_deref(),
-            Some("jdbc:postgresql://db:5432/orders")
-        );
+        assert_eq!(ds.url.as_deref(), Some("jdbc:postgresql://db:5432/orders"));
         assert_eq!(ds.username.as_deref(), Some("svc_orders"));
         assert!(ds.password.is_none());
     }
