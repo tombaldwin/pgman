@@ -73,9 +73,7 @@ impl SshTunnelSpec {
         };
         // Split host and port. Bracketed IPv6 wins; otherwise last `:`.
         let (host, port) = if let Some(stripped) = hostport.strip_prefix('[') {
-            let (h, rest) = stripped
-                .split_once(']')
-                .ok_or(SpecError::MissingHost)?;
+            let (h, rest) = stripped.split_once(']').ok_or(SpecError::MissingHost)?;
             if h.is_empty() {
                 return Err(SpecError::MissingHost);
             }
@@ -156,10 +154,14 @@ impl SshTunnel {
         let mut cmd = Command::new("ssh");
         cmd.arg("-N") // no remote command
             .arg("-T") // no pty
-            .arg("-o").arg("BatchMode=yes") // fail fast on missing keys
-            .arg("-o").arg("ExitOnForwardFailure=yes")
-            .arg("-o").arg("ServerAliveInterval=30")
-            .arg("-o").arg("ServerAliveCountMax=3");
+            .arg("-o")
+            .arg("BatchMode=yes") // fail fast on missing keys
+            .arg("-o")
+            .arg("ExitOnForwardFailure=yes")
+            .arg("-o")
+            .arg("ServerAliveInterval=30")
+            .arg("-o")
+            .arg("ServerAliveCountMax=3");
         if let Some(p) = spec.port {
             cmd.arg("-p").arg(p.to_string());
         }

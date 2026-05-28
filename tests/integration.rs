@@ -27,7 +27,15 @@ fn pgman_binary() -> &'static str {
 #[test]
 fn batch_select_1_emits_csv_and_exits_zero() {
     let out = Command::new(pgman_binary())
-        .args(["--batch", "--dsn", DSN, "--sql", "SELECT 1 AS one", "--format", "csv"])
+        .args([
+            "--batch",
+            "--dsn",
+            DSN,
+            "--sql",
+            "SELECT 1 AS one",
+            "--format",
+            "csv",
+        ])
         .output()
         .expect("spawn pgman");
     assert!(
@@ -69,13 +77,7 @@ fn batch_multistatement_routes_through_simple_query_protocol() {
     // `batch_execute()` accepts. Exit success means the splitter
     // detected the multi-stmt shape correctly.
     let out = Command::new(pgman_binary())
-        .args([
-            "--batch",
-            "--dsn",
-            DSN,
-            "--sql",
-            "BEGIN; SELECT 1; COMMIT",
-        ])
+        .args(["--batch", "--dsn", DSN, "--sql", "BEGIN; SELECT 1; COMMIT"])
         .output()
         .expect("spawn pgman");
     assert!(
@@ -121,7 +123,11 @@ fn batch_surfaces_server_notice_on_stderr() {
         ])
         .output()
         .expect("spawn pgman");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("pgman-test-notice"),

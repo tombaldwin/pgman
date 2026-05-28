@@ -346,6 +346,7 @@ proptest! {
                 .iter()
                 .map(|(i, s)| vec![i.to_string(), s.clone()])
                 .collect(),
+                    truncated: false,
         };
         g.rows.sort_by(|a, b| cmp_cells(&a[0], &b[0]));
         let after_first = g.rows.clone();

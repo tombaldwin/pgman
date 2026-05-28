@@ -19,8 +19,7 @@ fn stub(name: &str) -> String {
 #[test]
 fn pg_format_subprocess_writes_marker_and_passes_stdin_through() {
     let input = "select 1";
-    let out = pg_format_via(input, &stub("fake_pg_format"))
-        .expect("fake_pg_format should succeed");
+    let out = pg_format_via(input, &stub("fake_pg_format")).expect("fake_pg_format should succeed");
     // The stub prepends a marker line and echoes stdin. Trailing
     // newline is stripped by `pg_format_via` so the result reads
     // cleanly.
@@ -38,8 +37,8 @@ fn pg_format_missing_binary_surfaces_actionable_error() {
 #[test]
 fn external_edit_subprocess_prepends_marker_and_buffer_round_trips() {
     let buffer = "SELECT 1\nFROM t";
-    let edited = external_edit_via(buffer, &stub("fake_editor"))
-        .expect("fake_editor should succeed");
+    let edited =
+        external_edit_via(buffer, &stub("fake_editor")).expect("fake_editor should succeed");
     assert_eq!(edited, "-- edited by fake_editor\nSELECT 1\nFROM t");
 }
 
@@ -58,7 +57,6 @@ fn external_edit_with_args_splits_command_line() {
     // The stub doesn't care about extra args; the test just proves
     // that a command like `fake_editor --some-flag` parses and runs.
     let cmd = format!("{} --noop-flag", stub("fake_editor"));
-    let edited =
-        external_edit_via("hello", &cmd).expect("split-arg invocation should still run");
+    let edited = external_edit_via("hello", &cmd).expect("split-arg invocation should still run");
     assert!(edited.contains("hello"));
 }

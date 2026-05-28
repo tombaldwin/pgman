@@ -1,0 +1,25 @@
+---
+source: tests/snapshots.rs
+assertion_line: 349
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ ed┌ data · row 1 of 1 · field 1/1 · JSON ────────────────────────────────┐───┐
+│> (│                                                                      │   │
+└───│ ▼ { 3 }                                                              │───┘
+┌ re│   "id": 1                                                            │───┐
+│dat│   ▼ "meta": { 1 }                                                    │   │
+│{"i│     "k": "v"                                                         │   │
+│   │   ▼ "tags": [ 2 ]                                                    │   │
+│   │     [0]: "a"                                                         │   │
+│   │     [1]: "b"                                                         │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+└───└──────────────────────────────────────────────────────────────────────┘───┘
+ RO   tip · JSON cells render as a tree · y yanks the value (or jq path)

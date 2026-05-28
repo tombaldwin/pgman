@@ -24,8 +24,12 @@ use std::collections::HashMap;
 pub enum StatementKind {
     Select,
     Insert,
-    Update { has_where: bool },
-    Delete { has_where: bool },
+    Update {
+        has_where: bool,
+    },
+    Delete {
+        has_where: bool,
+    },
     Truncate,
     Drop,
     /// `ALTER` / `CREATE` / `GRANT` / `VACUUM` / other DDL & maintenance.
@@ -110,6 +114,11 @@ pub struct SafetyProfile {
     /// Wrap writes in an explicit transaction and prompt commit/rollback.
     pub auto_tx: bool,
     pub guards: Guards,
+    /// Row-count threshold above which a SELECT triggers a pre-flight
+    /// `EXPLAIN` cost preview + Confirm prompt before running. `0`
+    /// disables the check entirely. Default: disabled — the value is
+    /// opt-in per profile so existing setups don't change UX.
+    pub cost_preview_threshold_rows: u64,
 }
 
 impl Default for SafetyProfile {
@@ -119,6 +128,7 @@ impl Default for SafetyProfile {
             statement_timeout_ms: 30_000,
             auto_tx: true,
             guards: Guards::default(),
+            cost_preview_threshold_rows: 0,
         }
     }
 }
@@ -169,8 +179,8 @@ pub fn classify(sql: &str) -> StatementKind {
         "delete" => StatementKind::Delete { has_where },
         "truncate" => StatementKind::Truncate,
         "drop" => StatementKind::Drop,
-        "alter" | "create" | "comment" | "grant" | "revoke" | "reindex" | "vacuum"
-        | "analyze" | "analyse" | "cluster" | "refresh" => StatementKind::AlterDdl,
+        "alter" | "create" | "comment" | "grant" | "revoke" | "reindex" | "vacuum" | "analyze"
+        | "analyse" | "cluster" | "refresh" => StatementKind::AlterDdl,
         // `EXPLAIN ANALYZE <dml>` *executes* the DML — classify the inner
         // statement, not the EXPLAIN wrapper.
         "explain" => classify(strip_explain_prefix(trimmed)),
@@ -267,7 +277,7 @@ pub fn split_statements(sql: &str) -> Vec<String> {
 }
 
 /// Remove `-- line` and `/* block */` comments, leaving string literals intact.
-fn strip_sql_comments(sql: &str) -> String {
+pub(crate) fn strip_sql_comments(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
     let mut in_string = false;
@@ -315,7 +325,7 @@ fn strip_sql_comments(sql: &str) -> String {
 }
 
 /// `true` if `word` appears in `haystack` as a whole token (case-insensitive).
-fn word_present(haystack: &str, word: &str) -> bool {
+pub(crate) fn word_present(haystack: &str, word: &str) -> bool {
     haystack
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .any(|tok| tok.eq_ignore_ascii_case(word))
@@ -360,7 +370,10 @@ mod tests {
         assert_eq!(classify("INSERT INTO t VALUES (1)"), StatementKind::Insert);
         assert_eq!(classify("TRUNCATE TABLE audit"), StatementKind::Truncate);
         assert_eq!(classify("DROP TABLE legacy"), StatementKind::Drop);
-        assert_eq!(classify("ALTER TABLE t ADD COLUMN c int"), StatementKind::AlterDdl);
+        assert_eq!(
+            classify("ALTER TABLE t ADD COLUMN c int"),
+            StatementKind::AlterDdl
+        );
     }
 
     #[test]
@@ -418,7 +431,10 @@ mod tests {
             classify("WITH old AS (SELECT id FROM t) DELETE FROM t USING old"),
             StatementKind::Delete { has_where: false }
         );
-        assert_eq!(classify("WITH x AS (SELECT 1) SELECT * FROM x"), StatementKind::Select);
+        assert_eq!(
+            classify("WITH x AS (SELECT 1) SELECT * FROM x"),
+            StatementKind::Select
+        );
     }
 
     #[test]

@@ -75,7 +75,9 @@ pub fn parse(grid: &Grid) -> Vec<SessionRow> {
                 .unwrap_or(0);
             let user = user_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
             let application = app_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
-            let state = state_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
+            let state = state_idx
+                .and_then(|i| r.get(i).cloned())
+                .unwrap_or_default();
             // `:` from the COALESCE join — strip when both halves
             // are empty so we don't render `:` for "no wait event".
             let wait_event_raw = wait_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
@@ -124,6 +126,7 @@ mod tests {
                 .iter()
                 .map(|r| r.iter().map(|s| (*s).to_string()).collect())
                 .collect(),
+            truncated: false,
         }
     }
 

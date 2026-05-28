@@ -93,35 +93,138 @@ pub struct Candidate {
     pub context: Option<String>,
 }
 
-/// Walk back from `cursor` over identifier-ish characters (letters,
-/// digits, `_`) plus at most one trailing `.` to find the partial
-/// identifier under the cursor. Returns `None` when the cursor isn't
-/// inside / immediately after an identifier.
+/// The cursor sits inside a `nextval('|')` literal — `start..cursor`
+/// is the partial sequence-name the operator has typed inside the
+/// single quotes. Detected by `detect_nextval_literal` and consumed
+/// by both `extract_identifier` (to surface the replace range) and
+/// `candidates_for` (to emit `cache.sequences` entries).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextvalLiteral {
+    /// Byte offset of the first char inside the opening `'`.
+    pub start: usize,
+    /// Byte offset = cursor (end of the typed partial).
+    pub end: usize,
+    /// Substring `buf[start..end]` — the typed partial.
+    pub prefix: String,
+}
+
+/// Detect the `nextval('|')` literal context. Returns `Some` only
+/// when:
+///   - the cursor is inside a single-quoted string,
+///   - the opening `'` is preceded by `(` (possibly via whitespace),
+///   - which is preceded by the bare word `nextval` (case-insensitive,
+///     not part of a longer identifier like `not_nextval`).
+/// This is a fallback used by completion; it ignores escape sequences
+/// inside the string — a sequence name with a `'` in it would be
+/// pathological and is out of scope.
+pub fn detect_nextval_literal(buf: &str, cursor: usize) -> Option<NextvalLiteral> {
+    let cursor = cursor.min(buf.len());
+    if !buf.is_char_boundary(cursor) {
+        return None;
+    }
+    let before = &buf[..cursor];
+    // Walk the prefix; toggle in_str on each `'`. Track the most
+    // recent opening `'` so we know the literal's start position when
+    // we end with in_str == true.
+    let mut in_str = false;
+    let mut last_open: Option<usize> = None;
+    for (i, c) in before.char_indices() {
+        if c == '\'' {
+            if in_str {
+                in_str = false;
+            } else {
+                in_str = true;
+                last_open = Some(i);
+            }
+        }
+    }
+    if !in_str {
+        return None;
+    }
+    let open = last_open?;
+    // Anchor: head must end with `nextval (` (with optional whitespace
+    // around the `(`).
+    let head = &buf[..open];
+    let trimmed = head.trim_end();
+    let trimmed = trimmed.strip_suffix('(')?;
+    let trimmed = trimmed.trim_end();
+    const WANT: &str = "nextval";
+    if trimmed.len() < WANT.len() {
+        return None;
+    }
+    let tail_byte = trimmed.len() - WANT.len();
+    if !trimmed.is_char_boundary(tail_byte) {
+        return None;
+    }
+    let (head_before, tail) = trimmed.split_at(tail_byte);
+    if !tail.eq_ignore_ascii_case(WANT) {
+        return None;
+    }
+    // Word-boundary check: `not_nextval(` etc. must NOT match.
+    if let Some(prev) = head_before.chars().next_back() {
+        if prev.is_alphanumeric() || prev == '_' {
+            return None;
+        }
+    }
+    let prefix = buf[open + 1..cursor].to_string();
+    Some(NextvalLiteral {
+        start: open + 1,
+        end: cursor,
+        prefix,
+    })
+}
+
+/// Whether `c` counts as an identifier-continuation character. Matches
+/// Postgres's unquoted identifier rule loosely: ASCII letters, digits,
+/// `_`, plus any Unicode alphabetic codepoint (so `café`, `naïve`, and
+/// Cyrillic / CJK identifiers all complete). Numbers / `$` are out of
+/// scope for now — the former clashes with numeric-literal handling
+/// below.
+fn is_ident_char(c: char) -> bool {
+    c == '_' || c.is_alphanumeric()
+}
+
+/// Walk back from `cursor` over identifier-ish characters (Unicode
+/// letters, digits, `_`) plus any `.` segment separators to find the
+/// partial identifier under the cursor. Returns `None` when the cursor
+/// isn't inside / immediately after an identifier.
+///
+/// Special case: inside `nextval('|')` the cursor sits in a single-
+/// quoted string, which the regular walker rejects. We synthesize an
+/// `Identifier` with the in-string partial so the editor's replace
+/// range and the candidate engine line up.
 pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
     // Clamp + snap to char boundary so byte-cursor arithmetic is safe.
     let cursor = cursor.min(buf.len());
     if !buf.is_char_boundary(cursor) {
         return None;
     }
-    let bytes = buf.as_bytes();
+    if let Some(nv) = detect_nextval_literal(buf, cursor) {
+        return Some(Identifier {
+            start: nv.start,
+            end: nv.end,
+            schema: None,
+            qualifier: None,
+            prefix: nv.prefix,
+        });
+    }
+    // Walk backward by char so multi-byte UTF-8 (`café`, `naïve`,
+    // Cyrillic, CJK) is accepted as identifier-shaped.
     let mut start = cursor;
-    while start > 0 {
-        let prev = start - 1;
-        let c = bytes[prev];
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' {
-            start = prev;
+    for (idx, ch) in buf[..cursor].char_indices().rev() {
+        if is_ident_char(ch) || ch == '.' {
+            start = idx;
         } else {
             break;
         }
     }
     // Walk forward over identifier chars (no dots — we only honour the
     // qualifier the user already typed) so `SELECT user|_id` + Tab
-    // replaces the whole `user_id`, not just `user`.
+    // replaces the whole `user_id`, not just `user`. Char-aware too.
     let mut end = cursor;
-    while end < bytes.len() {
-        let c = bytes[end];
-        if c.is_ascii_alphanumeric() || c == b'_' {
-            end += 1;
+    for (i, ch) in buf[cursor..].char_indices() {
+        if is_ident_char(ch) {
+            end = cursor + i + ch.len_utf8();
         } else {
             break;
         }
@@ -133,12 +236,8 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
         // start fresh from this position. We require the *previous*
         // non-identifier char to have been a `.` or whitespace before
         // emitting; otherwise punctuation like `;` shouldn't trigger.
-        let prev = if cursor == 0 {
-            None
-        } else {
-            Some(bytes[cursor - 1])
-        };
-        match prev {
+        let prev_char = buf[..cursor].chars().next_back();
+        match prev_char {
             None => {
                 return Some(Identifier {
                     start: cursor,
@@ -148,7 +247,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
                     prefix: String::new(),
                 });
             }
-            Some(c) if c.is_ascii_whitespace() => {
+            Some(c) if c.is_whitespace() => {
                 return Some(Identifier {
                     start: cursor,
                     end,
@@ -185,11 +284,7 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
             let last = all.last().unwrap();
             let first = all[0];
             let middle = all[1..all.len() - 1].join(".");
-            (
-                Some(first.to_string()),
-                Some(middle),
-                last.to_string(),
-            )
+            (Some(first.to_string()), Some(middle), last.to_string())
         }
     };
     Some(Identifier {
@@ -210,11 +305,36 @@ pub fn extract_identifier(buf: &str, cursor: usize) -> Option<Identifier> {
 /// 2. Within a tier, sort lexicographically.
 /// 3. When unqualified and a `FROM` is in scope: columns of FROM tables
 ///    first, then aliases, then FROM-table names, then anything else.
-pub fn candidates_for(
-    buf: &str,
-    cursor: usize,
-    schema: &SchemaCache,
-) -> Vec<Candidate> {
+pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Candidate> {
+    // In-string nextval('|') context — wholly separate candidate set
+    // (sequence names from `cache.sequences`). Short-circuit before
+    // the regular extract / classify pipeline.
+    if let Some(nv) = detect_nextval_literal(buf, cursor) {
+        return schema
+            .sequences
+            .iter()
+            .filter(|s| {
+                let qualified = format!("{}.{}", s.schema, s.name);
+                starts_with_ci(&s.name, &nv.prefix) || starts_with_ci(&qualified, &nv.prefix)
+            })
+            .map(|s| {
+                // Render schema-qualified when not in `public` so the
+                // operator sees disambiguation; the `insert` value
+                // matches the display.
+                let qualified = if s.schema.eq_ignore_ascii_case("public") {
+                    s.name.clone()
+                } else {
+                    format!("{}.{}", s.schema, s.name)
+                };
+                Candidate {
+                    display: qualified.clone(),
+                    insert: qualified,
+                    kind: CandidateKind::Table,
+                    context: Some("sequence".to_string()),
+                }
+            })
+            .collect();
+    }
     let Some(id) = extract_identifier(buf, cursor) else {
         return Vec::new();
     };
@@ -253,10 +373,7 @@ pub fn candidates_for(
         // exposes the would-be-inserted row's columns, which match
         // the target table's columns one-for-one. Surface it so the
         // qualified path `EXCLUDED.|` autocompletes.
-        if let Some(cols) = schema
-            .columns_for(t.schema.as_deref(), &t.name)
-            .cloned()
-        {
+        if let Some(cols) = schema.columns_for(t.schema.as_deref(), &t.name).cloned() {
             in_scope.push(TableRefInQuery {
                 schema: None,
                 name: "EXCLUDED".into(),
@@ -365,10 +482,10 @@ fn candidates_fuzzy(
         std::collections::BTreeSet::new();
 
     let push = |scored: &mut Vec<(usize, Candidate)>,
-                    seen: &mut std::collections::BTreeSet<(CandidateKind, String)>,
-                    name: &str,
-                    kind: CandidateKind,
-                    context: Option<String>| {
+                seen: &mut std::collections::BTreeSet<(CandidateKind, String)>,
+                name: &str,
+                kind: CandidateKind,
+                context: Option<String>| {
         if let Some(score) = fuzzy_score(name, prefix) {
             if seen.insert((kind, name.to_string())) {
                 scored.push((
@@ -410,7 +527,11 @@ fn candidates_fuzzy(
                     }
                 }
                 scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-                return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+                return scored
+                    .into_iter()
+                    .take(MAX_FUZZY_RESULTS)
+                    .map(|(_, c)| c)
+                    .collect();
             }
         }
         // Schema qualifier → its tables.
@@ -427,7 +548,11 @@ fn candidates_fuzzy(
                 }
             }
             scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-            return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+            return scored
+                .into_iter()
+                .take(MAX_FUZZY_RESULTS)
+                .map(|(_, c)| c)
+                .collect();
         }
         // Bare table-name qualifier with no FROM scope → its columns.
         if let Some(cols) = schema.columns_for(None, q) {
@@ -441,7 +566,11 @@ fn candidates_fuzzy(
                 );
             }
             scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.display.cmp(&b.1.display)));
-            return scored.into_iter().take(MAX_FUZZY_RESULTS).map(|(_, c)| c).collect();
+            return scored
+                .into_iter()
+                .take(MAX_FUZZY_RESULTS)
+                .map(|(_, c)| c)
+                .collect();
         }
         // Unrecognised qualifier — nothing to fuzz over.
         return Vec::new();
@@ -461,7 +590,13 @@ fn candidates_fuzzy(
         if let Some(cols) = cols_owned {
             let ctx = t.alias.clone().unwrap_or_else(|| t.name.clone());
             for c in &cols {
-                push(&mut scored, &mut seen, c, CandidateKind::Column, Some(ctx.clone()));
+                push(
+                    &mut scored,
+                    &mut seen,
+                    c,
+                    CandidateKind::Column,
+                    Some(ctx.clone()),
+                );
             }
         }
     }
@@ -572,10 +707,7 @@ fn candidates_for_in_context(
     // context. Returns empty when the schema/table pair isn't in the
     // cache (a typo gets dead silence rather than wrong columns).
     if let (Some(s), Some(t)) = (&id.schema, &id.qualifier) {
-        let cols = schema
-            .columns_for(Some(s), t)
-            .cloned()
-            .unwrap_or_default();
+        let cols = schema.columns_for(Some(s), t).cloned().unwrap_or_default();
         return matches_for(&cols, &id.prefix, CandidateKind::Column);
     }
     // 2-segment `cte.col|` or `sub.col|` — resolve the qualifier
@@ -601,9 +733,7 @@ fn candidates_for_in_context(
         // the scope pops and continuations (RETURNING, ON CONFLICT)
         // can fire from the outer scope; here we offer them only if
         // the prefix matches, so a mid-literal Tab is still silent.
-        ClauseContext::Values => {
-            candidates_from_list(&id.prefix, continuations::AFTER_VALUES)
-        }
+        ClauseContext::Values => candidates_from_list(&id.prefix, continuations::AFTER_VALUES),
 
         // INSERT INTO foo (|  → columns of `foo` (specifically).
         ClauseContext::InsertColumns(t) => columns_of(t, &id.prefix, schema),
@@ -668,7 +798,10 @@ fn candidates_for_in_context(
 
         // CAST(expr AS |  → SQL type names. Multi-word types like
         // `timestamp with time zone` land as one Tab.
-        ClauseContext::TypeName => TYPE_NAMES
+        // Also used for the type position inside a CREATE TABLE
+        // column list: `CREATE TABLE t (id |` and
+        // `CREATE TABLE t (id INT, name |`.
+        ClauseContext::TypeName | ClauseContext::CreateTableColumnType => TYPE_NAMES
             .iter()
             .filter(|t| starts_with_ci(t, &id.prefix))
             .map(|t| Candidate {
@@ -678,6 +811,12 @@ fn candidates_for_in_context(
                 context: None,
             })
             .collect(),
+
+        // CREATE TABLE t (|  or  (id INT, |  — the operator is naming
+        // a fresh column. We have nothing useful to offer; returning
+        // an empty list suppresses the popup without breaking
+        // anything.
+        ClauseContext::CreateTableColumns => Vec::new(),
 
         // DROP <kind> |  → catalog set selected by `kind`, plus
         // DROP-specific continuations. NOT JOIN variants / WHERE etc.
@@ -714,9 +853,7 @@ fn candidates_for_in_context(
                     let mut out: Vec<Candidate> = Vec::new();
                     let mut seen = std::collections::BTreeSet::new();
                     for t in names {
-                        if starts_with_ci(&t.name, &id.prefix)
-                            && seen.insert(t.name.clone())
-                        {
+                        if starts_with_ci(&t.name, &id.prefix) && seen.insert(t.name.clone()) {
                             out.push(Candidate {
                                 display: t.name.clone(),
                                 insert: t.name.clone(),
@@ -748,7 +885,10 @@ fn candidates_for_in_context(
         // assignment list.
         ClauseContext::UpdateAssign(t) => {
             let mut out = columns_of(t, &id.prefix, schema);
-            out.extend(candidates_from_list(&id.prefix, continuations::AFTER_UPDATE_ASSIGN));
+            out.extend(candidates_from_list(
+                &id.prefix,
+                continuations::AFTER_UPDATE_ASSIGN,
+            ));
             out
         }
 
@@ -782,7 +922,10 @@ fn candidates_for_in_context(
                     .collect();
                 out.extend(candidates_tables_and_schemas(&id.prefix, schema));
                 out.extend(candidates_from_list(&id.prefix, JOIN_VARIANTS));
-                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_TABLE_REF));
+                out.extend(candidates_from_list(
+                    &id.prefix,
+                    continuations::AFTER_TABLE_REF,
+                ));
                 out
             }
         },
@@ -798,7 +941,10 @@ fn candidates_for_in_context(
                 // Clause continuations BEFORE functions: after typing
                 // `SELECT * F`, FROM is the natural next clause and
                 // should rank above FORMAT / FLOOR.
-                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_SELECT_LIST));
+                out.extend(candidates_from_list(
+                    &id.prefix,
+                    continuations::AFTER_SELECT_LIST,
+                ));
                 out.extend(candidates_functions(&id.prefix));
                 out
             }
@@ -812,7 +958,10 @@ fn candidates_for_in_context(
                 // identifiers; clause continuations (GROUP BY, ORDER BY,
                 // LIMIT) come after those.
                 out.extend(candidates_predicate_operators(&id.prefix));
-                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_PREDICATE));
+                out.extend(candidates_from_list(
+                    &id.prefix,
+                    continuations::AFTER_PREDICATE,
+                ));
                 out
             }
         },
@@ -836,7 +985,10 @@ fn candidates_for_in_context(
                     }
                 }
                 out.extend(candidates_predicate_operators(&id.prefix));
-                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_PREDICATE));
+                out.extend(candidates_from_list(
+                    &id.prefix,
+                    continuations::AFTER_PREDICATE,
+                ));
                 out
             }
         },
@@ -844,7 +996,10 @@ fn candidates_for_in_context(
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
             None => {
                 let mut out = candidates_columns_only(&id.prefix, in_scope, schema);
-                out.extend(candidates_from_list(&id.prefix, continuations::AFTER_ORDER_OR_GROUP));
+                out.extend(candidates_from_list(
+                    &id.prefix,
+                    continuations::AFTER_ORDER_OR_GROUP,
+                ));
                 out
             }
         },
@@ -889,8 +1044,7 @@ fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
 /// the popup row reads cleanly. Case mirrors the operator's prefix.
 fn candidates_functions(prefix: &str) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
-    let mut seen: std::collections::BTreeSet<&'static str> =
-        std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<&'static str> = std::collections::BTreeSet::new();
     for source in [AGGREGATE_FUNCTIONS, SCALAR_FUNCTIONS, WINDOW_FUNCTIONS] {
         for fname in source {
             if seen.insert(fname) && starts_with_ci(fname, prefix) {
@@ -948,8 +1102,7 @@ fn candidates_from_list(prefix: &str, list: &[&str]) -> Vec<Candidate> {
 
 fn candidates_tables_and_schemas(prefix: &str, schema: &SchemaCache) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
-    let mut seen_tables: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
+    let mut seen_tables: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for t in &schema.tables {
         if starts_with_ci(&t.name, prefix) && seen_tables.insert(t.name.clone()) {
             out.push(Candidate {
@@ -1000,8 +1153,7 @@ fn candidates_columns_only(
     schema: &SchemaCache,
 ) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
-    let mut seen: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     // In-scope tables first.
     for t in in_scope {
         if let Some(cols) = schema.columns_for(t.schema.as_deref(), &t.name) {
@@ -1140,16 +1292,12 @@ fn candidates_for_unqualified(
         };
         if let Some(cols) = cols_owned {
             for c in &cols {
-                if starts_with_ci(c, prefix)
-                    && seen.insert((CandidateKind::Column, c.clone()))
-                {
+                if starts_with_ci(c, prefix) && seen.insert((CandidateKind::Column, c.clone())) {
                     out.push(Candidate {
                         display: c.clone(),
                         insert: c.clone(),
                         kind: CandidateKind::Column,
-                        context: Some(
-                            table.alias.clone().unwrap_or_else(|| table.name.clone()),
-                        ),
+                        context: Some(table.alias.clone().unwrap_or_else(|| table.name.clone())),
                     });
                 }
             }
@@ -1159,9 +1307,7 @@ fn candidates_for_unqualified(
     // Tier 2: aliases in scope (helpful when typing the alias itself).
     for table in in_scope {
         if let Some(alias) = &table.alias {
-            if starts_with_ci(alias, prefix)
-                && seen.insert((CandidateKind::Alias, alias.clone()))
-            {
+            if starts_with_ci(alias, prefix) && seen.insert((CandidateKind::Alias, alias.clone())) {
                 out.push(Candidate {
                     display: alias.clone(),
                     insert: alias.clone(),
@@ -1209,9 +1355,7 @@ fn candidates_for_unqualified(
 
     // Tier 5: every other column.
     for col in schema.all_column_names() {
-        if starts_with_ci(&col, prefix)
-            && seen.insert((CandidateKind::Column, col.clone()))
-        {
+        if starts_with_ci(&col, prefix) && seen.insert((CandidateKind::Column, col.clone())) {
             out.push(Candidate {
                 display: col.clone(),
                 insert: col.clone(),
@@ -1223,9 +1367,7 @@ fn candidates_for_unqualified(
 
     // Tier 6: schema names.
     for s in &schema.schemas {
-        if starts_with_ci(s, prefix)
-            && seen.insert((CandidateKind::Schema, s.clone()))
-        {
+        if starts_with_ci(s, prefix) && seen.insert((CandidateKind::Schema, s.clone())) {
             out.push(Candidate {
                 display: s.clone(),
                 insert: s.clone(),
@@ -1256,8 +1398,7 @@ fn starts_with_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
-    haystack.len() >= needle.len()
-        && haystack[..needle.len()].eq_ignore_ascii_case(needle)
+    haystack.len() >= needle.len() && haystack[..needle.len()].eq_ignore_ascii_case(needle)
 }
 
 /// Mirror the operator's chosen case onto a keyword / function /
@@ -1433,6 +1574,40 @@ mod tests {
         assert!(id.schema.is_none());
         assert_eq!(id.qualifier.as_deref(), Some("u"));
         assert_eq!(id.prefix, "email");
+    }
+
+    #[test]
+    fn extract_identifier_accepts_non_ascii_letters_at_end_of_partial() {
+        // `café` ends in a non-ASCII letter; the byte-walker rejected
+        // it. Char-walker accepts it.
+        let id = extract_identifier("SELECT café", 12).unwrap();
+        assert_eq!(id.prefix, "café");
+        assert_eq!(id.qualifier, None);
+        // Replace range covers the whole word (5 bytes for `café` — `é`
+        // is 2 bytes — plus the 7-byte `SELECT ` prefix).
+        assert_eq!(id.start, 7);
+        assert_eq!(id.end, 12);
+    }
+
+    #[test]
+    fn extract_identifier_dot_completion_after_non_ascii_qualifier() {
+        // `café.|` — the bug from the backlog. Cursor sits right after
+        // the dot; completion should fire with qualifier=café and an
+        // empty prefix.
+        let buf = "SELECT café.";
+        let id = extract_identifier(buf, buf.len()).unwrap();
+        assert_eq!(id.qualifier.as_deref(), Some("café"));
+        assert_eq!(id.prefix, "");
+    }
+
+    #[test]
+    fn extract_identifier_accepts_cyrillic_identifier() {
+        // Non-Latin Unicode identifiers (Cyrillic, CJK, …) are valid
+        // Postgres unquoted identifiers; completion should treat them
+        // the same as ASCII.
+        let buf = "SELECT пользователь";
+        let id = extract_identifier(buf, buf.len()).unwrap();
+        assert_eq!(id.prefix, "пользователь");
     }
 
     #[test]
@@ -1724,7 +1899,10 @@ mod tests {
         let is_null_pos = labels.iter().position(|l| *l == "IS NULL");
         match (id_pos, in_pos.or(is_null_pos)) {
             (Some(i), Some(op)) => {
-                assert!(i < op, "`id` column should rank before operators: {labels:?}");
+                assert!(
+                    i < op,
+                    "`id` column should rank before operators: {labels:?}"
+                );
             }
             (Some(_), None) => {} // operators not present — fine
             (None, _) => panic!("expected `id` to appear: {labels:?}"),
@@ -2055,22 +2233,28 @@ mod tests {
     #[test]
     fn on_constraint_offers_constraint_names_scoped_to_target() {
         let mut cache = build_cache();
-        cache.constraints.push(crate::query::schema::ConstraintMeta {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "users_email_key".into(),
-        });
-        cache.constraints.push(crate::query::schema::ConstraintMeta {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "users_pkey".into(),
-        });
+        cache
+            .constraints
+            .push(crate::query::schema::ConstraintMeta {
+                schema: "public".into(),
+                table: "users".into(),
+                name: "users_email_key".into(),
+            });
+        cache
+            .constraints
+            .push(crate::query::schema::ConstraintMeta {
+                schema: "public".into(),
+                table: "users".into(),
+                name: "users_pkey".into(),
+            });
         // Different table — must NOT appear.
-        cache.constraints.push(crate::query::schema::ConstraintMeta {
-            schema: "public".into(),
-            table: "orders".into(),
-            name: "orders_pkey".into(),
-        });
+        cache
+            .constraints
+            .push(crate::query::schema::ConstraintMeta {
+                schema: "public".into(),
+                table: "orders".into(),
+                name: "orders_pkey".into(),
+            });
         let buf = "INSERT INTO users (id) VALUES (1) ON CONFLICT ON CONSTRAINT us";
         let cands = candidates_for(buf, buf.len(), &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
@@ -2312,7 +2496,9 @@ mod tests {
         let labels: Vec<String> = cands.iter().map(|c| c.display.clone()).collect();
         // Case follows the operator's prefix (lowercase here).
         assert!(
-            labels.iter().any(|l| l.to_ascii_lowercase().starts_with("pg_size")),
+            labels
+                .iter()
+                .any(|l| l.to_ascii_lowercase().starts_with("pg_size")),
             "expected pg_size_* function: {labels:?}"
         );
     }
@@ -2486,7 +2672,10 @@ mod tests {
         // clearer pair).
         let start = fuzzy_score("abc_target", "abc").expect("starts-with-like");
         let deep = fuzzy_score("xy_abc_target", "abc").expect("contains");
-        assert!(start < deep, "earlier match should beat later: {start} vs {deep}");
+        assert!(
+            start < deep,
+            "earlier match should beat later: {start} vs {deep}"
+        );
 
         // Non-match: needle has char not in haystack.
         assert!(fuzzy_score("users", "xyz").is_none());
@@ -2558,6 +2747,92 @@ mod tests {
         let cands = candidates_for("SELECT * FROM use", 17, &cache);
         let displays: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(displays.iter().any(|l| *l == "users"));
+    }
+
+    #[test]
+    fn nextval_literal_detects_open_string_after_nextval_paren() {
+        let buf = "SELECT nextval('";
+        let nv = detect_nextval_literal(buf, buf.len()).unwrap();
+        assert_eq!(nv.prefix, "");
+        assert_eq!(nv.start, buf.len());
+    }
+
+    #[test]
+    fn nextval_literal_captures_partial_prefix_inside_quotes() {
+        let buf = "SELECT nextval('user_id_se";
+        let nv = detect_nextval_literal(buf, buf.len()).unwrap();
+        assert_eq!(nv.prefix, "user_id_se");
+        // Replace range starts right after the opening `'`.
+        assert_eq!(&buf[nv.start..nv.end], "user_id_se");
+    }
+
+    #[test]
+    fn nextval_literal_is_case_insensitive_for_keyword() {
+        let buf = "SELECT NEXTVAL('";
+        assert!(detect_nextval_literal(buf, buf.len()).is_some());
+    }
+
+    #[test]
+    fn nextval_literal_rejects_when_string_is_closed_before_cursor() {
+        // `'users_seq'` is a complete literal — the cursor sits AFTER
+        // the closing quote, so we're not in-string anymore.
+        let buf = "SELECT nextval('users_seq')";
+        assert!(detect_nextval_literal(buf, buf.len()).is_none());
+    }
+
+    #[test]
+    fn nextval_literal_rejects_when_identifier_extends_into_nextval() {
+        // `not_nextval(` would otherwise pass the suffix check; the
+        // word-boundary guard rejects it.
+        let buf = "SELECT not_nextval('";
+        assert!(detect_nextval_literal(buf, buf.len()).is_none());
+    }
+
+    #[test]
+    fn nextval_literal_rejects_string_outside_nextval_context() {
+        let buf = "SELECT * FROM t WHERE x = 'hello";
+        assert!(detect_nextval_literal(buf, buf.len()).is_none());
+    }
+
+    #[test]
+    fn candidates_for_nextval_literal_offers_sequence_names() {
+        let mut cache = build_cache();
+        cache.sequences = vec![
+            TableMeta {
+                schema: "public".into(),
+                name: "users_id_seq".into(),
+            },
+            TableMeta {
+                schema: "public".into(),
+                name: "orders_id_seq".into(),
+            },
+            TableMeta {
+                schema: "audit".into(),
+                name: "events_id_seq".into(),
+            },
+        ];
+        let buf = "SELECT nextval('users";
+        let cands = candidates_for(buf, buf.len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        // Filtered to those starting with "users".
+        assert!(labels.contains(&"users_id_seq"));
+        assert!(!labels.contains(&"orders_id_seq"));
+        // Public sequences render bare; non-public render schema-
+        // qualified.
+        let cands = candidates_for("SELECT nextval('", "SELECT nextval('".len(), &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"users_id_seq"));
+        assert!(labels.contains(&"audit.events_id_seq"));
+    }
+
+    #[test]
+    fn extract_identifier_surfaces_nextval_replace_range() {
+        let buf = "SELECT nextval('user";
+        let id = extract_identifier(buf, buf.len()).unwrap();
+        // The synthesized Identifier should let the editor replace
+        // just the in-string partial, not the surrounding `nextval('`.
+        assert_eq!(id.prefix, "user");
+        assert_eq!(&buf[id.start..id.end], "user");
     }
 
     #[test]

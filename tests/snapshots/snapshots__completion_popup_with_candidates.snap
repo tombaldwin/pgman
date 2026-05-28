@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 203
+assertion_line: 206
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -20,4 +20,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- type to narrow · tab cycle · esc undo
+ RO   type to narrow · tab cycle · esc undo · F1 help

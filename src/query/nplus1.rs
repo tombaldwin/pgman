@@ -64,7 +64,10 @@ pub fn fingerprint(sql: &str) -> String {
         }
         if c.is_ascii_digit() && !(prev.is_ascii_alphanumeric() || prev == '_') {
             // Numeric literal — collapse digits and dots to one `?`.
-            while chars.peek().is_some_and(|d| d.is_ascii_digit() || *d == '.') {
+            while chars
+                .peek()
+                .is_some_and(|d| d.is_ascii_digit() || *d == '.')
+            {
                 chars.next();
             }
             out.push('?');
@@ -86,6 +89,67 @@ pub struct Cluster {
     pub count: usize,
     /// One representative statement from the cluster.
     pub example: String,
+}
+
+/// A one-line triage view of an imported log: how many queries
+/// total, how many distinct N+1 clusters, how many of the queries
+/// are part of any cluster, and a representative slow leader.
+/// Timing-independent — adding per-query durations is a separate
+/// backlog item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub total_queries: usize,
+    /// Number of distinct fingerprints that fired 2+ times.
+    pub cluster_count: usize,
+    /// Sum of `cluster.count` over all clusters — i.e. how many of
+    /// the queries are repeats. Always `<= total_queries`.
+    pub repeated_queries: usize,
+    /// The most-repeated cluster, if any. `None` when no
+    /// fingerprint fired more than once.
+    pub top_cluster: Option<Cluster>,
+}
+
+impl SessionSummary {
+    /// Compact summary suited for a one-line header above the log
+    /// picker. Mentions the top cluster only when one exists.
+    pub fn one_line(&self) -> String {
+        if self.total_queries == 0 {
+            return "no queries imported".to_string();
+        }
+        let mut s = format!(
+            "{} {}",
+            self.total_queries,
+            if self.total_queries == 1 {
+                "query"
+            } else {
+                "queries"
+            }
+        );
+        if self.cluster_count > 0 {
+            s.push_str(&format!(
+                " · {} N+1 cluster{} ({} of {} repeated)",
+                self.cluster_count,
+                if self.cluster_count == 1 { "" } else { "s" },
+                self.repeated_queries,
+                self.total_queries,
+            ));
+        }
+        s
+    }
+}
+
+/// Build a one-line triage summary over the imported reconstructed
+/// queries.
+pub fn summarize(queries: &[ReconstructedQuery]) -> SessionSummary {
+    let clusters = detect(queries);
+    let repeated_queries = clusters.iter().map(|c| c.count).sum();
+    let top_cluster = clusters.first().cloned();
+    SessionSummary {
+        total_queries: queries.len(),
+        cluster_count: clusters.len(),
+        repeated_queries,
+        top_cluster,
+    }
 }
 
 /// Cluster reconstructed queries by fingerprint. Only clusters seen 2+ times
@@ -175,5 +239,51 @@ mod tests {
     fn detect_ignores_one_off_queries() {
         let queries = vec![rq("select 1"), rq("select 2 from t")];
         assert!(detect(&queries).is_empty());
+    }
+
+    #[test]
+    fn summarize_empty_log_reports_no_queries() {
+        let s = summarize(&[]);
+        assert_eq!(s.total_queries, 0);
+        assert_eq!(s.cluster_count, 0);
+        assert!(s.top_cluster.is_none());
+        assert_eq!(s.one_line(), "no queries imported");
+    }
+
+    #[test]
+    fn summarize_counts_clusters_and_repeats() {
+        let queries = vec![
+            rq("select * from item where order_id = 1"),
+            rq("select * from item where order_id = 2"),
+            rq("select * from item where order_id = 3"),
+            rq("select * from orders where id = 1"),
+            // A second cluster of 2 — same shape twice.
+            rq("select * from product where id = 1"),
+            rq("select * from product where id = 2"),
+        ];
+        let s = summarize(&queries);
+        assert_eq!(s.total_queries, 6);
+        assert_eq!(s.cluster_count, 2);
+        assert_eq!(s.repeated_queries, 5); // 3 + 2
+        let top = s.top_cluster.as_ref().unwrap();
+        assert_eq!(top.count, 3);
+        assert!(top.fingerprint.contains("from item"));
+    }
+
+    #[test]
+    fn summarize_one_line_singular_plural_forms() {
+        // Singular "query" for n=1.
+        let queries = vec![rq("select 1")];
+        let s = summarize(&queries);
+        assert_eq!(s.one_line(), "1 query");
+        // Plural and no clusters → no cluster suffix. Use two
+        // structurally distinct shapes so fingerprints differ.
+        let queries = vec![rq("select 1"), rq("select * from t")];
+        let s = summarize(&queries);
+        assert_eq!(s.one_line(), "2 queries");
+        // Single cluster → "cluster" (singular) in the suffix.
+        let queries = vec![rq("select 1"), rq("select 1")];
+        let s = summarize(&queries);
+        assert!(s.one_line().contains("1 N+1 cluster ("));
     }
 }
