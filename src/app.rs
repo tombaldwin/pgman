@@ -2642,10 +2642,22 @@ impl App {
                 .map(|d| d.as_micros() as u64)
                 .unwrap_or(0),
             captured_event_count: self.tap_events.len(),
+            captured_listener_dropped: crate::tap::dropped_at_listener(),
             hotspots,
         });
         self.tap_baseline_cursor = 0;
         self.last_status = Some(summary);
+    }
+
+    /// Number of events the listener dropped between baseline
+    /// capture and now. Surfaced in the Baseline view header
+    /// — non-zero means the diff is operating on an incomplete
+    /// view of the workload (the missing events would have
+    /// landed in `current_hotspots` but never did).
+    pub fn baseline_listener_drops_since_capture(&self) -> Option<u64> {
+        let captured = self.tap_baseline.as_ref()?.captured_listener_dropped;
+        let current = crate::tap::dropped_at_listener();
+        Some(current.saturating_sub(captured))
     }
 
     fn on_tap_monitor_baseline_key(&mut self, key: KeyEvent) {
@@ -7039,6 +7051,13 @@ pub struct TapBaseline {
     pub captured_at_unix_micros: u64,
     /// Number of events in the ring at capture time.
     pub captured_event_count: usize,
+    /// `tap::dropped_at_listener()` at capture time. The
+    /// baseline panel renders the *delta* between this and
+    /// the current counter — non-zero deltas mean events were
+    /// shed between capture and diff, which is precisely the
+    /// scenario that makes a "did my deploy regress?" view
+    /// untrustworthy.
+    pub captured_listener_dropped: u64,
     /// The snapshot — Hotspots already aggregated so the diff
     /// computation is cheap even when the ring has churned.
     pub hotspots: Vec<crate::tap::Hotspot>,
@@ -10394,6 +10413,29 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.tap_events.is_empty());
         assert!(a.tap_baseline.is_some(), "baseline must persist across `c`");
+    }
+
+    #[test]
+    fn baseline_records_listener_drop_watermark_at_capture() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.on_msg(AppMsg::TapEvent {
+            event: tap_query("SELECT 1", 1),
+        });
+        // Snapshot the global atomic before capture so the
+        // assertion is robust to whatever other tests
+        // contributed (cumulative-counter semantics).
+        let baseline_drops = crate::tap::dropped_at_listener();
+        a.start_tap_monitor();
+        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
+        let captured = a.tap_baseline.as_ref().unwrap().captured_listener_dropped;
+        assert!(
+            captured >= baseline_drops,
+            "captured_listener_dropped must reflect a counter snapshot at-or-after baseline read"
+        );
+        // delta-since-capture starts at zero (or whatever
+        // concurrent tests added between capture and this read).
+        let delta = a.baseline_listener_drops_since_capture().unwrap();
+        assert_eq!(delta, crate::tap::dropped_at_listener() - captured);
     }
 
     #[test]

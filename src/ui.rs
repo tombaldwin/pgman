@@ -3958,7 +3958,13 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
     };
     let diffs = app.current_baseline_diff();
     let captured_age = baseline_age_label(baseline.captured_at_unix_micros);
-    let header_lines: Vec<Line> = vec![
+    // Show drops-since-capture in a third header line when
+    // non-zero: those events would have shaped the diff but
+    // were never seen by current_hotspots. Without this the
+    // baseline view silently misreports "no regression" on the
+    // very burst shape (thundering herd) most likely to need
+    // it.
+    let mut header_lines: Vec<Line> = vec![
         Line::from(Span::styled(
             format!(
                 "baseline captured {captured_age} · {} fingerprint(s) · {} event(s) at capture",
@@ -3975,8 +3981,18 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
             ),
             Style::default().fg(theme.muted),
         )),
-        Line::from(""),
     ];
+    if let Some(delta) = app.baseline_listener_drops_since_capture() {
+        if delta > 0 {
+            header_lines.push(Line::from(Span::styled(
+                format!(
+                    "⚠ {delta} event(s) dropped at listener since capture — diff below is a subsample"
+                ),
+                Style::default().fg(theme.health_yellow),
+            )));
+        }
+    }
+    header_lines.push(Line::from(""));
     if diffs.is_empty() {
         let mut lines = header_lines;
         lines.push(Line::from(Span::styled(
