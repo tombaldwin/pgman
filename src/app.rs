@@ -1229,6 +1229,12 @@ pub struct PendingRun {
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
+    /// Synthetic-data demo mode (`pgman --demo`). When set, `run`
+    /// skips the live connection and the loop skips persisting the
+    /// editor draft / history to disk — so a demo / screenshot run
+    /// can't clobber the operator's real session state. Populated
+    /// by `crate::demo::app`.
+    pub demo: bool,
     pub conn_state: ConnState,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
@@ -1613,6 +1619,7 @@ impl App {
         Self {
             theme,
             mode,
+            demo: false,
             conn_state: ConnState::Disconnected,
             dsn,
             dsn_origin: None,
@@ -1770,7 +1777,9 @@ impl App {
             .take()
             .expect("App::run must be called exactly once");
 
-        if self.dsn.is_some() {
+        // Demo mode renders a synthetic, pre-populated app — never
+        // open a real connection.
+        if self.dsn.is_some() && !self.demo {
             self.start_connect();
         }
 
@@ -1819,7 +1828,8 @@ impl App {
             // the buffer is dirty, so a panic in any spawned task
             // loses at most half a second of work. Cheap atomic
             // write via rename; not even a syscall when not dirty.
-            if self.draft_dirty
+            if !self.demo
+                && self.draft_dirty
                 && draft_save_due(
                     self.draft_last_save,
                     Instant::now(),
@@ -1831,19 +1841,24 @@ impl App {
                 self.draft_dirty = false;
             }
         }
-        // Persist the editor draft so the next launch can restore
-        // whatever the operator had in flight. Best-effort: failure
-        // logs and moves on — the loop is already finishing.
-        if let Err(e) = persist_draft(&self.editor_buffer) {
-            tracing::warn!("could not save editor draft: {e}");
-        }
-        // Persist the query history ring too. Same best-effort
-        // stance — history is a convenience, not source of truth.
-        if let Err(e) = persist_history(&self.history) {
-            tracing::warn!("could not save query history: {e}");
-        }
-        if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
-            tracing::warn!("could not save 'saved queries': {e}");
+        // Persist session state on exit — but never in demo mode,
+        // where the buffer / history / saved-queries are synthetic
+        // fixtures that must not overwrite the operator's real files.
+        if !self.demo {
+            // Persist the editor draft so the next launch can restore
+            // whatever the operator had in flight. Best-effort: failure
+            // logs and moves on — the loop is already finishing.
+            if let Err(e) = persist_draft(&self.editor_buffer) {
+                tracing::warn!("could not save editor draft: {e}");
+            }
+            // Persist the query history ring too. Same best-effort
+            // stance — history is a convenience, not source of truth.
+            if let Err(e) = persist_history(&self.history) {
+                tracing::warn!("could not save query history: {e}");
+            }
+            if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
+                tracing::warn!("could not save 'saved queries': {e}");
+            }
         }
         Ok(())
     }

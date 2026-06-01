@@ -24,6 +24,13 @@ struct Cli {
     #[arg(long)]
     upgrade: bool,
 
+    /// Run against a hand-crafted synthetic dataset — no database,
+    /// no network, no disk writes. For screenshots / the README
+    /// demo gif (`vhs demo.tape`) / talks. The frame is identical
+    /// on every launch.
+    #[arg(long)]
+    demo: bool,
+
     /// Batch / pipe mode: run a SQL statement and write the result to
     /// stdout, then exit. No TUI. Suitable for shell scripts and CI.
     #[arg(long)]
@@ -115,6 +122,18 @@ async fn main() -> anyhow::Result<()> {
     };
     if let Some(w) = theme_warn {
         tracing::warn!("{w}");
+    }
+
+    // `--demo`: synthetic, self-contained app — no discovery, no
+    // connection, no tap listeners, no draft/history restore. Bypass
+    // all of that and run the fixture app straight into the TUI.
+    if cli.demo {
+        tracing::info!("starting in --demo mode (synthetic data, no database)");
+        let mut application = pgman::demo::app(theme);
+        let mut term = tui::Tui::enter()?;
+        let result = application.run(&mut term).await;
+        drop(term);
+        return result;
     }
 
     let mut dsn = match cli.dsn.as_deref() {
