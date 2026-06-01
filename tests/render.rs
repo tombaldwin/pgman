@@ -378,6 +378,34 @@ fn rename_prompt_renders_prefilled_name() {
 }
 
 #[test]
+fn demo_app_renders_grid_schema_and_tap_without_panic() {
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    // Normal: the users result grid.
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("ada@example.com"),
+        "grid data missing:\n{rendered}"
+    );
+    // Schema browser opens against the fixture cache (3 tables,
+    // collapsed under the public schema node).
+    a.mode = Mode::SchemaBrowser;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("public") && rendered.contains("3 table(s)"),
+        "schema browser missing:\n{rendered}"
+    );
+    // Tap monitor shows the synthetic events.
+    a.mode = Mode::TapMonitor;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("order_items"),
+        "tap events missing:\n{rendered}"
+    );
+}
+
+#[test]
 fn param_prompt_renders_progress_and_entered_values() {
     let mut a = settle_app();
     a.param_prompt = Some(pgman::app::ParamPrompt {

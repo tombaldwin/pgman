@@ -1,11 +1,15 @@
 # pgman
 
+[![CI](https://github.com/tombaldwin/pgman/actions/workflows/test.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 A k9s-style Postgres TUI aimed at Java / AWS shops. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
 
-<!-- TODO: add a screenshot or asciinema cast here before announcing —
-     it's a TUI, so a visual is the single highest-impact addition.
-     e.g. ![pgman](docs/screenshot.png) -->
+![pgman demo — live filter, schema browser, saved-query :param prompt](demo.gif)
+
+> Captured from `pgman --demo`, the synthetic-data mode baked into the binary
+> (no database needed). Regenerate after a code change with `vhs demo.tape`.
 
 At a glance:
 
