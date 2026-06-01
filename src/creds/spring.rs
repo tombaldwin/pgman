@@ -65,18 +65,34 @@ pub struct SpringDatasourceEntry {
     pub password: Option<String>,
 }
 
-/// Parse every `<prefix>.url` / `<prefix>.username` / `<prefix>.password`
-/// triple from a `.properties` body. Order in the output preserves the
-/// order in which each prefix's `.url` line was encountered.
-///
-/// Filters: a prefix is only emitted when its `.url` starts with `jdbc:`
-/// — otherwise it's almost certainly not a datasource (e.g. `service.url`,
-/// `swagger.url`).
-pub fn parse_properties_all(text: &str) -> Vec<SpringDatasourceEntry> {
+/// A possibly-**partial** datasource block: any of `url` /
+/// `username` / `password` may be absent. This is what a Spring
+/// *profile* overlay (`application-prod.yml`) looks like — it
+/// commonly carries just a password or just a URL, expecting the
+/// base `application.yml` to supply the rest. [`merge_partials`]
+/// folds an overlay onto a base; [`parse_properties_partials`]
+/// produces these without the JDBC-URL filter that
+/// [`parse_properties_all`] applies.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpringDatasourcePartial {
+    pub prefix: String,
+    pub url: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+/// Parse every `<prefix>.{url,username,password}` triple from a
+/// `.properties` body into [`SpringDatasourcePartial`]s, in
+/// first-appearance order of the prefix (across **any** field, so
+/// a password-only prefix is still emitted — that's the whole
+/// point for profile overlays). No filtering: non-datasource
+/// prefixes (`service.url`, …) are dropped later by the JDBC
+/// check at pick-emission / in [`parse_properties_all`].
+pub fn parse_properties_partials(text: &str) -> Vec<SpringDatasourcePartial> {
     use std::collections::HashMap;
 
     let mut order: Vec<String> = Vec::new();
-    let mut entries: HashMap<String, SpringDatasourceEntry> = HashMap::new();
+    let mut entries: HashMap<String, SpringDatasourcePartial> = HashMap::new();
 
     for line in text.lines() {
         let line = line.trim();
@@ -99,34 +115,108 @@ pub fn parse_properties_all(text: &str) -> Vec<SpringDatasourceEntry> {
             continue;
         };
 
-        let entry = entries
-            .entry(prefix.clone())
-            .or_insert_with(|| SpringDatasourceEntry {
-                prefix: prefix.clone(),
-                url: String::new(),
-                username: None,
-                password: None,
-            });
+        if !entries.contains_key(&prefix) {
+            order.push(prefix.clone());
+            entries.insert(
+                prefix.clone(),
+                SpringDatasourcePartial {
+                    prefix: prefix.clone(),
+                    ..Default::default()
+                },
+            );
+        }
+        let entry = entries.get_mut(&prefix).expect("just inserted");
         match field {
-            "url" => {
-                if entry.url.is_empty() && !order.contains(&prefix) {
-                    order.push(prefix.clone());
-                }
-                entry.url = value.to_string();
-            }
+            "url" => entry.url = Some(value.to_string()),
             "username" => entry.username = Some(value.to_string()),
             "password" => entry.password = Some(value.to_string()),
             _ => {}
         }
     }
 
-    // Reassemble in first-seen order, dropping prefixes that never got a
-    // jdbc:* URL (or got nothing at all).
     order
         .into_iter()
         .filter_map(|p| entries.remove(&p))
-        .filter(|e| e.url.starts_with("jdbc:"))
         .collect()
+}
+
+/// Parse every `<prefix>.url` / `<prefix>.username` / `<prefix>.password`
+/// triple from a `.properties` body. Order in the output preserves the
+/// order in which each prefix first appeared.
+///
+/// Filters: a prefix is only emitted when its `.url` starts with `jdbc:`
+/// — otherwise it's almost certainly not a datasource (e.g. `service.url`,
+/// `swagger.url`). Built on [`parse_properties_partials`] + this filter.
+pub fn parse_properties_all(text: &str) -> Vec<SpringDatasourceEntry> {
+    parse_properties_partials(text)
+        .into_iter()
+        .filter(|p| p.url.as_deref().is_some_and(|u| u.starts_with("jdbc:")))
+        .map(|p| SpringDatasourceEntry {
+            prefix: p.prefix,
+            url: p.url.unwrap_or_default(),
+            username: p.username,
+            password: p.password,
+        })
+        .collect()
+}
+
+/// Overlay `profile` partials onto `base` partials, keyed by
+/// prefix — Spring profile semantics. For each prefix the result
+/// takes the profile's `url` / `username` / `password` when the
+/// profile sets a non-empty value, else the base's. Prefixes only
+/// in the base keep their values; prefixes only in the profile are
+/// appended. Output order: base order first, then profile-only
+/// prefixes. Pure.
+pub fn merge_partials(
+    base: &[SpringDatasourcePartial],
+    profile: &[SpringDatasourcePartial],
+) -> Vec<SpringDatasourcePartial> {
+    use std::collections::HashMap;
+    let overlay_by_prefix: HashMap<&str, &SpringDatasourcePartial> =
+        profile.iter().map(|p| (p.prefix.as_str(), p)).collect();
+
+    // Helper: prefer `over` when it carries a non-empty value.
+    fn pick(base: &Option<String>, over: Option<&Option<String>>) -> Option<String> {
+        let over_val = over.and_then(|o| o.as_ref()).filter(|s| !s.is_empty());
+        match over_val {
+            Some(v) => Some(v.clone()),
+            None => base.clone(),
+        }
+    }
+
+    let mut out: Vec<SpringDatasourcePartial> = Vec::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for b in base {
+        seen.insert(b.prefix.as_str());
+        let o = overlay_by_prefix.get(b.prefix.as_str());
+        out.push(SpringDatasourcePartial {
+            prefix: b.prefix.clone(),
+            url: pick(&b.url, o.map(|o| &o.url)),
+            username: pick(&b.username, o.map(|o| &o.username)),
+            password: pick(&b.password, o.map(|o| &o.password)),
+        });
+    }
+    for p in profile {
+        if !seen.contains(p.prefix.as_str()) {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
+/// Split a Spring config-file stem into `(family, profile)`.
+/// `"application"` → `("application", None)`;
+/// `"application-prod"` → `("application", Some("prod"))`;
+/// `"bootstrap-dev"` → `("bootstrap", Some("dev"))`. Splits on the
+/// first `-` (Spring's `application-<profile>` convention); a
+/// trailing `-` with no profile text is treated as no profile.
+pub fn split_config_name(stem: &str) -> (String, Option<String>) {
+    match stem.split_once('-') {
+        Some((family, profile)) if !profile.is_empty() => {
+            (family.to_string(), Some(profile.to_string()))
+        }
+        _ => (stem.to_string(), None),
+    }
 }
 
 /// Parse `spring.datasource.*` out of an `application.yml` body.
@@ -148,6 +238,15 @@ pub fn parse_yaml(_text: &str) -> SpringDatasource {
 pub fn parse_yaml_all(text: &str) -> Vec<SpringDatasourceEntry> {
     let flattened = flatten_yaml(text);
     parse_properties_all(&flattened)
+}
+
+/// YAML counterpart to [`parse_properties_partials`]: flatten the
+/// document, then parse partials (url optional, no JDBC filter).
+/// Used for profile-overlay merging where a profile file may
+/// carry only a password.
+pub fn parse_yaml_partials(text: &str) -> Vec<SpringDatasourcePartial> {
+    let flattened = flatten_yaml(text);
+    parse_properties_partials(&flattened)
 }
 
 /// Walk a YAML body line-by-line, tracking indent-based nesting, and
@@ -550,5 +649,150 @@ dataSource:
         let entries = parse_properties_all(text);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].prefix, "spring.datasource");
+    }
+
+    fn partial(
+        prefix: &str,
+        url: Option<&str>,
+        user: Option<&str>,
+        pass: Option<&str>,
+    ) -> SpringDatasourcePartial {
+        SpringDatasourcePartial {
+            prefix: prefix.to_string(),
+            url: url.map(str::to_string),
+            username: user.map(str::to_string),
+            password: pass.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn partials_emit_password_only_prefix() {
+        // The whole point: a profile overlay that sets only a
+        // password must still surface its prefix (with url=None).
+        let text = "spring.datasource.password=prod-secret";
+        let ps = parse_properties_partials(text);
+        assert_eq!(ps.len(), 1);
+        assert_eq!(ps[0].prefix, "spring.datasource");
+        assert_eq!(ps[0].url, None);
+        assert_eq!(ps[0].password.as_deref(), Some("prod-secret"));
+    }
+
+    #[test]
+    fn partials_keep_non_jdbc_prefixes_unlike_all() {
+        // partials are unfiltered; `_all` drops the non-jdbc one.
+        let text = "service.url=https://api\nspring.datasource.url=jdbc:postgresql://h/x";
+        assert_eq!(parse_properties_partials(text).len(), 2);
+        assert_eq!(parse_properties_all(text).len(), 1);
+    }
+
+    #[test]
+    fn merge_overlays_password_and_inherits_base_url() {
+        let base = vec![partial(
+            "spring.datasource",
+            Some("jdbc:postgresql://db/orders"),
+            Some("app"),
+            Some("base-pw"),
+        )];
+        let profile = vec![partial("spring.datasource", None, None, Some("prod-pw"))];
+        let merged = merge_partials(&base, &profile);
+        assert_eq!(merged.len(), 1);
+        // URL + username inherited from base; password overridden.
+        assert_eq!(
+            merged[0].url.as_deref(),
+            Some("jdbc:postgresql://db/orders")
+        );
+        assert_eq!(merged[0].username.as_deref(), Some("app"));
+        assert_eq!(merged[0].password.as_deref(), Some("prod-pw"));
+    }
+
+    #[test]
+    fn merge_empty_overlay_value_does_not_clobber_base() {
+        let base = vec![partial(
+            "ds",
+            Some("jdbc:postgresql://h/x"),
+            Some("u"),
+            Some("p"),
+        )];
+        // Profile present but with empty strings — must not erase base.
+        let profile = vec![partial("ds", Some(""), Some(""), Some(""))];
+        let merged = merge_partials(&base, &profile);
+        assert_eq!(merged[0].url.as_deref(), Some("jdbc:postgresql://h/x"));
+        assert_eq!(merged[0].username.as_deref(), Some("u"));
+        assert_eq!(merged[0].password.as_deref(), Some("p"));
+    }
+
+    #[test]
+    fn merge_appends_profile_only_prefix() {
+        let base = vec![partial(
+            "primary",
+            Some("jdbc:postgresql://h/a"),
+            None,
+            None,
+        )];
+        let profile = vec![partial(
+            "replica",
+            Some("jdbc:postgresql://h/b"),
+            None,
+            None,
+        )];
+        let merged = merge_partials(&base, &profile);
+        assert_eq!(
+            merged.iter().map(|p| p.prefix.as_str()).collect::<Vec<_>>(),
+            vec!["primary", "replica"]
+        );
+    }
+
+    #[test]
+    fn merge_profile_url_overrides_base_url() {
+        let base = vec![partial(
+            "ds",
+            Some("jdbc:postgresql://dev/x"),
+            Some("u"),
+            None,
+        )];
+        let profile = vec![partial("ds", Some("jdbc:postgresql://prod/x"), None, None)];
+        let merged = merge_partials(&base, &profile);
+        assert_eq!(merged[0].url.as_deref(), Some("jdbc:postgresql://prod/x"));
+        assert_eq!(merged[0].username.as_deref(), Some("u"));
+    }
+
+    #[test]
+    fn split_config_name_separates_family_and_profile() {
+        assert_eq!(
+            split_config_name("application"),
+            ("application".into(), None)
+        );
+        assert_eq!(
+            split_config_name("application-prod"),
+            ("application".into(), Some("prod".into()))
+        );
+        assert_eq!(
+            split_config_name("bootstrap-dev"),
+            ("bootstrap".into(), Some("dev".into()))
+        );
+        // Trailing dash → treated as no profile.
+        assert_eq!(
+            split_config_name("application-"),
+            ("application-".into(), None)
+        );
+    }
+
+    #[test]
+    fn yaml_partials_overlay_end_to_end() {
+        // Base supplies url + username; profile overlay supplies
+        // only the password. The merge yields a complete block.
+        let base_yaml =
+            "spring:\n  datasource:\n    url: jdbc:postgresql://db/orders\n    username: app\n";
+        let prof_yaml = "spring:\n  datasource:\n    password: prod-secret\n";
+        let base = parse_yaml_partials(base_yaml);
+        let prof = parse_yaml_partials(prof_yaml);
+        let merged = merge_partials(&base, &prof);
+        let ds = merged
+            .iter()
+            .find(|p| p.prefix == "spring.datasource")
+            .expect("datasource prefix");
+        assert_eq!(ds.url.as_deref(), Some("jdbc:postgresql://db/orders"));
+        assert_eq!(ds.username.as_deref(), Some("app"));
+        assert_eq!(ds.password.as_deref(), Some("prod-secret"));
     }
 }

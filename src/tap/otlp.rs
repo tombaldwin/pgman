@@ -51,8 +51,7 @@ pub const OTEL_SERVICE_NAME_KEY: &str = "service.name";
 #[must_use = "parse_otlp_json returns events — discarding the Vec loses them"]
 pub fn parse_otlp_json(body: &[u8]) -> Result<(Vec<TapEvent>, usize), String> {
     let s = std::str::from_utf8(body).map_err(|e| format!("not utf-8: {e}"))?;
-    let root: serde_json::Value =
-        serde_json::from_str(s).map_err(|e| format!("bad json: {e}"))?;
+    let root: serde_json::Value = serde_json::from_str(s).map_err(|e| format!("bad json: {e}"))?;
     let mut events: Vec<TapEvent> = Vec::new();
     let mut skipped = 0usize;
     let Some(resource_spans) = root.get("resourceSpans").and_then(|v| v.as_array()) else {
@@ -96,10 +95,7 @@ pub fn parse_otlp_json(body: &[u8]) -> Result<(Vec<TapEvent>, usize), String> {
     Ok((events, skipped))
 }
 
-pub fn span_to_tap_event(
-    span: &serde_json::Value,
-    service_name: Option<&str>,
-) -> Option<TapEvent> {
+pub fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -> Option<TapEvent> {
     let attrs = span.get("attributes").and_then(|v| v.as_array())?;
     // Filter for Postgres-flavoured DB spans. OTel's
     // db.system is "postgresql" for both vanilla Postgres
@@ -365,7 +361,11 @@ pub fn process_otlp_request(
         };
     }
     // Require JSON; protobuf is a v2 follow-up.
-    let ct = req.headers.get("content-type").map(String::as_str).unwrap_or("");
+    let ct = req
+        .headers
+        .get("content-type")
+        .map(String::as_str)
+        .unwrap_or("");
     if !ct.starts_with("application/json") {
         return HttpResponse {
             status: 415,
@@ -499,8 +499,7 @@ where
     let method = parts.next().ok_or("missing method")?.to_string();
     let path = parts.next().ok_or("missing path")?.to_string();
     let _version = parts.next().unwrap_or("HTTP/1.1");
-    let mut headers: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+    let mut headers: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for line in lines {
         if line.is_empty() {
             continue;
@@ -546,9 +545,7 @@ pub fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || needle.len() > haystack.len() {
         return None;
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 pub async fn write_http_response<W>(
