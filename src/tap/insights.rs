@@ -312,17 +312,171 @@ pub fn sort_callers(out: &mut [CallerStats], sort: HotspotSort) {
                 .cmp(&a.total_micros)
                 .then_with(|| a.caller.cmp(&b.caller))
         }),
-        HotspotSort::CallCount => out.sort_by(|a, b| {
-            b.count
-                .cmp(&a.count)
-                .then_with(|| a.caller.cmp(&b.caller))
-        }),
+        HotspotSort::CallCount => {
+            out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.caller.cmp(&b.caller)))
+        }
         HotspotSort::P95Latency => out.sort_by(|a, b| {
             b.p95_micros
                 .cmp(&a.p95_micros)
                 .then_with(|| a.caller.cmp(&b.caller))
         }),
     }
+}
+
+/// Sentinel pool name for query events that didn't carry a
+/// `pool`. Keeps [`group_by_pool`] total-conserving — every
+/// query event lands in some bucket — and surfaces the
+/// "no pool name" case explicitly rather than hiding traffic
+/// that the JAR didn't tag.
+pub const UNKNOWN_POOL: &str = "<unknown>";
+
+/// Per-pool saturation stats — answers "is this connection
+/// pool running hot?" Built by [`group_by_pool`]. The two
+/// headline signals are [`PoolStats::distinct_conns`] (breadth:
+/// how many physical connections the pool used across the ring
+/// window — approaches the configured pool size when busy) and
+/// [`PoolStats::peak_concurrent`] (depth: peak simultaneous
+/// in-flight queries).
+///
+/// A `saturation %` against the configured HikariCP maximum
+/// isn't derivable from query events alone — it waits on the
+/// JAR shipping `pool-max` in its heartbeat. Until then the
+/// raw concurrency + breadth numbers are enough to spot a pool
+/// running near a known size, or thrashing (high
+/// `distinct_conns` with low `peak_concurrent` = connections
+/// churning rather than being reused).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoolStats {
+    /// HikariCP pool name, or [`UNKNOWN_POOL`] for events that
+    /// carried no pool.
+    pub pool: String,
+    pub query_count: usize,
+    pub error_count: usize,
+    /// Distinct physical connection ids observed in this pool
+    /// across the ring window. Approaches the pool's configured
+    /// size when the pool is busy; far below it when idle.
+    pub distinct_conns: usize,
+    /// Peak number of queries executing concurrently in this
+    /// pool, computed by [`peak_concurrency`] as a sweep over
+    /// each query's `[ts, ts + duration]` interval. A *lower
+    /// bound* on peak pool checkout depth: a connection held but
+    /// idle between statements (idle-in-transaction) isn't
+    /// visible from query events, so true checkout depth can be
+    /// higher.
+    pub peak_concurrent: usize,
+    /// Sum of query durations — total busy time the pool spent
+    /// executing SQL across the window.
+    pub total_micros: u64,
+    /// 95th-percentile query duration in the pool.
+    pub p95_micros: u64,
+    /// Most recently seen `app` value — multiple services can
+    /// share one pgman listener, so this disambiguates which
+    /// app owns the pool.
+    pub last_app: Option<String>,
+}
+
+/// Peak simultaneous count over a set of `(start, duration)`
+/// intervals, by sweep line. Returns `0` for an empty slice.
+///
+/// At an equal timestamp, starts are processed before ends, so
+/// a zero-duration query registers a peak of `1` and two
+/// queries where one ends exactly as another starts count as
+/// briefly concurrent. Exact-microsecond adjacency is rare and
+/// connection checkout/checkin isn't instantaneous, so the
+/// slight over-count at the boundary is acceptable. Pure;
+/// covered by the `peak_concurrency_*` tests in `mod.rs`.
+pub(super) fn peak_concurrency(intervals: &[(u64, u64)]) -> usize {
+    // Endpoints: (+1) at each start, (-1) at each end.
+    let mut endpoints: Vec<(u64, i32)> = Vec::with_capacity(intervals.len() * 2);
+    for &(start, dur) in intervals {
+        endpoints.push((start, 1));
+        endpoints.push((start.saturating_add(dur), -1));
+    }
+    // Sort by timestamp; at a tie, +1 before -1 (delta desc).
+    endpoints.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+    let mut cur: i32 = 0;
+    let mut peak: i32 = 0;
+    for (_, delta) in endpoints {
+        cur += delta;
+        if cur > peak {
+            peak = cur;
+        }
+    }
+    peak.max(0) as usize
+}
+
+/// Group query events by connection-pool name, computing
+/// per-pool query volume, error count, distinct-connection
+/// breadth, peak in-flight concurrency, total busy time, and
+/// p95 latency. Events without a `pool` land in the
+/// [`UNKNOWN_POOL`] bucket so the rollup stays
+/// total-conserving. Heartbeat and txn-boundary events are
+/// skipped. Pure; called from the panel renderer.
+///
+/// Sort: most-contended first — `peak_concurrent` desc, then
+/// `distinct_conns` desc, then total busy time desc, pool name
+/// ascending as the final tiebreak for determinism.
+pub fn group_by_pool<'a, I>(events: I) -> Vec<PoolStats>
+where
+    I: IntoIterator<Item = &'a TapEvent>,
+{
+    use std::collections::{HashMap, HashSet};
+    #[derive(Default)]
+    struct Acc {
+        query_count: usize,
+        error_count: usize,
+        distinct_conns: HashSet<String>,
+        durations: Vec<u64>,
+        total_micros: u64,
+        intervals: Vec<(u64, u64)>,
+        last_app: Option<String>,
+    }
+    let mut buckets: HashMap<String, Acc> = HashMap::new();
+    for e in events {
+        if !matches!(e.kind, TapKind::Query) {
+            continue;
+        }
+        let key = e.pool.clone().unwrap_or_else(|| UNKNOWN_POOL.to_string());
+        let acc = buckets.entry(key).or_default();
+        acc.query_count += 1;
+        if e.is_error() {
+            acc.error_count += 1;
+        }
+        if let Some(c) = e.conn.as_deref() {
+            acc.distinct_conns.insert(c.to_string());
+        }
+        let d = e.duration_micros.unwrap_or(0);
+        acc.total_micros = acc.total_micros.saturating_add(d);
+        acc.durations.push(d);
+        acc.intervals.push((e.ts_unix_micros, d));
+        if let Some(app) = e.app.as_deref() {
+            acc.last_app = Some(app.to_string());
+        }
+    }
+    let mut out: Vec<PoolStats> = buckets
+        .into_iter()
+        .map(|(pool, mut acc)| {
+            acc.durations.sort_unstable();
+            PoolStats {
+                pool,
+                query_count: acc.query_count,
+                error_count: acc.error_count,
+                distinct_conns: acc.distinct_conns.len(),
+                peak_concurrent: peak_concurrency(&acc.intervals),
+                total_micros: acc.total_micros,
+                p95_micros: percentile(&acc.durations, 0.95),
+                last_app: acc.last_app,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.peak_concurrent
+            .cmp(&a.peak_concurrent)
+            .then_with(|| b.distinct_conns.cmp(&a.distinct_conns))
+            .then_with(|| b.total_micros.cmp(&a.total_micros))
+            .then_with(|| a.pool.cmp(&b.pool))
+    });
+    out
 }
 
 /// Aggregate stats for one transaction — populated by
@@ -478,8 +632,8 @@ where
         }
     }
     let mut out: Vec<TxnStats> = buckets
-        .into_iter()
-        .filter_map(|(_, acc)| {
+        .into_values()
+        .filter_map(|acc| {
             // Drop empty buckets — a TxnBoundary with no
             // preceding queries isn't useful (the ring may
             // have evicted them).
@@ -600,10 +754,14 @@ pub fn diff_hotspots(
     include_unchanged: bool,
 ) -> Vec<HotspotDiff> {
     use std::collections::{HashMap, HashSet};
-    let baseline_by_fp: HashMap<&str, &Hotspot> =
-        baseline.iter().map(|h| (h.fingerprint.as_str(), h)).collect();
-    let current_by_fp: HashMap<&str, &Hotspot> =
-        current.iter().map(|h| (h.fingerprint.as_str(), h)).collect();
+    let baseline_by_fp: HashMap<&str, &Hotspot> = baseline
+        .iter()
+        .map(|h| (h.fingerprint.as_str(), h))
+        .collect();
+    let current_by_fp: HashMap<&str, &Hotspot> = current
+        .iter()
+        .map(|h| (h.fingerprint.as_str(), h))
+        .collect();
     let mut all_fps: HashSet<&str> = HashSet::new();
     all_fps.extend(baseline_by_fp.keys().copied());
     all_fps.extend(current_by_fp.keys().copied());
@@ -781,9 +939,7 @@ where
         let mut l: usize = 0;
         let mut best: Option<(usize, usize)> = None; // (l, r)
         for r in 0..events.len() {
-            while l < r
-                && events[r].ts_unix_micros - events[l].ts_unix_micros > window_micros
-            {
+            while l < r && events[r].ts_unix_micros - events[l].ts_unix_micros > window_micros {
                 l += 1;
             }
             let run = r - l + 1;

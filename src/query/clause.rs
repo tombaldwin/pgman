@@ -625,8 +625,7 @@ fn take_qualified(
     i: usize,
 ) -> (QualifiedTable, usize) {
     let head = tokens[i].text.to_string();
-    if i + 2 < tokens.len() && tokens[i + 1].text == "." && is_identifier_like(&tokens[i + 2].text)
-    {
+    if i + 2 < tokens.len() && tokens[i + 1].text == "." && is_identifier_like(tokens[i + 2].text) {
         (
             QualifiedTable {
                 schema: Some(head),
@@ -706,7 +705,7 @@ pub fn extract_ctes(buf: &str) -> Vec<CteDef> {
                     explicit_columns
                 } else {
                     body_text
-                        .map(|body| crate::query::select_list::extract_select_columns(body))
+                        .map(crate::query::select_list::extract_select_columns)
                         .unwrap_or_default()
                 };
                 out.push(CteDef {

@@ -2694,7 +2694,7 @@ mod tests {
         let cands = candidates_for("SELECT * FROM usr", 17, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(
-            labels.iter().any(|l| *l == "users"),
+            labels.contains(&"users"),
             "fuzzy should surface `users` for prefix `usr`; got {labels:?}"
         );
     }
@@ -2729,11 +2729,11 @@ mod tests {
         let cands = candidates_for("SELECT u.nme FROM users u", 12, &cache);
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(
-            labels.iter().any(|l| *l == "name"),
+            labels.contains(&"name"),
             "expected fuzzy-`nmm` to surface `name` from users; got {labels:?}"
         );
         assert!(
-            !labels.iter().any(|l| *l == "actor"),
+            !labels.contains(&"actor"),
             "qualifier `u` should bound fuzzy scan to users' columns, not all tables; got {labels:?}"
         );
     }
@@ -2746,7 +2746,7 @@ mod tests {
         // result set (including continuation keywords like JOIN).
         let cands = candidates_for("SELECT * FROM use", 17, &cache);
         let displays: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
-        assert!(displays.iter().any(|l| *l == "users"));
+        assert!(displays.contains(&"users"));
     }
 
     #[test]
