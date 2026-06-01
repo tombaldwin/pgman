@@ -50,11 +50,16 @@ impl Fixture {
     }
 }
 
-/// How `generate_clean` empties the involved tables.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How `generate_clean` empties the involved tables. Serialised
+/// in the per-database safety profile (`safety.toml` /
+/// `pgman.toml`) as `clean_mode = "truncate"` / `"delete_from"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CleanMode {
     /// `TRUNCATE TABLE t RESTART IDENTITY CASCADE` — fast, resets sequences,
     /// cascades through FKs. Hits Postgres permissions and locks tables.
+    /// The default — matches DBUnit's own `CLEAN_INSERT` behaviour.
+    #[default]
     Truncate,
     /// `DELETE FROM t` — row-by-row, slower, doesn't reset sequences, but
     /// works without TRUNCATE privilege and respects triggers.
@@ -138,7 +143,80 @@ pub fn generate_apply_script(fixture: &Fixture, mode: CleanMode) -> String {
     out
 }
 
+/// Render a [`Fixture`] back into FlatXmlDataSet form — the
+/// inverse of [`parse_flat_xml`]. Each row becomes a
+/// `<table col="val" .../>` element; attribute values are
+/// XML-escaped (including newline / tab / CR as numeric entities)
+/// so a round-trip back through [`parse_flat_xml`] reproduces the
+/// fixture exactly. Per-row column order is preserved.
+///
+/// NULL caveat: a captured result grid can't distinguish SQL NULL
+/// from an empty string (both display blank), so every column is
+/// emitted with its displayed text — an empty cell becomes
+/// `col=""`, not an omitted attribute. Hand-edit if your DBUnit
+/// setup needs genuinely-NULL columns dropped.
+pub fn generate_flat_xml(fixture: &Fixture) -> String {
+    let mut out = String::new();
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<dataset>\n");
+    for row in &fixture.rows {
+        out.push_str("  <");
+        out.push_str(&row.table);
+        for (k, v) in &row.columns {
+            out.push(' ');
+            out.push_str(k);
+            out.push_str("=\"");
+            out.push_str(&xml_escape_attr(v));
+            out.push('"');
+        }
+        out.push_str("/>\n");
+    }
+    out.push_str("</dataset>\n");
+    out
+}
+
+/// Build a single-table [`Fixture`] from a result grid — the
+/// "capture current state" path. `columns` align with each row's
+/// cells by position; a short row pads missing cells as empty,
+/// and any cells beyond `columns` are ignored. `table` is used
+/// verbatim as the element name (DBUnit flat-XML convention —
+/// schema-qualify by hand if your setup needs it).
+pub fn fixture_from_rows(table: &str, columns: &[String], rows: &[Vec<String>]) -> Fixture {
+    let rows = rows
+        .iter()
+        .map(|cells| Row {
+            table: table.to_string(),
+            columns: columns
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), cells.get(i).cloned().unwrap_or_default()))
+                .collect(),
+        })
+        .collect();
+    Fixture { rows }
+}
+
 // -- helpers --
+
+/// Escape a string for use inside a double-quoted XML attribute.
+/// Whitespace controls become numeric entities so they survive
+/// XML attribute-value normalisation on re-parse.
+fn xml_escape_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            '\t' => out.push_str("&#9;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
 
 fn insert_sql(row: &Row) -> String {
     let cols: Vec<&str> = row.columns.iter().map(|(k, _)| k.as_str()).collect();
@@ -187,6 +265,73 @@ mod tests {
   <users id="2" name="Bob"/>
   <orders id="1" user_id="1" total="100.00"/>
 </dataset>"#
+    }
+
+    #[test]
+    fn generate_then_parse_round_trips() {
+        let original = parse_flat_xml(sample()).unwrap();
+        let xml = generate_flat_xml(&original);
+        let reparsed = parse_flat_xml(&xml).unwrap();
+        assert_eq!(reparsed, original);
+    }
+
+    #[test]
+    fn generate_escapes_special_chars_and_round_trips() {
+        let f = Fixture {
+            rows: vec![Row {
+                table: "t".into(),
+                columns: vec![
+                    ("note".into(), "a&b<c>d\"e".into()),
+                    ("multi".into(), "line1\nline2\tcol".into()),
+                ],
+            }],
+        };
+        let xml = generate_flat_xml(&f);
+        // Entities present, no raw special chars leaked into the attr.
+        assert!(xml.contains("&amp;") && xml.contains("&lt;") && xml.contains("&quot;"));
+        assert!(xml.contains("&#10;") && xml.contains("&#9;"));
+        // Exact round-trip including whitespace controls.
+        assert_eq!(parse_flat_xml(&xml).unwrap(), f);
+    }
+
+    #[test]
+    fn fixture_from_rows_aligns_columns_and_pads_short_rows() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![
+            vec!["1".to_string(), "alice".to_string()],
+            vec!["2".to_string()], // short row → name padded empty
+        ];
+        let f = fixture_from_rows("users", &cols, &rows);
+        assert_eq!(f.rows.len(), 2);
+        assert_eq!(f.rows[0].table, "users");
+        assert_eq!(
+            f.rows[0].columns,
+            vec![("id".into(), "1".into()), ("name".into(), "alice".into())]
+        );
+        assert_eq!(
+            f.rows[1].columns,
+            vec![("id".into(), "2".into()), ("name".into(), String::new())]
+        );
+    }
+
+    #[test]
+    fn fixture_from_rows_then_generate_is_parseable() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let rows = vec![vec!["1".to_string(), "O'Brien".to_string()]];
+        let f = fixture_from_rows("users", &cols, &rows);
+        let xml = generate_flat_xml(&f);
+        let parsed = parse_flat_xml(&xml).unwrap();
+        assert_eq!(parsed, f);
+        // Apostrophe needs no escaping inside a double-quoted attr.
+        assert!(xml.contains("name=\"O'Brien\""));
+    }
+
+    #[test]
+    fn generate_empty_fixture_is_just_dataset_wrapper() {
+        let xml = generate_flat_xml(&Fixture::default());
+        assert!(xml.contains("<dataset>"));
+        assert!(xml.contains("</dataset>"));
+        assert_eq!(parse_flat_xml(&xml).unwrap(), Fixture::default());
     }
 
     #[test]

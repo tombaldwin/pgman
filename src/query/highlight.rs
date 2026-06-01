@@ -356,8 +356,8 @@ fn classify_word(text: &str, bytes: &[u8], following_byte_idx: usize) -> TokenCl
         return TokenClass::Keyword;
     }
     // Function call? Look for `(` after optional whitespace.
-    if function_call_shape(bytes, following_byte_idx) {
-        if AGGREGATE_FUNCTIONS
+    if function_call_shape(bytes, following_byte_idx)
+        && (AGGREGATE_FUNCTIONS
             .iter()
             .any(|f| f.eq_ignore_ascii_case(&upper))
             || SCALAR_FUNCTIONS
@@ -365,10 +365,9 @@ fn classify_word(text: &str, bytes: &[u8], following_byte_idx: usize) -> TokenCl
                 .any(|f| f.eq_ignore_ascii_case(&upper))
             || WINDOW_FUNCTIONS
                 .iter()
-                .any(|f| f.eq_ignore_ascii_case(&upper))
-        {
-            return TokenClass::Function;
-        }
+                .any(|f| f.eq_ignore_ascii_case(&upper)))
+    {
+        return TokenClass::Function;
     }
     TokenClass::Identifier
 }

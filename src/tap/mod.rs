@@ -117,8 +117,7 @@ pub const TAP_CHANNEL_CAPACITY: usize = 4_096;
 /// because the downstream channel was full. Cumulative for
 /// the lifetime of the pgman process. Surfaced in the chrome
 /// badge so the operator notices backpressure.
-pub static DROPPED_AT_LISTENER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static DROPPED_AT_LISTENER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Read the cumulative listener-drop count. Public so the UI
 /// + report can surface it.
@@ -323,8 +322,7 @@ impl TapEvent {
     /// Always `false` for non-Query kinds — heartbeats and
     /// txn boundaries don't carry errors.
     pub fn is_error(&self) -> bool {
-        matches!(self.kind, TapKind::Query)
-            && self.error.as_ref().is_some_and(|e| !e.is_empty())
+        matches!(self.kind, TapKind::Query) && self.error.as_ref().is_some_and(|e| !e.is_empty())
     }
 
     /// First non-blank line of the SQL, with internal runs of
@@ -687,9 +685,7 @@ mod tests {
         let e = parse(bytes).unwrap();
         assert_eq!(
             e.error_one_line().as_deref(),
-            Some(
-                "BatchUpdateException: Batch entry 0 failed → PSQLException: ERROR: syntax error"
-            )
+            Some("BatchUpdateException: Batch entry 0 failed → PSQLException: ERROR: syntax error")
         );
     }
 
@@ -753,7 +749,11 @@ mod tests {
             params_redacted: false,
             duration_micros: Some(duration),
             rows: None,
-            error: if error { Some(vec!["err".into()]) } else { None },
+            error: if error {
+                Some(vec!["err".into()])
+            } else {
+                None
+            },
             caller: caller.map(|c| vec![c.into()]),
             dropped_events_total: None,
             txn_outcome: None,
@@ -764,9 +764,27 @@ mod tests {
     fn group_hotspots_collapses_literals_into_one_bucket() {
         // Same shape, different literals → one fingerprint → one bucket.
         let events = vec![
-            q("SELECT * FROM users WHERE id = 1", 100, false, None, "billing"),
-            q("SELECT * FROM users WHERE id = 2", 200, false, None, "billing"),
-            q("SELECT * FROM users WHERE id = 999", 300, false, None, "billing"),
+            q(
+                "SELECT * FROM users WHERE id = 1",
+                100,
+                false,
+                None,
+                "billing",
+            ),
+            q(
+                "SELECT * FROM users WHERE id = 2",
+                200,
+                false,
+                None,
+                "billing",
+            ),
+            q(
+                "SELECT * FROM users WHERE id = 999",
+                300,
+                false,
+                None,
+                "billing",
+            ),
             // Different shape — its own bucket.
             q("SELECT * FROM orders", 50, false, None, "billing"),
         ];
@@ -789,7 +807,7 @@ mod tests {
         txn.sql = None;
         txn.txn = Some("c-1#1".into());
         txn.txn_outcome = Some(TxnOutcome::Commit);
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "x"),
             hb,
             txn,
@@ -802,7 +820,7 @@ mod tests {
 
     #[test]
     fn group_hotspots_counts_errors_separately() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "x"),
             q("SELECT 1", 20, true, None, "x"),
             q("SELECT 1", 30, true, None, "x"),
@@ -870,7 +888,7 @@ mod tests {
     fn group_hotspots_sort_is_deterministic_when_keys_tie() {
         // Two buckets with the same total/count/p95; tiebreak
         // is the fingerprint (ascending) so the output is stable.
-        let events = vec![
+        let events = [
             q("SELECT 'a'", 10, false, None, "x"),
             q("SELECT 'b'", 10, false, None, "x"),
         ];
@@ -892,7 +910,7 @@ mod tests {
 
     #[test]
     fn hotspot_mean_handles_single_call_gracefully() {
-        let events = vec![q("SELECT 1", 42, false, None, "x")];
+        let events = [q("SELECT 1", 42, false, None, "x")];
         let hotspots = group_hotspots(events.iter(), HotspotSort::TotalTime);
         assert_eq!(hotspots[0].mean_micros(), 42);
     }
@@ -902,7 +920,7 @@ mod tests {
         // Two distinct fingerprint shapes so the buckets stay
         // separate after grouping (the fingerprinter collapses
         // string literals; vary table names instead).
-        let events = vec![
+        let events = [
             q("SELECT cheap FROM many", 1, false, None, "x"),
             q("SELECT cheap FROM many", 1, false, None, "x"),
             q("SELECT cheap FROM many", 1, false, None, "x"),
@@ -1120,7 +1138,7 @@ mod tests {
         // At least our own drop landed; concurrent tests may
         // have added more but never fewer.
         assert!(
-            dropped_at_listener() >= baseline + 1,
+            dropped_at_listener() > baseline,
             "drop counter must advance at least by our own contribution"
         );
     }
@@ -1179,16 +1197,17 @@ mod tests {
     async fn run_replay_file_streams_each_line_as_one_event() {
         use tokio::io::AsyncWriteExt;
         // Write a 3-event JSONL fixture to a temp file.
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-tap-replay-{}.jsonl",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("pgman-tap-replay-{}.jsonl", std::process::id()));
         let mut f = tokio::fs::File::create(&tmp).await.unwrap();
         let body = concat!(
-            r#"{"v":1,"ts_unix_micros":1,"sql":"SELECT 1","duration_micros":10}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":1,"sql":"SELECT 1","duration_micros":10}"#,
+            "\n",
             "\n", // blank line — should be skipped
-            r#"{"v":1,"ts_unix_micros":2,"sql":"SELECT 2","duration_micros":20}"#, "\n",
-            r#"{"v":1,"ts_unix_micros":3,"sql":"SELECT 3","duration_micros":30}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":2,"sql":"SELECT 2","duration_micros":20}"#,
+            "\n",
+            r#"{"v":1,"ts_unix_micros":3,"sql":"SELECT 3","duration_micros":30}"#,
+            "\n",
         );
         f.write_all(body.as_bytes()).await.unwrap();
         f.flush().await.unwrap();
@@ -1212,15 +1231,16 @@ mod tests {
     #[tokio::test]
     async fn run_replay_file_drops_malformed_lines_but_continues() {
         use tokio::io::AsyncWriteExt;
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-tap-replay-bad-{}.jsonl",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("pgman-tap-replay-bad-{}.jsonl", std::process::id()));
         let mut f = tokio::fs::File::create(&tmp).await.unwrap();
         let body = concat!(
-            r#"{"v":1,"ts_unix_micros":1,"sql":"good 1","duration_micros":1}"#, "\n",
-            "{not valid json", "\n", // malformed — should be dropped
-            r#"{"v":1,"ts_unix_micros":2,"sql":"good 2","duration_micros":2}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":1,"sql":"good 1","duration_micros":1}"#,
+            "\n",
+            "{not valid json",
+            "\n", // malformed — should be dropped
+            r#"{"v":1,"ts_unix_micros":2,"sql":"good 2","duration_micros":2}"#,
+            "\n",
         );
         f.write_all(body.as_bytes()).await.unwrap();
         f.flush().await.unwrap();
@@ -1251,10 +1271,8 @@ mod tests {
     /// Build the UDP-listener future + bound-addr pair that
     /// tests dial into. Spawns the recv loop on the runtime;
     /// the returned address lets the client `send_to(...)` it.
-    async fn spawn_udp_listener_for_test() -> (
-        std::net::SocketAddr,
-        tokio::sync::mpsc::Receiver<TapEvent>,
-    ) {
+    async fn spawn_udp_listener_for_test(
+    ) -> (std::net::SocketAddr, tokio::sync::mpsc::Receiver<TapEvent>) {
         let (tx, rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
         // Bind upfront so the test knows the port, then drive
         // the same accept loop as the public helper would.
@@ -1292,13 +1310,10 @@ mod tests {
             "sql": "SELECT 1", "duration_micros": 42
         }"#;
         client.send_to(payload, addr).await.unwrap();
-        let event = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        )
-        .await
-        .expect("UDP event delivered in time")
-        .expect("channel still open");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("UDP event delivered in time")
+            .expect("channel still open");
         assert_eq!(event.sql.as_deref(), Some("SELECT 1"));
         // Listener stamped received_at on the way through.
         assert!(event.received_at_unix_micros > 0);
@@ -1316,13 +1331,10 @@ mod tests {
             "sql": "SELECT 2", "duration_micros": 1
         }"#;
         client.send_to(payload, addr).await.unwrap();
-        let event = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        )
-        .await
-        .expect("good event delivered")
-        .expect("channel still open");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("good event delivered")
+            .expect("channel still open");
         assert_eq!(event.sql.as_deref(), Some("SELECT 2"));
     }
 
@@ -1331,9 +1343,8 @@ mod tests {
         let (addr, mut rx) = spawn_udp_listener_for_test().await;
         let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         for i in 0..3u64 {
-            let payload = format!(
-                r#"{{"v":1,"ts_unix_micros":{i},"sql":"SELECT {i}","duration_micros":1}}"#
-            );
+            let payload =
+                format!(r#"{{"v":1,"ts_unix_micros":{i},"sql":"SELECT {i}","duration_micros":1}}"#);
             client.send_to(payload.as_bytes(), addr).await.unwrap();
         }
         let mut got: Vec<String> = Vec::new();
@@ -1372,7 +1383,10 @@ mod tests {
         let req = read_http_request(&mut reader, 1024).await.unwrap();
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/v1/traces");
-        assert_eq!(req.headers.get("content-type").map(String::as_str), Some("application/json"));
+        assert_eq!(
+            req.headers.get("content-type").map(String::as_str),
+            Some("application/json")
+        );
         assert_eq!(req.body, body);
     }
 
@@ -1449,10 +1463,7 @@ mod tests {
         let req_bytes = b"POST /v1/traces HTTP/1.1\r\nContent-Type: application/json";
         let mut reader = std::io::Cursor::new(&req_bytes[..]);
         let err = read_http_request(&mut reader, 1024).await.unwrap_err();
-        assert!(
-            err.contains("closed before headers complete"),
-            "got: {err}"
-        );
+        assert!(err.contains("closed before headers complete"), "got: {err}");
     }
 
     #[tokio::test]
@@ -1520,12 +1531,9 @@ mod tests {
         let req = HttpRequest {
             method: "POST".into(),
             path: "/v1/traces".into(),
-            headers: [(
-                "content-type".into(),
-                "application/x-protobuf".into(),
-            )]
-            .into_iter()
-            .collect(),
+            headers: [("content-type".into(), "application/x-protobuf".into())]
+                .into_iter()
+                .collect(),
             body: Vec::new(),
         };
         let resp = process_otlp_request(req, &tx);
@@ -1785,7 +1793,10 @@ mod tests {
         let e = &events[0];
         assert_eq!(e.kind, TapKind::Query);
         assert_eq!(e.app.as_deref(), Some("billing-service"));
-        assert_eq!(e.sql.as_deref(), Some("SELECT * FROM accounts WHERE id = ?"));
+        assert_eq!(
+            e.sql.as_deref(),
+            Some("SELECT * FROM accounts WHERE id = ?")
+        );
         // duration = 10ms = 10_000us
         assert_eq!(e.duration_micros, Some(10_000));
         // ts = end / 1000 (ns → µs)
@@ -2025,13 +2036,7 @@ mod tests {
 
     // --- transaction view tests -----------------------
 
-    fn q_in_txn(
-        sql: &str,
-        ts: u64,
-        duration: u64,
-        txn: Option<&str>,
-        conn: &str,
-    ) -> TapEvent {
+    fn q_in_txn(sql: &str, ts: u64, duration: u64, txn: Option<&str>, conn: &str) -> TapEvent {
         q_in_txn_with_pool(sql, ts, duration, txn, conn, None)
     }
 
@@ -2088,7 +2093,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_buckets_per_txn_id() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 2", 200, 20, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 3", 300, 30, Some("c-1#2"), "c-1"),
@@ -2105,7 +2110,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_closes_on_txn_boundary_event() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 2", 200, 20, Some("c-1#1"), "c-1"),
             boundary(300, "c-1#1", "c-1", TxnOutcome::Commit),
@@ -2121,7 +2126,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_separates_commit_and_rollback() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             boundary(200, "c-1#1", "c-1", TxnOutcome::Commit),
             q_in_txn("SELECT 2", 300, 10, Some("c-1#2"), "c-1"),
@@ -2188,7 +2193,7 @@ mod tests {
     fn group_by_txn_falls_back_to_conn_when_txn_is_absent() {
         // Autocommit: each statement has no txn but the conn
         // groups them.
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, None, "c-1"),
             q_in_txn("SELECT 2", 200, 10, None, "c-1"),
         ];
@@ -2203,7 +2208,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_drops_events_with_neither_txn_nor_conn() {
-        let events = vec![TapEvent {
+        let events = [TapEvent {
             v: 1,
             kind: TapKind::Query,
             ts_unix_micros: 1,
@@ -2230,7 +2235,7 @@ mod tests {
     fn group_by_txn_drops_boundary_with_no_preceding_queries() {
         // A boundary event arrives after the ring evicted
         // its query events — nothing to surface.
-        let events = vec![boundary(1, "c-1#1", "c-1", TxnOutcome::Commit)];
+        let events = [boundary(1, "c-1#1", "c-1", TxnOutcome::Commit)];
         let stats = group_by_txn(events.iter());
         assert!(stats.is_empty());
     }
@@ -2240,10 +2245,7 @@ mod tests {
         let mut hb = q_in_txn("ignored", 0, 0, None, "c-1");
         hb.kind = TapKind::Heartbeat;
         hb.sql = None;
-        let events = vec![
-            hb,
-            q_in_txn("SELECT 1", 1, 10, Some("c-1#1"), "c-1"),
-        ];
+        let events = [hb, q_in_txn("SELECT 1", 1, 10, Some("c-1#1"), "c-1")];
         let stats = group_by_txn(events.iter());
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].statement_count, 1);
@@ -2432,7 +2434,7 @@ mod tests {
 
     #[test]
     fn group_by_caller_buckets_events_by_innermost_frame() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, Some("OrderService.foo:1"), "svc"),
             q("SELECT 2", 20, false, Some("OrderService.foo:1"), "svc"),
             q("SELECT 3", 30, false, Some("UserService.bar:5"), "svc"),
@@ -2454,7 +2456,7 @@ mod tests {
         // Events with caller=None must still appear in the rollup
         // (under UNKNOWN_CALLER) — otherwise the rollup loses
         // events and stops being total-conserving.
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "svc"),
             q("SELECT 2", 20, false, Some("Foo.bar:1"), "svc"),
             q("SELECT 3", 30, false, None, "svc"),
@@ -2487,10 +2489,7 @@ mod tests {
         let mut hb = q("ignored", 0, false, Some("x"), "svc");
         hb.kind = TapKind::Heartbeat;
         hb.sql = None;
-        let events = vec![
-            hb,
-            q("SELECT 1", 1, false, Some("Foo.bar:1"), "svc"),
-        ];
+        let events = [hb, q("SELECT 1", 1, false, Some("Foo.bar:1"), "svc")];
         let groups = group_by_caller(events.iter(), HotspotSort::TotalTime);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].count, 1);
@@ -2498,7 +2497,7 @@ mod tests {
 
     #[test]
     fn group_by_caller_counts_errors_and_computes_percentiles() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, Some("Foo.bar:1"), "svc"),
             q("SELECT 1", 20, true, Some("Foo.bar:1"), "svc"),
             q("SELECT 1", 30, true, Some("Foo.bar:1"), "svc"),
@@ -2512,7 +2511,7 @@ mod tests {
 
     #[test]
     fn caller_stats_mean_handles_single_call() {
-        let events = vec![q("SELECT 1", 42, false, Some("Foo.bar:1"), "svc")];
+        let events = [q("SELECT 1", 42, false, Some("Foo.bar:1"), "svc")];
         let groups = group_by_caller(events.iter(), HotspotSort::TotalTime);
         assert_eq!(groups[0].mean_micros(), 42);
     }
@@ -2521,7 +2520,7 @@ mod tests {
     fn group_by_caller_total_is_conserved_across_named_and_unknown() {
         // Sum of counts across all buckets should equal the
         // total number of query events.
-        let events = vec![
+        let events = [
             q("SELECT 1", 1, false, None, "svc"),
             q("SELECT 2", 1, false, Some("A.b:1"), "svc"),
             q("SELECT 3", 1, false, Some("A.b:1"), "svc"),
@@ -2593,6 +2592,142 @@ mod tests {
         }
     }
 
+    /// Pool-tagged query event: `(pool, conn, ts, duration)`.
+    fn q_pool(pool: Option<&str>, conn: &str, ts: u64, dur: u64) -> TapEvent {
+        TapEvent {
+            v: 1,
+            kind: TapKind::Query,
+            ts_unix_micros: ts,
+            received_at_unix_micros: ts,
+            app: Some("svc".into()),
+            pool: pool.map(str::to_string),
+            conn: Some(conn.into()),
+            txn: None,
+            sql: Some("SELECT 1".into()),
+            params: None,
+            params_redacted: false,
+            duration_micros: Some(dur),
+            rows: None,
+            error: None,
+            caller: None,
+            dropped_events_total: None,
+            txn_outcome: None,
+        }
+    }
+
+    #[test]
+    fn peak_concurrency_empty_is_zero() {
+        assert_eq!(insights::peak_concurrency(&[]), 0);
+    }
+
+    #[test]
+    fn peak_concurrency_disjoint_intervals_is_one() {
+        // [0,10), [20,30), [40,50) — never overlap.
+        let intervals = [(0u64, 10u64), (20, 10), (40, 10)];
+        assert_eq!(insights::peak_concurrency(&intervals), 1);
+    }
+
+    #[test]
+    fn peak_concurrency_full_overlap_counts_all() {
+        // Three queries all running 0..100.
+        let intervals = [(0u64, 100u64), (10, 80), (20, 50)];
+        assert_eq!(insights::peak_concurrency(&intervals), 3);
+    }
+
+    #[test]
+    fn peak_concurrency_zero_duration_registers_one() {
+        // A point query [5,5] still occupies a slot momentarily.
+        assert_eq!(insights::peak_concurrency(&[(5, 0)]), 1);
+    }
+
+    #[test]
+    fn peak_concurrency_partial_overlap_finds_the_peak() {
+        // A: [0,30), B: [20,40), C: [35,60). Peak is 2 (A+B).
+        let intervals = [(0u64, 30u64), (20, 20), (35, 25)];
+        assert_eq!(insights::peak_concurrency(&intervals), 2);
+    }
+
+    #[test]
+    fn group_by_pool_buckets_by_pool_name() {
+        let events = [
+            q_pool(Some("primary"), "p-1", 0, 10),
+            q_pool(Some("primary"), "p-2", 5, 10),
+            q_pool(Some("replica"), "r-1", 0, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 2);
+        let primary = pools.iter().find(|p| p.pool == "primary").unwrap();
+        assert_eq!(primary.query_count, 2);
+        assert_eq!(primary.distinct_conns, 2);
+        // p-1 [0,10) overlaps p-2 [5,15) → peak 2.
+        assert_eq!(primary.peak_concurrent, 2);
+        let replica = pools.iter().find(|p| p.pool == "replica").unwrap();
+        assert_eq!(replica.query_count, 1);
+        assert_eq!(replica.distinct_conns, 1);
+        assert_eq!(replica.peak_concurrent, 1);
+    }
+
+    #[test]
+    fn group_by_pool_untagged_lands_in_unknown_bucket() {
+        let events = [
+            q_pool(None, "c-1", 0, 10),
+            q_pool(Some("primary"), "p-1", 0, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert!(pools.iter().any(|p| p.pool == UNKNOWN_POOL));
+        // Total-conserving: every query event is bucketed.
+        let total: usize = pools.iter().map(|p| p.query_count).sum();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn group_by_pool_skips_non_query_events() {
+        let mut hb = q_pool(Some("primary"), "p-1", 0, 10);
+        hb.kind = TapKind::Heartbeat;
+        let events = [hb, q_pool(Some("primary"), "p-1", 0, 10)];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].query_count, 1);
+    }
+
+    #[test]
+    fn group_by_pool_counts_errors_and_distinct_conns() {
+        let mut err = q_pool(Some("primary"), "p-1", 0, 10);
+        err.error = Some(vec!["boom".into()]);
+        let events = vec![
+            err,
+            q_pool(Some("primary"), "p-1", 20, 10), // same conn reused
+            q_pool(Some("primary"), "p-2", 40, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].error_count, 1);
+        assert_eq!(pools[0].distinct_conns, 2);
+        // All disjoint in time → peak 1 despite 3 queries.
+        assert_eq!(pools[0].peak_concurrent, 1);
+    }
+
+    #[test]
+    fn group_by_pool_sorts_most_contended_first() {
+        // hot pool: 3 overlapping conns. cold pool: 1 conn.
+        let events = [
+            q_pool(Some("cold"), "c-1", 0, 10),
+            q_pool(Some("hot"), "h-1", 0, 100),
+            q_pool(Some("hot"), "h-2", 10, 100),
+            q_pool(Some("hot"), "h-3", 20, 100),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools[0].pool, "hot");
+        assert_eq!(pools[0].peak_concurrent, 3);
+        assert_eq!(pools[1].pool, "cold");
+    }
+
+    #[test]
+    fn group_by_pool_empty_input_is_empty() {
+        let events: Vec<TapEvent> = Vec::new();
+        assert!(group_by_pool(events.iter()).is_empty());
+    }
+
     #[test]
     fn detect_nplus1_fires_on_a_tight_burst_in_one_txn() {
         // 6 SELECTs at the same shape inside one txn within
@@ -2644,13 +2779,7 @@ mod tests {
         // hits the threshold.
         let mut events: Vec<TapEvent> = Vec::new();
         for i in 0..3 {
-            events.push(q_at(
-                "SELECT 1",
-                i * 10_000,
-                Some("c-1#1"),
-                "c-1",
-                None,
-            ));
+            events.push(q_at("SELECT 1", i * 10_000, Some("c-1#1"), "c-1", None));
         }
         for i in 0..3 {
             events.push(q_at(
@@ -2745,13 +2874,7 @@ mod tests {
         // Only 4 query events — under threshold even after
         // non-query frames are filtered out.
         for i in 0..4 {
-            events.push(q_at(
-                "SELECT 1",
-                i * 10_000,
-                Some("c-1#1"),
-                "c-1",
-                None,
-            ));
+            events.push(q_at("SELECT 1", i * 10_000, Some("c-1#1"), "c-1", None));
         }
         let findings = detect_nplus1(events.iter(), NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
         assert!(findings.is_empty());
@@ -2796,10 +2919,10 @@ mod tests {
     #[test]
     fn percentile_clamps_p_to_unit_interval() {
         let sorted: Vec<u64> = vec![10, 20, 30, 40, 50];
-        assert_eq!(percentile(&sorted, -1.0), 10);  // clamped to 0 → first
-        assert_eq!(percentile(&sorted, 0.0), 10);   // rank 0 → idx 0
-        assert_eq!(percentile(&sorted, 1.0), 50);   // rank N → idx N-1
-        assert_eq!(percentile(&sorted, 2.0), 50);   // clamped to 1 → last
+        assert_eq!(percentile(&sorted, -1.0), 10); // clamped to 0 → first
+        assert_eq!(percentile(&sorted, 0.0), 10); // rank 0 → idx 0
+        assert_eq!(percentile(&sorted, 1.0), 50); // rank N → idx N-1
+        assert_eq!(percentile(&sorted, 2.0), 50); // clamped to 1 → last
     }
 
     #[test]

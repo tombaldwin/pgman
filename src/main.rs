@@ -293,40 +293,33 @@ async fn main() -> anyhow::Result<()> {
         // when the tokio runtime drops the adapter at `.await`.
         // Write directly to the underlying file; the kernel
         // buffers small appends adequately.
-        let mut record_file: Option<tokio::fs::File> =
-            match record_path.as_ref() {
-                None => None,
-                Some(path) => {
-                    if let Some(parent) = path.parent() {
-                        if !parent.as_os_str().is_empty() {
-                            // tokio::fs so a slow NFS doesn't
-                            // block the runtime worker at startup.
-                            let _ = tokio::fs::create_dir_all(parent).await;
-                        }
-                    }
-                    match tokio::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                        .await
-                    {
-                        Ok(f) => {
-                            tracing::info!(
-                                "tap-record: appending events to {}",
-                                path.display()
-                            );
-                            Some(f)
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "invalid --tap-record {}: {e}",
-                                path.display()
-                            );
-                            std::process::exit(2);
-                        }
+        let mut record_file: Option<tokio::fs::File> = match record_path.as_ref() {
+            None => None,
+            Some(path) => {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        // tokio::fs so a slow NFS doesn't
+                        // block the runtime worker at startup.
+                        let _ = tokio::fs::create_dir_all(parent).await;
                     }
                 }
-            };
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .await
+                {
+                    Ok(f) => {
+                        tracing::info!("tap-record: appending events to {}", path.display());
+                        Some(f)
+                    }
+                    Err(e) => {
+                        eprintln!("invalid --tap-record {}: {e}", path.display());
+                        std::process::exit(2);
+                    }
+                }
+            }
+        };
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             // Track the global drop counter so we can emit a
@@ -402,16 +395,15 @@ async fn main() -> anyhow::Result<()> {
                             // Write + flush sequentially. A
                             // failure disables the recorder so
                             // we don't spam logs every event.
-                            let write_ok =
-                                match f.write_all(&bytes).await {
-                                    Ok(()) => true,
-                                    Err(e) => {
-                                        tracing::warn!(
+                            let write_ok = match f.write_all(&bytes).await {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    tracing::warn!(
                                             "tap-record: write failed; disabling capture for this session: {e}"
                                         );
-                                        false
-                                    }
-                                };
+                                    false
+                                }
+                            };
                             if write_ok {
                                 if let Err(e) = f.flush().await {
                                     tracing::warn!(
@@ -517,7 +509,9 @@ async fn main() -> anyhow::Result<()> {
             .clone();
         tokio::spawn(async move {
             match tap::run_replay_file(&path, replay_tx).await {
-                Ok(n) => tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display()),
+                Ok(n) => {
+                    tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display())
+                }
                 Err(e) => tracing::error!("tap-replay: failed to read {}: {e}", path.display()),
             }
         });
@@ -542,61 +536,16 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix(':') {
-        let port: u16 = rest
-            .parse()
-            .map_err(|e| format!("port {rest:?}: {e}"))?;
+        let port: u16 = rest.parse().map_err(|e| format!("port {rest:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
     if !raw.contains(':') {
         // Bare port — same shape, default to localhost.
-        let port: u16 = raw
-            .parse()
-            .map_err(|e| format!("port {raw:?}: {e}"))?;
+        let port: u16 = raw.parse().map_err(|e| format!("port {raw:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
     raw.parse::<SocketAddr>()
         .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
-}
-
-#[cfg(test)]
-mod main_tests {
-    use super::*;
-
-    #[test]
-    fn parse_tap_addr_accepts_colon_port() {
-        let got = parse_tap_addr(":7432").unwrap();
-        assert_eq!(got.ip().to_string(), "127.0.0.1");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_accepts_bare_port() {
-        let got = parse_tap_addr("7432").unwrap();
-        assert_eq!(got.ip().to_string(), "127.0.0.1");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_accepts_full_host_port() {
-        let got = parse_tap_addr("0.0.0.0:7432").unwrap();
-        assert_eq!(got.ip().to_string(), "0.0.0.0");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_rejects_garbage() {
-        let err = parse_tap_addr("not-an-address").unwrap_err();
-        assert!(err.contains("port"), "expected port-parse error: {err}");
-    }
-
-    #[test]
-    fn parse_tap_addr_rejects_oversize_port() {
-        let err = parse_tap_addr(":99999").unwrap_err();
-        assert!(
-            err.contains("port"),
-            "expected port-range error: {err}"
-        );
-    }
 }
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
@@ -787,56 +736,94 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
         })
         .collect();
     files.sort();
+
+    // Pass 1: parse every file into partials and classify each by
+    // Spring config family ("application" / "bootstrap") and
+    // optional profile. Base (no-profile) files for a family are
+    // merged into one base block; profile files are stashed for a
+    // second pass so they can overlay the (fully-accumulated) base
+    // — Spring's `application-<profile>` semantics. Two passes
+    // because a profile filename can sort *before* its base across
+    // the `.`/`-` boundary (`application-prod.yml` < `application.properties`).
+    use creds::spring::SpringDatasourcePartial;
+    let mut bases: std::collections::BTreeMap<String, (String, Vec<SpringDatasourcePartial>)> =
+        std::collections::BTreeMap::new();
+    let mut profiles: Vec<(String, String, Vec<SpringDatasourcePartial>)> = Vec::new();
     for path in &files {
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
-        let ext = path.extension().and_then(|e| e.to_str());
-        let entries = match ext {
-            Some("properties") => creds::spring::parse_properties_all(&text),
-            Some("yml") | Some("yaml") => creds::spring::parse_yaml_all(&text),
+        let partials = match path.extension().and_then(|e| e.to_str()) {
+            Some("properties") => creds::spring::parse_properties_partials(&text),
+            Some("yml") | Some("yaml") => creds::spring::parse_yaml_partials(&text),
             _ => continue,
         };
-        if entries.is_empty() {
+        if partials.is_empty() {
             continue;
         }
-        let file_label = path
+        let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("application");
-        tracing::info!(
-            "Spring properties: {} datasource(s) in {}",
-            entries.len(),
-            path.display()
-        );
-        for e in entries {
-            let Some(raw) = creds::intellij::jdbc_to_dsn(&e.url) else {
+            .unwrap_or("application")
+            .to_string();
+        let (family, profile) = creds::spring::split_config_name(&stem);
+        match profile {
+            None => {
+                let slot = bases
+                    .entry(family)
+                    .or_insert_with(|| (stem.clone(), Vec::new()));
+                slot.0 = stem; // label tracks the most recent base file
+                slot.1 = creds::spring::merge_partials(&slot.1, &partials);
+            }
+            Some(_) => profiles.push((stem, family, partials)),
+        }
+    }
+
+    // Resolve a partial block into picks under `label`. A prefix
+    // contributes a pick only when it has a usable jdbc:postgresql
+    // URL; username / password from the block win over URL creds.
+    let mut emit = |label: &str, block: &[SpringDatasourcePartial]| {
+        for p in block {
+            let Some(url) = p.url.as_deref() else {
+                continue;
+            };
+            let Some(raw) = creds::intellij::jdbc_to_dsn(url) else {
                 continue;
             };
             let Ok(mut dsn) = conn::Dsn::parse(&raw) else {
                 continue;
             };
-            // Spring's username/password keys win over anything in the URL —
-            // operators usually only put credentials in one place.
-            if let Some(u) = e.username {
+            if let Some(u) = &p.username {
                 if !u.is_empty() {
-                    dsn.user = Some(u);
+                    dsn.user = Some(u.clone());
                 }
             }
-            if let Some(p) = e.password {
-                if !p.is_empty() {
-                    dsn.password = Some(p);
+            if let Some(pw) = &p.password {
+                if !pw.is_empty() {
+                    dsn.password = Some(pw.clone());
                 }
             }
-            // Provenance line — note we log the redacted DSN, never the raw
-            // password (CLAUDE.md: never log credentials).
-            tracing::info!("  → pick {}.{} = {}", file_label, e.prefix, dsn.redacted());
+            // Provenance only — never the raw password (CLAUDE.md).
+            tracing::info!("  → pick {}.{} = {}", label, p.prefix, dsn.redacted());
             picks.push(DataSourcePick {
-                name: format!("{} ({})", e.prefix, file_label),
+                name: format!("{} ({})", p.prefix, label),
                 origin: "Spring",
                 dsn,
             });
         }
+    };
+
+    // Pass 2: emit base picks (families in sorted order), then
+    // each profile merged over its family's base.
+    for (label, block) in bases.values() {
+        emit(label, block);
+    }
+    for (label, family, block) in &profiles {
+        let merged = match bases.get(family) {
+            Some((_, base)) => creds::spring::merge_partials(base, block),
+            None => block.clone(),
+        };
+        emit(label, &merged);
     }
 }
 
@@ -853,5 +840,43 @@ fn load_safety_config() -> safety::SafetyConfig {
             }
         },
         Err(_) => safety::SafetyConfig::default(),
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test]
+    fn parse_tap_addr_accepts_colon_port() {
+        let got = parse_tap_addr(":7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_bare_port() {
+        let got = parse_tap_addr("7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_full_host_port() {
+        let got = parse_tap_addr("0.0.0.0:7432").unwrap();
+        assert_eq!(got.ip().to_string(), "0.0.0.0");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_garbage() {
+        let err = parse_tap_addr("not-an-address").unwrap_err();
+        assert!(err.contains("port"), "expected port-parse error: {err}");
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_oversize_port() {
+        let err = parse_tap_addr(":99999").unwrap_err();
+        assert!(err.contains("port"), "expected port-range error: {err}");
     }
 }

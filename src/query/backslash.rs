@@ -37,6 +37,12 @@ pub enum BackslashCmd {
     /// `None` arg means "pick a default path under the cache
     /// dir."
     Report(Option<String>),
+    /// `\fixture` / `\fixture <path>` — capture the current
+    /// result grid as a DBUnit FlatXmlDataSet (the reverse of
+    /// the apply script). `None` arg means "pick a default path
+    /// under the cache dir." Needs a single-table result so the
+    /// element name is known.
+    Fixture(Option<String>),
     /// Anything else starting with `\`. The dispatcher uses the
     /// inner string to compose a useful error.
     Unknown(String),
@@ -72,6 +78,7 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
             _ => None,
         }),
         "report" => BackslashCmd::Report(arg1.map(str::to_string)),
+        "fixture" => BackslashCmd::Fixture(arg1.map(str::to_string)),
         _ => BackslashCmd::Unknown(raw),
     })
 }
@@ -166,6 +173,18 @@ mod tests {
         assert_eq!(
             parse_backslash_command("\\report report.html"),
             Some(BackslashCmd::Report(Some("report.html".into())))
+        );
+    }
+
+    #[test]
+    fn parse_fixture_with_and_without_path() {
+        assert_eq!(
+            parse_backslash_command("\\fixture"),
+            Some(BackslashCmd::Fixture(None))
+        );
+        assert_eq!(
+            parse_backslash_command("\\fixture users.xml"),
+            Some(BackslashCmd::Fixture(Some("users.xml".into())))
         );
     }
 
