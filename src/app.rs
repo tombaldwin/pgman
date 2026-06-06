@@ -11,7 +11,7 @@ use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
 use crate::tui::{Tui, TuiHost};
 
-use crate::text_input::TextInput;
+use tui_common::TextInput;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::widgets::TableState;

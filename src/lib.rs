@@ -22,7 +22,6 @@ pub mod safety;
 pub mod saved;
 pub mod splash;
 pub mod tap;
-pub mod text_input;
 pub mod theme;
 pub mod tui;
 pub mod tunnel;
