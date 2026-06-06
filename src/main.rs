@@ -754,7 +754,22 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                 .unwrap_or(false)
         })
         .collect();
-    files.sort();
+    // Order base files of one family so the higher-precedence format is
+    // applied last (as the overlay) during the merge: Spring resolves
+    // `.properties` over `.yml`/`.yaml`. Sort primarily by the name with
+    // the extension stripped (groups a family's files together), then by
+    // format rank ascending so `.properties` lands after `.yml`.
+    files.sort_by(|a, b| {
+        let key = |p: &std::path::Path| -> (String, u8) {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let stem = name
+                .rsplit_once('.')
+                .map(|(s, _)| s.to_string())
+                .unwrap_or_else(|| name.to_string());
+            (stem, creds::spring::format_precedence_rank(name))
+        };
+        key(a).cmp(&key(b))
+    });
 
     // Pass 1: parse every file into partials and classify each by
     // Spring config family ("application" / "bootstrap") and

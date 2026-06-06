@@ -4497,10 +4497,13 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
         return;
     }
-    let visible_h = inner.height as usize;
+    // The header row consumes one line, so the scrollable body is
+    // `inner.height - 1` rows. Anchor the scroll on that height, else
+    // the focused last pool lands one row past the visible window.
+    let body_h = (inner.height as usize).saturating_sub(1);
     let cursor = app.tap_pools_cursor.min(pools.len() - 1);
-    let scroll = if cursor >= visible_h {
-        cursor + 1 - visible_h
+    let scroll = if cursor >= body_h {
+        cursor + 1 - body_h
     } else {
         0
     };
@@ -4516,12 +4519,7 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
     )));
     let inner_w = inner.width as usize;
     let body_col = inner_w.saturating_sub(2 + 5 + 2 + 5 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 9 + 2);
-    for (i, p) in pools
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(visible_h.saturating_sub(1))
-    {
+    for (i, p) in pools.iter().enumerate().skip(scroll).take(body_h) {
         let is_focus = i == cursor;
         let style = if is_focus {
             Style::default()

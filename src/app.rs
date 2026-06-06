@@ -158,6 +158,29 @@ pub enum Mode {
     ResultDiff,
 }
 
+impl Mode {
+    /// True while the operator is typing literal text into a buffer —
+    /// the editor or any single-line prompt. Global single-key / `Ctrl`
+    /// chords (notably `Ctrl-W` close-tab) must stay inert in these
+    /// modes so they don't fire mid-typing and clobber the buffer or
+    /// the tab. EVERY prompt mode must appear here — a new prompt that
+    /// forgets to opt in re-introduces the close-tab-while-typing bug.
+    pub fn is_text_input(self) -> bool {
+        matches!(
+            self,
+            Mode::Editor
+                | Mode::HistorySearch
+                | Mode::GridFilter
+                | Mode::GridFind
+                | Mode::SchemaBrowserFilter
+                | Mode::SaveQueryPrompt
+                | Mode::ParamPrompt
+                | Mode::SavedQueriesFilter
+                | Mode::RenameQueryPrompt
+        )
+    }
+}
+
 /// Connection lifecycle state.
 #[derive(Debug, Clone)]
 pub enum ConnState {
@@ -395,6 +418,11 @@ pub struct TabSnapshot {
     pub grid_visible_rows: Vec<usize>,
     pub last_run_sql: Option<String>,
     pub grid_source: Option<(String, String)>,
+    /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
+    /// tab can't leak into another (a fresh tab starts unpinned). The
+    /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
+    /// dismissed on any tab change (see `dismiss_result_diff`).
+    pub pinned_result: Option<PinnedResult>,
 }
 
 /// Hard cap on tab count. 9 matches `Ctrl-1..Ctrl-9` numeric
@@ -2539,15 +2567,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let typing_mode = matches!(
-            self.mode,
-            Mode::Editor
-                | Mode::HistorySearch
-                | Mode::GridFilter
-                | Mode::GridFind
-                | Mode::SchemaBrowserFilter
-                | Mode::SaveQueryPrompt
-        );
+        let typing_mode = self.mode.is_text_input();
         if ctrl && matches!(key.code, KeyCode::Char('t')) {
             self.new_tab();
             return;
@@ -3216,6 +3236,7 @@ impl App {
             grid_visible_rows: self.grid_visible_rows.clone(),
             last_run_sql: self.last_run_sql.clone(),
             grid_source: self.grid_source.clone(),
+            pinned_result: self.pinned_result.clone(),
         };
         if let Some(slot) = self.tabs.get_mut(self.active_tab) {
             *slot = snap;
@@ -3244,6 +3265,20 @@ impl App {
         self.grid_visible_rows = snap.grid_visible_rows;
         self.last_run_sql = snap.last_run_sql;
         self.grid_source = snap.grid_source;
+        self.pinned_result = snap.pinned_result;
+    }
+
+    /// Close the transient result-diff overlay if one is open. Called
+    /// on every tab change: the overlay is bound to the tab's live grid,
+    /// which is about to swap out from under it, so it must not survive
+    /// the switch. The per-tab `pinned_result` baseline is preserved
+    /// (snapshotted/restored separately).
+    fn dismiss_result_diff(&mut self) {
+        if self.mode == Mode::ResultDiff {
+            self.mode = Mode::Normal;
+        }
+        self.result_diff = None;
+        self.result_diff_cursor = 0;
     }
 
     /// `Ctrl-T` — push a fresh tab and switch to it. Refuses
@@ -3257,6 +3292,7 @@ impl App {
             self.last_status = Some("can't switch tabs while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.snapshot_active_tab();
         self.tabs.push(TabSnapshot::default());
         self.active_tab = self.tabs.len() - 1;
@@ -3284,6 +3320,7 @@ impl App {
             self.last_status = Some("can't close tab while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.tabs.remove(self.active_tab);
         if self.active_tab >= self.tabs.len() {
             self.active_tab = self.tabs.len() - 1;
@@ -3306,6 +3343,7 @@ impl App {
             self.last_status = Some("can't switch tabs while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.snapshot_active_tab();
         self.active_tab = idx;
         self.load_active_tab();
@@ -10921,6 +10959,97 @@ mod tests {
         a.cycle_tab(true);
         assert_eq!(a.editor_buffer, "two");
         assert_eq!(a.active_tab, 1);
+    }
+
+    #[test]
+    fn all_prompt_modes_count_as_text_input() {
+        // Every text-entry mode must opt into is_text_input so the
+        // global Ctrl-W (close-tab) chord stays inert while typing.
+        for m in [
+            Mode::Editor,
+            Mode::ParamPrompt,
+            Mode::SavedQueriesFilter,
+            Mode::RenameQueryPrompt,
+            Mode::SaveQueryPrompt,
+            Mode::GridFilter,
+            Mode::GridFind,
+            Mode::HistorySearch,
+            Mode::SchemaBrowserFilter,
+        ] {
+            assert!(m.is_text_input(), "{m:?} should be a text-input mode");
+        }
+        assert!(!Mode::Normal.is_text_input());
+        assert!(!Mode::ResultDiff.is_text_input());
+        assert!(!Mode::TapMonitor.is_text_input());
+    }
+
+    #[test]
+    fn ctrl_w_in_a_prompt_does_not_close_the_tab() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.new_tab(); // two tabs, so close_active_tab would otherwise fire
+        assert_eq!(a.tabs.len(), 2);
+        a.mode = Mode::ParamPrompt;
+        a.param_prompt = Some(ParamPrompt {
+            query_name: "q".into(),
+            template: "SELECT :x".into(),
+            params: vec!["x".into()],
+            idx: 0,
+            values: Vec::new(),
+            input: TextInput::new(),
+        });
+        a.on_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(
+            a.tabs.len(),
+            2,
+            "Ctrl-W must not close a tab while typing in a prompt"
+        );
+        assert_eq!(a.mode, Mode::ParamPrompt);
+    }
+
+    #[test]
+    fn result_diff_pin_is_per_tab_and_does_not_leak() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Normal;
+        a.grid = Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        };
+        // Pin A on tab 1.
+        a.pin_or_diff_result();
+        assert!(a.pinned_result.is_some(), "tab 1 should have a pinned A");
+        // A fresh tab must NOT inherit the pin — otherwise the first D
+        // there diffs against an unrelated baseline.
+        a.new_tab();
+        assert!(
+            a.pinned_result.is_none(),
+            "a fresh tab must start with no pinned baseline"
+        );
+        // Returning to tab 1 restores its pin.
+        a.cycle_tab(false);
+        assert!(
+            a.pinned_result.is_some(),
+            "returning to tab 1 should restore its pinned baseline"
+        );
+    }
+
+    #[test]
+    fn tab_switch_dismisses_an_open_result_diff_overlay() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Normal;
+        a.grid = Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        };
+        a.pin_or_diff_result(); // pin A
+        a.grid.rows = vec![vec!["2".into()]];
+        a.pin_or_diff_result(); // diff → opens the overlay
+        assert_eq!(a.mode, Mode::ResultDiff);
+        a.new_tab();
+        // The transient overlay must not survive onto the new tab.
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.result_diff.is_none());
     }
 
     #[test]

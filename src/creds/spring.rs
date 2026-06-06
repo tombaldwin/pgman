@@ -219,6 +219,23 @@ pub fn split_config_name(stem: &str) -> (String, Option<String>) {
     }
 }
 
+/// Rank a config file by Spring's format precedence so that, when
+/// several base files of one family are merged, the *winning* format
+/// is applied last (as the overlay). Spring Boot resolves
+/// `application.properties` over `application.yml`/`.yaml` when both
+/// define the same key, so `.properties` ranks highest. A higher rank
+/// must sort later. Unknown extensions rank lowest.
+pub fn format_precedence_rank(filename: &str) -> u8 {
+    let lower = filename.to_ascii_lowercase();
+    if lower.ends_with(".properties") {
+        2
+    } else if lower.ends_with(".yml") || lower.ends_with(".yaml") {
+        1
+    } else {
+        0
+    }
+}
+
 /// Parse `spring.datasource.*` out of an `application.yml` body.
 ///
 /// Stub — M1.5 (see BACKLOG.md).
@@ -775,6 +792,22 @@ dataSource:
             split_config_name("application-"),
             ("application-".into(), None)
         );
+    }
+
+    #[test]
+    fn properties_outrank_yaml_for_base_merge() {
+        // Spring resolves .properties over .yml/.yaml; the higher rank
+        // must sort later so it overlays (wins) during the base merge.
+        assert!(
+            format_precedence_rank("application.properties")
+                > format_precedence_rank("application.yml")
+        );
+        assert_eq!(
+            format_precedence_rank("application.yml"),
+            format_precedence_rank("application.yaml")
+        );
+        assert!(format_precedence_rank("application.yaml") > format_precedence_rank("weird.txt"));
+        assert_eq!(format_precedence_rank("APPLICATION.PROPERTIES"), 2);
     }
 
     #[test]
