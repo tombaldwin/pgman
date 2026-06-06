@@ -3436,7 +3436,7 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     // shown/total count so a narrowed list is obvious.
     let visible = app.visible_saved_indices();
     let total = app.saved_queries.entries.len();
-    let title = match app.saved_queries_filter.as_deref() {
+    let title = match app.saved_queries_filter.as_ref().map(|t| t.text()) {
         Some(f) => format!(
             " saved queries — /{f}  ({}/{} shown) · enter load · esc clear ",
             visible.len(),
@@ -3476,7 +3476,10 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
             Paragraph::new(Text::from(vec![Line::from(Span::styled(
                 format!(
                     "no saved queries match '{}'",
-                    app.saved_queries_filter.as_deref().unwrap_or("")
+                    app.saved_queries_filter
+                        .as_ref()
+                        .map(|t| t.text())
+                        .unwrap_or("")
                 ),
                 Style::default().fg(theme.muted),
             ))])),
@@ -3564,12 +3567,12 @@ fn draw_rename_prompt(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::from(Span::styled("new name:", Style::default().fg(theme.muted))),
         Line::from(Span::styled(
-            app.rename_query_buffer.clone(),
+            app.rename_query_buffer.text().to_string(),
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         )),
     ];
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
-    let x = inner.x + app.rename_query_buffer.chars().count() as u16;
+    let x = inner.x + app.rename_query_buffer.cursor_col() as u16;
     let y = inner.y + 1;
     if x < inner.x + inner.width {
         f.set_cursor_position((x, y));
@@ -3653,13 +3656,13 @@ fn draw_param_prompt(f: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(theme.muted),
     )));
     lines.push(Line::from(Span::styled(
-        pp.input.clone(),
+        pp.input.text().to_string(),
         Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
     )));
     let input_row = lines.len() as u16 - 1;
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
-    // Cursor at the end of the current input.
-    let x = inner.x + pp.input.chars().count() as u16;
+    // Cursor at its position within the current input.
+    let x = inner.x + pp.input.cursor_col() as u16;
     let y = inner.y + input_row;
     if x < inner.x + inner.width && y < inner.y + inner.height {
         f.set_cursor_position((x, y));
