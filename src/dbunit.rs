@@ -161,10 +161,10 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
     out.push_str("<dataset>\n");
     for row in &fixture.rows {
         out.push_str("  <");
-        out.push_str(&row.table);
+        out.push_str(&xml_escape_name(&row.table));
         for (k, v) in &row.columns {
             out.push(' ');
-            out.push_str(k);
+            out.push_str(&xml_escape_name(k));
             out.push_str("=\"");
             out.push_str(&xml_escape_attr(v));
             out.push('"');
@@ -201,6 +201,29 @@ pub fn fixture_from_rows(table: &str, columns: &[String], rows: &[Vec<String>]) 
 /// Escape a string for use inside a double-quoted XML attribute.
 /// Whitespace controls become numeric entities so they survive
 /// XML attribute-value normalisation on re-parse.
+/// Sanitise a string into a valid XML `Name` for use as an element or
+/// attribute name. DBUnit flat-XML uses table and column names as XML
+/// names, and a captured result grid can carry headers that aren't
+/// valid XML names — an unaliased expression column is `?column?`, a
+/// quoted alias can hold spaces or `&`. Emitting those raw produces
+/// malformed XML that won't round-trip through [`parse_flat_xml`].
+/// Every disallowed character becomes `_`; a name that can't *start* an
+/// XML name is prefixed with `_`. Lossless for ordinary SQL identifiers,
+/// which already are valid XML names.
+fn xml_escape_name(s: &str) -> String {
+    let is_start = |c: char| c.is_ascii_alphabetic() || c == '_' || c == ':';
+    let is_part = |c: char| is_start(c) || c.is_ascii_digit() || c == '-' || c == '.';
+    let mut out: String = s
+        .chars()
+        .map(|c| if is_part(c) { c } else { '_' })
+        .collect();
+    let needs_prefix = out.chars().next().map(|c| !is_start(c)).unwrap_or(true);
+    if needs_prefix {
+        out.insert(0, '_');
+    }
+    out
+}
+
 fn xml_escape_attr(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -324,6 +347,46 @@ mod tests {
         assert_eq!(parsed, f);
         // Apostrophe needs no escaping inside a double-quoted attr.
         assert!(xml.contains("name=\"O'Brien\""));
+    }
+
+    #[test]
+    fn special_chars_in_names_are_sanitised_to_valid_xml() {
+        // Regression: column/table names were emitted raw, so an
+        // unaliased expression header (`?column?`) or a spaced/`&` alias
+        // produced malformed XML. Names must sanitise to valid XML names
+        // and still parse back.
+        let f = Fixture {
+            rows: vec![Row {
+                table: "weird table".into(),
+                columns: vec![
+                    ("?column?".into(), "2".into()),
+                    ("a&b".into(), "x".into()),
+                    ("1leading".into(), "y".into()),
+                ],
+            }],
+        };
+        let xml = generate_flat_xml(&f);
+        // No raw illegal name chars leaked into element/attribute names.
+        assert!(!xml.contains("?column?"));
+        assert!(!xml.contains("weird table"));
+        assert!(!xml.contains("a&b"));
+        // Valid XML now round-trips without a parse error.
+        let parsed = parse_flat_xml(&xml).expect("sanitised names must parse");
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.rows[0].table, "weird_table");
+        let names: Vec<&str> = parsed.rows[0]
+            .columns
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect();
+        assert_eq!(names, vec!["_column_", "a_b", "_1leading"]);
+    }
+
+    #[test]
+    fn ordinary_identifiers_pass_through_name_sanitiser() {
+        assert_eq!(xml_escape_name("user_id"), "user_id");
+        assert_eq!(xml_escape_name("created_at"), "created_at");
+        assert_eq!(xml_escape_name(""), "_");
     }
 
     #[test]

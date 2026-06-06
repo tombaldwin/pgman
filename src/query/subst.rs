@@ -163,8 +163,14 @@ fn quote(p: &BoundParam) -> String {
 /// Those must stay quoted.
 fn is_bare_type(sql_type: &str) -> bool {
     let upper = sql_type.to_ascii_uppercase();
-    // Drop a precision/scale `(…)` or array `[]` suffix, keep the base.
-    let base = upper.split(['(', '[']).next().unwrap_or(&upper).trim();
+    // Drop a precision/scale `(…)` suffix, keep the base.
+    let base = upper.split('(').next().unwrap_or(&upper).trim();
+    // Array types (e.g. `INT4[]`, `NUMERIC[]`) are NOT bare — an array
+    // literal value like `{1,2,3}` must stay single-quoted, otherwise
+    // the reconstructed SQL is invalid. Only the scalar base is bare.
+    if base.contains('[') {
+        return false;
+    }
     matches!(
         base,
         "INT"
@@ -273,6 +279,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "VALUES (1, 3.14, 9000000000, true)");
+    }
+
+    #[test]
+    fn array_types_stay_quoted() {
+        // Regression: stripping the `[]` suffix made `int4[]` match the
+        // bare `INT4` list, emitting `{1,2,3}` unquoted → invalid SQL.
+        // Array literals must stay single-quoted regardless of element
+        // type.
+        let params = [
+            p(1, "int4[]", "{1,2,3}"),
+            p(2, "numeric[]", "{1.5,2.5}"),
+            p(3, "bool[]", "{t,f}"),
+            p(4, "_text", "{a,b}"),
+        ];
+        let out = apply(
+            "VALUES (?, ?, ?, ?)",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "VALUES ('{1,2,3}', '{1.5,2.5}', '{t,f}', '{a,b}')");
     }
 
     #[test]
