@@ -16,7 +16,7 @@ ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs"] }
 tokio-postgres = "0.7"
-tokio-postgres-rustls = "0.13"
+tokio-postgres-rustls = "0.14"
 rustls = "0.23"
 rustls-native-certs = "0.8"
 webpki-roots = "0.26"
