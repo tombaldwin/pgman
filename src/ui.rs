@@ -3808,67 +3808,76 @@ fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Flatten into display entries: removed, then changed, then
-    // added — matching the cursor model in `diff_row_count`.
+    // Entry rows are removed, then changed, then added — matching the
+    // cursor model in `diff_row_count`. Format only the visible window
+    // rather than every diff row each frame: a large diff (a batch
+    // UPDATE against its baseline) can carry thousands of rows, and the
+    // overlay only ever shows `visible_h` of them.
     let row_w = inner.width.saturating_sub(4) as usize;
     let render_row =
         |row: &[String]| -> String { crate::grid::truncate_cell(&row.join(" | "), row_w) };
-    let mut entries: Vec<(Style, String)> = Vec::new();
-    for &ai in &diff.removed {
-        let body = state
-            .a
-            .rows
-            .get(ai)
-            .map(|r| render_row(r))
-            .unwrap_or_default();
-        entries.push((Style::default().fg(theme.health_red), format!("- {body}")));
-    }
-    for ch in &diff.changed {
-        let deltas: Vec<String> = ch
-            .cells
-            .iter()
-            .map(|c| {
-                let col = state
-                    .a
-                    .columns
-                    .get(c.col)
-                    .map(String::as_str)
-                    .unwrap_or("?");
-                format!("{col}: {} → {}", c.old, c.new)
-            })
-            .collect();
-        let text = format!("~ [{}] {}", ch.key.join(", "), deltas.join("  ·  "));
-        entries.push((
-            Style::default().fg(theme.health_yellow),
-            crate::grid::truncate_cell(&text, row_w),
-        ));
-    }
-    for &bi in &diff.added {
-        let body = state
-            .b_rows
-            .get(bi)
-            .map(|r| render_row(r))
-            .unwrap_or_default();
-        entries.push((Style::default().fg(theme.health_green), format!("+ {body}")));
-    }
+    let nr = diff.removed.len();
+    let nc = diff.changed.len();
+    let total = nr + nc + diff.added.len();
+    // Map a flat entry index to its (style, text), touching only the
+    // one underlying row it names.
+    let fmt_entry = |flat: usize| -> (Style, String) {
+        if flat < nr {
+            let body = state
+                .a
+                .rows
+                .get(diff.removed[flat])
+                .map(|r| render_row(r))
+                .unwrap_or_default();
+            (Style::default().fg(theme.health_red), format!("- {body}"))
+        } else if flat < nr + nc {
+            let ch = &diff.changed[flat - nr];
+            let deltas: Vec<String> = ch
+                .cells
+                .iter()
+                .map(|c| {
+                    let col = state
+                        .a
+                        .columns
+                        .get(c.col)
+                        .map(String::as_str)
+                        .unwrap_or("?");
+                    format!("{col}: {} → {}", c.old, c.new)
+                })
+                .collect();
+            let text = format!("~ [{}] {}", ch.key.join(", "), deltas.join("  ·  "));
+            (
+                Style::default().fg(theme.health_yellow),
+                crate::grid::truncate_cell(&text, row_w),
+            )
+        } else {
+            let body = state
+                .b_rows
+                .get(diff.added[flat - nr - nc])
+                .map(|r| render_row(r))
+                .unwrap_or_default();
+            (Style::default().fg(theme.health_green), format!("+ {body}"))
+        }
+    };
 
     // Reserve the summary line; scroll the entry list under it.
     let visible_h = (inner.height as usize).saturating_sub(2);
-    let cursor = app.result_diff_cursor.min(entries.len().saturating_sub(1));
+    let cursor = app.result_diff_cursor.min(total.saturating_sub(1));
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {
         0
     };
     lines.push(Line::from(""));
-    for (i, (style, text)) in entries.iter().enumerate().skip(scroll).take(visible_h) {
-        let style = if i == cursor {
+    for flat in scroll..(scroll + visible_h).min(total) {
+        let (base, text) = fmt_entry(flat);
+        let style = if flat == cursor {
             Style::default()
                 .fg(theme.text)
                 .bg(theme.row_selected_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
-            *style
+            base
         };
         lines.push(Line::from(Span::styled(format!("  {text}"), style)));
     }

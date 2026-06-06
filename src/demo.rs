@@ -41,10 +41,10 @@ pub fn app(theme: Theme) -> App {
         rows,
         truncated: false,
     };
-    // The renderer pages through `grid_visible_rows`, not the raw
-    // grid — mirror what a real QueryOk does so the rows show.
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
-    a.grid_state.select(Some(0));
+    // Populate the derived view state (visible rows + selection)
+    // through the same path a real QueryOk uses, so the demo can't
+    // drift from the live renderer.
+    a.reset_grid_view();
     a.grid_source = Some(("public".into(), "users".into()));
     a.editor_buffer = "SELECT id, email, plan, created_at\n\
                        FROM users\n\
