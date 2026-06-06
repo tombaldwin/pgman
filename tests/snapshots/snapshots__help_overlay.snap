@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 134
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -93,7 +92,7 @@ expression: dump(&buf)
 │              │                                                                    │              │
 │              │   tx open                                                          │              │
 │              │     y             commit the transaction                           │              │
-│              │ ↓ 95 more below                                                    │              │
+│              │ ↓ 96 more below                                                    │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

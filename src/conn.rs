@@ -309,6 +309,75 @@ fn opt(s: &str) -> Option<String> {
     }
 }
 
+/// Mask inline credentials in a connection-URL-shaped string so it is
+/// safe to log when it can't be parsed into a [`Dsn`] (where
+/// [`Dsn::redacted`] would otherwise be used). Scrubs both forms a
+/// postgres/JDBC URL can carry a secret in:
+///   - userinfo: `scheme://user:pass@host` → `scheme://***@host`
+///   - query param: `?password=secret` / `&pwd=…` → `password=***`
+///
+/// Best-effort and conservative. Used only on the logging/error path for
+/// strings that failed to parse; never reconstruct a real DSN from it.
+pub fn redact_url(url: &str) -> String {
+    // 1. Userinfo between "://" and the authority's first '@'.
+    let mut out = String::with_capacity(url.len());
+    let rest = if let Some(scheme_end) = url.find("://") {
+        let after = scheme_end + 3;
+        out.push_str(&url[..after]);
+        let tail = &url[after..];
+        let authority_end = tail.find('/').unwrap_or(tail.len());
+        match tail[..authority_end].find('@') {
+            Some(at) => {
+                out.push_str("***@");
+                &tail[at + 1..]
+            }
+            None => tail,
+        }
+    } else {
+        url
+    };
+    out.push_str(rest);
+    // 2. password-bearing query params.
+    mask_password_params(out)
+}
+
+/// Replace the value of any `password=` / `pwd=` / `passwd=` query
+/// parameter (case-insensitive key) with `***`. Indices are taken from
+/// an ASCII-lowercased copy, whose byte length matches the original, so
+/// they map back exactly.
+fn mask_password_params(s: String) -> String {
+    let lower = s.to_ascii_lowercase();
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    for key in ["password=", "pwd=", "passwd="] {
+        let mut from = 0;
+        while let Some(rel) = lower[from..].find(key) {
+            let val_start = from + rel + key.len();
+            let val_end = s[val_start..]
+                .find('&')
+                .map(|i| val_start + i)
+                .unwrap_or(s.len());
+            ranges.push((val_start, val_end));
+            from = val_end;
+        }
+    }
+    if ranges.is_empty() {
+        return s;
+    }
+    ranges.sort_unstable();
+    let mut out = String::with_capacity(s.len());
+    let mut cursor = 0;
+    for (vs, ve) in ranges {
+        if vs < cursor {
+            continue; // nested/overlapping match already covered
+        }
+        out.push_str(&s[cursor..vs]);
+        out.push_str("***");
+        cursor = ve;
+    }
+    out.push_str(&s[cursor..]);
+    out
+}
+
 /// A successful connection's bootstrap result.
 pub struct Booted {
     pub server_version: String,
@@ -1133,6 +1202,47 @@ mod tests {
             s.contains("via ssh://tom@bastion"),
             "tunnel target should appear: {s}"
         );
+    }
+
+    #[test]
+    fn redact_url_masks_userinfo_and_password_params() {
+        // Inline userinfo.
+        assert_eq!(
+            super::redact_url("postgres://user:s3cret@host:5432/db"),
+            "postgres://***@host:5432/db"
+        );
+        // JDBC scheme + password query param (no userinfo).
+        assert_eq!(
+            super::redact_url("jdbc:postgresql://host/db?user=app&password=s3cret"),
+            "jdbc:postgresql://host/db?user=app&password=***"
+        );
+        // Both userinfo and a trailing password param, mid-query.
+        assert_eq!(
+            super::redact_url("postgres://u:p@host/db?password=abc&sslmode=require"),
+            "postgres://***@host/db?password=***&sslmode=require"
+        );
+        // pwd= alias.
+        assert_eq!(
+            super::redact_url("postgresql://host/db?pwd=hunter2"),
+            "postgresql://host/db?pwd=***"
+        );
+        // Nothing to redact — passes through unchanged.
+        assert_eq!(
+            super::redact_url("postgres://host:5432/db?sslmode=disable"),
+            "postgres://host:5432/db?sslmode=disable"
+        );
+        // Garbage that failed to parse still gets userinfo scrubbed.
+        assert_eq!(
+            super::redact_url("postgres://admin:letmein@:notaport/x"),
+            "postgres://***@:notaport/x"
+        );
+        // Crucially: the raw secret never survives.
+        for masked in [
+            super::redact_url("postgres://u:topsecret@h/d"),
+            super::redact_url("jdbc:postgresql://h/d?password=topsecret"),
+        ] {
+            assert!(!masked.contains("topsecret"), "leak: {masked}");
+        }
     }
 
     #[test]

@@ -20,10 +20,11 @@ buckets were folded in once their initial passes shipped).
   because we don't override the hostname check.
 
 ### Credentials & config
-- **Profile-specific overrides** (`application-prod.yml` overrides
-  `application.yml`). Today each profile file is parsed
-  independently and a profile-only file with a partial datasource
-  block (e.g. password override) produces no pick.
+- **Profile-specific overrides** *(done; see Done →
+  Credentials & config.)* `application-<profile>.yml` now
+  overlays the base `application.yml` per datasource prefix, so
+  a profile that sets only a password (or only a URL) yields a
+  complete, usable pick.
 - `${...}` placeholder resolution. (Blocked — needs real-world
   verification of Spring / SSM / 1Password mechanics; the
   `${op://}`-as-property-source assumption is still unconfirmed.)
@@ -33,14 +34,15 @@ buckets were folded in once their initial passes shipped).
   timestamps.
 
 ### Editor — domain features
-- **Saved queries — v2.** v1 ship covers save / list / load /
-  delete. Still to come: in-panel rename / search, and
-  `:param`-style placeholder prompts on load (`SELECT … WHERE
-  id = :id` → prompt for id at load time).
-- Capture-current-state → write a fixture (reverse of the DBUnit
-  apply script).
-- Per-database `CleanMode` config (which truncate strategy each db
-  uses for DBUnit apply).
+- **Saved queries — v2.** *(done; see Done → Editor.)* v1
+  (save / list / load / delete) plus v2: `:param` load-time
+  prompts, in-panel rename (`r`), and live substring search
+  (`/`, matches name or body). Possible v3 nice-to-haves:
+  tags / folders, fuzzy match, body-only vs name-only scoping.
+- Capture-current-state → write a fixture *(done; see Done →
+  Editor — `\fixture`)*.
+- Per-database `CleanMode` config *(done; see Done → Editor —
+  per-db `clean_mode`)*.
 
 ### Editor — authoring polish
 A second round of editor quality-of-life features past the syntax-
@@ -57,12 +59,13 @@ batch.
   newval WHERE pk = …` and routes through the existing safety
   guard for confirmation. Every GUI tool has this; matches what
   TablePlus / DataGrip operators expect.
-- **Result diff.** `D` pins the current result as A; the next run
-  becomes B; a diff view shows row-by-row adds / removes / changes
-  keyed by the source table's PK (or by full-row hash when no PK is
-  inferred). Killer feature for "did my migration / batch update
-  break anything?" workflows. Probably wants its own
-  `Mode::ResultDiff` and a small `query::row_diff` pure module.
+- **Result diff.** *(landed; see Done → Result grid.)* `D`
+  pins A, the next `D` diffs the current grid as B. One
+  refinement still open: key on the *actual* source-table PK
+  (from the catalog) rather than the inferred-unique-column
+  heuristic — would need the schema cache to carry PK columns
+  (same gap as "Indexes under each table"). The heuristic
+  already covers the common id-column case.
 
 ### Schema browser — follow-ups
 - DDL preview pane (live `pg_get_tabledef`-ish query) for the
@@ -90,6 +93,26 @@ now cover most painful real-world schema sins. Last one:
   no longer pull every row into RAM). The grid still shows only
   the first page; a portal-backed "fetch next N" / scroll-to-load
   is the v2.
+
+### Code-review follow-ups (from the open-source-prep review)
+- **Memoise per-frame tap groupings** *(evaluated — not pursued)*. The
+  tap L2 views (`draw_tap_monitor_pools` and siblings) call
+  `group_by_pool` / `group_by_txn` / `current_hotspots` over the whole
+  ring on every redraw. A cross-frame cache needs interior mutability
+  plus invalidation keyed on the ring's version + sort. The grouping is
+  documented (and measured) as sub-millisecond over the ~2k-event ring
+  — "cheap relative to the rest of the frame budget" — so a cache trades
+  the simple, obviously-correct pure methods for a staleness-bug surface
+  in the exact feature being optimised. Net-negative; left as-is. Revisit
+  only if profiling shows it on a hot path (e.g. if the ring cap grows
+  by orders of magnitude).
+- **Extend `TextInput` to the remaining prompts** *(partial — done for
+  the three review-flagged prompts)*. `ParamPrompt`, `SavedQueriesFilter`,
+  and `RenameQueryPrompt` now share `text_input::TextInput` (cursor
+  movement, Home/End, Ctrl-W word-delete, paste). The older single-line
+  inputs (`SaveQueryPrompt` name, `GridFilter`, `GridFind`,
+  `HistorySearch`, `SchemaBrowserFilter`) still hand-roll append-only
+  editing and could adopt the same widget for consistency.
 
 ### JDBC tap — layered build
 The committed observability path. **pgman-tap is not a
@@ -242,10 +265,14 @@ no new I/O.
   same sort modes as Hotspots. Events without a caller frame
   land in the `<unknown>` bucket so the rollup stays
   total-conserving.
-- **Pool-saturation gauge.** Count distinct `conn` IDs per
-  pool over time vs the configured HikariCP max (carried in
-  the heartbeat event, or configured via
-  `pgman.tap.pool-max`). Flag thrash.
+- **Pool-saturation gauge.** *(partial: live gauge landed;
+  see Done → JDBC tap.)* The fifth TapMonitor view groups the
+  ring by pool name and shows distinct-connection breadth,
+  peak in-flight concurrency, query volume / errors, busy
+  time, and p95. Still pending — the `saturation %` vs the
+  configured HikariCP max: a max value isn't derivable from
+  query events, so it waits on the JAR shipping `pool-max`
+  in its heartbeat (or a `pgman.tap.pool-max` config).
 - **Read-replica awareness.** *(partial: pool display
   landed; pool-role classification still pending.)* The
   Transactions view + report now show which connection
@@ -653,7 +680,7 @@ the list for the cases where it can't reach.
   candidates. Catalog fetch needs a new query for foreign-key edges.
   Higher-value, bigger scope than the other completion items here.
 
-### Reuse from ebman (`/Users/tom/git/ebman/src/`)
+### Reuse from the sibling `ebman` project
 Survey is in [Done]. Lift as the milestones reach them:
 - `shell.rs` — PTY wrapper + key→bytes; verbatim. Use for `psql` /
   `pg_dump` / `claude` handoff (M2 / advisor / snapshots).
@@ -731,7 +758,80 @@ Pull a remote database down for local testing; keep tagged backups.
 
 Historical record. Newest at the top within each section.
 
+### Credentials & config
+
+- **Spring profile-specific overrides.** `application-<profile>.yml`
+  (and `.properties` / `bootstrap*`) now overlay the base
+  `application.yml` per datasource prefix, matching Spring's
+  profile semantics — a profile that sets only a password (or
+  only a URL) inherits the rest from the base and produces a
+  complete pick, where before it produced none. Pure core in
+  `creds::spring`: new `SpringDatasourcePartial` (url/username/
+  password all optional) + `parse_properties_partials` /
+  `parse_yaml_partials` (unfiltered, url-optional — so a
+  password-only prefix still surfaces); `parse_properties_all`
+  refactored to sit on top of the partials + the JDBC-URL
+  filter (output unchanged, 17 existing tests still green);
+  `merge_partials(base, profile)` overlays by prefix (profile's
+  non-empty fields win, base fills the rest, profile-only
+  prefixes appended); `split_config_name(stem)` → `(family,
+  Option<profile>)`. `main.rs` discovery is thin glue: two
+  passes (accumulate bases, then merge each profile over its
+  family's base — two passes because `application-prod.yml`
+  can sort before `application.properties` across the `.`/`-`
+  boundary), emitting picks via `jdbc_to_dsn` + `Dsn::parse`.
+  8 new tests (password-only prefix emitted, partials keep
+  non-jdbc unlike `_all`, merge overlays password + inherits
+  url, empty overlay value doesn't clobber, profile-only prefix
+  appended, profile url overrides base, `split_config_name`,
+  yaml overlay end-to-end).
+
 ### JDBC tap
+
+- **L2 — pool-saturation gauge (live view).** Fifth
+  TapMonitor view (`List → Hotspots → Callers → Transactions
+  → Pools → NplusOne → Baseline`), groups the ring by
+  connection-pool name. New `PoolStats` + `group_by_pool` in
+  `tap/insights.rs`: per-pool query count, error count,
+  distinct-connection breadth, peak in-flight concurrency
+  (pure `peak_concurrency` sweep-line over each query's
+  `[ts, ts+duration]` interval, +1-before-−1 at equal
+  timestamps so point queries register and adjacency doesn't
+  under-count), total busy time, p95. Untagged traffic lands
+  in `<unknown>` so the rollup is total-conserving; non-query
+  events skipped. Sort: most-contended first (peak desc →
+  distinct-conns desc → busy desc → pool asc). Wired through
+  `App::current_pools` / `tap_pools_cursor` /
+  `on_tap_monitor_pools_key` / `cycle_tap_view`, the
+  `draw_tap_monitor_pools` renderer, and the report (Markdown
+  + HTML Connection-pools section + `report_snapshot`).
+  Cheatsheet bumped to "7 views". The `saturation %` vs a
+  configured HikariCP max is deferred — no max is derivable
+  from query events; it waits on the JAR shipping `pool-max`
+  in its heartbeat. 18 new tests (5 `peak_concurrency`:
+  empty / disjoint / full-overlap / zero-duration / partial;
+  7 `group_by_pool`: bucketing / unknown bucket / skip
+  non-query / errors+distinct-conns / contention sort /
+  empty; 1 pools-view navigate+clear; 2 report pools section
+  render + empty placeholder; updated the view-cycle tests to
+  seven views and the HTML-sections test to include
+  Connection pools).
+
+- **Refactor — split `tap.rs` into a directory.** The single
+  file had grown past 4,300 lines, mixing wire schema, L1
+  transports (TCP / UDP / OTLP / replay), and L2 insights
+  (Hotspots / Callers / Transactions / N+1 / baseline diff)
+  in one module. Split into `src/tap/` with `mod.rs` (schema
+  + `parse` + `forward_or_drop` + drop atomics + the shared
+  `now_unix_micros`), `insights.rs` (Hotspots / Callers /
+  Transactions / diff / N+1 detector), `replay.rs`
+  (`parse_replay_line` / `record_line` / `run_replay_file`),
+  `otlp.rs` (OTLP parser + HTTP server), and `listener.rs`
+  (TCP + UDP listeners). `pub use submod::*;` keeps the
+  public API identical so every callsite (and the ~237
+  tests still in `mod.rs`) is unchanged. Build green, all
+  tests pass. Tests remain in `mod.rs` for now — moving
+  them alongside their submodules is a follow-up.
 
 - **L2 — pool column in Transactions view + report.**
   `TxnStats` gains `pool: Option<String>` (populated from
@@ -1272,6 +1372,35 @@ Historical record. Newest at the top within each section.
 
 ### Result grid
 
+- **Result diff (`Mode::ResultDiff`).** `D` in Normal pins the
+  current grid as baseline A; the next `D` diffs the current
+  grid (B) against it and opens the diff view. New pure
+  `query::row_diff` module: `diff_rows(rows_a, rows_b, key)` →
+  `RowDiff { added, removed, changed, unchanged }` keyed by
+  either `RowKey::Columns` (strong mode — reports per-cell
+  old→new deltas on matched keys) or `RowKey::FullRow` (a
+  mutation reads as remove+add). `infer_key_column` picks the
+  leftmost column unique across *both* result sets without
+  touching the catalog — a PK / id column satisfies this by
+  definition, so the common "re-ran the same query" case gets
+  change-detection for free; the App falls back to full-row
+  keying when column layouts differ or no column is unique.
+  Diff state snapshots both sides (`ResultDiffState`) so the
+  view is stable; baseline persists across diffs for iterative
+  work. In the view: j/k navigate (removed → changed → added,
+  unchanged summarised), `r` re-pins B as the new A, `c`
+  clears the pin, q/esc close. Renderer colour-codes
+  red/yellow/green and shows the inferred key in the title.
+  22 new tests (15 pure `row_diff`: identical / add+remove /
+  changed-with-cell-deltas / only-differing-cells / full-row
+  mutation / full-row match / duplicate-key pairing / empty A
+  / empty B / both-empty / key inference: leftmost-unique /
+  id-preference / none-when-not-unique / empty-side /
+  zero-cols; 6 App: empty-grid error, pin baseline, diff with
+  inferred key, full-row fallback on column mismatch, `r`
+  re-pin, `c` clear; 1 render-path). Follow-up: key on the
+  real catalog PK once the schema cache carries PK columns.
+
 - **Vim-style bookmarks (`m<a-z>` / `'<a-z>`).** Two pending-key
   flags on App (`pending_mark_set`, `pending_mark_jump`) consume
   the next keystroke in Normal as the bookmark letter. Set
@@ -1350,6 +1479,98 @@ Historical record. Newest at the top within each section.
   / query-running guard).
 
 ### Editor
+
+- **Per-database DBUnit `clean_mode`.** The apply script
+  (`Ctrl-D`) now picks its table-clean strategy from the
+  per-database safety profile instead of hardcoding `TRUNCATE`.
+  `CleanMode` gains `Serialize`/`Deserialize` (+ `Default` =
+  `Truncate`) and serialises as `clean_mode = "truncate"` /
+  `"delete_from"`; `SafetyProfile` gains a `clean_mode` field
+  (default `Truncate`, so existing setups are unchanged).
+  `load_dbunit_fixture` looks it up via
+  `safety_config.profile_for(dbname)`. Lets a database without
+  TRUNCATE privilege opt into `DELETE FROM` per-db. 4 new tests
+  (default is truncate, absent-in-TOML defaults, per-db
+  `delete_from` override + unlisted-db fallback, plus two app
+  tests: apply uses the configured mode / defaults to truncate).
+
+- **`\fixture` — capture current result as a DBUnit fixture.**
+  The reverse of the existing apply script: `\fixture` (or
+  `\fixture <path>`) snapshots the current result grid into a
+  FlatXmlDataSet (`<dataset><table col="val".../></dataset>`).
+  New pure `dbunit::generate_flat_xml` (inverse of
+  `parse_flat_xml`, with attribute escaping — `&<>"` plus
+  newline/tab/CR as numeric entities — so a round-trip is
+  exact) + `dbunit::fixture_from_rows(table, columns, rows)`
+  (position-aligned, short rows padded). Backslash command
+  `BackslashCmd::Fixture(Option<String>)`; `dispatch_fixture`
+  requires a non-empty single-table result (uses `grid_source`
+  for the element name), writes atomically, default path
+  `<cache>/<table>-fixture-<stamp>.xml` with the table name
+  sanitised so it can't escape the cache dir. Help cheatsheet +
+  snapshot updated. NULL caveat documented: a captured grid
+  can't tell SQL NULL from empty string, so every column is
+  emitted (empty → `col=""`). 11 new tests (5 pure dbunit:
+  round-trip, escaping round-trip, column alignment + short-row
+  pad, from-rows→generate→parse, empty fixture; 1 backslash
+  parse; 3 app dispatch: writes parseable dataset to an
+  explicit path, errors without a source table, errors on an
+  empty grid).
+
+- **Saved queries v2 — in-panel rename + search.** Two
+  additions to the saved-queries panel. **Rename** (`r`):
+  opens `Mode::RenameQueryPrompt` pre-filled with the focused
+  entry's name; Enter commits via a new position-preserving
+  `SavedQueries::rename(from, to)` (`Ok(true)` renamed /
+  `Ok(false)` source gone / `Err(RenameError::Exists)` refuses
+  to clobber another entry), persists, and returns to the
+  list; empty names and collisions keep the prompt open with a
+  status hint; Esc cancels. **Search** (`/`): opens
+  `Mode::SavedQueriesFilter`, a live substring filter
+  (case-insensitive, matches name OR body) backed by the pure
+  `app::filter_saved_indices`; the panel renders only matches
+  with a `/<term> (N/M shown)` title, and a new
+  `visible_saved_indices` / `focused_saved_index` pair maps the
+  cursor through the filter so load / delete / rename act on
+  the right entry. Filter clears on close / accept-then-reopen.
+  15 new tests (4 `SavedQueries::rename`: position-preserving /
+  missing-source / collision-refused / same-name-noop; 4
+  `filter_saved_indices`: blank-all / name-ci / body / no-match;
+  5 app-flow: filter narrows + focus mapping, esc clears,
+  backspace widens, rename prefill, rename empty-rejected,
+  rename collision-refused, rename esc; 2 render: live-filtered
+  panel with count, rename prompt prefilled). Persistence
+  paths (rename/delete `save_to`) stay covered at the `saved`
+  module level with explicit temp paths, not through the
+  handlers — consistent with the existing delete/save tests.
+
+- **Saved queries v2 — `:param` load-time prompts.** Loading a
+  saved query whose body contains `:name` placeholders now opens
+  `Mode::ParamPrompt` and collects one value per distinct
+  placeholder before substituting and loading into the editor.
+  New pure `query::params` module: a single SQL-aware scanner
+  backs both `extract_params` (distinct names, first-appearance
+  order) and `substitute_params` (verbatim replacement). The
+  scanner skips `::` casts, `:=`, single-quoted strings (with
+  `''` escapes), double-quoted identifiers, and line / block
+  comments, and requires an identifier-start after the colon so
+  `:1` isn't a placeholder. App side: `ParamPrompt` state +
+  `load_saved_query` (branches on whether params exist) +
+  `load_sql_into_editor` (shared load path) +
+  `on_param_prompt_key` (take/put-back to avoid borrow conflict
+  on completion); empty values are rejected, Esc cancels back to
+  the list. `draw_param_prompt` shows progress (`2/3`), the
+  values already entered, and the live input with a placed
+  cursor. 26 new tests (18 pure params: ordering / dedup / cast
+  skip / cast-then-param / string / quoted-ident / line+block
+  comment / `:=` / digit-after-colon / escaped-quote / empty,
+  plus substitute: verbatim / repeats / unmapped-intact /
+  no-touch-casts-strings / no-params / unicode-span; 7 App:
+  no-param direct load, enters prompt, sequential collect +
+  substitute, repeated-param fills both, empty rejected, esc
+  cancels, backspace edits; 1 render-path). Substitution is
+  verbatim (operator owns quoting; still routes through
+  `safety.rs` on run).
 
 - **Saved queries v1.** New `saved.rs` pure module
   (`SavedQuery { name, body }`, `SavedQueries::{ upsert, remove,
@@ -2078,7 +2299,7 @@ BEFORE FORMAT.
 
 ### ebman survey
 
-Survey of `/Users/tom/git/ebman/src/` to decide what's worth lifting.
+Survey of the sibling `ebman` project's `src/` to decide what's worth lifting.
 The lifts themselves are in [Open → Reuse from ebman]; the survey
 itself is done.
 - Adopt ebman's splash *rendering* but NOT its 3s minimum duration —
