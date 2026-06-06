@@ -11,6 +11,7 @@ use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
 use crate::tui::{Tui, TuiHost};
 
+use crate::text_input::TextInput;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::widgets::TableState;
@@ -488,7 +489,7 @@ pub struct ParamPrompt {
     /// Values already entered (aligned with `params[0..idx]`).
     pub values: Vec<String>,
     /// Current input buffer for `params[idx]`.
-    pub input: String,
+    pub input: TextInput,
 }
 
 /// Pure: scan every cell of every visible row and return the
@@ -1396,10 +1397,10 @@ pub struct App {
     /// Live substring filter for the saved-queries panel
     /// (`Mode::SavedQueriesFilter`). `None` = show everything.
     /// Matches case-insensitively on name OR body.
-    pub saved_queries_filter: Option<String>,
+    pub saved_queries_filter: Option<TextInput>,
     /// Input buffer for `Mode::RenameQueryPrompt` (the new name
     /// being typed), and the original name being renamed.
-    pub rename_query_buffer: String,
+    pub rename_query_buffer: TextInput,
     pub rename_query_from: String,
     /// Saved state for the non-active tabs. The active tab's
     /// state always lives in the per-session fields above; on
@@ -1677,7 +1678,7 @@ impl App {
             save_query_name: String::new(),
             param_prompt: None,
             saved_queries_filter: None,
-            rename_query_buffer: String::new(),
+            rename_query_buffer: TextInput::new(),
             rename_query_from: String::new(),
             // Start with a single tab whose state IS the per-
             // session fields. The Vec entry is a placeholder that
@@ -3421,7 +3422,7 @@ impl App {
             params,
             idx: 0,
             values: Vec::new(),
-            input: String::new(),
+            input: TextInput::new(),
         });
         self.mode = Mode::ParamPrompt;
     }
@@ -3438,8 +3439,6 @@ impl App {
     }
 
     fn on_param_prompt_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         // Take the prompt out so the completion path can borrow
         // `self` mutably (to load the editor) without aliasing.
         let Some(mut pp) = self.param_prompt.take() else {
@@ -3453,7 +3452,7 @@ impl App {
                 self.last_status = Some("param entry cancelled".into());
             }
             KeyCode::Enter => {
-                let val = pp.input.trim().to_string();
+                let val = pp.input.trimmed().to_string();
                 if val.is_empty() {
                     // Empty would splice into broken SQL — make the
                     // operator type something (or esc to cancel).
@@ -3462,7 +3461,7 @@ impl App {
                     return;
                 }
                 pp.values.push(val);
-                pp.input.clear();
+                pp.input = TextInput::new();
                 pp.idx += 1;
                 if pp.idx >= pp.params.len() {
                     let map: std::collections::HashMap<String, String> = pp
@@ -3479,15 +3478,10 @@ impl App {
                     self.param_prompt = Some(pp);
                 }
             }
-            KeyCode::Backspace => {
-                pp.input.pop();
-                self.param_prompt = Some(pp);
-            }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                pp.input.push(c);
-                self.param_prompt = Some(pp);
-            }
+            // All editing (insert / backspace / cursor move / word-delete)
+            // routes through the shared single-line widget.
             _ => {
+                pp.input.handle_key(key);
                 self.param_prompt = Some(pp);
             }
         }
@@ -3498,7 +3492,7 @@ impl App {
     pub fn visible_saved_indices(&self) -> Vec<usize> {
         filter_saved_indices(
             &self.saved_queries.entries,
-            self.saved_queries_filter.as_deref(),
+            self.saved_queries_filter.as_ref().map(|t| t.text()),
         )
     }
 
@@ -3572,15 +3566,13 @@ impl App {
     }
 
     fn start_saved_queries_filter(&mut self) {
-        self.saved_queries_filter = Some(String::new());
+        self.saved_queries_filter = Some(TextInput::new());
         self.saved_queries_cursor = 0;
         self.mode = Mode::SavedQueriesFilter;
         self.last_status = Some("filter saved queries · type to narrow".into());
     }
 
     fn on_saved_queries_filter_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Esc => {
                 // Cancel the search: drop the filter, back to the
@@ -3595,19 +3587,17 @@ impl App {
                 self.mode = Mode::SavedQueries;
                 self.last_status = None;
             }
-            KeyCode::Backspace => {
-                if let Some(f) = self.saved_queries_filter.as_mut() {
-                    f.pop();
+            // Editing routes through the shared widget. Re-home the list
+            // cursor only when the filter *text* changed (the visible set
+            // may have shrunk) — not on bare cursor movement.
+            _ => {
+                let filter = self.saved_queries_filter.get_or_insert_with(TextInput::new);
+                let before = filter.text().len();
+                filter.handle_key(key);
+                if filter.text().len() != before {
+                    self.saved_queries_cursor = 0;
                 }
-                self.saved_queries_cursor = 0;
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                self.saved_queries_filter
-                    .get_or_insert_with(String::new)
-                    .push(c);
-                self.saved_queries_cursor = 0;
-            }
-            _ => {}
         }
     }
 
@@ -3621,14 +3611,12 @@ impl App {
             return;
         };
         self.rename_query_from = name.clone();
-        self.rename_query_buffer = name;
+        self.rename_query_buffer = TextInput::with_text(name);
         self.mode = Mode::RenameQueryPrompt;
         self.last_status = Some("rename · edit name · enter save · esc cancel".into());
     }
 
     fn on_rename_query_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Esc => {
                 self.rename_query_buffer.clear();
@@ -3637,7 +3625,7 @@ impl App {
                 self.last_status = Some("rename cancelled".into());
             }
             KeyCode::Enter => {
-                let to = self.rename_query_buffer.trim().to_string();
+                let to = self.rename_query_buffer.trimmed().to_string();
                 if to.is_empty() {
                     self.last_status = Some("name required (esc to cancel)".into());
                     return;
@@ -3666,13 +3654,10 @@ impl App {
                     }
                 }
             }
-            KeyCode::Backspace => {
-                self.rename_query_buffer.pop();
+            // Editing routes through the shared single-line widget.
+            _ => {
+                self.rename_query_buffer.handle_key(key);
             }
-            KeyCode::Char(c) if !ctrl && !alt => {
-                self.rename_query_buffer.push(c);
-            }
-            _ => {}
         }
     }
 
@@ -9466,14 +9451,14 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('/')));
         assert_eq!(a.mode, Mode::SavedQueriesFilter);
         type_str(&mut a, "ord");
-        assert_eq!(a.saved_queries_filter.as_deref(), Some("ord"));
+        assert_eq!(a.saved_queries_filter.as_ref().map(|t| t.text()), Some("ord"));
         assert_eq!(a.visible_saved_indices(), vec![1]);
         // Cursor 0 in the filtered view maps to real entry index 1.
         assert_eq!(a.focused_saved_index(), Some(1));
         // Enter keeps the filter applied and returns to navigation.
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::SavedQueries);
-        assert_eq!(a.saved_queries_filter.as_deref(), Some("ord"));
+        assert_eq!(a.saved_queries_filter.as_ref().map(|t| t.text()), Some("ord"));
     }
 
     #[test]
@@ -9504,7 +9489,7 @@ mod tests {
         a.open_saved_queries();
         a.on_key(KeyEvent::from(KeyCode::Char('r')));
         assert_eq!(a.mode, Mode::RenameQueryPrompt);
-        assert_eq!(a.rename_query_buffer, "old");
+        assert_eq!(a.rename_query_buffer.text(), "old");
         assert_eq!(a.rename_query_from, "old");
     }
 
