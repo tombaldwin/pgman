@@ -228,7 +228,7 @@ fn draw_about(f: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = art_lines;
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("pgman {}", env!("CARGO_PKG_VERSION")),
+        format!("pgman {} · beta", env!("CARGO_PKG_VERSION")),
         Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),

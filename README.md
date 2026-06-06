@@ -2,9 +2,17 @@
 
 [![CI](https://github.com/tombaldwin/pgman/actions/workflows/test.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![status: public beta](https://img.shields.io/badge/status-public%20beta-orange.svg)](https://github.com/tombaldwin/pgman/releases)
 
 A k9s-style Postgres TUI aimed at Java / AWS shops. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
+
+> ### ⚠️ Public beta
+> pgman is pre-1.0 — expect rough edges and breaking changes before 1.0.
+> It defaults to **read-only** connections and routes every write through
+> per-statement safety guards, but don't point it at a production database
+> without reviewing your `safety.toml` first. Bug reports and feedback very
+> welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
 
 ![pgman demo — live filter, schema browser, saved-query :param prompt](demo.gif)
 
