@@ -1,6 +1,6 @@
 {
   "candor": {
-    "version": "d9e8063",
+    "version": "fce3119",
     "toolchain": "nightly-2026-04-16"
   },
   "functions": [
@@ -19,7 +19,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf13ab0a1e021982c"
+      "hash": "d0fba3fd0d251ba08492952baff418ca"
     },
     {
       "fn": "<tui::Tui as tui::TuiHost>::draw",
@@ -34,7 +34,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1e201d42f378ad79",
+      "hash": "d0fba3fd0d251ba0f1aa458bf10de89c",
       "calls": [
         "tui::Tui::draw"
       ]
@@ -54,7 +54,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da788eb94196c38e1d"
+      "hash": "d0fba3fd0d251ba0dfb916f585841d22"
     },
     {
       "fn": "app::App::cancel_running_query",
@@ -69,7 +69,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da45cceb8760eb418f",
+      "hash": "d0fba3fd0d251ba0a597082ae5cc8b43",
       "calls": [
         "<app::PgCancelDispatcher as app::CancelDispatcher>::dispatch"
       ]
@@ -89,7 +89,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1125e7efbfa1434d"
+      "hash": "d0fba3fd0d251ba050057533bc8206bd"
     },
     {
       "fn": "app::App::close_tx",
@@ -104,7 +104,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8aceff1999a1f08a",
+      "hash": "d0fba3fd0d251ba0ddd5fb844c8758ab",
       "calls": [
         "conn::tx_commit",
         "conn::tx_rollback"
@@ -127,7 +127,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab4573aa2b4049b3c",
+      "hash": "d0fba3fd0d251ba003075267f73524fb",
       "fs": [
         "write"
       ],
@@ -153,7 +153,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da34b0fcf38c42f900",
+      "hash": "d0fba3fd0d251ba0c1b3f6d4091f3294",
       "fs": [
         "write"
       ],
@@ -179,7 +179,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da5a31fdeb70ba07e4",
+      "hash": "d0fba3fd0d251ba0372606c4656a58e1",
       "fs": [
         "write"
       ],
@@ -204,7 +204,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da4c020415e0de5b3d"
+      "hash": "d0fba3fd0d251ba0b04e1d84cf06f7cf"
     },
     {
       "fn": "app::App::editor_undo",
@@ -221,7 +221,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da0820ebf7e530aeaf"
+      "hash": "d0fba3fd0d251ba0257d5a35eb7bbeb0"
     },
     {
       "fn": "app::App::export_grid_to_clipboard",
@@ -238,7 +238,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da3f1bc7bf2637b37c"
+      "hash": "d0fba3fd0d251ba07e8f687f15bd3938"
     },
     {
       "fn": "app::App::load_dbunit_fixture",
@@ -255,7 +255,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da7799c8bed45cbc54",
+      "hash": "d0fba3fd0d251ba065a64161fa70a5ef",
       "fs": [
         "read"
       ]
@@ -275,7 +275,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa23eec54626066fc"
+      "hash": "d0fba3fd0d251ba00541be38495806df"
     },
     {
       "fn": "app::App::on_cell_detail_json_key",
@@ -290,7 +290,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8e903f849bbe7822",
+      "hash": "d0fba3fd0d251ba0ca45bd4026a14221",
       "calls": [
         "app::App::yank_json_cell_path"
       ]
@@ -308,7 +308,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da280289a2f8fbf8ae",
+      "hash": "d0fba3fd0d251ba02fd1f3af6f372945",
       "calls": [
         "app::App::on_cell_detail_json_key",
         "app::App::on_cell_detail_text_key"
@@ -327,7 +327,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab24d62cc45f0868c",
+      "hash": "d0fba3fd0d251ba0860e7d56d49d3ff8",
       "calls": [
         "app::App::yank_focused_field"
       ]
@@ -347,7 +347,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac676d57f55b1e3e0",
+      "hash": "d0fba3fd0d251ba0c64e157ce3944acd",
       "calls": [
         "app::App::spawn_run"
       ]
@@ -365,7 +365,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da6c4ce50063665dc8",
+      "hash": "d0fba3fd0d251ba0903217d9361acda8",
       "calls": [
         "app::App::spawn_terminate_session"
       ]
@@ -391,7 +391,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da177f305a95623065",
+      "hash": "d0fba3fd0d251ba02ce35cc181802fe8",
       "calls": [
         "app::App::start_connect"
       ]
@@ -419,7 +419,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da6bea0749097f7dd5",
+      "hash": "d0fba3fd0d251ba0a70d9d2e164acb73",
       "fs": [
         "read",
         "write"
@@ -454,7 +454,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dafd88cd5bff54f627",
+      "hash": "d0fba3fd0d251ba00cab91dae7e05778",
       "fs": [
         "read",
         "write"
@@ -494,7 +494,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da0f5f7ed518ebcf2e",
+      "hash": "d0fba3fd0d251ba077fb0e99c87f178c",
       "fs": [
         "read",
         "write"
@@ -530,7 +530,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da502398bf863163a0",
+      "hash": "d0fba3fd0d251ba0a328fe45379cd8b3",
       "fs": [
         "read",
         "write"
@@ -574,7 +574,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dadb9eae49937a95ec",
+      "hash": "d0fba3fd0d251ba0932b69748f0b8b78",
       "calls": [
         "app::App::spawn_run"
       ]
@@ -602,7 +602,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8327d830a61a593b",
+      "hash": "d0fba3fd0d251ba0bc10c83de87000af",
       "calls": [
         "app::App::export_grid_to_clipboard",
         "app::App::start_connect",
@@ -626,7 +626,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da46c56b0b196f639c",
+      "hash": "d0fba3fd0d251ba0341552e89b353aff",
       "calls": [
         "app::App::yank_focused_notification"
       ]
@@ -644,7 +644,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daae1713c82681e17f",
+      "hash": "d0fba3fd0d251ba0fd6cf2c801529ea7",
       "calls": [
         "app::saved_queries_path"
       ]
@@ -662,7 +662,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da24f9ecdc0a7d9c04",
+      "hash": "d0fba3fd0d251ba03571a3697966d869",
       "calls": [
         "app::App::yank_focused_field"
       ]
@@ -680,7 +680,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da4cdb691fc2aeaf13",
+      "hash": "d0fba3fd0d251ba084a74be177891768",
       "calls": [
         "app::saved_queries_path"
       ]
@@ -698,7 +698,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1aff99afb93b5402",
+      "hash": "d0fba3fd0d251ba0f7f88f185fc62f41",
       "calls": [
         "app::saved_queries_path"
       ]
@@ -716,7 +716,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da24466689d7843c3b",
+      "hash": "d0fba3fd0d251ba0eebfec8a98e02b65",
       "calls": [
         "app::App::yank_schema_browser_insert",
         "app::App::yank_schema_browser_select"
@@ -739,7 +739,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da17cbbdb729e759aa",
+      "hash": "d0fba3fd0d251ba05e15efe52459f6a3",
       "calls": [
         "app::App::start_schema_lint",
         "app::App::yank_schema_lint_suggestion"
@@ -760,7 +760,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8211477ae3ad648b",
+      "hash": "d0fba3fd0d251ba064dcac8b0ee86846",
       "calls": [
         "app::App::refresh_sessions",
         "app::App::toggle_auto_refresh"
@@ -781,7 +781,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dad0d9f92305ff23f1",
+      "hash": "d0fba3fd0d251ba0655b4877dd77fa26",
       "calls": [
         "app::App::refresh_slow_queries",
         "app::App::toggle_auto_refresh"
@@ -800,7 +800,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da224f5596e6549f9a",
+      "hash": "d0fba3fd0d251ba0cf61b465654b9dfa",
       "calls": [
         "app::App::capture_tap_baseline"
       ]
@@ -818,7 +818,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da3379ac771b341ccb",
+      "hash": "d0fba3fd0d251ba0c3bee44ff5c5f257",
       "calls": [
         "app::App::close_tx"
       ]
@@ -838,7 +838,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da54fdb5416f699e47"
+      "hash": "d0fba3fd0d251ba06ba2fe2a10aed45c"
     },
     {
       "fn": "app::App::reformat_buffer",
@@ -853,7 +853,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da154153e4036437fc",
+      "hash": "d0fba3fd0d251ba0a953ca3343476fbe",
       "calls": [
         "app::pg_format_via"
       ]
@@ -871,7 +871,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da15d6227d59bdabe9",
+      "hash": "d0fba3fd0d251ba06b9a477f71d10b93",
       "calls": [
         "app::App::spawn_sessions_load"
       ]
@@ -889,7 +889,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf77bd4fd03581a4c",
+      "hash": "d0fba3fd0d251ba045bfe36eb176017a",
       "calls": [
         "app::App::spawn_slow_queries_load"
       ]
@@ -907,7 +907,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da302aa7bf0bf57b8c",
+      "hash": "d0fba3fd0d251ba0d045afed63bef384",
       "calls": [
         "app::chrono_like_now_utc"
       ]
@@ -931,7 +931,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dad5007a60b9e8bcf1",
+      "hash": "d0fba3fd0d251ba0c21f2682f10ea30b",
       "fs": [
         "write"
       ],
@@ -957,7 +957,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab28115af50c2eeed",
+      "hash": "d0fba3fd0d251ba060597098d314bb8f",
       "calls": [
         "app::App::spawn_run"
       ]
@@ -989,7 +989,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da2ad2357cdfbc2ebe",
+      "hash": "d0fba3fd0d251ba0f94cc8e6d95aa29f",
       "fs": [
         "read",
         "write"
@@ -1017,7 +1017,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1c88c013dd58d3f4",
+      "hash": "d0fba3fd0d251ba01f78f1a3f1845797",
       "fs": [
         "read",
         "write"
@@ -1056,7 +1056,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dae1946f5c7d7d6ac8",
+      "hash": "d0fba3fd0d251ba086db7987c8c9d956",
       "fs": [
         "read",
         "write"
@@ -1088,7 +1088,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da057cf96a81c53961",
+      "hash": "d0fba3fd0d251ba07fee781124fb0024",
       "calls": [
         "app::run_cost_explain"
       ]
@@ -1110,7 +1110,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da618bb40c88182029",
+      "hash": "d0fba3fd0d251ba0c6498e5fa6ec1ef0",
       "calls": [
         "app::execute"
       ]
@@ -1128,7 +1128,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1bda35860f330437",
+      "hash": "d0fba3fd0d251ba0ffcca8a79a2cdb0c",
       "calls": [
         "conn::run_query"
       ]
@@ -1146,7 +1146,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da9019040e9a5bbb71",
+      "hash": "d0fba3fd0d251ba041532cb69976a0b5",
       "calls": [
         "conn::run_query"
       ]
@@ -1166,7 +1166,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da59b315fba776d88d",
+      "hash": "d0fba3fd0d251ba012bfb4647ac8dd96",
       "calls": [
         "conn::run_query"
       ]
@@ -1192,7 +1192,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf46188c298dac1c0",
+      "hash": "d0fba3fd0d251ba0acba3b9f8cd1751e",
       "calls": [
         "conn::connect_and_bootstrap"
       ]
@@ -1210,7 +1210,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da6970ca19ba352cb4",
+      "hash": "d0fba3fd0d251ba0f11bfc240048d4ea",
       "calls": [
         "app::App::cancel_running_query"
       ]
@@ -1230,7 +1230,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da839c9ef6f5a8b1aa",
+      "hash": "d0fba3fd0d251ba0079ee81f68f849d6",
       "calls": [
         "query::lint::fetch_live"
       ]
@@ -1248,7 +1248,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da262c7e5ab8a275a5",
+      "hash": "d0fba3fd0d251ba01364adda6aeca992",
       "calls": [
         "app::App::spawn_sessions_load"
       ]
@@ -1266,7 +1266,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da7bcc743a1589838f",
+      "hash": "d0fba3fd0d251ba0ab72bfd4e1096cce",
       "calls": [
         "app::App::spawn_slow_queries_load"
       ]
@@ -1286,7 +1286,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dad752acf27915c4c3"
+      "hash": "d0fba3fd0d251ba044be4a421a528fff"
     },
     {
       "fn": "app::App::tick_auto_refresh",
@@ -1305,7 +1305,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1ea0a520b287d67e",
+      "hash": "d0fba3fd0d251ba0b2b60247cc69ba60",
       "calls": [
         "app::App::refresh_sessions",
         "app::App::refresh_slow_queries"
@@ -1326,7 +1326,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da0d00ca73a686559b"
+      "hash": "d0fba3fd0d251ba000a3a689fa7d2240"
     },
     {
       "fn": "app::App::tick_watch",
@@ -1349,7 +1349,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da2c1a0b1cc7a8be96",
+      "hash": "d0fba3fd0d251ba0e2bb42d400969a58",
       "fs": [
         "write"
       ],
@@ -1372,7 +1372,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da73e121c7f84be3ac"
+      "hash": "d0fba3fd0d251ba0a288f41823bf5cb4"
     },
     {
       "fn": "app::App::write_export",
@@ -1389,7 +1389,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da0de8fca50e3e4cc5",
+      "hash": "d0fba3fd0d251ba0808143972a301467",
       "fs": [
         "write"
       ]
@@ -1409,7 +1409,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da3d113a66b7145771"
+      "hash": "d0fba3fd0d251ba033db06eec9d04ba3"
     },
     {
       "fn": "app::App::yank_focused_notification",
@@ -1426,7 +1426,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf22639118c7a9a94"
+      "hash": "d0fba3fd0d251ba069f7c5a6c968cbf2"
     },
     {
       "fn": "app::App::yank_json_cell_path",
@@ -1443,7 +1443,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac7e6625e4d4851aa"
+      "hash": "d0fba3fd0d251ba0df5fb27263f86c4e"
     },
     {
       "fn": "app::App::yank_row_as_insert",
@@ -1460,7 +1460,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da74c3bf3b342c81c2"
+      "hash": "d0fba3fd0d251ba056c4d8158efa7333"
     },
     {
       "fn": "app::App::yank_schema_browser_insert",
@@ -1477,7 +1477,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab94f9bf75fa775e0"
+      "hash": "d0fba3fd0d251ba022d95bba6218bb02"
     },
     {
       "fn": "app::App::yank_schema_browser_select",
@@ -1494,7 +1494,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da810b894a328b74ad"
+      "hash": "d0fba3fd0d251ba008db1cb3075adae3"
     },
     {
       "fn": "app::App::yank_schema_lint_suggestion",
@@ -1511,7 +1511,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1c0964ba5232f912"
+      "hash": "d0fba3fd0d251ba088a0bbb3cf69fe41"
     },
     {
       "fn": "app::cache_stamped_path",
@@ -1530,7 +1530,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dabf7243772f8afbe8",
+      "hash": "d0fba3fd0d251ba04277879ed759ebcf",
       "calls": [
         "util::cache_dir"
       ]
@@ -1550,7 +1550,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa88942d140866ca7"
+      "hash": "d0fba3fd0d251ba051bca89db23b7e33"
     },
     {
       "fn": "app::default_fixture_path",
@@ -1567,7 +1567,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8fb9e24af8cd445d",
+      "hash": "d0fba3fd0d251ba00439efae019578df",
       "calls": [
         "app::cache_stamped_path"
       ]
@@ -1587,7 +1587,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dacc6227ad475f28b5",
+      "hash": "d0fba3fd0d251ba0ab91dee95da61475",
       "calls": [
         "app::cache_stamped_path"
       ]
@@ -1605,7 +1605,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da125c262ba089f1bb",
+      "hash": "d0fba3fd0d251ba0fe06a7c1aae21855",
       "calls": [
         "util::data_dir"
       ]
@@ -1623,7 +1623,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daacab5e3b57813b16",
+      "hash": "d0fba3fd0d251ba0b2d41046197bc089",
       "calls": [
         "conn::run_batch",
         "conn::run_batch_in_tx_open",
@@ -1653,7 +1653,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da48e04d709b99edcf",
+      "hash": "d0fba3fd0d251ba0d8288fa0a1abc838",
       "fs": [
         "read",
         "write"
@@ -1672,7 +1672,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daae72e7f8f273b22e",
+      "hash": "d0fba3fd0d251ba0b535b6494e5a1f6c",
       "calls": [
         "util::data_dir"
       ]
@@ -1692,7 +1692,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab693fb433719f6b6",
+      "hash": "d0fba3fd0d251ba0000ff027bca9c30a",
       "fs": [
         "read"
       ],
@@ -1716,7 +1716,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da779237f91193b94a",
+      "hash": "d0fba3fd0d251ba064d3df848fa149b4",
       "fs": [
         "read"
       ]
@@ -1736,7 +1736,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dacd6044332b6f4a78",
+      "hash": "d0fba3fd0d251ba01f7d914a0e901145",
       "fs": [
         "read"
       ],
@@ -1760,7 +1760,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dacf8129be3b25c3ca",
+      "hash": "d0fba3fd0d251ba0253adaea99ea7f84",
       "fs": [
         "read"
       ]
@@ -1778,7 +1778,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa15f235833b93769",
+      "hash": "d0fba3fd0d251ba03cacdf7a262c3620",
       "calls": [
         "app::draft_path"
       ]
@@ -1796,7 +1796,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da5f2ffdbccf4ac5ee",
+      "hash": "d0fba3fd0d251ba08e8d030105f60330",
       "calls": [
         "app::history_path"
       ]
@@ -1816,7 +1816,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf46defec67a5a8fe"
+      "hash": "d0fba3fd0d251ba0803cd5e9d3758b4a"
     },
     {
       "fn": "app::run_cost_explain",
@@ -1833,7 +1833,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac9d3c622e67deb6c"
+      "hash": "d0fba3fd0d251ba00f1147e13298d3d5"
     },
     {
       "fn": "app::saved_queries_path",
@@ -1848,7 +1848,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1c72fd68bde6e251",
+      "hash": "d0fba3fd0d251ba02c15c36d1c8a3c76",
       "calls": [
         "util::data_dir"
       ]
@@ -1874,7 +1874,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab486ec1eef0acc0c",
+      "hash": "d0fba3fd0d251ba0689167711bf6fa81",
       "calls": [
         "conn::connect_only",
         "conn::run_batch",
@@ -1896,7 +1896,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dadc21680f66e74f2c"
+      "hash": "d0fba3fd0d251ba0f4a4f8a0638e1ebc"
     },
     {
       "fn": "conn::apply_ssl_mode",
@@ -1913,7 +1913,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac985714e169eadc4"
+      "hash": "d0fba3fd0d251ba029cd3ee4b41be4d3"
     },
     {
       "fn": "conn::build_tls_connector",
@@ -1930,7 +1930,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8c9d9d7e0d4e21bf"
+      "hash": "d0fba3fd0d251ba087b4ffee6309d525"
     },
     {
       "fn": "conn::connect_and_bootstrap",
@@ -1955,7 +1955,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dabf242f381eba4882",
+      "hash": "d0fba3fd0d251ba0dd3f3f34ba80416b",
       "calls": [
         "conn::connect_inner",
         "conn::run_query",
@@ -1986,7 +1986,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac3101d982f00adb6",
+      "hash": "d0fba3fd0d251ba034550326333bbc4d",
       "calls": [
         "conn::apply_ssl_mode",
         "conn::build_tls_connector",
@@ -2015,7 +2015,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da7741cb65e25060ae",
+      "hash": "d0fba3fd0d251ba0c92cfee0ac617e98",
       "calls": [
         "conn::connect_inner"
       ]
@@ -2035,7 +2035,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa6d2b0bf6c281109"
+      "hash": "d0fba3fd0d251ba0716e08580892c310"
     },
     {
       "fn": "conn::run_batch_in_tx_open",
@@ -2052,7 +2052,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da90e3a48383cee0d2"
+      "hash": "d0fba3fd0d251ba019a44cecc663e7c7"
     },
     {
       "fn": "conn::run_in_tx_open",
@@ -2069,7 +2069,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab32dce5bc53b064b",
+      "hash": "d0fba3fd0d251ba027eaa589be8a4bf5",
       "calls": [
         "conn::run_statement"
       ]
@@ -2089,7 +2089,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8ca9e4ee68c689a0",
+      "hash": "d0fba3fd0d251ba04e5f250db118a5c8",
       "calls": [
         "conn::run_statement"
       ]
@@ -2109,7 +2109,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da34c6b1f32ac00d62",
+      "hash": "d0fba3fd0d251ba0912aaa1459f3cf04",
       "calls": [
         "conn::stream_rows"
       ]
@@ -2129,7 +2129,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da9fc66c05d99a65d4",
+      "hash": "d0fba3fd0d251ba00fc4c7c2c165cf7c",
       "calls": [
         "conn::stream_rows"
       ]
@@ -2149,7 +2149,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da24f4b7c5a50b82bc"
+      "hash": "d0fba3fd0d251ba0a858ec145107f432"
     },
     {
       "fn": "conn::stream_rows",
@@ -2166,7 +2166,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dae0d5434547ae9a41"
+      "hash": "d0fba3fd0d251ba0179a75931a0e9248"
     },
     {
       "fn": "conn::tx_commit",
@@ -2183,7 +2183,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8c4e95b509c8cc58"
+      "hash": "d0fba3fd0d251ba0f918a7d72b0bc6c4"
     },
     {
       "fn": "conn::tx_rollback",
@@ -2200,7 +2200,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da7d2623f5fb8f7023"
+      "hash": "d0fba3fd0d251ba0ebeee0bfbfb1455a"
     },
     {
       "fn": "creds::intellij::expand_to_dsns",
@@ -2219,7 +2219,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dad96a269bb4a4f007",
+      "hash": "d0fba3fd0d251ba09faaec91cc4fcde4",
       "calls": [
         "conn::Dsn::parse"
       ]
@@ -2241,7 +2241,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da42716dcfa2b90443",
+      "hash": "d0fba3fd0d251ba02b7461556daab9b5",
       "calls": [
         "conn::Dsn::parse"
       ]
@@ -2261,7 +2261,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1dbdc16477876ccc",
+      "hash": "d0fba3fd0d251ba0aeff447757c680b3",
       "calls": [
         "app::App::new",
         "conn::Dsn::parse"
@@ -2285,7 +2285,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac869a268abf60d5f",
+      "hash": "d0fba3fd0d251ba0d58107f00840f046",
       "calls": [
         "conn::Dsn::parse"
       ]
@@ -2308,7 +2308,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa8d7e562299ffb4d",
+      "hash": "d0fba3fd0d251ba0f791629793935671",
       "fs": [
         "read"
       ]
@@ -2330,7 +2330,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da8bd1691309a74cc4",
+      "hash": "d0fba3fd0d251ba02d56d08804a83a17",
       "calls": [
         "query::lint::run_lint101",
         "query::lint::run_lint102",
@@ -2355,7 +2355,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da0a3526d53388d3fa"
+      "hash": "d0fba3fd0d251ba0fbf808d2d2ae5abd"
     },
     {
       "fn": "query::lint::run_lint102",
@@ -2372,7 +2372,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daee2cbc1c470d8c29"
+      "hash": "d0fba3fd0d251ba069a42b737551056a"
     },
     {
       "fn": "query::lint::run_lint103",
@@ -2389,7 +2389,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dabb744f311aed6ad1"
+      "hash": "d0fba3fd0d251ba035970a0d8ffda302"
     },
     {
       "fn": "query::lint::run_lint104",
@@ -2406,7 +2406,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dadceda0c1e0d6abb8"
+      "hash": "d0fba3fd0d251ba05e1bd70e2d3b7430"
     },
     {
       "fn": "query::lint::run_lint105",
@@ -2423,7 +2423,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac5040095e5a2eab6"
+      "hash": "d0fba3fd0d251ba0b0e796f0fee75b37"
     },
     {
       "fn": "query::lint::run_lint106",
@@ -2440,7 +2440,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dab094bba4c8d6688d"
+      "hash": "d0fba3fd0d251ba021b63924ee123552"
     },
     {
       "fn": "query::schema::fetch",
@@ -2460,7 +2460,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dad6d3f17f05e27bb6"
+      "hash": "d0fba3fd0d251ba07b191af5bcf34f2b"
     },
     {
       "fn": "saved::load_from",
@@ -2480,7 +2480,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da801e0a8d99a1f974",
+      "hash": "d0fba3fd0d251ba01ecb862bccc0168b",
       "fs": [
         "read"
       ]
@@ -2500,7 +2500,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dac0005b9db5b111f4"
+      "hash": "d0fba3fd0d251ba01797e685fed55f82"
     },
     {
       "fn": "tap::listener::handle_tcp_conn",
@@ -2519,7 +2519,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dadef553411b804755",
+      "hash": "d0fba3fd0d251ba06598da11d7f63874",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros"
@@ -2545,7 +2545,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dabbbdebdb42f11cff",
+      "hash": "d0fba3fd0d251ba0ff1f606267f5b215",
       "calls": [
         "tap::listener::handle_tcp_conn"
       ]
@@ -2570,7 +2570,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da7fdcfe570e15b159",
+      "hash": "d0fba3fd0d251ba057a317ab8c4c8124",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros"
@@ -2591,7 +2591,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447dae750f3059137ea74"
+      "hash": "d0fba3fd0d251ba09eb1cb86c641ca44"
     },
     {
       "fn": "tap::otlp::handle_otlp_conn",
@@ -2608,7 +2608,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1ebd1f5f7af4e8d0",
+      "hash": "d0fba3fd0d251ba0d26c9f23ab13c7f8",
       "calls": [
         "tap::otlp::process_otlp_request"
       ]
@@ -2626,7 +2626,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da84d7944dc433250b",
+      "hash": "d0fba3fd0d251ba0d2d580746737aa3a",
       "calls": [
         "tap::otlp::span_to_tap_event"
       ]
@@ -2648,7 +2648,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da61331e82ae2667b1",
+      "hash": "d0fba3fd0d251ba0e2a4e98cac148ef4",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros",
@@ -2675,7 +2675,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa72771eb6f08c498",
+      "hash": "d0fba3fd0d251ba07c8de17478d9052a",
       "calls": [
         "tap::otlp::handle_otlp_conn"
       ]
@@ -2695,7 +2695,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da88e8c2e1ab2ba29a"
+      "hash": "d0fba3fd0d251ba057ed14e1a9ca5d26"
     },
     {
       "fn": "tap::replay::run_replay_file",
@@ -2717,7 +2717,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da4b020a712d836a8f",
+      "hash": "d0fba3fd0d251ba0a909f903952e9ea6",
       "fs": [
         "read"
       ],
@@ -2738,7 +2738,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da2abe3f809fd99acd",
+      "hash": "d0fba3fd0d251ba0ce7af45db1caad97",
       "calls": [
         "ui::draw"
       ]
@@ -2767,7 +2767,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da587d78e793698ff3",
+      "hash": "d0fba3fd0d251ba02e32a7f84170d7ca",
       "calls": [
         "tunnel::pick_free_local_port"
       ]
@@ -2787,7 +2787,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da5e4265c2d29b0f25"
+      "hash": "d0fba3fd0d251ba0ef37497338f346fe"
     },
     {
       "fn": "ui::baseline_age_label",
@@ -2804,7 +2804,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da864baa2e2fcb8182"
+      "hash": "d0fba3fd0d251ba0efeaa95cb3b0b9d0"
     },
     {
       "fn": "ui::draw",
@@ -2819,7 +2819,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daeac65fe8f2d7130c",
+      "hash": "d0fba3fd0d251ba06fd06bc87dab29b2",
       "calls": [
         "ui::draw_tap_monitor"
       ]
@@ -2837,7 +2837,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf4abd130f0e9b5d5",
+      "hash": "d0fba3fd0d251ba055ef61e6b7777cf0",
       "calls": [
         "ui::draw_tap_monitor_baseline"
       ]
@@ -2855,7 +2855,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da3d6a68d905baf226",
+      "hash": "d0fba3fd0d251ba06d48b4a4085cf11c",
       "calls": [
         "ui::baseline_age_label"
       ]
@@ -2878,7 +2878,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da1fc5c2b0c9baf517"
+      "hash": "d0fba3fd0d251ba047216e4e4c859441"
     },
     {
       "fn": "upgrade::run",
@@ -2897,7 +2897,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da104e5c41d4e6e739",
+      "hash": "d0fba3fd0d251ba012d3683d9e9fe282",
       "calls": [
         "upgrade::relaunch"
       ]
@@ -2917,7 +2917,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da06accf508e054e2f"
+      "hash": "d0fba3fd0d251ba0d6b427a8c518335a"
     },
     {
       "fn": "util::config_dir",
@@ -2934,7 +2934,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447da4f01e6ed4cc22d4e"
+      "hash": "d0fba3fd0d251ba084eee3cf92682c6e"
     },
     {
       "fn": "util::config_file",
@@ -2949,7 +2949,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daf0b39911124cf14a",
+      "hash": "d0fba3fd0d251ba01325afae465ef2cb",
       "calls": [
         "util::config_dir"
       ]
@@ -2969,7 +2969,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "b5a5836e9de447daa28b687851a847cb"
+      "hash": "d0fba3fd0d251ba00a82a865c5467b21"
     }
   ]
 }
