@@ -11,13 +11,13 @@ use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
 use crate::tui::{Tui, TuiHost};
 
-use tui_common::TextInput;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::widgets::TableState;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tui_common::TextInput;
 
 /// The query M0 runs on connect — a read-only database overview. Every column
 /// is text, so it renders without type-specific decoding.
