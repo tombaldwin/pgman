@@ -293,7 +293,6 @@ fn result_diff_view_renders_added_removed_changed() {
     let pinned = pgman::app::PinnedResult {
         columns: cols.clone(),
         rows: a_rows,
-        source: None,
         label: "A-query".into(),
     };
     a.result_diff = Some(pgman::app::ResultDiffState {
