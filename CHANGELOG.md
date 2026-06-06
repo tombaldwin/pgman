@@ -6,8 +6,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
-pgman is pre-1.0; until the first tagged release, `main` is the moving target.
-Highlights so far (see `BACKLOG.md` for the full record):
+Nothing yet — `main` is the moving target between releases.
+
+## [0.1.0] — 2026-06-06
+
+First public beta. pgman is pre-1.0; expect rough edges and breaking
+changes before 1.0. Highlights (see `BACKLOG.md` for the full record):
 
 - **Connect & browse** — auto-discovery of datasources from Spring
   `application*.yml`/`.properties` (incl. profile overlays), IntelliJ
@@ -26,4 +30,5 @@ Highlights so far (see `BACKLOG.md` for the full record):
   with hotspots, per-caller and per-pool rollups, transaction view, baseline
   diff, and live N+1 detection; Markdown / HTML report export.
 
-[Unreleased]: https://github.com/tombaldwin/pgman/commits/main
+[Unreleased]: https://github.com/tombaldwin/pgman/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/tombaldwin/pgman/releases/tag/v0.1.0
