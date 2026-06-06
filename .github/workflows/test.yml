@@ -90,3 +90,12 @@ jobs:
       # before clippy started running in CI. Fix-as-you-go; tightening
       # to deny is a follow-up.
       - run: cargo clippy --all-targets
+
+  # Supply-chain gate: security advisories, license allow-list, bans,
+  # and source provenance, per deny.toml.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
