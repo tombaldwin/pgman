@@ -180,9 +180,9 @@ async fn main() -> anyhow::Result<()> {
                         });
                     }
                     None => tracing::warn!(
-                        "  project connection '{}' has unparseable url {:?}; skipping",
+                        "  project connection '{}' has unparseable url '{}'; skipping",
                         c.name,
-                        c.url
+                        conn::redact_url(&c.url)
                     ),
                 }
             }
@@ -699,7 +699,10 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
         tracing::info!(
             "  {} → {}",
             s.name,
-            s.jdbc_url.as_deref().unwrap_or("(no jdbc-url)")
+            s.jdbc_url
+                .as_deref()
+                .map(conn::redact_url)
+                .unwrap_or_else(|| "(no jdbc-url)".to_string())
         );
     }
     for s in sources {
