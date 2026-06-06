@@ -7,8 +7,8 @@ use pgman::{app, batch, conn, creds, font_probe, project, safety, tap, theme, tu
 #[derive(Parser)]
 #[command(
     name = "pgman",
-    version,
-    about = "k9s-style Postgres TUI for Java/AWS shops"
+    version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
+    about = "k9s-style Postgres TUI for Java/AWS shops (public beta)"
 )]
 struct Cli {
     /// Connect using a postgres:// DSN.
