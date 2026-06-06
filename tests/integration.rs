@@ -146,12 +146,14 @@ async fn cancel_token_aborts_pg_sleep() {
     // verify the query returns with a cancellation error before the
     // sleep completes. This is what Ctrl-C actually does — the
     // unit tests cover the routing; this one covers the wire.
-    use pgman::conn::{connect_only, NoticeMsg};
+    use pgman::conn::{connect_only, NoticeMsg, NotificationMsg};
     use std::time::{Duration, Instant};
 
     let dsn = pgman::conn::Dsn::parse(DSN).expect("parse DSN");
     let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel::<NoticeMsg>();
-    let (client, _tunnel) = connect_only(dsn, false, 0, notice_tx)
+    let (notification_tx, _notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<NotificationMsg>();
+    let (client, _tunnel) = connect_only(dsn, false, 0, notice_tx, notification_tx)
         .await
         .expect("connect");
 

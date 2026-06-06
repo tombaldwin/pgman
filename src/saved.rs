@@ -60,6 +60,39 @@ impl SavedQueries {
     pub fn get(&self, name: &str) -> Option<&SavedQuery> {
         self.entries.iter().find(|e| e.name == name)
     }
+
+    /// Rename the entry `from` → `to`, **preserving its list
+    /// position** (unlike remove + upsert, which would move it to
+    /// the end). Outcomes:
+    /// - `Ok(true)` — renamed.
+    /// - `Ok(false)` — no entry named `from` (nothing changed).
+    /// - `Err(RenameError::Exists)` — a *different* entry is
+    ///   already named `to`; refused so a rename can't silently
+    ///   clobber another saved query.
+    ///
+    /// `from == to` is a no-op success (`Ok(true)`).
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<bool, RenameError> {
+        if from == to {
+            return Ok(self.get(from).is_some());
+        }
+        if self.entries.iter().any(|e| e.name == to) {
+            return Err(RenameError::Exists);
+        }
+        match self.entries.iter_mut().find(|e| e.name == from) {
+            Some(e) => {
+                e.name = to.to_string();
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
+/// Why a [`SavedQueries::rename`] was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameError {
+    /// The target name is already taken by another entry.
+    Exists,
 }
 
 /// Best-effort load. A missing / unreadable / malformed file
@@ -113,6 +146,76 @@ mod tests {
         assert_eq!(removed.body, "select 1");
         assert!(q.entries.is_empty());
         assert!(q.remove("a").is_none());
+    }
+
+    #[test]
+    fn rename_preserves_position_and_body() {
+        let mut q = SavedQueries::default();
+        q.upsert(SavedQuery {
+            name: "a".into(),
+            body: "one".into(),
+        });
+        q.upsert(SavedQuery {
+            name: "b".into(),
+            body: "two".into(),
+        });
+        q.upsert(SavedQuery {
+            name: "c".into(),
+            body: "three".into(),
+        });
+        assert_eq!(q.rename("b", "bee"), Ok(true));
+        // Position 1 preserved (not moved to the end).
+        assert_eq!(q.entries[1].name, "bee");
+        assert_eq!(q.entries[1].body, "two");
+        assert_eq!(
+            q.entries
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "bee", "c"]
+        );
+    }
+
+    #[test]
+    fn rename_missing_source_is_ok_false() {
+        let mut q = SavedQueries::default();
+        q.upsert(SavedQuery {
+            name: "a".into(),
+            body: "one".into(),
+        });
+        assert_eq!(q.rename("nope", "x"), Ok(false));
+        assert_eq!(q.entries.len(), 1);
+        assert_eq!(q.entries[0].name, "a");
+    }
+
+    #[test]
+    fn rename_to_existing_name_is_refused() {
+        let mut q = SavedQueries::default();
+        q.upsert(SavedQuery {
+            name: "a".into(),
+            body: "one".into(),
+        });
+        q.upsert(SavedQuery {
+            name: "b".into(),
+            body: "two".into(),
+        });
+        assert_eq!(q.rename("a", "b"), Err(RenameError::Exists));
+        // Both entries untouched.
+        assert_eq!(q.entries[0].name, "a");
+        assert_eq!(q.entries[1].name, "b");
+    }
+
+    #[test]
+    fn rename_to_same_name_is_noop_success() {
+        let mut q = SavedQueries::default();
+        q.upsert(SavedQuery {
+            name: "a".into(),
+            body: "one".into(),
+        });
+        assert_eq!(q.rename("a", "a"), Ok(true));
+        assert_eq!(q.entries.len(), 1);
+        // Renaming a missing entry to itself reports "not found".
+        assert_eq!(q.rename("ghost", "ghost"), Ok(false));
     }
 
     #[test]

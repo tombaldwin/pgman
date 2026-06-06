@@ -51,7 +51,7 @@ fn dump(buf: &Buffer) -> String {
 /// Find the FIRST cell whose symbol matches `needle`. Returns
 /// `(x, y, &Cell)`. Used to look up "where on screen did `users` get
 /// rendered, and what colour is it?".
-fn find_cell<'a>(buf: &'a Buffer, needle: &str) -> Option<(u16, u16)> {
+fn find_cell(buf: &Buffer, needle: &str) -> Option<(u16, u16)> {
     for y in 0..buf.area.height {
         let line = row_text(buf, y);
         if let Some(col) = line.find(needle) {
@@ -189,6 +189,7 @@ fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
     a.tap_baseline = Some(pgman::app::TapBaseline {
         captured_at_unix_micros: 1,
         captured_event_count: 1,
+        captured_listener_dropped: 0,
         hotspots: a.current_hotspots(),
     });
     a.on_tap_event(pgman::tap::TapEvent {
@@ -225,6 +226,219 @@ fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
     assert!(
         rendered.contains("new"),
         "expected `new` change-label for the post-baseline fingerprint; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn tap_monitor_pools_view_renders_pool_rows() {
+    let mut a = settle_app();
+    // Two pools' worth of traffic.
+    for (pool, conn, ts) in [
+        ("primary", "p-1", 1u64),
+        ("primary", "p-2", 2),
+        ("replica", "r-1", 3),
+    ] {
+        a.on_tap_event(pgman::tap::TapEvent {
+            v: 1,
+            kind: pgman::tap::TapKind::Query,
+            ts_unix_micros: ts,
+            received_at_unix_micros: ts,
+            app: Some("svc".into()),
+            pool: Some(pool.into()),
+            conn: Some(conn.into()),
+            txn: None,
+            sql: Some("SELECT 1".into()),
+            params: None,
+            params_redacted: false,
+            duration_micros: Some(50),
+            rows: None,
+            error: None,
+            caller: None,
+            dropped_events_total: None,
+            txn_outcome: None,
+        });
+    }
+    a.mode = Mode::TapMonitor;
+    a.tap_view = pgman::app::TapView::Pools;
+    let buf = render(&mut a, 140, 30);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("peak") && rendered.contains("conns"),
+        "expected pool column headers; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("primary") && rendered.contains("replica"),
+        "expected both pool names; full render:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("view: pools"),
+        "expected pools view label in title; full render:\n{rendered}"
+    );
+}
+
+#[test]
+fn result_diff_view_renders_added_removed_changed() {
+    let mut a = settle_app();
+    let cols = vec!["id".to_string(), "name".to_string()];
+    let a_rows = vec![
+        vec!["1".to_string(), "alice".to_string()],
+        vec!["2".to_string(), "bob".to_string()],
+    ];
+    let b_rows = vec![
+        vec!["1".to_string(), "ALICE".to_string()],
+        vec!["3".to_string(), "carol".to_string()],
+    ];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
+    let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: a_rows,
+        label: "A-query".into(),
+    };
+    a.result_diff = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows,
+        b_label: "B-query".into(),
+        key,
+        diff,
+    });
+    a.pinned_result = Some(pinned);
+    a.mode = Mode::ResultDiff;
+    let buf = render(&mut a, 140, 30);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("Result diff"),
+        "title missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("added") && rendered.contains("removed") && rendered.contains("changed"),
+        "summary line missing:\n{rendered}"
+    );
+    // id 2 (bob) removed, id 3 (carol) added, id 1 changed alice→ALICE.
+    assert!(rendered.contains("bob"), "removed row missing:\n{rendered}");
+    assert!(rendered.contains("carol"), "added row missing:\n{rendered}");
+    assert!(
+        rendered.contains("ALICE"),
+        "changed cell missing:\n{rendered}"
+    );
+}
+
+#[test]
+fn saved_queries_panel_filters_live_and_shows_count() {
+    let mut a = settle_app();
+    for (n, b) in [
+        ("users", "SELECT * FROM users"),
+        ("orders", "SELECT * FROM orders"),
+        ("revenue", "SELECT sum(amount)"),
+    ] {
+        a.saved_queries.upsert(pgman::saved::SavedQuery {
+            name: n.into(),
+            body: b.into(),
+        });
+    }
+    a.saved_queries_filter = Some("ord".into());
+    a.mode = Mode::SavedQueriesFilter;
+    let buf = render(&mut a, 120, 24);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("/ord"),
+        "filter not in title:\n{rendered}"
+    );
+    assert!(rendered.contains("1/3 shown"), "count missing:\n{rendered}");
+    assert!(rendered.contains("orders"), "match missing:\n{rendered}");
+    // Non-matching entries are filtered out of the list + detail.
+    assert!(
+        !rendered.contains("revenue"),
+        "filtered entry leaked:\n{rendered}"
+    );
+}
+
+#[test]
+fn rename_prompt_renders_prefilled_name() {
+    let mut a = settle_app();
+    a.saved_queries.upsert(pgman::saved::SavedQuery {
+        name: "old-name".into(),
+        body: "SELECT 1".into(),
+    });
+    a.rename_query_from = "old-name".into();
+    a.rename_query_buffer = "new-name".into();
+    a.mode = Mode::RenameQueryPrompt;
+    let buf = render(&mut a, 120, 24);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("rename 'old-name'"),
+        "title missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("new-name"),
+        "edited buffer missing:\n{rendered}"
+    );
+}
+
+#[test]
+fn demo_app_renders_grid_schema_and_tap_without_panic() {
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    // Normal: the users result grid.
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("ada@example.com"),
+        "grid data missing:\n{rendered}"
+    );
+    // Schema browser opens against the fixture cache (3 tables,
+    // collapsed under the public schema node).
+    a.mode = Mode::SchemaBrowser;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("public") && rendered.contains("3 table(s)"),
+        "schema browser missing:\n{rendered}"
+    );
+    // Tap monitor shows the synthetic events.
+    a.mode = Mode::TapMonitor;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("order_items"),
+        "tap events missing:\n{rendered}"
+    );
+}
+
+#[test]
+fn param_prompt_renders_progress_and_entered_values() {
+    let mut a = settle_app();
+    a.param_prompt = Some(pgman::app::ParamPrompt {
+        query_name: "by-id".into(),
+        template: "WHERE id = :id AND org = :org".into(),
+        params: vec!["id".into(), "org".into()],
+        idx: 1,
+        values: vec!["42".into()],
+        input: "acme".into(),
+    });
+    a.mode = Mode::ParamPrompt;
+    let buf = render(&mut a, 120, 20);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("by-id"),
+        "query name missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("param 2/2"),
+        "progress missing:\n{rendered}"
+    );
+    // The already-entered first value is echoed back.
+    assert!(
+        rendered.contains(":id = 42"),
+        "entered value missing:\n{rendered}"
+    );
+    // The current prompt names the second placeholder.
+    assert!(
+        rendered.contains(":org"),
+        "current prompt missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("acme"),
+        "input buffer missing:\n{rendered}"
     );
 }
 

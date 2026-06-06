@@ -155,12 +155,48 @@ fn quote(p: &BoundParam) -> String {
 }
 
 /// Types emitted without surrounding quotes — numerics and booleans.
+///
+/// Matched on the exact base type name (precision / array suffix
+/// stripped), NOT a substring: a substring test wrongly treated
+/// `INTERVAL`, `INT4RANGE`, `POINT`, … as bare because they contain
+/// `INT`/`REAL`, emitting them unquoted and producing invalid SQL.
+/// Those must stay quoted.
 fn is_bare_type(sql_type: &str) -> bool {
-    let t = sql_type.to_ascii_uppercase();
-    const BARE: &[&str] = &[
-        "INT", "SERIAL", "DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL", "BOOL",
-    ];
-    BARE.iter().any(|k| t.contains(k))
+    let upper = sql_type.to_ascii_uppercase();
+    // Drop a precision/scale `(…)` suffix, keep the base.
+    let base = upper.split('(').next().unwrap_or(&upper).trim();
+    // Array types (e.g. `INT4[]`, `NUMERIC[]`) are NOT bare — an array
+    // literal value like `{1,2,3}` must stay single-quoted, otherwise
+    // the reconstructed SQL is invalid. Only the scalar base is bare.
+    if base.contains('[') {
+        return false;
+    }
+    matches!(
+        base,
+        "INT"
+            | "INT2"
+            | "INT4"
+            | "INT8"
+            | "INTEGER"
+            | "SMALLINT"
+            | "BIGINT"
+            | "SERIAL"
+            | "SERIAL2"
+            | "SERIAL4"
+            | "SERIAL8"
+            | "SMALLSERIAL"
+            | "BIGSERIAL"
+            | "DECIMAL"
+            | "NUMERIC"
+            | "FLOAT"
+            | "FLOAT4"
+            | "FLOAT8"
+            | "DOUBLE"
+            | "DOUBLE PRECISION"
+            | "REAL"
+            | "BOOL"
+            | "BOOLEAN"
+    )
 }
 
 #[cfg(test)]
@@ -212,6 +248,58 @@ mod tests {
         let params = [p(1, "VARCHAR", "O'Brien")];
         let out = apply("SELECT ?", &params, PlaceholderStyle::QuestionMark).unwrap();
         assert_eq!(out, "SELECT 'O''Brien'");
+    }
+
+    #[test]
+    fn interval_and_range_types_stay_quoted() {
+        // Regression: a substring test wrongly treated INTERVAL /
+        // INT4RANGE / POINT as bare numerics (they contain INT/REAL),
+        // emitting them unquoted → invalid SQL.
+        let params = [
+            p(1, "INTERVAL", "1 day"),
+            p(2, "INT4RANGE", "[1,5)"),
+            p(3, "POINT", "(1,2)"),
+        ];
+        let out = apply("VALUES (?, ?, ?)", &params, PlaceholderStyle::QuestionMark).unwrap();
+        assert_eq!(out, "VALUES ('1 day', '[1,5)', '(1,2)')");
+    }
+
+    #[test]
+    fn numeric_families_stay_bare() {
+        let params = [
+            p(1, "INTEGER", "1"),
+            p(2, "numeric(10,2)", "3.14"),
+            p(3, "BIGINT", "9000000000"),
+            p(4, "BOOLEAN", "true"),
+        ];
+        let out = apply(
+            "VALUES (?, ?, ?, ?)",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "VALUES (1, 3.14, 9000000000, true)");
+    }
+
+    #[test]
+    fn array_types_stay_quoted() {
+        // Regression: stripping the `[]` suffix made `int4[]` match the
+        // bare `INT4` list, emitting `{1,2,3}` unquoted → invalid SQL.
+        // Array literals must stay single-quoted regardless of element
+        // type.
+        let params = [
+            p(1, "int4[]", "{1,2,3}"),
+            p(2, "numeric[]", "{1.5,2.5}"),
+            p(3, "bool[]", "{t,f}"),
+            p(4, "_text", "{a,b}"),
+        ];
+        let out = apply(
+            "VALUES (?, ?, ?, ?)",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "VALUES ('{1,2,3}', '{1.5,2.5}', '{t,f}', '{a,b}')");
     }
 
     #[test]

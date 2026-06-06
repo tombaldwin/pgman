@@ -11,6 +11,7 @@ use crate::safety::{self, Decision, Guard, SafetyConfig};
 use crate::theme::Theme;
 use crate::tui::{Tui, TuiHost};
 
+use crate::text_input::TextInput;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::widgets::TableState;
@@ -131,11 +132,53 @@ pub enum Mode {
     /// Name prompt for `Ctrl-S` save-current-buffer. Operator
     /// types a name; Enter persists; Esc cancels.
     SaveQueryPrompt,
+    /// `:param` value prompt shown when loading a saved query that
+    /// contains named placeholders. One prompt per distinct
+    /// placeholder; Enter advances, Esc cancels back to the list.
+    /// State lives in `App::param_prompt`.
+    ParamPrompt,
+    /// Live substring search over the saved-queries panel (`/`
+    /// from `SavedQueries`). Each char narrows the list in place;
+    /// Enter accepts (keeps the filter), Esc clears it.
+    SavedQueriesFilter,
+    /// Rename prompt for the focused saved query (`r` from
+    /// `SavedQueries`). Edits `App::rename_query_buffer`; Enter
+    /// commits (refused on name collision), Esc cancels.
+    RenameQueryPrompt,
     /// JDBC-tap event monitor (`F4` from anywhere). Lists
     /// `App::tap_events` in recency order — time, duration,
     /// app, sql preview. j/k move; enter drills into one event;
     /// c clears the ring; q/esc close.
     TapMonitor,
+    /// Result-diff view (`D` in Normal pins A, the next `D`
+    /// diffs the current grid as B). Shows added / removed /
+    /// changed rows keyed by an inferred unique column (or
+    /// full-row identity). j/k navigate; `r` re-pins B as the
+    /// new A; `c` clears the pin; q/esc close.
+    ResultDiff,
+}
+
+impl Mode {
+    /// True while the operator is typing literal text into a buffer —
+    /// the editor or any single-line prompt. Global single-key / `Ctrl`
+    /// chords (notably `Ctrl-W` close-tab) must stay inert in these
+    /// modes so they don't fire mid-typing and clobber the buffer or
+    /// the tab. EVERY prompt mode must appear here — a new prompt that
+    /// forgets to opt in re-introduces the close-tab-while-typing bug.
+    pub fn is_text_input(self) -> bool {
+        matches!(
+            self,
+            Mode::Editor
+                | Mode::HistorySearch
+                | Mode::GridFilter
+                | Mode::GridFind
+                | Mode::SchemaBrowserFilter
+                | Mode::SaveQueryPrompt
+                | Mode::ParamPrompt
+                | Mode::SavedQueriesFilter
+                | Mode::RenameQueryPrompt
+        )
+    }
 }
 
 /// Connection lifecycle state.
@@ -375,6 +418,11 @@ pub struct TabSnapshot {
     pub grid_visible_rows: Vec<usize>,
     pub last_run_sql: Option<String>,
     pub grid_source: Option<(String, String)>,
+    /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
+    /// tab can't leak into another (a fresh tab starts unpinned). The
+    /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
+    /// dismissed on any tab change (see `dismiss_result_diff`).
+    pub pinned_result: Option<PinnedResult>,
 }
 
 /// Hard cap on tab count. 9 matches `Ctrl-1..Ctrl-9` numeric
@@ -391,6 +439,83 @@ pub const TAB_CAP: usize = 9;
 pub struct GridBookmark {
     pub row: usize,
     pub col: usize,
+}
+
+/// A result set frozen as the diff baseline ("A"). Holds the
+/// columns + rows needed to render a diff against a later result
+/// without touching the live grid, plus a short header label.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    /// Short label for the header — the SQL that produced A
+    /// (collapsed / truncated) or a fallback.
+    pub label: String,
+}
+
+/// Frozen state behind `Mode::ResultDiff`: the baseline (A), a
+/// snapshot of the current result (B), the key strategy chosen,
+/// and the computed diff. Snapshotting B keeps the view stable
+/// and lets the renderer pull full rows by index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultDiffState {
+    pub a: PinnedResult,
+    pub b_columns: Vec<String>,
+    pub b_rows: Vec<Vec<String>>,
+    pub b_label: String,
+    pub key: crate::query::row_diff::RowKey,
+    pub diff: crate::query::row_diff::RowDiff,
+}
+
+/// Number of individually-listed rows in a diff view: removed +
+/// changed + added (unchanged rows are summarised, not listed).
+/// Shared by the key handler (cursor clamp) and the renderer.
+pub fn diff_row_count(diff: &crate::query::row_diff::RowDiff) -> usize {
+    diff.removed.len() + diff.changed.len() + diff.added.len()
+}
+
+/// Pure: indices into `entries` matching `filter` — a
+/// case-insensitive substring tested against each entry's name
+/// **or** body. An absent / blank filter returns every index in
+/// original order. Backs the saved-queries panel search so the
+/// cursor and renderer agree on what's visible.
+pub fn filter_saved_indices(
+    entries: &[crate::saved::SavedQuery],
+    filter: Option<&str>,
+) -> Vec<usize> {
+    let needle = filter.unwrap_or("").trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return (0..entries.len()).collect();
+    }
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            e.name.to_ascii_lowercase().contains(&needle)
+                || e.body.to_ascii_lowercase().contains(&needle)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// In-progress `:param` collection while loading a saved query
+/// that carries named placeholders. The operator answers one
+/// prompt per distinct placeholder; when the last is filled the
+/// template is substituted and loaded into the editor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamPrompt {
+    /// Saved-query name, for the modal title / status.
+    pub query_name: String,
+    /// The SQL template with `:name` placeholders still in it.
+    pub template: String,
+    /// Distinct placeholder names, in first-appearance order.
+    pub params: Vec<String>,
+    /// Index of the placeholder currently being entered.
+    pub idx: usize,
+    /// Values already entered (aligned with `params[0..idx]`).
+    pub values: Vec<String>,
+    /// Current input buffer for `params[idx]`.
+    pub input: TextInput,
 }
 
 /// Pure: scan every cell of every visible row and return the
@@ -813,7 +938,7 @@ pub fn format_row_estimate(rows: f64) -> String {
     let mut out = String::with_capacity(s.len() + s.len() / 3);
     let len = bytes.len();
     for (i, b) in bytes.iter().enumerate() {
-        if i > 0 && (len - i) % 3 == 0 {
+        if i > 0 && (len - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(*b as char);
@@ -1131,6 +1256,12 @@ pub struct PendingRun {
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
+    /// Synthetic-data demo mode (`pgman --demo`). When set, `run`
+    /// skips the live connection and the loop skips persisting the
+    /// editor draft / history to disk — so a demo / screenshot run
+    /// can't clobber the operator's real session state. Populated
+    /// by `crate::demo::app`.
+    pub demo: bool,
     pub conn_state: ConnState,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
@@ -1272,6 +1403,8 @@ pub struct App {
     pub tap_callers_cursor: usize,
     /// Cursor into the rendered transaction-stats list.
     pub tap_txns_cursor: usize,
+    /// Cursor into the rendered per-pool stats list.
+    pub tap_pools_cursor: usize,
     /// Captured hotspots snapshot for the baseline-diff view.
     /// `None` until the operator presses `B`.
     pub tap_baseline: Option<TapBaseline>,
@@ -1284,6 +1417,17 @@ pub struct App {
     pub saved_queries_cursor: usize,
     /// Name being typed in `Mode::SaveQueryPrompt`.
     pub save_query_name: String,
+    /// Active `:param` collection while loading a parameterised
+    /// saved query (`Mode::ParamPrompt`). `None` otherwise.
+    pub param_prompt: Option<ParamPrompt>,
+    /// Live substring filter for the saved-queries panel
+    /// (`Mode::SavedQueriesFilter`). `None` = show everything.
+    /// Matches case-insensitively on name OR body.
+    pub saved_queries_filter: Option<TextInput>,
+    /// Input buffer for `Mode::RenameQueryPrompt` (the new name
+    /// being typed), and the original name being renamed.
+    pub rename_query_buffer: TextInput,
+    pub rename_query_from: String,
     /// Saved state for the non-active tabs. The active tab's
     /// state always lives in the per-session fields above; on
     /// switch we snapshot out / load in.
@@ -1438,6 +1582,16 @@ pub struct App {
     /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
     /// FK navigation.
     pub grid_source: Option<(String, String)>,
+    /// Result pinned as the diff baseline ("A") by `D` in Normal
+    /// mode. The next `D` diffs the current grid against this.
+    /// Persists across diffs so the operator can iterate
+    /// (tweak → run → D) against a fixed baseline.
+    pub pinned_result: Option<PinnedResult>,
+    /// The computed diff currently shown in `Mode::ResultDiff`.
+    /// Snapshots both sides so the view is stable while open.
+    pub result_diff: Option<ResultDiffState>,
+    /// Cursor into the rendered diff row list.
+    pub result_diff_cursor: usize,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -1492,6 +1646,7 @@ impl App {
         Self {
             theme,
             mode,
+            demo: false,
             conn_state: ConnState::Disconnected,
             dsn,
             dsn_origin: None,
@@ -1541,11 +1696,16 @@ impl App {
             tap_nplus1_cursor: 0,
             tap_callers_cursor: 0,
             tap_txns_cursor: 0,
+            tap_pools_cursor: 0,
             tap_baseline: None,
             tap_baseline_cursor: 0,
             saved_queries: crate::saved::SavedQueries::default(),
             saved_queries_cursor: 0,
             save_query_name: String::new(),
+            param_prompt: None,
+            saved_queries_filter: None,
+            rename_query_buffer: TextInput::new(),
+            rename_query_from: String::new(),
             // Start with a single tab whose state IS the per-
             // session fields. The Vec entry is a placeholder that
             // gets refreshed on every tab switch.
@@ -1594,6 +1754,9 @@ impl App {
             json_cell_collapsed: std::collections::HashSet::new(),
             json_cell_value: None,
             grid_source: None,
+            pinned_result: None,
+            result_diff: None,
+            result_diff_cursor: 0,
             data_source_picks,
             data_source_pick_index: 0,
             client: None,
@@ -1641,7 +1804,9 @@ impl App {
             .take()
             .expect("App::run must be called exactly once");
 
-        if self.dsn.is_some() {
+        // Demo mode renders a synthetic, pre-populated app — never
+        // open a real connection.
+        if self.dsn.is_some() && !self.demo {
             self.start_connect();
         }
 
@@ -1690,7 +1855,8 @@ impl App {
             // the buffer is dirty, so a panic in any spawned task
             // loses at most half a second of work. Cheap atomic
             // write via rename; not even a syscall when not dirty.
-            if self.draft_dirty
+            if !self.demo
+                && self.draft_dirty
                 && draft_save_due(
                     self.draft_last_save,
                     Instant::now(),
@@ -1702,19 +1868,24 @@ impl App {
                 self.draft_dirty = false;
             }
         }
-        // Persist the editor draft so the next launch can restore
-        // whatever the operator had in flight. Best-effort: failure
-        // logs and moves on — the loop is already finishing.
-        if let Err(e) = persist_draft(&self.editor_buffer) {
-            tracing::warn!("could not save editor draft: {e}");
-        }
-        // Persist the query history ring too. Same best-effort
-        // stance — history is a convenience, not source of truth.
-        if let Err(e) = persist_history(&self.history) {
-            tracing::warn!("could not save query history: {e}");
-        }
-        if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
-            tracing::warn!("could not save 'saved queries': {e}");
+        // Persist session state on exit — but never in demo mode,
+        // where the buffer / history / saved-queries are synthetic
+        // fixtures that must not overwrite the operator's real files.
+        if !self.demo {
+            // Persist the editor draft so the next launch can restore
+            // whatever the operator had in flight. Best-effort: failure
+            // logs and moves on — the loop is already finishing.
+            if let Err(e) = persist_draft(&self.editor_buffer) {
+                tracing::warn!("could not save editor draft: {e}");
+            }
+            // Persist the query history ring too. Same best-effort
+            // stance — history is a convenience, not source of truth.
+            if let Err(e) = persist_history(&self.history) {
+                tracing::warn!("could not save query history: {e}");
+            }
+            if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
+                tracing::warn!("could not save 'saved queries': {e}");
+            }
         }
         Ok(())
     }
@@ -1943,7 +2114,7 @@ impl App {
                 self.grid_source = self
                     .last_run_sql
                     .as_deref()
-                    .and_then(|sql| infer_single_source_table(sql));
+                    .and_then(infer_single_source_table);
                 self.query_running = false;
                 self.last_error = None;
                 self.last_error_detail = None;
@@ -2250,18 +2421,14 @@ impl App {
         self.tap_health.last_event_at_unix_micros = event.received_at_unix_micros;
         match event.kind {
             crate::tap::TapKind::Heartbeat => {
-                self.tap_health.heartbeat_count = self
-                    .tap_health
-                    .heartbeat_count
-                    .saturating_add(1);
+                self.tap_health.heartbeat_count = self.tap_health.heartbeat_count.saturating_add(1);
                 if let Some(d) = event.dropped_events_total {
                     self.tap_health.dropped_events_total = d;
                 }
             }
             crate::tap::TapKind::Query | crate::tap::TapKind::TxnBoundary => {
                 if matches!(event.kind, crate::tap::TapKind::Query) {
-                    self.tap_health.query_count =
-                        self.tap_health.query_count.saturating_add(1);
+                    self.tap_health.query_count = self.tap_health.query_count.saturating_add(1);
                 }
                 self.tap_events.push_back(event);
                 while self.tap_events.len() > TAP_CAP {
@@ -2330,14 +2497,13 @@ impl App {
         if !was_watching
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
+            && self.mode != Mode::Editor
         {
-            if self.mode != Mode::Editor {
-                self.should_quit = true;
-                return;
-            }
-            // Fall through to the editor's on_editor_key for the
-            // cancel-or-no-op logic.
+            self.should_quit = true;
+            return;
         }
+        // Fall through to the editor's on_editor_key for the
+        // cancel-or-no-op logic.
         // (No early return for Ctrl-C-while-watching here: if a
         // query is also in flight, the editor handler's
         // `cancel_running_query` arm below still needs to fire so
@@ -2399,15 +2565,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        let typing_mode = matches!(
-            self.mode,
-            Mode::Editor
-                | Mode::HistorySearch
-                | Mode::GridFilter
-                | Mode::GridFind
-                | Mode::SchemaBrowserFilter
-                | Mode::SaveQueryPrompt
-        );
+        let typing_mode = self.mode.is_text_input();
         if ctrl && matches!(key.code, KeyCode::Char('t')) {
             self.new_tab();
             return;
@@ -2465,6 +2623,10 @@ impl App {
             Mode::TapMonitor => self.on_tap_monitor_key(key),
             Mode::SavedQueries => self.on_saved_queries_key(key),
             Mode::SaveQueryPrompt => self.on_save_query_prompt_key(key),
+            Mode::SavedQueriesFilter => self.on_saved_queries_filter_key(key),
+            Mode::RenameQueryPrompt => self.on_rename_query_key(key),
+            Mode::ParamPrompt => self.on_param_prompt_key(key),
+            Mode::ResultDiff => self.on_result_diff_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -2552,9 +2714,7 @@ impl App {
             } else {
                 String::new()
             };
-            format!(
-                "JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}"
-            )
+            format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
         });
         self.mode = Mode::TapMonitor;
     }
@@ -2566,9 +2726,7 @@ impl App {
         // the diff. Surfacing this on every view (instead of
         // gating to Baseline only) means the "I just deployed,
         // grab a baseline NOW" workflow is one keystroke.
-        if matches!(key.code, KeyCode::Char('B'))
-            && key.modifiers.contains(KeyModifiers::SHIFT)
-        {
+        if matches!(key.code, KeyCode::Char('B')) && key.modifiers.contains(KeyModifiers::SHIFT) {
             self.capture_tap_baseline();
             return;
         }
@@ -2577,9 +2735,28 @@ impl App {
             TapView::Hotspots => self.on_tap_monitor_hotspots_key(key),
             TapView::Callers => self.on_tap_monitor_callers_key(key),
             TapView::Transactions => self.on_tap_monitor_txns_key(key),
+            TapView::Pools => self.on_tap_monitor_pools_key(key),
             TapView::NplusOne => self.on_tap_monitor_nplus1_key(key),
             TapView::Baseline => self.on_tap_monitor_baseline_key(key),
         }
+    }
+
+    /// Clear the tap event ring (`c` from any tap view) and re-home
+    /// every per-view cursor. One ring backs all views, so a clear must
+    /// reset all cursors — hand-maintained per-view copies had drifted,
+    /// leaving stale cursors after a clear. The captured baseline
+    /// snapshot is intentionally preserved (only the live ring is wiped).
+    fn clear_tap_ring(&mut self) {
+        let n = self.tap_events.len();
+        self.tap_events.clear();
+        self.tap_events_cursor = 0;
+        self.tap_hotspots_cursor = 0;
+        self.tap_callers_cursor = 0;
+        self.tap_txns_cursor = 0;
+        self.tap_pools_cursor = 0;
+        self.tap_nplus1_cursor = 0;
+        self.tap_baseline_cursor = 0;
+        self.last_status = Some(format!("cleared {n} tap event(s)"));
     }
 
     fn on_tap_monitor_txns_key(&mut self, key: KeyEvent) {
@@ -2604,17 +2781,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_txns_cursor = self.tap_txns_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_txns_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.tap_baseline_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2623,6 +2790,40 @@ impl App {
     /// one pass over the ring.
     pub fn current_txns(&self) -> Vec<crate::tap::TxnStats> {
         crate::tap::group_by_txn(self.tap_events.iter())
+    }
+
+    fn on_tap_monitor_pools_key(&mut self, key: KeyEvent) {
+        let last = self.current_pools().len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('v') => self.cycle_tap_view(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.tap_pools_cursor = (self.tap_pools_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.tap_pools_cursor = self.tap_pools_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.tap_pools_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_pools_cursor = last,
+            KeyCode::PageDown => {
+                self.tap_pools_cursor = (self.tap_pools_cursor + 10).min(last);
+            }
+            KeyCode::PageUp => {
+                self.tap_pools_cursor = self.tap_pools_cursor.saturating_sub(10);
+            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
+            _ => {}
+        }
+    }
+
+    /// Compute the current per-pool saturation stats. Cheap —
+    /// one pass over the ring (plus a per-pool endpoint sweep
+    /// for peak concurrency).
+    pub fn current_pools(&self) -> Vec<crate::tap::PoolStats> {
+        crate::tap::group_by_pool(self.tap_events.iter())
     }
 
     /// Freeze the current hotspots list as the diff baseline
@@ -2642,17 +2843,26 @@ impl App {
                 .map(|d| d.as_micros() as u64)
                 .unwrap_or(0),
             captured_event_count: self.tap_events.len(),
+            captured_listener_dropped: crate::tap::dropped_at_listener(),
             hotspots,
         });
         self.tap_baseline_cursor = 0;
         self.last_status = Some(summary);
     }
 
+    /// Number of events the listener dropped between baseline
+    /// capture and now. Surfaced in the Baseline view header
+    /// — non-zero means the diff is operating on an incomplete
+    /// view of the workload (the missing events would have
+    /// landed in `current_hotspots` but never did).
+    pub fn baseline_listener_drops_since_capture(&self) -> Option<u64> {
+        let captured = self.tap_baseline.as_ref()?.captured_listener_dropped;
+        let current = crate::tap::dropped_at_listener();
+        Some(current.saturating_sub(captured))
+    }
+
     fn on_tap_monitor_baseline_key(&mut self, key: KeyEvent) {
-        let last = self
-            .current_baseline_diff()
-            .len()
-            .saturating_sub(1);
+        let last = self.current_baseline_diff().len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -2673,19 +2883,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_baseline_cursor = self.tap_baseline_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.tap_baseline_cursor = 0;
-                // Keep the baseline — `c` clears the ring, not
-                // the captured snapshot. A separate keypress
-                // (recapture via Shift-B) drops the old baseline.
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2714,10 +2912,7 @@ impl App {
             // hotspots view — TotalTime / CallCount / P95Latency).
             KeyCode::Char('s') => {
                 self.tap_sort = self.tap_sort.next();
-                self.last_status = Some(format!(
-                    "tap callers · sort: {}",
-                    self.tap_sort.label()
-                ));
+                self.last_status = Some(format!("tap callers · sort: {}", self.tap_sort.label()));
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.tap_callers_cursor = (self.tap_callers_cursor + 1).min(last);
@@ -2733,24 +2928,13 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_callers_cursor = self.tap_callers_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
 
     fn on_tap_monitor_nplus1_key(&mut self, key: KeyEvent) {
-        let last = self
-            .current_nplus1()
-            .len()
-            .saturating_sub(1);
+        let last = self.current_nplus1().len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -2771,14 +2955,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_nplus1_cursor = self.tap_nplus1_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2809,21 +2986,13 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_events_cursor = self.tap_events_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
 
     fn on_tap_monitor_hotspots_key(&mut self, key: KeyEvent) {
-        let last = self
-            .current_hotspots()
-            .len()
-            .saturating_sub(1);
+        let last = self.current_hotspots().len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
@@ -2836,10 +3005,7 @@ impl App {
             // so the operator sees what they just selected.
             KeyCode::Char('s') => {
                 self.tap_sort = self.tap_sort.next();
-                self.last_status = Some(format!(
-                    "tap hotspots · sort: {}",
-                    self.tap_sort.label()
-                ));
+                self.last_status = Some(format!("tap hotspots · sort: {}", self.tap_sort.label()));
                 // Resort uses the same grouping; cursor stays at
                 // its index (callers parking on a row see the row
                 // move under them — acceptable for a sort cycle).
@@ -2858,13 +3024,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_hotspots_cursor = self.tap_hotspots_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2906,13 +3066,15 @@ impl App {
                     open
                 ));
             }
+            TapView::Pools => {
+                self.tap_pools_cursor = 0;
+                let pools = self.current_pools();
+                self.last_status = Some(format!("tap view · pools · {} pool(s)", pools.len()));
+            }
             TapView::NplusOne => {
                 self.tap_nplus1_cursor = 0;
                 let findings = self.current_nplus1();
-                self.last_status = Some(format!(
-                    "tap view · N+1 · {} finding(s)",
-                    findings.len()
-                ));
+                self.last_status = Some(format!("tap view · N+1 · {} finding(s)", findings.len()));
             }
             TapView::Baseline => {
                 self.tap_baseline_cursor = 0;
@@ -3028,6 +3190,7 @@ impl App {
             grid_visible_rows: self.grid_visible_rows.clone(),
             last_run_sql: self.last_run_sql.clone(),
             grid_source: self.grid_source.clone(),
+            pinned_result: self.pinned_result.clone(),
         };
         if let Some(slot) = self.tabs.get_mut(self.active_tab) {
             *slot = snap;
@@ -3056,6 +3219,20 @@ impl App {
         self.grid_visible_rows = snap.grid_visible_rows;
         self.last_run_sql = snap.last_run_sql;
         self.grid_source = snap.grid_source;
+        self.pinned_result = snap.pinned_result;
+    }
+
+    /// Close the transient result-diff overlay if one is open. Called
+    /// on every tab change: the overlay is bound to the tab's live grid,
+    /// which is about to swap out from under it, so it must not survive
+    /// the switch. The per-tab `pinned_result` baseline is preserved
+    /// (snapshotted/restored separately).
+    fn dismiss_result_diff(&mut self) {
+        if self.mode == Mode::ResultDiff {
+            self.mode = Mode::Normal;
+        }
+        self.result_diff = None;
+        self.result_diff_cursor = 0;
     }
 
     /// `Ctrl-T` — push a fresh tab and switch to it. Refuses
@@ -3069,6 +3246,7 @@ impl App {
             self.last_status = Some("can't switch tabs while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.snapshot_active_tab();
         self.tabs.push(TabSnapshot::default());
         self.active_tab = self.tabs.len() - 1;
@@ -3096,6 +3274,7 @@ impl App {
             self.last_status = Some("can't close tab while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.tabs.remove(self.active_tab);
         if self.active_tab >= self.tabs.len() {
             self.active_tab = self.tabs.len() - 1;
@@ -3118,6 +3297,7 @@ impl App {
             self.last_status = Some("can't switch tabs while a query is running".into());
             return;
         }
+        self.dismiss_result_diff();
         self.snapshot_active_tab();
         self.active_tab = idx;
         self.load_active_tab();
@@ -3203,6 +3383,7 @@ impl App {
             self.last_status = Some("no saved queries · Ctrl-S in editor to save one".into());
             return;
         }
+        self.saved_queries_filter = None;
         self.saved_queries_cursor = self
             .saved_queries_cursor
             .min(self.saved_queries.entries.len() - 1);
@@ -3213,10 +3394,120 @@ impl App {
         self.mode = Mode::SavedQueries;
     }
 
+    /// Load a saved query into the editor. If its body contains
+    /// `:param` placeholders, start the [`Mode::ParamPrompt`] flow
+    /// to collect values first; otherwise load it directly.
+    fn load_saved_query(&mut self, q: crate::saved::SavedQuery) {
+        let params = crate::query::params::extract_params(&q.body);
+        if params.is_empty() {
+            self.load_sql_into_editor(q.body, format!("loaded saved query '{}'", q.name));
+            return;
+        }
+        let n = params.len();
+        self.last_status = Some(format!(
+            "'{}' needs {n} value(s) · enter each · esc cancels",
+            q.name
+        ));
+        self.param_prompt = Some(ParamPrompt {
+            query_name: q.name,
+            template: q.body,
+            params,
+            idx: 0,
+            values: Vec::new(),
+            input: TextInput::new(),
+        });
+        self.mode = Mode::ParamPrompt;
+    }
+
+    /// Drop `sql` into the editor buffer and switch to the editor.
+    /// Shared by the direct and post-`:param`-prompt load paths.
+    fn load_sql_into_editor(&mut self, sql: String, status: String) {
+        self.editor_buffer = sql;
+        self.editor_cursor = self.editor_buffer.len();
+        self.editor_preferred_col = None;
+        self.history_pos = None;
+        self.last_status = Some(status);
+        self.mode = Mode::Editor;
+    }
+
+    fn on_param_prompt_key(&mut self, key: KeyEvent) {
+        // Take the prompt out so the completion path can borrow
+        // `self` mutably (to load the editor) without aliasing.
+        let Some(mut pp) = self.param_prompt.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel back to the list (it's still populated).
+                self.mode = Mode::SavedQueries;
+                self.last_status = Some("param entry cancelled".into());
+            }
+            KeyCode::Enter => {
+                let val = pp.input.trimmed().to_string();
+                if val.is_empty() {
+                    // Empty would splice into broken SQL — make the
+                    // operator type something (or esc to cancel).
+                    self.last_status = Some("value required (esc to cancel)".into());
+                    self.param_prompt = Some(pp);
+                    return;
+                }
+                pp.values.push(val);
+                pp.input = TextInput::new();
+                pp.idx += 1;
+                if pp.idx >= pp.params.len() {
+                    let map: std::collections::HashMap<String, String> = pp
+                        .params
+                        .iter()
+                        .cloned()
+                        .zip(pp.values.iter().cloned())
+                        .collect();
+                    let sql = crate::query::params::substitute_params(&pp.template, &map);
+                    let n = pp.params.len();
+                    let name = pp.query_name.clone();
+                    self.load_sql_into_editor(sql, format!("loaded '{name}' with {n} param(s)"));
+                } else {
+                    self.param_prompt = Some(pp);
+                }
+            }
+            // All editing (insert / backspace / cursor move / word-delete)
+            // routes through the shared single-line widget.
+            _ => {
+                pp.input.handle_key(key);
+                self.param_prompt = Some(pp);
+            }
+        }
+    }
+
+    /// Indices into `saved_queries.entries` currently visible
+    /// under the active filter (all, in order, when unfiltered).
+    pub fn visible_saved_indices(&self) -> Vec<usize> {
+        filter_saved_indices(
+            &self.saved_queries.entries,
+            self.saved_queries_filter.as_ref().map(|t| t.text()),
+        )
+    }
+
+    /// The real `entries` index under the panel cursor, mapped
+    /// through the current filter. `None` when nothing matches.
+    fn focused_saved_index(&self) -> Option<usize> {
+        self.visible_saved_indices()
+            .get(self.saved_queries_cursor)
+            .copied()
+    }
+
     fn on_saved_queries_key(&mut self, key: KeyEvent) {
-        let last = self.saved_queries.entries.len().saturating_sub(1);
+        // Compute the filtered/visible index list once per keypress —
+        // it lowercases every entry name + body, so re-deriving it for
+        // the cursor clamp and again for the focused entry was wasteful.
+        let visible = self.visible_saved_indices();
+        let last = visible.len().saturating_sub(1);
+        let focused = visible.get(self.saved_queries_cursor).copied();
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
+                // Leaving the panel clears the filter so the next
+                // open starts fresh.
+                self.saved_queries_filter = None;
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
@@ -3228,19 +3519,18 @@ impl App {
             }
             KeyCode::Char('g') | KeyCode::Home => self.saved_queries_cursor = 0,
             KeyCode::Char('G') | KeyCode::End => self.saved_queries_cursor = last,
+            KeyCode::Char('/') => self.start_saved_queries_filter(),
+            KeyCode::Char('r') => self.start_rename_query(),
             KeyCode::Enter => {
-                if let Some(q) = self
-                    .saved_queries
-                    .entries
-                    .get(self.saved_queries_cursor)
+                if let Some(q) = focused
+                    .and_then(|i| self.saved_queries.entries.get(i))
                     .cloned()
                 {
-                    self.editor_buffer = q.body;
-                    self.editor_cursor = self.editor_buffer.len();
-                    self.editor_preferred_col = None;
-                    self.history_pos = None;
-                    self.last_status = Some(format!("loaded saved query '{}'", q.name));
-                    self.mode = Mode::Editor;
+                    // Keep the filter: load_saved_query may open the
+                    // :param prompt, and Esc there returns to this
+                    // (still-filtered) list. A fresh `open_saved_queries`
+                    // clears the filter on its own.
+                    self.load_saved_query(q);
                 }
             }
             KeyCode::Char('d') => {
@@ -3250,10 +3540,8 @@ impl App {
                 // ungracefully; but practically once saved is
                 // written, gone is gone). Status hints what
                 // happened.
-                if let Some(name) = self
-                    .saved_queries
-                    .entries
-                    .get(self.saved_queries_cursor)
+                if let Some(name) = focused
+                    .and_then(|i| self.saved_queries.entries.get(i))
                     .map(|q| q.name.clone())
                 {
                     self.saved_queries.remove(&name);
@@ -3262,7 +3550,7 @@ impl App {
                     {
                         self.last_error = Some(format!("delete failed: {e}"));
                     }
-                    let last_after = self.saved_queries.entries.len().saturating_sub(1);
+                    let last_after = self.visible_saved_indices().len().saturating_sub(1);
                     if self.saved_queries_cursor > last_after {
                         self.saved_queries_cursor = last_after;
                     }
@@ -3270,6 +3558,102 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn start_saved_queries_filter(&mut self) {
+        self.saved_queries_filter = Some(TextInput::new());
+        self.saved_queries_cursor = 0;
+        self.mode = Mode::SavedQueriesFilter;
+        self.last_status = Some("filter saved queries · type to narrow".into());
+    }
+
+    fn on_saved_queries_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                // Cancel the search: drop the filter, back to the
+                // full list.
+                self.saved_queries_filter = None;
+                self.saved_queries_cursor = 0;
+                self.mode = Mode::SavedQueries;
+                self.last_status = None;
+            }
+            KeyCode::Enter => {
+                // Accept: keep the filter applied, return to nav.
+                self.mode = Mode::SavedQueries;
+                self.last_status = None;
+            }
+            // Editing routes through the shared widget. Re-home the list
+            // cursor only when the filter *text* changed (the visible set
+            // may have shrunk) — not on bare cursor movement.
+            _ => {
+                let filter = self.saved_queries_filter.get_or_insert_with(TextInput::new);
+                let before = filter.text().len();
+                filter.handle_key(key);
+                if filter.text().len() != before {
+                    self.saved_queries_cursor = 0;
+                }
+            }
+        }
+    }
+
+    fn start_rename_query(&mut self) {
+        let Some(name) = self
+            .focused_saved_index()
+            .and_then(|i| self.saved_queries.entries.get(i))
+            .map(|q| q.name.clone())
+        else {
+            self.last_status = Some("nothing to rename".into());
+            return;
+        };
+        self.rename_query_from = name.clone();
+        self.rename_query_buffer = TextInput::with_text(name);
+        self.mode = Mode::RenameQueryPrompt;
+        self.last_status = Some("rename · edit name · enter save · esc cancel".into());
+    }
+
+    fn on_rename_query_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.rename_query_buffer.clear();
+                self.rename_query_from.clear();
+                self.mode = Mode::SavedQueries;
+                self.last_status = Some("rename cancelled".into());
+            }
+            KeyCode::Enter => {
+                let to = self.rename_query_buffer.trimmed().to_string();
+                if to.is_empty() {
+                    self.last_status = Some("name required (esc to cancel)".into());
+                    return;
+                }
+                let from = self.rename_query_from.clone();
+                match self.saved_queries.rename(&from, &to) {
+                    Ok(true) => {
+                        if let Err(e) =
+                            crate::saved::save_to(&saved_queries_path(), &self.saved_queries)
+                        {
+                            self.last_error = Some(format!("rename save failed: {e}"));
+                        }
+                        self.last_status = Some(format!("renamed '{from}' → '{to}'"));
+                        self.rename_query_buffer.clear();
+                        self.rename_query_from.clear();
+                        self.mode = Mode::SavedQueries;
+                    }
+                    Ok(false) => {
+                        // Source vanished (shouldn't happen mid-modal).
+                        self.last_status = Some(format!("'{from}' no longer exists"));
+                        self.mode = Mode::SavedQueries;
+                    }
+                    Err(crate::saved::RenameError::Exists) => {
+                        self.last_status =
+                            Some(format!("a saved query named '{to}' already exists"));
+                    }
+                }
+            }
+            // Editing routes through the shared single-line widget.
+            _ => {
+                self.rename_query_buffer.handle_key(key);
+            }
         }
     }
 
@@ -3658,6 +4042,10 @@ impl App {
             Mode::TapMonitor => Some("jdbc tap"),
             Mode::SavedQueries => Some("saved queries"),
             Mode::SaveQueryPrompt => Some("editor"),
+            Mode::SavedQueriesFilter => Some("saved queries"),
+            Mode::RenameQueryPrompt => Some("saved queries"),
+            Mode::ParamPrompt => Some("saved queries"),
+            Mode::ResultDiff => Some("result diff"),
             Mode::ExplainTree => Some("EXPLAIN tree"),
             Mode::SlowQueries => Some("slow queries"),
             Mode::Sessions => Some("active sessions"),
@@ -3802,6 +4190,7 @@ impl App {
             KeyCode::Char('L') => self.start_sessions(),
             KeyCode::Char('W') => self.start_schema_lint(),
             KeyCode::Char('Q') => self.open_saved_queries(),
+            KeyCode::Char('D') => self.pin_or_diff_result(),
             KeyCode::Char('I') => self.yank_row_as_insert(),
             KeyCode::Char('m') => {
                 self.pending_mark_set = true;
@@ -5101,6 +5490,7 @@ impl App {
                 self.last_status = Some(format!("\\timing {}", if new { "on" } else { "off" }));
             }
             BackslashCmd::Report(target) => self.dispatch_report(target),
+            BackslashCmd::Fixture(target) => self.dispatch_fixture(target),
             BackslashCmd::Unknown(raw) => {
                 self.last_error = Some(format!("unknown backslash command: {raw}"));
             }
@@ -5121,19 +5511,53 @@ impl App {
             crate::report::ReportFormat::Markdown => crate::report::render_markdown(&snapshot),
             crate::report::ReportFormat::Html => crate::report::render_html(&snapshot),
         };
+        let ok = format!("wrote report to {}", path.display());
+        self.write_export(&path, &body, "\\report", ok);
+    }
+
+    /// Shared write path for `\report` / `\fixture`: create the parent
+    /// directory if needed, write atomically, and set the status (on
+    /// success, `ok_status`) or error line. `cmd` names the backslash
+    /// command for the error message.
+    fn write_export(&mut self, path: &std::path::Path, body: &str, cmd: &str, ok_status: String) {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        match tui_common::util::write_atomic(&path, &body) {
-            Ok(()) => {
-                self.last_status = Some(format!("wrote report to {}", path.display()));
-            }
+        match tui_common::util::write_atomic(path, body) {
+            Ok(()) => self.last_status = Some(ok_status),
             Err(e) => {
-                self.last_error = Some(format!("\\report failed: {} ({e})", path.display()));
+                self.last_error = Some(format!("{cmd} failed: {} ({e})", path.display()));
             }
         }
+    }
+
+    /// `\fixture` / `\fixture <path>` handler. Captures the
+    /// current result grid as a DBUnit FlatXmlDataSet — the
+    /// reverse of the apply script. Requires a non-empty,
+    /// single-table result (the source table is the element
+    /// name). Writes atomically; default path lives under the
+    /// cache dir with a wall-clock-stamped filename.
+    fn dispatch_fixture(&mut self, target: Option<String>) {
+        if self.grid.rows.is_empty() {
+            self.last_error = Some("no result to capture — run a query first".into());
+            return;
+        }
+        let Some((_schema, table)) = self.grid_source.clone() else {
+            self.last_error = Some(
+                "fixture capture needs a single-table result (no source table inferred)".into(),
+            );
+            return;
+        };
+        let fixture = crate::dbunit::fixture_from_rows(&table, &self.grid.columns, &self.grid.rows);
+        let xml = crate::dbunit::generate_flat_xml(&fixture);
+        let path = match target {
+            Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+            _ => default_fixture_path(&table),
+        };
+        let ok = format!("wrote {} row(s) to {}", fixture.rows.len(), path.display());
+        self.write_export(&path, &xml, "\\fixture", ok);
     }
 
     /// Build a [`crate::report::ReportSnapshot`] from the
@@ -5357,7 +5781,16 @@ impl App {
         }
         let row_count = fixture.rows.len();
         let table_count = fixture.tables().len();
-        self.editor_buffer = dbunit::generate_apply_script(&fixture, dbunit::CleanMode::Truncate);
+        // Clean strategy is per-database (safety profile), defaulting
+        // to TRUNCATE. Lets a db without TRUNCATE privilege opt into
+        // DELETE FROM via `clean_mode = "delete_from"`.
+        let db = self
+            .dsn
+            .as_ref()
+            .map(|d| d.dbname.as_str())
+            .unwrap_or("default");
+        let clean_mode = self.safety_config.profile_for(db).clean_mode;
+        self.editor_buffer = dbunit::generate_apply_script(&fixture, clean_mode);
         self.editor_cursor = 0;
         self.editor_preferred_col = None;
         self.history_pos = None;
@@ -5428,7 +5861,7 @@ impl App {
     /// Reset the per-grid view state — sort / filter / column cursor
     /// — so a fresh result set starts clean. Called whenever a new
     /// `Grid` lands on the App via `QueryOk` or `Booted`.
-    fn reset_grid_view(&mut self) {
+    pub(crate) fn reset_grid_view(&mut self) {
         self.grid_col_cursor = 0;
         self.grid_sort = None;
         self.grid_raw_rows = None;
@@ -5583,6 +6016,143 @@ impl App {
             "→ {}.{} (F5 to run)",
             edge.parent_schema, edge.parent_table
         ));
+    }
+
+    /// Short label for the current grid — the SQL that produced
+    /// it (whitespace-collapsed, truncated) or a source/row-count
+    /// fallback. Used in the diff header so the operator remembers
+    /// which result each side is.
+    fn current_result_label(&self) -> String {
+        if let Some(sql) = self.last_run_sql.as_deref() {
+            let one = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !one.is_empty() {
+                return crate::grid::truncate_cell(&one, 60);
+            }
+        }
+        match &self.grid_source {
+            Some((schema, table)) => format!("{schema}.{table}"),
+            None => format!("{} row(s)", self.grid.rows.len()),
+        }
+    }
+
+    /// `D` in Normal mode. With no baseline pinned, freeze the
+    /// current grid as A. With a baseline already pinned, diff the
+    /// current grid (B) against it and open `Mode::ResultDiff`.
+    fn pin_or_diff_result(&mut self) {
+        if self.grid.rows.is_empty() {
+            self.last_error = Some("no result to diff — run a query first".into());
+            return;
+        }
+        match self.pinned_result.take() {
+            None => {
+                let n = self.grid.rows.len();
+                self.pinned_result = Some(PinnedResult {
+                    columns: self.grid.columns.clone(),
+                    rows: self.grid.rows.clone(),
+                    label: self.current_result_label(),
+                });
+                self.last_status = Some(format!(
+                    "pinned result A · {n} row(s) · run another query, then D to diff"
+                ));
+            }
+            Some(a) => {
+                // Baseline present — current grid is B. Put A back
+                // (it persists across diffs for iterative work).
+                let b_columns = self.grid.columns.clone();
+                let b_rows = self.grid.rows.clone();
+                let b_label = self.current_result_label();
+                let key = Self::choose_diff_key(&a, &b_columns, &b_rows);
+                let diff = crate::query::row_diff::diff_rows(&a.rows, &b_rows, &key);
+                let summary = format!(
+                    "diff · +{} -{} ~{} ={}",
+                    diff.added.len(),
+                    diff.removed.len(),
+                    diff.changed.len(),
+                    diff.unchanged
+                );
+                self.result_diff = Some(ResultDiffState {
+                    a: a.clone(),
+                    b_columns,
+                    b_rows,
+                    b_label,
+                    key,
+                    diff,
+                });
+                self.pinned_result = Some(a);
+                self.result_diff_cursor = 0;
+                self.mode = Mode::ResultDiff;
+                self.last_status = Some(summary);
+            }
+        }
+    }
+
+    /// Pick the diff key for A-vs-B. Use a single inferred unique
+    /// column (strong mode, with change-detection) only when the
+    /// column layouts match — comparing non-key cells positionally
+    /// requires aligned columns. Otherwise fall back to full-row
+    /// identity.
+    fn choose_diff_key(
+        a: &PinnedResult,
+        b_columns: &[String],
+        b_rows: &[Vec<String>],
+    ) -> crate::query::row_diff::RowKey {
+        use crate::query::row_diff::{infer_key_column, RowKey};
+        if a.columns == b_columns {
+            if let Some(col) = infer_key_column(&a.rows, b_rows, a.columns.len()) {
+                return RowKey::Columns(vec![col]);
+            }
+        }
+        RowKey::FullRow
+    }
+
+    fn on_result_diff_key(&mut self, key: KeyEvent) {
+        let last = self
+            .result_diff
+            .as_ref()
+            .map(|d| diff_row_count(&d.diff).saturating_sub(1))
+            .unwrap_or(0);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.result_diff_cursor = (self.result_diff_cursor + 1).min(last);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.result_diff_cursor = self.result_diff_cursor.saturating_sub(1);
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.result_diff_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.result_diff_cursor = last,
+            KeyCode::PageDown => {
+                self.result_diff_cursor = (self.result_diff_cursor + 10).min(last);
+            }
+            KeyCode::PageUp => {
+                self.result_diff_cursor = self.result_diff_cursor.saturating_sub(10);
+            }
+            // `r` re-pins the B side as the new baseline A, so the
+            // operator can iterate: tweak → run → D → r → repeat.
+            KeyCode::Char('r') => {
+                if let Some(d) = self.result_diff.as_ref() {
+                    self.pinned_result = Some(PinnedResult {
+                        columns: d.b_columns.clone(),
+                        rows: d.b_rows.clone(),
+                        label: d.b_label.clone(),
+                    });
+                    self.mode = Mode::Normal;
+                    self.result_diff = None;
+                    self.last_status = Some("re-pinned current result as A".into());
+                }
+            }
+            // `c` clears the pinned baseline entirely.
+            KeyCode::Char('c') => {
+                self.pinned_result = None;
+                self.result_diff = None;
+                self.mode = Mode::Normal;
+                self.last_status = Some("cleared pinned result".into());
+            }
+            _ => {}
+        }
     }
 
     fn yank_row_as_insert(&mut self) {
@@ -6245,10 +6815,8 @@ impl App {
                 // children. Leaf nodes stay open (collapsing them
                 // would just hide the line they're on).
                 if let Some(row) = rows.get(self.explain_cursor) {
-                    if row.has_children {
-                        if !self.explain_collapsed.remove(&row.path) {
-                            self.explain_collapsed.insert(row.path.clone());
-                        }
+                    if row.has_children && !self.explain_collapsed.remove(&row.path) {
+                        self.explain_collapsed.insert(row.path.clone());
                     }
                 }
             }
@@ -6910,13 +7478,39 @@ pub fn saved_queries_path() -> std::path::PathBuf {
 /// second (or by two pgman instances at once) don't clobber
 /// each other.
 pub fn default_report_path() -> std::path::PathBuf {
+    cache_stamped_path("report", "md")
+}
+
+/// `<cache>/<stem>-<secs>-<nanos>-<pid>.<ext>` — a wall-clock + pid
+/// stamped path under the cache dir. The pid + nanosecond fraction
+/// keep two writes within the same second (or from two pgman
+/// instances at once) from clobbering each other.
+fn cache_stamped_path(stem: &str, ext: &str) -> std::path::PathBuf {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = now.as_secs();
     let nanos = now.subsec_nanos();
     let pid = std::process::id();
-    crate::util::cache_dir().join(format!("report-{secs}-{nanos:09}-{pid}.md"))
+    crate::util::cache_dir().join(format!("{stem}-{secs}-{nanos:09}-{pid}.{ext}"))
+}
+
+/// Default path for `\fixture` when the operator gives none:
+/// `<cache>/<table>-fixture-<secs>-<nanos>-<pid>.xml`. The table
+/// name is sanitised so a schema-qualified or odd identifier
+/// can't escape the cache dir.
+pub fn default_fixture_path(table: &str) -> std::path::PathBuf {
+    let safe: String = table
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    cache_stamped_path(&format!("{safe}-fixture"), "xml")
 }
 
 /// Minimal "current UTC moment" formatted as
@@ -6993,7 +7587,8 @@ pub const TAP_CAP: usize = 2000;
 /// shipped in L1). `Hotspots` aggregates by SQL fingerprint.
 /// `Callers` aggregates by innermost caller frame.
 /// `Transactions` aggregates by synthetic `txn` id (open vs
-/// committed/rolled-back). `NplusOne` is the live N+1
+/// committed/rolled-back). `Pools` aggregates by connection-
+/// pool name (saturation gauge). `NplusOne` is the live N+1
 /// detector. `Baseline` is the diff vs the captured snapshot.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TapView {
@@ -7002,23 +7597,26 @@ pub enum TapView {
     Hotspots,
     Callers,
     Transactions,
+    Pools,
     NplusOne,
     Baseline,
 }
 
 impl TapView {
     /// Order: List → Hotspots → Callers → Transactions →
-    /// NplusOne → Baseline → List. Entity views
-    /// (Hotspots / Callers / Transactions) come before the
-    /// analytical views (NplusOne / Baseline); within
+    /// Pools → NplusOne → Baseline → List. Entity views
+    /// (Hotspots / Callers / Transactions / Pools) come before
+    /// the analytical views (NplusOne / Baseline); within
     /// entities we cycle SQL-side → app-side → transaction-
-    /// side which mirrors the diagnostic narrowing path.
+    /// side → resource-side which mirrors the diagnostic
+    /// narrowing path.
     pub fn next(self) -> Self {
         match self {
             TapView::List => TapView::Hotspots,
             TapView::Hotspots => TapView::Callers,
             TapView::Callers => TapView::Transactions,
-            TapView::Transactions => TapView::NplusOne,
+            TapView::Transactions => TapView::Pools,
+            TapView::Pools => TapView::NplusOne,
             TapView::NplusOne => TapView::Baseline,
             TapView::Baseline => TapView::List,
         }
@@ -7039,6 +7637,13 @@ pub struct TapBaseline {
     pub captured_at_unix_micros: u64,
     /// Number of events in the ring at capture time.
     pub captured_event_count: usize,
+    /// `tap::dropped_at_listener()` at capture time. The
+    /// baseline panel renders the *delta* between this and
+    /// the current counter — non-zero deltas mean events were
+    /// shed between capture and diff, which is precisely the
+    /// scenario that makes a "did my deploy regress?" view
+    /// untrustworthy.
+    pub captured_listener_dropped: u64,
     /// The snapshot — Hotspots already aggregated so the diff
     /// computation is cheap even when the ring has churned.
     pub hotspots: Vec<crate::tap::Hotspot>,
@@ -8046,8 +8651,8 @@ mod tests {
             .iter()
             .map(|c| c.display.as_str())
             .collect();
-        assert!(labels.iter().any(|l| *l == "users"), "got {labels:?}");
-        assert!(labels.iter().any(|l| *l == "orders"), "got {labels:?}");
+        assert!(labels.contains(&"users"), "got {labels:?}");
+        assert!(labels.contains(&"orders"), "got {labels:?}");
     }
 
     #[test]
@@ -8066,8 +8671,8 @@ mod tests {
             .iter()
             .map(|c| c.display.as_str())
             .collect();
-        assert!(labels.iter().any(|l| *l == "users"));
-        assert!(labels.iter().any(|l| *l == "orders"));
+        assert!(labels.contains(&"users"));
+        assert!(labels.contains(&"orders"));
     }
 
     #[test]
@@ -8216,7 +8821,7 @@ mod tests {
             .map(|c| c.display.as_str())
             .collect();
         assert!(
-            labels.iter().any(|l| *l == "orders"),
+            labels.contains(&"orders"),
             "after narrowing to empty prefix, all tables should be offered; got {labels:?}"
         );
     }
@@ -8574,6 +9179,450 @@ mod tests {
             ],
             truncated: false,
         }
+    }
+
+    fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
+        Grid {
+            columns: columns.iter().map(|s| s.to_string()).collect(),
+            rows: rows
+                .iter()
+                .map(|r| r.iter().map(|s| s.to_string()).collect())
+                .collect(),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn result_diff_d_with_empty_grid_errors() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id"], &[]);
+        a.pin_or_diff_result();
+        assert!(a.pinned_result.is_none());
+        assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
+    }
+
+    #[test]
+    fn result_diff_first_d_pins_baseline() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = sample_grid();
+        a.pin_or_diff_result();
+        let p = a.pinned_result.as_ref().expect("baseline pinned");
+        assert_eq!(p.rows.len(), 4);
+        assert_eq!(p.columns, vec!["id".to_string(), "name".to_string()]);
+        // Pinning alone doesn't open the diff view.
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.result_diff.is_none());
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("pinned result A"));
+    }
+
+    #[test]
+    fn result_diff_second_d_opens_diff_with_inferred_key() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = sample_grid(); // ids 3,1,10,2
+        a.pin_or_diff_result(); // pins A
+                                // B: id 3 renamed, id 2 removed, id 99 added; 1 and 10 unchanged.
+        a.grid = grid_of(
+            &["id", "name"],
+            &[
+                &["3", "CAROL"],
+                &["1", "alice"],
+                &["10", "bob"],
+                &["99", "new"],
+            ],
+        );
+        a.pin_or_diff_result(); // diffs
+        assert_eq!(a.mode, Mode::ResultDiff);
+        let d = a.result_diff.as_ref().expect("diff computed");
+        // id column (0) is unique on both sides → strong key.
+        assert!(matches!(
+            &d.key,
+            crate::query::row_diff::RowKey::Columns(c) if c == &vec![0]
+        ));
+        assert_eq!(d.diff.changed.len(), 1, "id 3 name changed");
+        assert_eq!(d.diff.removed.len(), 1, "id 2 gone");
+        assert_eq!(d.diff.added.len(), 1, "id 99 new");
+        assert_eq!(d.diff.unchanged, 2, "ids 1 and 10");
+        // Baseline persists for iterative diffing.
+        assert!(a.pinned_result.is_some());
+    }
+
+    #[test]
+    fn result_diff_falls_back_to_full_row_when_columns_differ() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id", "name"], &[&["1", "x"]]);
+        a.pin_or_diff_result();
+        // B has a different column layout — cell-level keying is unsafe.
+        a.grid = grid_of(&["id", "name", "extra"], &[&["1", "x", "y"]]);
+        a.pin_or_diff_result();
+        let d = a.result_diff.as_ref().expect("diff computed");
+        assert!(matches!(d.key, crate::query::row_diff::RowKey::FullRow));
+    }
+
+    #[test]
+    fn result_diff_r_repins_b_as_new_baseline() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id"], &[&["1"]]);
+        a.pin_or_diff_result();
+        a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
+        a.pin_or_diff_result();
+        assert_eq!(a.mode, Mode::ResultDiff);
+        a.on_key(KeyEvent::from(KeyCode::Char('r')));
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.result_diff.is_none());
+        // New baseline = the B side (two rows).
+        assert_eq!(a.pinned_result.as_ref().unwrap().rows.len(), 2);
+    }
+
+    #[test]
+    fn result_diff_c_clears_pin() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id"], &[&["1"]]);
+        a.pin_or_diff_result();
+        a.grid = grid_of(&["id"], &[&["2"]]);
+        a.pin_or_diff_result();
+        a.on_key(KeyEvent::from(KeyCode::Char('c')));
+        assert!(a.pinned_result.is_none());
+        assert!(a.result_diff.is_none());
+        assert_eq!(a.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn result_diff_d_keybinding_pins_from_normal_mode() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Normal;
+        a.grid = sample_grid();
+        a.on_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert!(a.pinned_result.is_some());
+    }
+
+    fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
+        crate::saved::SavedQuery {
+            name: name.into(),
+            body: body.into(),
+        }
+    }
+
+    fn type_str(a: &mut App, s: &str) {
+        for c in s.chars() {
+            a.on_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+    }
+
+    #[test]
+    fn param_prompt_no_params_loads_directly() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("plain", "SELECT 1"));
+        assert_eq!(a.mode, Mode::Editor);
+        assert_eq!(a.editor_buffer, "SELECT 1");
+        assert!(a.param_prompt.is_none());
+    }
+
+    #[test]
+    fn param_prompt_with_params_enters_prompt_mode() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id"));
+        assert_eq!(a.mode, Mode::ParamPrompt);
+        assert_eq!(
+            a.param_prompt.as_ref().unwrap().params,
+            vec!["id".to_string()]
+        );
+    }
+
+    #[test]
+    fn param_prompt_collects_values_and_substitutes() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved(
+            "two",
+            "SELECT * FROM t WHERE id = :id AND org = :org",
+        ));
+        type_str(&mut a, "42");
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        // First value taken; still prompting for the second.
+        assert_eq!(a.mode, Mode::ParamPrompt);
+        assert_eq!(a.param_prompt.as_ref().unwrap().idx, 1);
+        type_str(&mut a, "7");
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::Editor);
+        assert_eq!(a.editor_buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
+        assert!(a.param_prompt.is_none());
+    }
+
+    #[test]
+    fn param_prompt_same_param_twice_fills_both() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("dup", "SELECT :x WHERE a = :x"));
+        // Only one prompt (distinct param), substituted everywhere.
+        assert_eq!(a.param_prompt.as_ref().unwrap().params.len(), 1);
+        type_str(&mut a, "9");
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.editor_buffer, "SELECT 9 WHERE a = 9");
+    }
+
+    #[test]
+    fn param_prompt_rejects_empty_value() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("byid", "WHERE id = :id"));
+        a.on_key(KeyEvent::from(KeyCode::Enter)); // empty
+        assert_eq!(a.mode, Mode::ParamPrompt);
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("value required"));
+    }
+
+    #[test]
+    fn param_prompt_esc_cancels_back_to_list() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("byid", "WHERE id = :id"));
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::SavedQueries);
+        assert!(a.param_prompt.is_none());
+    }
+
+    #[test]
+    fn param_prompt_backspace_edits_input() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.load_saved_query(saved("byid", "WHERE id = :id"));
+        type_str(&mut a, "49");
+        a.on_key(KeyEvent::from(KeyCode::Backspace));
+        type_str(&mut a, "2");
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.editor_buffer, "WHERE id = 42");
+    }
+
+    fn app_with_saved(entries: &[(&str, &str)]) -> App {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        for (n, b) in entries {
+            a.saved_queries.upsert(saved(n, b));
+        }
+        a
+    }
+
+    #[test]
+    fn filter_saved_indices_blank_returns_all() {
+        let e = vec![saved("a", "x"), saved("b", "y")];
+        assert_eq!(filter_saved_indices(&e, None), vec![0, 1]);
+        assert_eq!(filter_saved_indices(&e, Some("   ")), vec![0, 1]);
+    }
+
+    #[test]
+    fn filter_saved_indices_matches_name_case_insensitive() {
+        let e = vec![saved("ActiveUsers", "..."), saved("revenue", "...")];
+        assert_eq!(filter_saved_indices(&e, Some("active")), vec![0]);
+        assert_eq!(filter_saved_indices(&e, Some("REV")), vec![1]);
+    }
+
+    #[test]
+    fn filter_saved_indices_matches_body_too() {
+        let e = vec![
+            saved("a", "SELECT * FROM orders"),
+            saved("b", "SELECT * FROM users"),
+        ];
+        assert_eq!(filter_saved_indices(&e, Some("orders")), vec![0]);
+    }
+
+    #[test]
+    fn filter_saved_indices_no_match_is_empty() {
+        let e = vec![saved("a", "x")];
+        assert!(filter_saved_indices(&e, Some("zzz")).is_empty());
+    }
+
+    #[test]
+    fn saved_filter_narrows_live_and_maps_focus_to_real_index() {
+        let mut a = app_with_saved(&[("users", "a"), ("orders", "b"), ("revenue", "c")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('/')));
+        assert_eq!(a.mode, Mode::SavedQueriesFilter);
+        type_str(&mut a, "ord");
+        assert_eq!(
+            a.saved_queries_filter.as_ref().map(|t| t.text()),
+            Some("ord")
+        );
+        assert_eq!(a.visible_saved_indices(), vec![1]);
+        // Cursor 0 in the filtered view maps to real entry index 1.
+        assert_eq!(a.focused_saved_index(), Some(1));
+        // Enter keeps the filter applied and returns to navigation.
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::SavedQueries);
+        assert_eq!(
+            a.saved_queries_filter.as_ref().map(|t| t.text()),
+            Some("ord")
+        );
+    }
+
+    #[test]
+    fn saved_filter_esc_clears_filter() {
+        let mut a = app_with_saved(&[("users", "a"), ("orders", "b")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('/')));
+        type_str(&mut a, "ord");
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::SavedQueries);
+        assert!(a.saved_queries_filter.is_none());
+    }
+
+    #[test]
+    fn saved_filter_backspace_widens() {
+        let mut a = app_with_saved(&[("users", "a"), ("orders", "b")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('/')));
+        type_str(&mut a, "ordz");
+        assert!(a.visible_saved_indices().is_empty());
+        a.on_key(KeyEvent::from(KeyCode::Backspace)); // back to "ord"
+        assert_eq!(a.visible_saved_indices(), vec![1]);
+    }
+
+    #[test]
+    fn rename_prompt_prefills_current_name() {
+        let mut a = app_with_saved(&[("old", "x")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('r')));
+        assert_eq!(a.mode, Mode::RenameQueryPrompt);
+        assert_eq!(a.rename_query_buffer.text(), "old");
+        assert_eq!(a.rename_query_from, "old");
+    }
+
+    #[test]
+    fn rename_rejects_empty_name() {
+        let mut a = app_with_saved(&[("old", "x")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('r')));
+        for _ in 0..8 {
+            a.on_key(KeyEvent::from(KeyCode::Backspace));
+        }
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::RenameQueryPrompt);
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("name required"));
+        // Original name untouched.
+        assert_eq!(a.saved_queries.entries[0].name, "old");
+    }
+
+    #[test]
+    fn rename_refuses_collision_without_changing_entries() {
+        let mut a = app_with_saved(&[("a", "x"), ("b", "y")]);
+        a.open_saved_queries(); // cursor on "a"
+        a.on_key(KeyEvent::from(KeyCode::Char('r')));
+        for _ in 0..8 {
+            a.on_key(KeyEvent::from(KeyCode::Backspace));
+        }
+        type_str(&mut a, "b"); // collide with existing "b"
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::RenameQueryPrompt); // stayed put
+        assert!(a
+            .last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("already exists"));
+        assert_eq!(a.saved_queries.entries[0].name, "a");
+        assert_eq!(a.saved_queries.entries[1].name, "b");
+    }
+
+    #[test]
+    fn rename_esc_cancels_without_changing_entries() {
+        let mut a = app_with_saved(&[("a", "x")]);
+        a.open_saved_queries();
+        a.on_key(KeyEvent::from(KeyCode::Char('r')));
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(a.mode, Mode::SavedQueries);
+        assert_eq!(a.saved_queries.entries[0].name, "a");
+    }
+
+    #[test]
+    fn dispatch_fixture_writes_parseable_dataset_to_explicit_path() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id", "name"], &[&["1", "alice"], &["2", "bob"]]);
+        a.grid_source = Some(("public".into(), "users".into()));
+        let dir = std::env::temp_dir().join(format!("pgman-fixture-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("users.xml");
+        a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
+        assert!(a.last_status.as_deref().unwrap_or("").contains("2 row(s)"));
+        let xml = std::fs::read_to_string(&path).unwrap();
+        let parsed = crate::dbunit::parse_flat_xml(&xml).unwrap();
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.rows[0].table, "users");
+        assert_eq!(
+            parsed.rows[0].columns,
+            vec![("id".into(), "1".into()), ("name".into(), "alice".into())]
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn dispatch_fixture_errors_without_source_table() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id"], &[&["1"]]);
+        a.grid_source = None;
+        a.dispatch_fixture(None);
+        assert!(a
+            .last_error
+            .as_deref()
+            .unwrap_or("")
+            .contains("single-table"));
+    }
+
+    #[test]
+    fn dispatch_fixture_errors_on_empty_grid() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.grid = grid_of(&["id"], &[]);
+        a.grid_source = Some(("public".into(), "users".into()));
+        a.dispatch_fixture(None);
+        assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
+    }
+
+    fn write_temp_fixture(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pgman-clean-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fx = dir.join("f.xml");
+        std::fs::write(&fx, r#"<dataset><users id="1"/></dataset>"#).unwrap();
+        fx
+    }
+
+    #[test]
+    fn load_dbunit_fixture_uses_per_db_clean_mode() {
+        let fx = write_temp_fixture("delete");
+        let mut cfg = SafetyConfig::default();
+        cfg.databases.insert(
+            "legacy".into(),
+            crate::safety::SafetyProfile {
+                clean_mode: crate::dbunit::CleanMode::DeleteFrom,
+                ..Default::default()
+            },
+        );
+        let dsn = crate::conn::Dsn::parse("postgres://u@h/legacy").ok();
+        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
+        a.editor_buffer = fx.to_string_lossy().to_string();
+        a.load_dbunit_fixture();
+        assert!(
+            a.editor_buffer.contains("DELETE FROM users"),
+            "expected DELETE FROM; got:\n{}",
+            a.editor_buffer
+        );
+        assert!(!a.editor_buffer.contains("TRUNCATE"));
+        let _ = std::fs::remove_file(&fx);
+    }
+
+    #[test]
+    fn load_dbunit_fixture_defaults_to_truncate() {
+        let fx = write_temp_fixture("trunc");
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.editor_buffer = fx.to_string_lossy().to_string();
+        a.load_dbunit_fixture();
+        assert!(
+            a.editor_buffer.contains("TRUNCATE TABLE users"),
+            "expected TRUNCATE; got:\n{}",
+            a.editor_buffer
+        );
+        let _ = std::fs::remove_file(&fx);
     }
 
     #[test]
@@ -9869,6 +10918,97 @@ mod tests {
     }
 
     #[test]
+    fn all_prompt_modes_count_as_text_input() {
+        // Every text-entry mode must opt into is_text_input so the
+        // global Ctrl-W (close-tab) chord stays inert while typing.
+        for m in [
+            Mode::Editor,
+            Mode::ParamPrompt,
+            Mode::SavedQueriesFilter,
+            Mode::RenameQueryPrompt,
+            Mode::SaveQueryPrompt,
+            Mode::GridFilter,
+            Mode::GridFind,
+            Mode::HistorySearch,
+            Mode::SchemaBrowserFilter,
+        ] {
+            assert!(m.is_text_input(), "{m:?} should be a text-input mode");
+        }
+        assert!(!Mode::Normal.is_text_input());
+        assert!(!Mode::ResultDiff.is_text_input());
+        assert!(!Mode::TapMonitor.is_text_input());
+    }
+
+    #[test]
+    fn ctrl_w_in_a_prompt_does_not_close_the_tab() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.new_tab(); // two tabs, so close_active_tab would otherwise fire
+        assert_eq!(a.tabs.len(), 2);
+        a.mode = Mode::ParamPrompt;
+        a.param_prompt = Some(ParamPrompt {
+            query_name: "q".into(),
+            template: "SELECT :x".into(),
+            params: vec!["x".into()],
+            idx: 0,
+            values: Vec::new(),
+            input: TextInput::new(),
+        });
+        a.on_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(
+            a.tabs.len(),
+            2,
+            "Ctrl-W must not close a tab while typing in a prompt"
+        );
+        assert_eq!(a.mode, Mode::ParamPrompt);
+    }
+
+    #[test]
+    fn result_diff_pin_is_per_tab_and_does_not_leak() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Normal;
+        a.grid = Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        };
+        // Pin A on tab 1.
+        a.pin_or_diff_result();
+        assert!(a.pinned_result.is_some(), "tab 1 should have a pinned A");
+        // A fresh tab must NOT inherit the pin — otherwise the first D
+        // there diffs against an unrelated baseline.
+        a.new_tab();
+        assert!(
+            a.pinned_result.is_none(),
+            "a fresh tab must start with no pinned baseline"
+        );
+        // Returning to tab 1 restores its pin.
+        a.cycle_tab(false);
+        assert!(
+            a.pinned_result.is_some(),
+            "returning to tab 1 should restore its pinned baseline"
+        );
+    }
+
+    #[test]
+    fn tab_switch_dismisses_an_open_result_diff_overlay() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Normal;
+        a.grid = Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        };
+        a.pin_or_diff_result(); // pin A
+        a.grid.rows = vec![vec!["2".into()]];
+        a.pin_or_diff_result(); // diff → opens the overlay
+        assert_eq!(a.mode, Mode::ResultDiff);
+        a.new_tab();
+        // The transient overlay must not survive onto the new tab.
+        assert_eq!(a.mode, Mode::Normal);
+        assert!(a.result_diff.is_none());
+    }
+
+    #[test]
     fn close_tab_drops_current_and_loads_neighbour() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.mode = Mode::Normal;
@@ -10177,7 +11317,10 @@ mod tests {
             event: tap_query("new", 9_999),
         });
         assert_eq!(a.tap_events.len(), TAP_CAP);
-        assert_eq!(a.tap_events.front().and_then(|e| e.sql.as_deref()), Some("q1"));
+        assert_eq!(
+            a.tap_events.front().and_then(|e| e.sql.as_deref()),
+            Some("q1")
+        );
         // Cursor decremented to follow the eviction.
         assert_eq!(a.tap_events_cursor, 0);
     }
@@ -10243,7 +11386,7 @@ mod tests {
     }
 
     #[test]
-    fn tap_monitor_v_cycles_through_six_views() {
+    fn tap_monitor_v_cycles_through_seven_views() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.on_msg(AppMsg::TapEvent {
             event: tap_query("SELECT 1", 1),
@@ -10262,11 +11405,50 @@ mod tests {
             "expected transactions in status: {status}"
         );
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
+        assert_eq!(a.tap_view, TapView::Pools);
+        let status = a.last_status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("pools"),
+            "expected pools in status: {status}"
+        );
+        a.on_key(KeyEvent::from(KeyCode::Char('v')));
         assert_eq!(a.tap_view, TapView::NplusOne);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
         assert_eq!(a.tap_view, TapView::Baseline);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
         assert_eq!(a.tap_view, TapView::List);
+    }
+
+    #[test]
+    fn tap_monitor_pools_view_navigates_and_clears() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        // Two pools: primary (two conns) and replica (one conn).
+        for (pool, conn, i) in [
+            ("primary", "p-1", 0u64),
+            ("primary", "p-2", 1),
+            ("replica", "r-1", 2),
+        ] {
+            let mut e = tap_query("SELECT 1", i);
+            e.pool = Some(pool.into());
+            e.conn = Some(conn.into());
+            e.ts_unix_micros = i;
+            e.received_at_unix_micros = i;
+            a.on_msg(AppMsg::TapEvent { event: e });
+        }
+        a.start_tap_monitor();
+        a.tap_view = TapView::Pools;
+        let pools = a.current_pools();
+        assert_eq!(pools.len(), 2);
+        // Navigation clamps to the last row.
+        a.on_key(KeyEvent::from(KeyCode::Char('G')));
+        assert_eq!(a.tap_pools_cursor, 1);
+        a.on_key(KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(a.tap_pools_cursor, 0);
+        // `c` clears the ring from the pools view too.
+        a.on_key(KeyEvent::from(KeyCode::Char('c')));
+        assert!(a.tap_events.is_empty());
+        assert_eq!(a.tap_pools_cursor, 0);
+        assert!(a.current_pools().is_empty());
     }
 
     #[test]
@@ -10397,6 +11579,29 @@ mod tests {
     }
 
     #[test]
+    fn baseline_records_listener_drop_watermark_at_capture() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.on_msg(AppMsg::TapEvent {
+            event: tap_query("SELECT 1", 1),
+        });
+        // Snapshot the global atomic before capture so the
+        // assertion is robust to whatever other tests
+        // contributed (cumulative-counter semantics).
+        let baseline_drops = crate::tap::dropped_at_listener();
+        a.start_tap_monitor();
+        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
+        let captured = a.tap_baseline.as_ref().unwrap().captured_listener_dropped;
+        assert!(
+            captured >= baseline_drops,
+            "captured_listener_dropped must reflect a counter snapshot at-or-after baseline read"
+        );
+        // delta-since-capture starts at zero (or whatever
+        // concurrent tests added between capture and this read).
+        let delta = a.baseline_listener_drops_since_capture().unwrap();
+        assert_eq!(delta, crate::tap::dropped_at_listener() - captured);
+    }
+
+    #[test]
     fn baseline_recapture_overwrites_previous_snapshot() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.on_msg(AppMsg::TapEvent {
@@ -10419,12 +11624,13 @@ mod tests {
     }
 
     #[test]
-    fn tap_monitor_v_cycle_includes_baseline_as_sixth_view() {
+    fn tap_monitor_v_cycle_includes_baseline_as_last_view() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.start_tap_monitor();
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Hotspots
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Callers
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Transactions
+        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Pools
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → NplusOne
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Baseline
         assert_eq!(a.tap_view, TapView::Baseline);
@@ -10985,29 +12191,30 @@ mod tests {
     #[test]
     fn backslash_report_writes_markdown_to_explicit_path() {
         let mut a = app_with_schemas();
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-report-test-{}.md",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("pgman-report-test-{}.md", std::process::id()));
         a.mode = Mode::Editor;
         a.editor_buffer = format!("\\report {}", tmp.display());
         a.editor_cursor = a.editor_buffer.len();
         a.on_key(KeyEvent::from(KeyCode::F(5)));
         let contents = std::fs::read_to_string(&tmp).expect("report written");
-        assert!(contents.starts_with("# pgman report"), "got: {contents:.120}");
+        assert!(
+            contents.starts_with("# pgman report"),
+            "got: {contents:.120}"
+        );
         assert!(contents.contains("## Schema lint findings"));
         let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("wrote report to"), "expected status flash; got: {status}");
+        assert!(
+            status.contains("wrote report to"),
+            "expected status flash; got: {status}"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn backslash_report_writes_html_when_extension_matches() {
         let mut a = app_with_schemas();
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-report-test-{}.html",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("pgman-report-test-{}.html", std::process::id()));
         a.mode = Mode::Editor;
         a.editor_buffer = format!("\\report {}", tmp.display());
         a.editor_cursor = a.editor_buffer.len();

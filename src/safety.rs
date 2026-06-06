@@ -40,19 +40,10 @@ pub enum StatementKind {
 
 impl StatementKind {
     /// Anything that is not a plain `SELECT`. Unknown statements count as writes.
+    /// The auto-tx wrap (see [`evaluate`]) keys off this, so every write —
+    /// DML, DDL, and `Other` (e.g. MERGE) — gets a rollback-able transaction.
     pub fn is_write(self) -> bool {
         !matches!(self, StatementKind::Select)
-    }
-
-    /// Data-modifying statements that benefit from a rollback-able transaction.
-    pub fn is_dml(self) -> bool {
-        matches!(
-            self,
-            StatementKind::Insert
-                | StatementKind::Update { .. }
-                | StatementKind::Delete { .. }
-                | StatementKind::Truncate
-        )
     }
 }
 
@@ -119,6 +110,11 @@ pub struct SafetyProfile {
     /// disables the check entirely. Default: disabled — the value is
     /// opt-in per profile so existing setups don't change UX.
     pub cost_preview_threshold_rows: u64,
+    /// Which table-clean strategy the DBUnit apply script
+    /// (`Ctrl-D`) uses for this database. `truncate` (default,
+    /// fast, needs the privilege) or `delete_from` (works without
+    /// TRUNCATE privilege, respects triggers).
+    pub clean_mode: crate::dbunit::CleanMode,
 }
 
 impl Default for SafetyProfile {
@@ -129,6 +125,7 @@ impl Default for SafetyProfile {
             auto_tx: true,
             guards: Guards::default(),
             cost_preview_threshold_rows: 0,
+            clean_mode: crate::dbunit::CleanMode::Truncate,
         }
     }
 }
@@ -181,6 +178,12 @@ pub fn classify(sql: &str) -> StatementKind {
         "drop" => StatementKind::Drop,
         "alter" | "create" | "comment" | "grant" | "revoke" | "reindex" | "vacuum" | "analyze"
         | "analyse" | "cluster" | "refresh" => StatementKind::AlterDdl,
+        // MERGE (PG15+) can INSERT / UPDATE / DELETE. We have no dedicated
+        // kind for it, so it maps to `Other` — which `is_write()` reports as
+        // a write and which guards as `Confirm` by default. Listed explicitly
+        // (rather than falling through `_`) so a reader sees it's intentional
+        // and the regression test pins it as a write.
+        "merge" => StatementKind::Other,
         // `EXPLAIN ANALYZE <dml>` *executes* the DML — classify the inner
         // statement, not the EXPLAIN wrapper.
         "explain" => classify(strip_explain_prefix(trimmed)),
@@ -310,13 +313,27 @@ pub(crate) fn strip_sql_comments(sql: &str) -> String {
             '/' if chars.peek() == Some(&'*') => {
                 chars.next();
                 let mut prev = '\0';
+                let mut closed = false;
+                let mut body = String::new();
                 for cc in chars.by_ref() {
                     if prev == '*' && cc == '/' {
+                        closed = true;
                         break;
                     }
+                    body.push(cc);
                     prev = cc;
                 }
                 out.push(' ');
+                // Unterminated `/*` — don't swallow the rest of the buffer.
+                // Swallowing could hide a destructive verb (e.g. a CTE whose
+                // INSERT/DELETE sits after an unclosed comment) and get the
+                // statement misclassified as a harmless SELECT. Keeping the
+                // text leaves classification fail-safe (the verb is still
+                // seen and guarded); Postgres rejects the unterminated
+                // comment as a syntax error anyway.
+                if !closed {
+                    out.push_str(&body);
+                }
             }
             _ => out.push(c),
         }
@@ -523,5 +540,65 @@ mod tests {
         // Unlisted database falls back to the default profile.
         let other = cfg.profile_for("scratch");
         assert_eq!(other.statement_timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn clean_mode_defaults_to_truncate() {
+        let cfg = SafetyConfig::default();
+        assert_eq!(cfg.default.clean_mode, crate::dbunit::CleanMode::Truncate);
+        // Absent from TOML → default Truncate.
+        let cfg: SafetyConfig = toml::from_str("[databases.prod]\nread_only = true\n").unwrap();
+        assert_eq!(
+            cfg.profile_for("prod").clean_mode,
+            crate::dbunit::CleanMode::Truncate
+        );
+    }
+
+    #[test]
+    fn merge_is_treated_as_a_write_not_select() {
+        // MERGE (PG15+) can INSERT/UPDATE/DELETE — it must never reach
+        // Guard::Allow as a SELECT does.
+        let k = classify("MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE");
+        assert_eq!(k, StatementKind::Other);
+        assert!(k.is_write());
+        let cfg = SafetyConfig::default();
+        let d = evaluate(
+            &cfg,
+            "db",
+            "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE",
+        );
+        assert_ne!(d.guard, Guard::Allow, "MERGE must be guarded, not allowed");
+    }
+
+    #[test]
+    fn unterminated_block_comment_does_not_hide_a_write() {
+        // An unclosed `/*` must not swallow a trailing destructive verb
+        // and downgrade the statement to a harmless SELECT.
+        let k = classify("WITH x AS (SELECT 1) /* note\nINSERT INTO logs SELECT * FROM x");
+        assert_eq!(
+            k,
+            StatementKind::Insert,
+            "write behind an unclosed comment must still classify as a write"
+        );
+        // A normal closed comment still strips cleanly.
+        assert_eq!(classify("SELECT 1 /* harmless */"), StatementKind::Select);
+    }
+
+    #[test]
+    fn clean_mode_parses_per_database_override() {
+        let toml = r#"
+            [databases.legacy]
+            clean_mode = "delete_from"
+        "#;
+        let cfg: SafetyConfig = toml::from_str(toml).expect("parse safety config");
+        assert_eq!(
+            cfg.profile_for("legacy").clean_mode,
+            crate::dbunit::CleanMode::DeleteFrom
+        );
+        // Unlisted db still defaults to Truncate.
+        assert_eq!(
+            cfg.profile_for("other").clean_mode,
+            crate::dbunit::CleanMode::Truncate
+        );
     }
 }

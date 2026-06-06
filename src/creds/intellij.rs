@@ -143,14 +143,15 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
                         in_schema_mapping = false;
                     }
                     "schema-mapping" => in_schema_mapping = true,
-                    "node" if in_schema_mapping => {
+                    "node"
+                        if in_schema_mapping
                         // Only nodes with kind="database" matter; their qname
                         // (when present and non-empty) is the dbname.
-                        if attr(&e, "kind").as_deref() == Some("database") {
-                            if let Some(q) = attr(&e, "qname").filter(|s| !s.is_empty()) {
-                                if !current_meta.databases.contains(&q) {
-                                    current_meta.databases.push(q);
-                                }
+                        && attr(&e, "kind").as_deref() == Some("database") =>
+                    {
+                        if let Some(q) = attr(&e, "qname").filter(|s| !s.is_empty()) {
+                            if !current_meta.databases.contains(&q) {
+                                current_meta.databases.push(q);
                             }
                         }
                     }
@@ -179,12 +180,13 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
             Ok(Event::Empty(e)) => {
                 // Self-closing tag (common for `<node ... />` in schema-mapping).
                 let name = element_name(&e);
-                if name == "node" && in_schema_mapping {
-                    if attr(&e, "kind").as_deref() == Some("database") {
-                        if let Some(q) = attr(&e, "qname").filter(|s| !s.is_empty()) {
-                            if !current_meta.databases.contains(&q) {
-                                current_meta.databases.push(q);
-                            }
+                if name == "node"
+                    && in_schema_mapping
+                    && attr(&e, "kind").as_deref() == Some("database")
+                {
+                    if let Some(q) = attr(&e, "qname").filter(|s| !s.is_empty()) {
+                        if !current_meta.databases.contains(&q) {
+                            current_meta.databases.push(q);
                         }
                     }
                 }

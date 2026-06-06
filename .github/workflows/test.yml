@@ -26,6 +26,11 @@ jobs:
       - run: cargo build --tests
       - run: cargo test --all-targets
       - run: cargo test --doc
+      # Compile (don't run) the DB-gated integration tests on every push
+      # and both OSes, so a signature change can't silently rot them
+      # the way it did once before. The `integration` job below actually
+      # runs them against Postgres, but only on Linux.
+      - run: cargo check --all-targets --features integration
 
   # Integration tests against a real Postgres. Linux only — GitHub
   # services aren't supported on macOS runners.
@@ -85,3 +90,12 @@ jobs:
       # before clippy started running in CI. Fix-as-you-go; tightening
       # to deny is a follow-up.
       - run: cargo clippy --all-targets
+
+  # Supply-chain gate: security advisories, license allow-list, bans,
+  # and source provenance, per deny.toml.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

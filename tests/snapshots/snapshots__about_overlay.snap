@@ -24,7 +24,7 @@ expression: dump(&buf)
 │                         │                          ██████████          │                         │
 │                         │                             ██████           │                         │
 │                         │                                              │                         │
-│                         │                  pgman 0.0.1                 │                         │
+│                         │                  pgman 0.1.0                 │                         │
 │                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
 │                         │                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
