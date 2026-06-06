@@ -24,6 +24,13 @@ struct Cli {
     #[arg(long)]
     upgrade: bool,
 
+    /// Run against a hand-crafted synthetic dataset — no database,
+    /// no network, no disk writes. For screenshots / the README
+    /// demo gif (`vhs demo.tape`) / talks. The frame is identical
+    /// on every launch.
+    #[arg(long)]
+    demo: bool,
+
     /// Batch / pipe mode: run a SQL statement and write the result to
     /// stdout, then exit. No TUI. Suitable for shell scripts and CI.
     #[arg(long)]
@@ -117,6 +124,18 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("{w}");
     }
 
+    // `--demo`: synthetic, self-contained app — no discovery, no
+    // connection, no tap listeners, no draft/history restore. Bypass
+    // all of that and run the fixture app straight into the TUI.
+    if cli.demo {
+        tracing::info!("starting in --demo mode (synthetic data, no database)");
+        let mut application = pgman::demo::app(theme);
+        let mut term = tui::Tui::enter()?;
+        let result = application.run(&mut term).await;
+        drop(term);
+        return result;
+    }
+
     let mut dsn = match cli.dsn.as_deref() {
         Some(raw) => match conn::Dsn::parse(raw) {
             Ok(d) => Some(d),
@@ -161,9 +180,9 @@ async fn main() -> anyhow::Result<()> {
                         });
                     }
                     None => tracing::warn!(
-                        "  project connection '{}' has unparseable url {:?}; skipping",
+                        "  project connection '{}' has unparseable url '{}'; skipping",
                         c.name,
-                        c.url
+                        conn::redact_url(&c.url)
                     ),
                 }
             }
@@ -262,15 +281,19 @@ async fn main() -> anyhow::Result<()> {
         || cli.tap_otlp.is_some()
         || cli.tap_replay.is_some()
         || cli.tap_udp.is_some();
-    let tap_event_tx = if needs_tap_adapter {
+    let tap_channels = if needs_tap_adapter {
         let app_tx = application.msg_tx_clone();
-        // Bounded channel — see tap::TAP_CHANNEL_CAPACITY for
-        // the cap rationale. Replaces the original
-        // `unbounded_channel` that could OOM under sustained
-        // JAR throughput if the consumer stalled. Drops are
-        // counted in `tap::DROPPED_AT_LISTENER` and surfaced
-        // in the chrome.
-        let (tap_tx, mut tap_rx) =
+        // Two bounded channels so replay can't starve the live
+        // transports. Live (TCP / UDP / OTLP) listeners share
+        // `live_tap_tx` and try_send through forward_or_drop —
+        // they drop on full. Replay gets its own channel and
+        // uses `.send().await` for delivery guarantee; if it
+        // backs up that's fine because it ONLY blocks the
+        // replay file pump, not the listeners. The single
+        // adapter task selects from both rx.
+        let (live_tap_tx, mut live_rx) =
+            tokio::sync::mpsc::channel::<tap::TapEvent>(tap::TAP_CHANNEL_CAPACITY);
+        let (replay_tap_tx, mut replay_rx) =
             tokio::sync::mpsc::channel::<tap::TapEvent>(tap::TAP_CHANNEL_CAPACITY);
         // Open the capture file once and own it inside the
         // adapter task. The previous version used `std::fs`
@@ -289,40 +312,33 @@ async fn main() -> anyhow::Result<()> {
         // when the tokio runtime drops the adapter at `.await`.
         // Write directly to the underlying file; the kernel
         // buffers small appends adequately.
-        let mut record_file: Option<tokio::fs::File> =
-            match record_path.as_ref() {
-                None => None,
-                Some(path) => {
-                    if let Some(parent) = path.parent() {
-                        if !parent.as_os_str().is_empty() {
-                            // tokio::fs so a slow NFS doesn't
-                            // block the runtime worker at startup.
-                            let _ = tokio::fs::create_dir_all(parent).await;
-                        }
-                    }
-                    match tokio::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(path)
-                        .await
-                    {
-                        Ok(f) => {
-                            tracing::info!(
-                                "tap-record: appending events to {}",
-                                path.display()
-                            );
-                            Some(f)
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "invalid --tap-record {}: {e}",
-                                path.display()
-                            );
-                            std::process::exit(2);
-                        }
+        let mut record_file: Option<tokio::fs::File> = match record_path.as_ref() {
+            None => None,
+            Some(path) => {
+                if let Some(parent) = path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        // tokio::fs so a slow NFS doesn't
+                        // block the runtime worker at startup.
+                        let _ = tokio::fs::create_dir_all(parent).await;
                     }
                 }
-            };
+                match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                    .await
+                {
+                    Ok(f) => {
+                        tracing::info!("tap-record: appending events to {}", path.display());
+                        Some(f)
+                    }
+                    Err(e) => {
+                        eprintln!("invalid --tap-record {}: {e}", path.display());
+                        std::process::exit(2);
+                    }
+                }
+            }
+        };
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             // Track the global drop counter so we can emit a
@@ -332,7 +348,16 @@ async fn main() -> anyhow::Result<()> {
             // these into tap_health.dropped_events_total —
             // the diagnostic survives the round trip.
             let mut last_drop_seen = tap::dropped_at_listener();
-            while let Some(event) = tap_rx.recv().await {
+            loop {
+                // Select fairly between live and replay
+                // sources. When both channels close we exit
+                // the loop naturally and the post-loop flush
+                // runs.
+                let event = tokio::select! {
+                    Some(e) = live_rx.recv() => e,
+                    Some(e) = replay_rx.recv() => e,
+                    else => break,
+                };
                 // Send to the live App side FIRST so a slow
                 // disk on the record path can't starve the
                 // TUI. The capture write is best-effort: it
@@ -389,16 +414,15 @@ async fn main() -> anyhow::Result<()> {
                             // Write + flush sequentially. A
                             // failure disables the recorder so
                             // we don't spam logs every event.
-                            let write_ok =
-                                match f.write_all(&bytes).await {
-                                    Ok(()) => true,
-                                    Err(e) => {
-                                        tracing::warn!(
+                            let write_ok = match f.write_all(&bytes).await {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    tracing::warn!(
                                             "tap-record: write failed; disabling capture for this session: {e}"
                                         );
-                                        false
-                                    }
-                                };
+                                    false
+                                }
+                            };
                             if write_ok {
                                 if let Err(e) = f.flush().await {
                                     tracing::warn!(
@@ -427,14 +451,18 @@ async fn main() -> anyhow::Result<()> {
                 let _ = f.flush().await;
             }
         });
-        Some(tap_tx)
+        Some((live_tap_tx, replay_tap_tx))
     } else {
         None
     };
     if let Some(addr_raw) = tap_listen_effective.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_tcp_listener(addr, tap_tx).await {
                         tracing::error!("tap-tcp listener bind failed: {e}");
@@ -451,7 +479,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr_raw) = cli.tap_udp.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_udp_listener(addr, tap_tx).await {
                         tracing::error!("tap-udp listener bind failed: {e}");
@@ -468,7 +500,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(addr_raw) = cli.tap_otlp.as_deref() {
         match parse_tap_addr(addr_raw) {
             Ok(addr) => {
-                let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+                let tap_tx = tap_channels
+                    .as_ref()
+                    .expect("adapter spawned above")
+                    .0
+                    .clone();
                 tokio::spawn(async move {
                     if let Err(e) = tap::run_otlp_listener(addr, tap_tx).await {
                         tracing::error!("tap-otlp listener bind failed: {e}");
@@ -483,18 +519,26 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     if let Some(path) = cli.tap_replay.clone() {
-        let tap_tx = tap_event_tx.clone().expect("adapter spawned above");
+        // Replay uses its own channel so backpressure on the
+        // replay file pump can't starve live transports.
+        let replay_tx = tap_channels
+            .as_ref()
+            .expect("adapter spawned above")
+            .1
+            .clone();
         tokio::spawn(async move {
-            match tap::run_replay_file(&path, tap_tx).await {
-                Ok(n) => tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display()),
+            match tap::run_replay_file(&path, replay_tx).await {
+                Ok(n) => {
+                    tracing::info!("tap-replay: streamed {n} event(s) from {}", path.display())
+                }
                 Err(e) => tracing::error!("tap-replay: failed to read {}: {e}", path.display()),
             }
         });
     }
-    // Drop the keepalive sender so the adapter task exits
-    // cleanly when all listeners + the replay task have shut
-    // down on app exit.
-    drop(tap_event_tx);
+    // Drop both keepalive senders so the adapter's select
+    // exits cleanly when all listeners + the replay task have
+    // shut down on app exit.
+    drop(tap_channels);
 
     let mut term = tui::Tui::enter()?;
     let result = application.run(&mut term).await;
@@ -511,61 +555,16 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix(':') {
-        let port: u16 = rest
-            .parse()
-            .map_err(|e| format!("port {rest:?}: {e}"))?;
+        let port: u16 = rest.parse().map_err(|e| format!("port {rest:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
     if !raw.contains(':') {
         // Bare port — same shape, default to localhost.
-        let port: u16 = raw
-            .parse()
-            .map_err(|e| format!("port {raw:?}: {e}"))?;
+        let port: u16 = raw.parse().map_err(|e| format!("port {raw:?}: {e}"))?;
         return Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
     }
     raw.parse::<SocketAddr>()
         .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
-}
-
-#[cfg(test)]
-mod main_tests {
-    use super::*;
-
-    #[test]
-    fn parse_tap_addr_accepts_colon_port() {
-        let got = parse_tap_addr(":7432").unwrap();
-        assert_eq!(got.ip().to_string(), "127.0.0.1");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_accepts_bare_port() {
-        let got = parse_tap_addr("7432").unwrap();
-        assert_eq!(got.ip().to_string(), "127.0.0.1");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_accepts_full_host_port() {
-        let got = parse_tap_addr("0.0.0.0:7432").unwrap();
-        assert_eq!(got.ip().to_string(), "0.0.0.0");
-        assert_eq!(got.port(), 7432);
-    }
-
-    #[test]
-    fn parse_tap_addr_rejects_garbage() {
-        let err = parse_tap_addr("not-an-address").unwrap_err();
-        assert!(err.contains("port"), "expected port-parse error: {err}");
-    }
-
-    #[test]
-    fn parse_tap_addr_rejects_oversize_port() {
-        let err = parse_tap_addr(":99999").unwrap_err();
-        assert!(
-            err.contains("port"),
-            "expected port-range error: {err}"
-        );
-    }
 }
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
@@ -700,7 +699,10 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
         tracing::info!(
             "  {} → {}",
             s.name,
-            s.jdbc_url.as_deref().unwrap_or("(no jdbc-url)")
+            s.jdbc_url
+                .as_deref()
+                .map(conn::redact_url)
+                .unwrap_or_else(|| "(no jdbc-url)".to_string())
         );
     }
     for s in sources {
@@ -755,57 +757,110 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                 .unwrap_or(false)
         })
         .collect();
-    files.sort();
+    // Order base files of one family so the higher-precedence format is
+    // applied last (as the overlay) during the merge: Spring resolves
+    // `.properties` over `.yml`/`.yaml`. Sort primarily by the name with
+    // the extension stripped (groups a family's files together), then by
+    // format rank ascending so `.properties` lands after `.yml`.
+    files.sort_by(|a, b| {
+        let key = |p: &std::path::Path| -> (String, u8) {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let stem = name
+                .rsplit_once('.')
+                .map(|(s, _)| s.to_string())
+                .unwrap_or_else(|| name.to_string());
+            (stem, creds::spring::format_precedence_rank(name))
+        };
+        key(a).cmp(&key(b))
+    });
+
+    // Pass 1: parse every file into partials and classify each by
+    // Spring config family ("application" / "bootstrap") and
+    // optional profile. Base (no-profile) files for a family are
+    // merged into one base block; profile files are stashed for a
+    // second pass so they can overlay the (fully-accumulated) base
+    // — Spring's `application-<profile>` semantics. Two passes
+    // because a profile filename can sort *before* its base across
+    // the `.`/`-` boundary (`application-prod.yml` < `application.properties`).
+    use creds::spring::SpringDatasourcePartial;
+    let mut bases: std::collections::BTreeMap<String, (String, Vec<SpringDatasourcePartial>)> =
+        std::collections::BTreeMap::new();
+    let mut profiles: Vec<(String, String, Vec<SpringDatasourcePartial>)> = Vec::new();
     for path in &files {
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
-        let ext = path.extension().and_then(|e| e.to_str());
-        let entries = match ext {
-            Some("properties") => creds::spring::parse_properties_all(&text),
-            Some("yml") | Some("yaml") => creds::spring::parse_yaml_all(&text),
+        let partials = match path.extension().and_then(|e| e.to_str()) {
+            Some("properties") => creds::spring::parse_properties_partials(&text),
+            Some("yml") | Some("yaml") => creds::spring::parse_yaml_partials(&text),
             _ => continue,
         };
-        if entries.is_empty() {
+        if partials.is_empty() {
             continue;
         }
-        let file_label = path
+        let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("application");
-        tracing::info!(
-            "Spring properties: {} datasource(s) in {}",
-            entries.len(),
-            path.display()
-        );
-        for e in entries {
-            let Some(raw) = creds::intellij::jdbc_to_dsn(&e.url) else {
+            .unwrap_or("application")
+            .to_string();
+        let (family, profile) = creds::spring::split_config_name(&stem);
+        match profile {
+            None => {
+                let slot = bases
+                    .entry(family)
+                    .or_insert_with(|| (stem.clone(), Vec::new()));
+                slot.0 = stem; // label tracks the most recent base file
+                slot.1 = creds::spring::merge_partials(&slot.1, &partials);
+            }
+            Some(_) => profiles.push((stem, family, partials)),
+        }
+    }
+
+    // Resolve a partial block into picks under `label`. A prefix
+    // contributes a pick only when it has a usable jdbc:postgresql
+    // URL; username / password from the block win over URL creds.
+    let mut emit = |label: &str, block: &[SpringDatasourcePartial]| {
+        for p in block {
+            let Some(url) = p.url.as_deref() else {
+                continue;
+            };
+            let Some(raw) = creds::intellij::jdbc_to_dsn(url) else {
                 continue;
             };
             let Ok(mut dsn) = conn::Dsn::parse(&raw) else {
                 continue;
             };
-            // Spring's username/password keys win over anything in the URL —
-            // operators usually only put credentials in one place.
-            if let Some(u) = e.username {
+            if let Some(u) = &p.username {
                 if !u.is_empty() {
-                    dsn.user = Some(u);
+                    dsn.user = Some(u.clone());
                 }
             }
-            if let Some(p) = e.password {
-                if !p.is_empty() {
-                    dsn.password = Some(p);
+            if let Some(pw) = &p.password {
+                if !pw.is_empty() {
+                    dsn.password = Some(pw.clone());
                 }
             }
-            // Provenance line — note we log the redacted DSN, never the raw
-            // password (CLAUDE.md: never log credentials).
-            tracing::info!("  → pick {}.{} = {}", file_label, e.prefix, dsn.redacted());
+            // Provenance only — never the raw password (CLAUDE.md).
+            tracing::info!("  → pick {}.{} = {}", label, p.prefix, dsn.redacted());
             picks.push(DataSourcePick {
-                name: format!("{} ({})", e.prefix, file_label),
+                name: format!("{} ({})", p.prefix, label),
                 origin: "Spring",
                 dsn,
             });
         }
+    };
+
+    // Pass 2: emit base picks (families in sorted order), then
+    // each profile merged over its family's base.
+    for (label, block) in bases.values() {
+        emit(label, block);
+    }
+    for (label, family, block) in &profiles {
+        let merged = match bases.get(family) {
+            Some((_, base)) => creds::spring::merge_partials(base, block),
+            None => block.clone(),
+        };
+        emit(label, &merged);
     }
 }
 
@@ -822,5 +877,43 @@ fn load_safety_config() -> safety::SafetyConfig {
             }
         },
         Err(_) => safety::SafetyConfig::default(),
+    }
+}
+
+#[cfg(test)]
+mod main_tests {
+    use super::*;
+
+    #[test]
+    fn parse_tap_addr_accepts_colon_port() {
+        let got = parse_tap_addr(":7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_bare_port() {
+        let got = parse_tap_addr("7432").unwrap();
+        assert_eq!(got.ip().to_string(), "127.0.0.1");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_accepts_full_host_port() {
+        let got = parse_tap_addr("0.0.0.0:7432").unwrap();
+        assert_eq!(got.ip().to_string(), "0.0.0.0");
+        assert_eq!(got.port(), 7432);
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_garbage() {
+        let err = parse_tap_addr("not-an-address").unwrap_err();
+        assert!(err.contains("port"), "expected port-parse error: {err}");
+    }
+
+    #[test]
+    fn parse_tap_addr_rejects_oversize_port() {
+        let err = parse_tap_addr(":99999").unwrap_err();
+        assert!(err.contains("port"), "expected port-range error: {err}");
     }
 }

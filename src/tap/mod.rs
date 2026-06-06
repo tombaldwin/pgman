@@ -77,6 +77,18 @@
 //!   "conn": "primary-7", "txn": "primary-7#42", "txn_outcome": "commit" }
 //! ```
 
+pub mod insights;
+pub use insights::*;
+
+pub mod replay;
+pub use replay::*;
+
+pub mod otlp;
+pub use otlp::*;
+
+pub mod listener;
+pub use listener::*;
+
 use serde::{Deserialize, Serialize};
 
 /// Current wire-format version. Events with a `v` field that
@@ -85,31 +97,27 @@ use serde::{Deserialize, Serialize};
 /// panel rows.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Default capacity for the bounded mpsc channel between
-/// listeners and the App-side adapter.
+/// Default capacity for each of the bounded mpsc channels
+/// between listeners and the App-side adapter.
 ///
-/// **This is the TOTAL capacity shared across all four
-/// transports** — TCP, UDP, OTLP, and replay each hold a
-/// clone of the same `Sender`. At 1 active transport the
-/// budget is "few hundred ms at 1000 QPS"; with four active
-/// transports the per-transport effective budget is a
-/// quarter of that. Sized for a typical local-dev / staging
-/// deployment with one primary transport; production with
-/// concurrent listeners may want to scale this constant up.
+/// `main.rs` sets up **two** channels with this capacity:
+/// one shared by the live transports (TCP / UDP / OTLP), one
+/// dedicated to replay. This avoids replay backpressure
+/// starving the live transports. Within the live channel,
+/// each transport tries to `try_send` and DROPS on full —
+/// see [`DROPPED_AT_LISTENER`]. The replay channel uses
+/// `.send().await` for delivery guarantee.
 ///
-/// Over-the-cap events are dropped (with a counter, see
-/// [`DROPPED_AT_LISTENER`]) rather than buffered without
-/// bound. The previous design used `unbounded_channel`; in
-/// production that was an OOM risk the JAR-side
-/// `dropped_events_total` accounting couldn't see.
+/// Sized for "few hundred ms at 1000 QPS" on one transport;
+/// production with concurrent live transports may want to
+/// scale this up.
 pub const TAP_CHANNEL_CAPACITY: usize = 4_096;
 
 /// Process-global counter of events the listener side dropped
 /// because the downstream channel was full. Cumulative for
 /// the lifetime of the pgman process. Surfaced in the chrome
 /// badge so the operator notices backpressure.
-pub static DROPPED_AT_LISTENER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+pub static DROPPED_AT_LISTENER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Read the cumulative listener-drop count. Public so the UI
 /// + report can surface it.
@@ -121,11 +129,14 @@ pub fn dropped_at_listener() -> u64 {
 /// Used by listeners to forward an event into the bounded
 /// channel. On `Full` the event is dropped + counted. On
 /// `Closed` we return `Err(())` so the listener can exit.
-/// Centralised so all four transports (TCP / UDP / OTLP)
-/// share the same backpressure semantics. `replay` does NOT
-/// go through here — it uses `.send().await` to block on
-/// backpressure, since replay events are operator-initiated
-/// and the operator wants them to land.
+/// Centralised so the live transports (TCP / UDP / OTLP)
+/// share the same backpressure semantics.
+///
+/// Replay does NOT go through here, and runs on its OWN
+/// bounded channel (set up in `main.rs`). It uses
+/// `.send().await` for delivery guarantee — backpressure
+/// blocks the replay file pump but cannot starve the live
+/// transports, which contend for a different channel.
 fn forward_or_drop(
     tx: &tokio::sync::mpsc::Sender<TapEvent>,
     event: TapEvent,
@@ -311,8 +322,7 @@ impl TapEvent {
     /// Always `false` for non-Query kinds — heartbeats and
     /// txn boundaries don't carry errors.
     pub fn is_error(&self) -> bool {
-        matches!(self.kind, TapKind::Query)
-            && self.error.as_ref().is_some_and(|e| !e.is_empty())
+        matches!(self.kind, TapKind::Query) && self.error.as_ref().is_some_and(|e| !e.is_empty())
     }
 
     /// First non-blank line of the SQL, with internal runs of
@@ -423,1643 +433,7 @@ fn collapse_whitespace(s: &str) -> String {
     out
 }
 
-// ---------------------------------------------------------
-// UDP listener — opt-in transport, one event per datagram.
-// Use when the JVM side must never block on telemetry
-// (production critical paths) and lossy delivery is fine.
-// ---------------------------------------------------------
-
-/// Maximum UDP datagram size we'll process. Stays well under
-/// the typical 65 KiB UDP cap and gives a useful upper bound
-/// for the parse buffer. Datagrams over this size truncate
-/// at the OS layer and would fail parse anyway — we just
-/// avoid the alloc.
-pub const TAP_UDP_MAX_DATAGRAM: usize = 64 * 1024;
-
-/// Spawn a UDP listener that decodes each datagram as one
-/// `TapEvent` JSON and forwards through `tx`. Pairs with
-/// the TCP listener — operators pick UDP when they care more
-/// about "never blocks the app" than "no events lost."
-///
-/// Parse failures are logged via `tracing::warn` and dropped.
-/// A bad datagram never takes out the listener.
-pub async fn run_udp_listener(
-    addr: std::net::SocketAddr,
-    tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let socket = tokio::net::UdpSocket::bind(addr).await?;
-    tracing::info!("tap: UDP listener bound on {addr}");
-    let mut buf = vec![0u8; TAP_UDP_MAX_DATAGRAM];
-    loop {
-        let (len, peer) = match socket.recv_from(&mut buf).await {
-            Ok(pair) => pair,
-            Err(e) => {
-                tracing::warn!("tap-udp: recv failed: {e}");
-                continue;
-            }
-        };
-        match parse(&buf[..len]) {
-            Ok(mut event) => {
-                event.received_at_unix_micros = now_unix_micros();
-                if forward_or_drop(&tx, event, "udp").is_err() {
-                    return Ok(());
-                }
-            }
-            Err(e) => {
-                tracing::warn!("tap-udp: dropped malformed datagram from {peer}: {e}");
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------
-// OTLP — peer ingest from the OpenTelemetry Java agent.
-//
-// The OTel JDBC instrumentation emits one span per JDBC call
-// with attributes like `db.system=postgresql`, `db.statement`,
-// `db.operation`. We accept those spans on a peer HTTP
-// endpoint (default port 4318) and map them onto `TapEvent`
-// so OTel-equipped JVM shops see live queries in pgman
-// without installing pgman-tap.
-//
-// v1 supports OTLP/HTTP JSON only (`Content-Type:
-// application/json`). The protobuf variant is the wire
-// default for production OTel pipelines but most Java agents
-// also accept `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`. We can
-// add protobuf later if a real user asks.
-// ---------------------------------------------------------
-
-/// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
-/// Anything beyond this is broken telemetry (clock skew /
-/// hostile span / bug). Capping prevents one such span
-/// from hijacking the `TotalTime` sort via saturating
-/// arithmetic in [`group_hotspots`].
-pub const OTLP_DURATION_CAP_MICROS: u64 = 3_600_000_000;
-
-/// Attribute key the OTel semantic conventions use to mark a
-/// span as a database call (always `"db.system"`, value
-/// `"postgresql"` for our case).
-pub const OTEL_DB_SYSTEM_KEY: &str = "db.system";
-pub const OTEL_DB_SYSTEM_POSTGRES: &str = "postgresql";
-pub const OTEL_DB_STATEMENT_KEY: &str = "db.statement";
-pub const OTEL_DB_OPERATION_KEY: &str = "db.operation";
-pub const OTEL_SERVICE_NAME_KEY: &str = "service.name";
-
-/// Parse one OTLP/HTTP JSON body
-/// (an `ExportTraceServiceRequest`) and emit one
-/// [`TapEvent`] per spans whose `db.system=postgresql`. Spans
-/// that don't look like Postgres calls (no `db.system`, or a
-/// different system, or no `db.statement`) are silently
-/// skipped — the caller's HTTP response should still be 200
-/// because OTLP semantics treat un-acked spans as the
-/// receiver's choice.
-///
-/// Returns the parsed events and a count of spans skipped so
-/// the listener can log a one-line summary instead of
-/// per-span chatter.
-#[must_use = "parse_otlp_json returns events — discarding the Vec loses them"]
-pub fn parse_otlp_json(body: &[u8]) -> Result<(Vec<TapEvent>, usize), String> {
-    let s = std::str::from_utf8(body).map_err(|e| format!("not utf-8: {e}"))?;
-    let root: serde_json::Value =
-        serde_json::from_str(s).map_err(|e| format!("bad json: {e}"))?;
-    let mut events: Vec<TapEvent> = Vec::new();
-    let mut skipped = 0usize;
-    let Some(resource_spans) = root.get("resourceSpans").and_then(|v| v.as_array()) else {
-        return Ok((events, 0));
-    };
-    for rs in resource_spans {
-        // service.name lives on the resource and applies to
-        // every span inside this resourceSpans bundle.
-        let service_name = rs
-            .get("resource")
-            .and_then(|r| r.get("attributes"))
-            .and_then(|a| a.as_array())
-            .and_then(|attrs| otlp_attr_string(attrs, OTEL_SERVICE_NAME_KEY));
-        let Some(scope_spans) = rs.get("scopeSpans").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for ss in scope_spans {
-            let Some(spans) = ss.get("spans").and_then(|v| v.as_array()) else {
-                continue;
-            };
-            for span in spans {
-                match span_to_tap_event(span, service_name.as_deref()) {
-                    Some(event) => {
-                        // Defensive: enforce the same invariants
-                        // `parse` does for tap-protocol frames.
-                        // span_to_tap_event always produces a
-                        // valid Query event today, but anyone
-                        // extending it later won't silently leak
-                        // an invalid one past the contract.
-                        if validate_required(&event).is_ok() {
-                            events.push(event);
-                        } else {
-                            skipped += 1;
-                        }
-                    }
-                    None => skipped += 1,
-                }
-            }
-        }
-    }
-    Ok((events, skipped))
-}
-
-fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -> Option<TapEvent> {
-    let attrs = span.get("attributes").and_then(|v| v.as_array())?;
-    // Filter for Postgres-flavoured DB spans. OTel's
-    // db.system is "postgresql" for both vanilla Postgres
-    // and Aurora; Redshift uses "redshift" so we skip those.
-    let system = otlp_attr_string(attrs, OTEL_DB_SYSTEM_KEY)?;
-    if system != OTEL_DB_SYSTEM_POSTGRES {
-        return None;
-    }
-    // db.statement is the only field that actually carries
-    // the SQL; spans without it (e.g. connection open/close)
-    // aren't useful for the tap.
-    let sql = otlp_attr_string(attrs, OTEL_DB_STATEMENT_KEY)?;
-    // Duration: end - start in nanoseconds → microseconds.
-    // The values are protobuf uint64, which JSON encodes as a
-    // string per the protobuf-JSON mapping — but some
-    // implementations (including OTel collector test fixtures)
-    // emit numbers, so accept either.
-    let start_ns = otlp_unix_nano(span.get("startTimeUnixNano"))?;
-    let end_ns = otlp_unix_nano(span.get("endTimeUnixNano"))?;
-    // Cap at 1 hour. A malicious or buggy agent shipping
-    // `endTimeUnixNano: u64::MAX` would otherwise hand us a
-    // saturating-add monster that hijacks the TotalTime sort.
-    // Real queries that take an hour are operator news long
-    // before they reach the panel — clamping is safe.
-    let raw_micros = end_ns.saturating_sub(start_ns) / 1_000;
-    let duration_micros = if raw_micros > OTLP_DURATION_CAP_MICROS {
-        // Surface the clamp so an operator with genuine
-        // long-running analytical queries can distinguish
-        // them from hostile / broken telemetry. Single-line
-        // log; the listener's debug-summary line would
-        // otherwise hide this entirely.
-        tracing::warn!(
-            "tap-otlp: clamped duration {raw_micros}µs to cap {OTLP_DURATION_CAP_MICROS}µs"
-        );
-        OTLP_DURATION_CAP_MICROS
-    } else {
-        raw_micros
-    };
-    let ts_unix_micros = end_ns / 1_000;
-    // Status: 2 == ERROR per OTel protocol. Code 1 == OK,
-    // 0 == UNSET. Treat 2 as a query error.
-    let status_code = span
-        .get("status")
-        .and_then(|s| s.get("code"))
-        .and_then(|c| c.as_u64())
-        .unwrap_or(0);
-    let error = if status_code == 2 {
-        // OTel usually carries the message on the status
-        // object; fall back to a generic marker so the
-        // renderer flags it even when the agent didn't ship a
-        // message.
-        let msg = span
-            .get("status")
-            .and_then(|s| s.get("message"))
-            .and_then(|m| m.as_str())
-            .map(String::from)
-            .unwrap_or_else(|| "OTLP span reported ERROR".into());
-        Some(vec![msg])
-    } else {
-        None
-    };
-    Some(TapEvent {
-        v: PROTOCOL_VERSION,
-        kind: TapKind::Query,
-        ts_unix_micros,
-        // Listener stamps this after parse; leave zero here.
-        received_at_unix_micros: 0,
-        app: service_name.map(String::from),
-        // OTel JDBC doesn't expose pool / conn / txn — those
-        // are pgman-tap's added value. Leave None.
-        pool: None,
-        conn: None,
-        txn: None,
-        sql: Some(sql),
-        // OTel typically strips bound parameters for PII
-        // safety; we flag that on the event so the renderer
-        // can surface "values redacted by source."
-        params: None,
-        params_redacted: true,
-        duration_micros: Some(duration_micros),
-        rows: None,
-        error,
-        caller: None,
-        dropped_events_total: None,
-        txn_outcome: None,
-    })
-}
-
-/// Look up a string-valued attribute by key in an OTLP
-/// attribute list. Attribute values are tagged unions
-/// (`stringValue`, `intValue`, `doubleValue`, ...); we only
-/// care about `stringValue` for the keys we map.
-///
-/// A single malformed attribute (missing `"key"`, non-string
-/// key, array/object value) does not abort the search — the
-/// loop just skips it. The earlier version used `?` which
-/// short-circuited the whole function and made e.g. a
-/// `service.namespace` attribute landing before `service.name`
-/// hide the entire span from pgman.
-fn otlp_attr_string(attrs: &[serde_json::Value], key: &str) -> Option<String> {
-    for attr in attrs {
-        let Some(k) = attr.get("key").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        if k == key {
-            return attr
-                .get("value")
-                .and_then(|v| v.get("stringValue"))
-                .and_then(|v| v.as_str())
-                .map(String::from);
-        }
-    }
-    None
-}
-
-/// Decode an OTLP uint64-as-JSON value. Per the protobuf-JSON
-/// mapping uint64 should be a string, but some emitters use
-/// numbers. Accept both.
-fn otlp_unix_nano(v: Option<&serde_json::Value>) -> Option<u64> {
-    let v = v?;
-    if let Some(n) = v.as_u64() {
-        return Some(n);
-    }
-    if let Some(s) = v.as_str() {
-        return s.parse::<u64>().ok();
-    }
-    None
-}
-
-// ---------------------------------------------------------
-// L2 — insights. Pure aggregation over the in-memory ring.
-// ---------------------------------------------------------
-
-/// How to sort the [`Hotspot`] list. Cycled with `s` in the
-/// hotspots view; the default lands on `TotalTime` because
-/// "where is the database spending its time" is the most
-/// common entry-point question.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum HotspotSort {
-    /// Sum of `duration_micros` across the group, descending.
-    /// Often the right starting question.
-    #[default]
-    TotalTime,
-    /// Count of statements in the group, descending. Surfaces
-    /// chatty templates (likely-N+1, hot caches missing, etc.).
-    CallCount,
-    /// 95th percentile of `duration_micros`, descending.
-    /// Surfaces tail-latency offenders the totals can hide.
-    P95Latency,
-}
-
-impl HotspotSort {
-    /// One-shot sort-mode cycler used by the panel's `s` key.
-    pub fn next(self) -> Self {
-        match self {
-            HotspotSort::TotalTime => HotspotSort::CallCount,
-            HotspotSort::CallCount => HotspotSort::P95Latency,
-            HotspotSort::P95Latency => HotspotSort::TotalTime,
-        }
-    }
-
-    /// Human-readable label for the chrome / panel title.
-    pub fn label(self) -> &'static str {
-        match self {
-            HotspotSort::TotalTime => "total time",
-            HotspotSort::CallCount => "call count",
-            HotspotSort::P95Latency => "p95 latency",
-        }
-    }
-}
-
-/// Aggregate stats for one fingerprint bucket in the
-/// hotspots view. Built by [`group_hotspots`] from the
-/// in-memory ring. `example_sql` is the most recent member's
-/// SQL (matches the column the operator pivots from when
-/// drilling into the cause).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hotspot {
-    pub fingerprint: String,
-    pub example_sql: String,
-    pub count: usize,
-    pub error_count: usize,
-    /// Sum of `duration_micros` across the group.
-    pub total_micros: u64,
-    /// 50th-percentile duration (nearest-rank).
-    pub p50_micros: u64,
-    /// 95th-percentile duration (nearest-rank).
-    pub p95_micros: u64,
-    /// 99th-percentile duration (nearest-rank).
-    pub p99_micros: u64,
-    /// Distinct innermost-caller frames seen in the group.
-    /// `0` when no event in the group carried a caller stack.
-    pub distinct_callers: usize,
-    /// Most recently seen innermost-caller frame in the group,
-    /// or `None` when no event carried one.
-    pub last_caller: Option<String>,
-    /// Most recently seen `app` value in the group.
-    pub last_app: Option<String>,
-}
-
-impl Hotspot {
-    /// Per-call mean duration (total / count). `0` when the
-    /// group is empty — but a group is never empty by
-    /// construction (one event creates one group).
-    pub fn mean_micros(&self) -> u64 {
-        if self.count == 0 {
-            0
-        } else {
-            self.total_micros / self.count as u64
-        }
-    }
-}
-
-/// Group an event slice by SQL fingerprint, computing
-/// per-bucket counts, error counts, total duration, and
-/// p50 / p95 / p99 durations. Heartbeat and txn-boundary
-/// events are skipped — only query events fingerprint
-/// meaningfully. Pure; called from the panel renderer.
-///
-/// Sort order is applied at the end per `sort`.
-pub fn group_hotspots<'a, I>(events: I, sort: HotspotSort) -> Vec<Hotspot>
-where
-    I: IntoIterator<Item = &'a TapEvent>,
-{
-    use std::collections::HashMap;
-    // Aggregator: fingerprint → accumulator.
-    #[derive(Default)]
-    struct Acc {
-        example_sql: String,
-        count: usize,
-        error_count: usize,
-        total_micros: u64,
-        durations: Vec<u64>,
-        distinct_callers: std::collections::HashSet<String>,
-        last_caller: Option<String>,
-        last_app: Option<String>,
-    }
-    let mut buckets: HashMap<String, Acc> = HashMap::new();
-    for e in events {
-        if !matches!(e.kind, TapKind::Query) {
-            continue;
-        }
-        let Some(sql) = e.sql.as_deref() else {
-            continue;
-        };
-        let fp = crate::query::nplus1::fingerprint(sql);
-        let acc = buckets.entry(fp).or_default();
-        acc.example_sql = sql.to_string(); // most recent wins
-        acc.count += 1;
-        if e.is_error() {
-            acc.error_count += 1;
-        }
-        let d = e.duration_micros.unwrap_or(0);
-        acc.total_micros = acc.total_micros.saturating_add(d);
-        acc.durations.push(d);
-        if let Some(c) = e.innermost_caller() {
-            acc.distinct_callers.insert(c.to_string());
-            acc.last_caller = Some(c.to_string());
-        }
-        if let Some(app) = e.app.as_deref() {
-            acc.last_app = Some(app.to_string());
-        }
-    }
-    let mut out: Vec<Hotspot> = buckets
-        .into_iter()
-        .map(|(fingerprint, mut acc)| {
-            // Nearest-rank percentile: sort durations ascending,
-            // index = ceil(p * N) - 1, clamped to [0, N-1].
-            acc.durations.sort_unstable();
-            let p50 = percentile(&acc.durations, 0.50);
-            let p95 = percentile(&acc.durations, 0.95);
-            let p99 = percentile(&acc.durations, 0.99);
-            Hotspot {
-                fingerprint,
-                example_sql: acc.example_sql,
-                count: acc.count,
-                error_count: acc.error_count,
-                total_micros: acc.total_micros,
-                p50_micros: p50,
-                p95_micros: p95,
-                p99_micros: p99,
-                distinct_callers: acc.distinct_callers.len(),
-                last_caller: acc.last_caller,
-                last_app: acc.last_app,
-            }
-        })
-        .collect();
-    sort_hotspots(&mut out, sort);
-    out
-}
-
-/// In-place sort of a hotspot list per `sort`. Exposed so
-/// the panel can resort without re-aggregating when the
-/// operator presses `s`.
-pub fn sort_hotspots(out: &mut [Hotspot], sort: HotspotSort) {
-    match sort {
-        HotspotSort::TotalTime => out.sort_by(|a, b| {
-            b.total_micros
-                .cmp(&a.total_micros)
-                .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-        }),
-        HotspotSort::CallCount => out.sort_by(|a, b| {
-            b.count
-                .cmp(&a.count)
-                .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-        }),
-        HotspotSort::P95Latency => out.sort_by(|a, b| {
-            b.p95_micros
-                .cmp(&a.p95_micros)
-                .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-        }),
-    }
-}
-
-/// Aggregate stats keyed by innermost caller frame —
-/// answers "which app code path is responsible for the
-/// database time?" Sibling to [`Hotspot`] but the grouping
-/// key is the app side, not the SQL side. Built by
-/// [`group_by_caller`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CallerStats {
-    /// Innermost non-framework frame the caller was at when
-    /// the JAR sampled the stack. `"<unknown>"` when no event
-    /// in the bucket carried a caller frame (the JAR may have
-    /// caller-capture disabled or threshold-gated).
-    pub caller: String,
-    pub count: usize,
-    pub error_count: usize,
-    pub total_micros: u64,
-    pub p50_micros: u64,
-    pub p95_micros: u64,
-    pub p99_micros: u64,
-    /// Distinct SQL fingerprints observed under this caller.
-    /// High count + many distinct fingerprints = a method
-    /// driving a lot of varied work; high count + few
-    /// fingerprints = a hot loop (often the N+1 shape).
-    pub distinct_fingerprints: usize,
-    /// Most recent SQL fingerprint seen — gives the operator
-    /// a concrete pointer when drilling in.
-    pub last_fingerprint: Option<String>,
-    pub last_app: Option<String>,
-}
-
-impl CallerStats {
-    pub fn mean_micros(&self) -> u64 {
-        if self.count == 0 {
-            0
-        } else {
-            self.total_micros / self.count as u64
-        }
-    }
-}
-
-/// Sentinel rendered when an event has no caller frame.
-/// Surfaced in the panel so operators see the "unknown"
-/// bucket explicitly rather than mistaking missing data for
-/// "no traffic from that caller."
-pub const UNKNOWN_CALLER: &str = "<unknown>";
-
-/// Group an event slice by innermost caller frame
-/// (`caller[0]`), computing the same per-bucket totals as
-/// [`group_hotspots`]. Events without any caller frame land
-/// in the [`UNKNOWN_CALLER`] bucket so the rollup remains
-/// total-conserving (sum of counts = total query events).
-/// Pure; called from the panel renderer.
-pub fn group_by_caller<'a, I>(events: I, sort: HotspotSort) -> Vec<CallerStats>
-where
-    I: IntoIterator<Item = &'a TapEvent>,
-{
-    use std::collections::HashMap;
-    #[derive(Default)]
-    struct Acc {
-        count: usize,
-        error_count: usize,
-        total_micros: u64,
-        durations: Vec<u64>,
-        distinct_fingerprints: std::collections::HashSet<String>,
-        last_fingerprint: Option<String>,
-        last_app: Option<String>,
-    }
-    let mut buckets: HashMap<String, Acc> = HashMap::new();
-    for e in events {
-        if !matches!(e.kind, TapKind::Query) {
-            continue;
-        }
-        let key = e
-            .innermost_caller()
-            .map(str::to_string)
-            .unwrap_or_else(|| UNKNOWN_CALLER.to_string());
-        let acc = buckets.entry(key).or_default();
-        acc.count += 1;
-        if e.is_error() {
-            acc.error_count += 1;
-        }
-        let d = e.duration_micros.unwrap_or(0);
-        acc.total_micros = acc.total_micros.saturating_add(d);
-        acc.durations.push(d);
-        if let Some(sql) = e.sql.as_deref() {
-            let fp = crate::query::nplus1::fingerprint(sql);
-            acc.last_fingerprint = Some(fp.clone());
-            acc.distinct_fingerprints.insert(fp);
-        }
-        if let Some(app) = e.app.as_deref() {
-            acc.last_app = Some(app.to_string());
-        }
-    }
-    let mut out: Vec<CallerStats> = buckets
-        .into_iter()
-        .map(|(caller, mut acc)| {
-            acc.durations.sort_unstable();
-            CallerStats {
-                caller,
-                count: acc.count,
-                error_count: acc.error_count,
-                total_micros: acc.total_micros,
-                p50_micros: percentile(&acc.durations, 0.50),
-                p95_micros: percentile(&acc.durations, 0.95),
-                p99_micros: percentile(&acc.durations, 0.99),
-                distinct_fingerprints: acc.distinct_fingerprints.len(),
-                last_fingerprint: acc.last_fingerprint,
-                last_app: acc.last_app,
-            }
-        })
-        .collect();
-    sort_callers(&mut out, sort);
-    out
-}
-
-/// In-place sort of a caller-stats list per `sort`. Mirrors
-/// [`sort_hotspots`] so the panel can resort on `s` without
-/// re-aggregating.
-pub fn sort_callers(out: &mut [CallerStats], sort: HotspotSort) {
-    match sort {
-        HotspotSort::TotalTime => out.sort_by(|a, b| {
-            b.total_micros
-                .cmp(&a.total_micros)
-                .then_with(|| a.caller.cmp(&b.caller))
-        }),
-        HotspotSort::CallCount => out.sort_by(|a, b| {
-            b.count
-                .cmp(&a.count)
-                .then_with(|| a.caller.cmp(&b.caller))
-        }),
-        HotspotSort::P95Latency => out.sort_by(|a, b| {
-            b.p95_micros
-                .cmp(&a.p95_micros)
-                .then_with(|| a.caller.cmp(&b.caller))
-        }),
-    }
-}
-
-/// Aggregate stats for one transaction — populated by
-/// [`group_by_txn`]. Surfaces long-held transactions,
-/// read-after-write patterns, and the classic
-/// "47 SELECTs + 1 COMMIT" N+1 shape at the txn level.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TxnStats {
-    /// Synthetic transaction id from the JAR. `None` for
-    /// events that didn't carry one (autocommit traffic
-    /// not yet routed via the conn-fallback path) — kept
-    /// distinct from synthetic-id transactions so the
-    /// renderer can label them differently.
-    pub txn: Option<String>,
-    pub conn: Option<String>,
-    pub app: Option<String>,
-    /// HikariCP / connection-pool name the txn ran against
-    /// (e.g. `primary` vs `replica`). Populated from the
-    /// first event in the bucket that carried one. Surfaces
-    /// "did this write hit the replica pool by mistake?"
-    /// without waiting on the JAR to ship an explicit
-    /// `pool_role` field.
-    pub pool: Option<String>,
-    /// Number of query events inside the transaction.
-    pub statement_count: usize,
-    pub error_count: usize,
-    /// Distinct SQL fingerprints — `1` for the canonical
-    /// N+1 shape, high for legitimate varied work.
-    pub distinct_fingerprints: usize,
-    /// Most recent SQL fingerprint observed — gives the
-    /// operator a concrete pointer.
-    pub last_fingerprint: Option<String>,
-    /// Earliest event ts in the txn (microseconds since
-    /// the Unix epoch).
-    pub first_ts_unix_micros: u64,
-    /// Latest event ts in the txn — equals the boundary
-    /// event's ts when `outcome` is `Some`.
-    pub last_ts_unix_micros: u64,
-    /// Wall-clock span from first to last event. Doesn't
-    /// include time after the last observed event for an
-    /// open transaction — that gap is "we haven't seen
-    /// it yet."
-    pub span_micros: u64,
-    /// Sum of `duration_micros` across the txn's queries.
-    /// Total DB time, separate from wall-clock span.
-    pub total_query_micros: u64,
-    /// `None` when no TxnBoundary event has closed the
-    /// txn — i.e. the transaction is open as far as
-    /// pgman can tell. `Some(Commit)` / `Some(Rollback)`
-    /// when the boundary arrived.
-    pub outcome: Option<TxnOutcome>,
-}
-
-impl TxnStats {
-    /// Whether pgman has seen a `TxnBoundary` close this
-    /// transaction. Open transactions are usually the
-    /// diagnostic target (held locks, blocking other
-    /// sessions).
-    pub fn is_open(&self) -> bool {
-        self.outcome.is_none()
-    }
-}
-
-/// Group events by synthetic transaction id. Walks the
-/// ring once, bucketing query events by `txn` (falling back
-/// to `conn` so autocommit traffic groups usefully) and
-/// closing each bucket out with the matching `TxnBoundary`
-/// event when one arrives.
-///
-/// Sort: open transactions first (sorted by span desc —
-/// longest-held are most diagnostic), then closed
-/// transactions by statement_count desc, fingerprint as
-/// the final tiebreak for determinism.
-pub fn group_by_txn<'a, I>(events: I) -> Vec<TxnStats>
-where
-    I: IntoIterator<Item = &'a TapEvent>,
-{
-    use std::collections::HashMap;
-    #[derive(Default)]
-    struct Acc {
-        txn: Option<String>,
-        conn: Option<String>,
-        app: Option<String>,
-        pool: Option<String>,
-        statement_count: usize,
-        error_count: usize,
-        distinct_fingerprints: std::collections::HashSet<String>,
-        last_fingerprint: Option<String>,
-        first_ts: Option<u64>,
-        last_ts: Option<u64>,
-        total_query_micros: u64,
-        outcome: Option<TxnOutcome>,
-    }
-    let mut buckets: HashMap<String, Acc> = HashMap::new();
-    let key_of = |e: &TapEvent| -> Option<String> {
-        // Prefer txn; fall back to conn so autocommit
-        // traffic groups under "one txn per autocommit
-        // statement" via the conn id. Events with neither
-        // can't be grouped meaningfully — drop them rather
-        // than pool them all under a single sentinel.
-        e.txn.clone().or_else(|| e.conn.clone())
-    };
-    for e in events {
-        let Some(key) = key_of(e) else {
-            continue;
-        };
-        match e.kind {
-            TapKind::Query => {
-                let acc = buckets.entry(key).or_default();
-                if acc.txn.is_none() {
-                    acc.txn = e.txn.clone();
-                }
-                if acc.conn.is_none() {
-                    acc.conn = e.conn.clone();
-                }
-                if acc.app.is_none() {
-                    acc.app = e.app.clone();
-                }
-                if acc.pool.is_none() {
-                    acc.pool = e.pool.clone();
-                }
-                acc.statement_count += 1;
-                if e.is_error() {
-                    acc.error_count += 1;
-                }
-                if let Some(sql) = e.sql.as_deref() {
-                    let fp = crate::query::nplus1::fingerprint(sql);
-                    acc.last_fingerprint = Some(fp.clone());
-                    acc.distinct_fingerprints.insert(fp);
-                }
-                acc.total_query_micros = acc
-                    .total_query_micros
-                    .saturating_add(e.duration_micros.unwrap_or(0));
-                if acc.first_ts.is_none() {
-                    acc.first_ts = Some(e.ts_unix_micros);
-                }
-                acc.last_ts = Some(e.ts_unix_micros);
-            }
-            TapKind::TxnBoundary => {
-                let acc = buckets.entry(key).or_default();
-                if acc.txn.is_none() {
-                    acc.txn = e.txn.clone();
-                }
-                if acc.conn.is_none() {
-                    acc.conn = e.conn.clone();
-                }
-                acc.outcome = e.txn_outcome;
-                acc.last_ts = Some(e.ts_unix_micros);
-            }
-            TapKind::Heartbeat => {
-                // Heartbeats don't belong to any txn.
-            }
-        }
-    }
-    let mut out: Vec<TxnStats> = buckets
-        .into_iter()
-        .filter_map(|(_, acc)| {
-            // Drop empty buckets — a TxnBoundary with no
-            // preceding queries isn't useful (the ring may
-            // have evicted them).
-            if acc.statement_count == 0 {
-                return None;
-            }
-            let first = acc.first_ts.unwrap_or(0);
-            let last = acc.last_ts.unwrap_or(first);
-            Some(TxnStats {
-                txn: acc.txn,
-                conn: acc.conn,
-                app: acc.app,
-                pool: acc.pool,
-                statement_count: acc.statement_count,
-                error_count: acc.error_count,
-                distinct_fingerprints: acc.distinct_fingerprints.len(),
-                last_fingerprint: acc.last_fingerprint,
-                first_ts_unix_micros: first,
-                last_ts_unix_micros: last,
-                span_micros: last.saturating_sub(first),
-                total_query_micros: acc.total_query_micros,
-                outcome: acc.outcome,
-            })
-        })
-        .collect();
-    // Open transactions first (sorted by span desc), then
-    // closed by statement_count desc.
-    out.sort_by(|a, b| {
-        let open_order = match (a.is_open(), b.is_open()) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => std::cmp::Ordering::Equal,
-        };
-        let key_tiebreak = || {
-            a.txn
-                .as_deref()
-                .unwrap_or("")
-                .cmp(b.txn.as_deref().unwrap_or(""))
-                .then_with(|| {
-                    a.conn
-                        .as_deref()
-                        .unwrap_or("")
-                        .cmp(b.conn.as_deref().unwrap_or(""))
-                })
-        };
-        open_order
-            .then_with(|| {
-                if a.is_open() {
-                    b.span_micros.cmp(&a.span_micros)
-                } else {
-                    b.statement_count.cmp(&a.statement_count)
-                }
-            })
-            .then_with(key_tiebreak)
-    });
-    out
-}
-
-/// One row of the baseline-diff view: a fingerprint
-/// classified relative to a captured baseline snapshot.
-/// The renderer colour-codes each kind so a glance tells
-/// the story.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HotspotDiff {
-    pub fingerprint: String,
-    pub example_sql: String,
-    pub kind: DiffKind,
-    /// Counts and p95 from the baseline (zero if `kind ==
-    /// New`).
-    pub baseline_count: usize,
-    pub baseline_p95_micros: u64,
-    /// Counts and p95 from the current snapshot (zero if
-    /// `kind == Disappeared`).
-    pub current_count: usize,
-    pub current_p95_micros: u64,
-}
-
-/// What changed for this fingerprint vs the baseline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiffKind {
-    /// Fingerprint wasn't in the baseline ring but is in the
-    /// current — the typical "did my deploy introduce this?"
-    /// signal.
-    New,
-    /// Current p95 is at least `BASELINE_REGRESSION_FACTOR`×
-    /// the baseline p95. Tail latency got worse, even if the
-    /// call count is flat.
-    Regressed,
-    /// Fingerprint was in the baseline but isn't present in
-    /// the current — either the call site went away or the
-    /// ring window slid past it. Surfaced because operators
-    /// looking for "what disappeared" do exist (rollback
-    /// validation).
-    Disappeared,
-    /// In both snapshots, no notable change. Filtered out by
-    /// default — `Unchanged` only surfaces when the operator
-    /// asks for everything.
-    Unchanged,
-}
-
-/// Default regression threshold: 2× p95. Anything ≥ 2× is
-/// flagged `Regressed`. The threshold is conservative so
-/// pgman doesn't cry wolf for normal jitter.
-pub const BASELINE_REGRESSION_FACTOR: u64 = 2;
-
-/// Pure diff between two hotspot snapshots. Returns one
-/// `HotspotDiff` per fingerprint that changed (`New`,
-/// `Regressed`, or `Disappeared` by default — `Unchanged`
-/// rows are dropped unless `include_unchanged` is set).
-///
-/// Sort: regressions first (sorted by current p95 desc), then
-/// new (by current count desc), then disappeared (by baseline
-/// count desc), then unchanged (alphabetical). Within ties,
-/// fingerprint ascending for determinism.
-pub fn diff_hotspots(
-    baseline: &[Hotspot],
-    current: &[Hotspot],
-    include_unchanged: bool,
-) -> Vec<HotspotDiff> {
-    use std::collections::{HashMap, HashSet};
-    let baseline_by_fp: HashMap<&str, &Hotspot> =
-        baseline.iter().map(|h| (h.fingerprint.as_str(), h)).collect();
-    let current_by_fp: HashMap<&str, &Hotspot> =
-        current.iter().map(|h| (h.fingerprint.as_str(), h)).collect();
-    let mut all_fps: HashSet<&str> = HashSet::new();
-    all_fps.extend(baseline_by_fp.keys().copied());
-    all_fps.extend(current_by_fp.keys().copied());
-
-    let mut out: Vec<HotspotDiff> = Vec::new();
-    for fp in all_fps {
-        let b = baseline_by_fp.get(fp).copied();
-        let c = current_by_fp.get(fp).copied();
-        let (kind, example_sql, b_count, b_p95, c_count, c_p95) = match (b, c) {
-            (None, Some(cur)) => (
-                DiffKind::New,
-                cur.example_sql.clone(),
-                0,
-                0,
-                cur.count,
-                cur.p95_micros,
-            ),
-            (Some(base), None) => (
-                DiffKind::Disappeared,
-                base.example_sql.clone(),
-                base.count,
-                base.p95_micros,
-                0,
-                0,
-            ),
-            (Some(base), Some(cur)) => {
-                let regressed = base.p95_micros > 0
-                    && cur.p95_micros >= base.p95_micros.saturating_mul(BASELINE_REGRESSION_FACTOR);
-                let k = if regressed {
-                    DiffKind::Regressed
-                } else {
-                    DiffKind::Unchanged
-                };
-                (
-                    k,
-                    cur.example_sql.clone(),
-                    base.count,
-                    base.p95_micros,
-                    cur.count,
-                    cur.p95_micros,
-                )
-            }
-            (None, None) => unreachable!("set membership"),
-        };
-        if !include_unchanged && matches!(kind, DiffKind::Unchanged) {
-            continue;
-        }
-        out.push(HotspotDiff {
-            fingerprint: fp.to_string(),
-            example_sql,
-            kind,
-            baseline_count: b_count,
-            baseline_p95_micros: b_p95,
-            current_count: c_count,
-            current_p95_micros: c_p95,
-        });
-    }
-    // Sort: Regressed (highest current p95 first), New
-    // (highest current count first), Disappeared (highest
-    // baseline count first), Unchanged (alphabetical).
-    out.sort_by(|a, b| {
-        let order = |k: DiffKind| match k {
-            DiffKind::Regressed => 0,
-            DiffKind::New => 1,
-            DiffKind::Disappeared => 2,
-            DiffKind::Unchanged => 3,
-        };
-        let oa = order(a.kind);
-        let ob = order(b.kind);
-        oa.cmp(&ob)
-            .then_with(|| match a.kind {
-                DiffKind::Regressed => b.current_p95_micros.cmp(&a.current_p95_micros),
-                DiffKind::New => b.current_count.cmp(&a.current_count),
-                DiffKind::Disappeared => b.baseline_count.cmp(&a.baseline_count),
-                DiffKind::Unchanged => std::cmp::Ordering::Equal,
-            })
-            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-    });
-    out
-}
-
-/// One detected N+1 burst: a `(txn, fingerprint)` pair that
-/// fired `count` times inside `window_micros`. The renderer
-/// uses `last_caller` as the pointer to the offending app
-/// code; `example_sql` is the most-recent member's SQL so the
-/// operator can see what's running.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NplusOneFinding {
-    pub fingerprint: String,
-    pub example_sql: String,
-    /// Synthetic transaction id from the JAR. `None` when the
-    /// events fired outside a transaction (autocommit; each
-    /// statement was its own txn but the same `(conn, conn-seq)`
-    /// grouped them in time).
-    pub txn: Option<String>,
-    pub conn: Option<String>,
-    pub app: Option<String>,
-    pub count: usize,
-    /// First and last event's `ts_unix_micros` in the burst —
-    /// gives the operator the "how recent" signal.
-    pub first_ts_unix_micros: u64,
-    pub last_ts_unix_micros: u64,
-    /// Span (last - first); `0` for a single-event finding.
-    pub span_micros: u64,
-    /// Innermost caller frame from the first event in the burst.
-    pub last_caller: Option<String>,
-}
-
-/// Default sliding-window for live N+1 detection: 200 ms.
-/// Application-level N+1 (a service iterating a collection
-/// and firing one SELECT per element) typically fits well
-/// inside this; longer bursts are usually batch jobs.
-pub const NPLUS1_WINDOW_MICROS: u64 = 200_000;
-
-/// Default minimum repetitions for live N+1 detection.
-/// 5 is the operating point matching the offline N+1
-/// classifier; below this the false-positive rate from
-/// legitimate-but-similar queries climbs.
-pub const NPLUS1_MIN_REPEATS: usize = 5;
-
-/// Scan a ring for live N+1 bursts. A finding fires when at
-/// least `min_repeats` events sharing the same
-/// `(txn-or-conn, fingerprint)` key land within
-/// `window_micros` of each other. Pure; called from the
-/// panel renderer.
-///
-/// Algorithm: bucket events by key (txn when set, otherwise
-/// the connection id so autocommit traffic still groups
-/// usefully), then walk each bucket in `ts_unix_micros`
-/// order using a sliding window over indices to find runs
-/// of `min_repeats` events inside the time window. The
-/// finding captures the *longest* such run per key, so
-/// repeated bursts collapse to one signal.
-pub fn detect_nplus1<'a, I>(
-    events: I,
-    window_micros: u64,
-    min_repeats: usize,
-) -> Vec<NplusOneFinding>
-where
-    I: IntoIterator<Item = &'a TapEvent>,
-{
-    use std::collections::HashMap;
-    // Key by (group_key, fingerprint). group_key prefers
-    // `txn`; falls back to `conn` so autocommit traffic from
-    // the same connection still groups; falls back to a
-    // synthetic "—" so we don't lose all signal when the JAR
-    // ships none of those.
-    type Key = (String, String);
-    let mut buckets: HashMap<Key, Vec<&TapEvent>> = HashMap::new();
-    for e in events {
-        if !matches!(e.kind, TapKind::Query) {
-            continue;
-        }
-        let Some(sql) = e.sql.as_deref() else {
-            continue;
-        };
-        let group_key = e
-            .txn
-            .clone()
-            .or_else(|| e.conn.clone())
-            .unwrap_or_else(|| "—".into());
-        let fp = crate::query::nplus1::fingerprint(sql);
-        buckets.entry((group_key, fp)).or_default().push(e);
-    }
-    let mut out: Vec<NplusOneFinding> = Vec::new();
-    for ((_group, fingerprint), mut events) in buckets {
-        if events.len() < min_repeats {
-            continue;
-        }
-        events.sort_by_key(|e| e.ts_unix_micros);
-        // Sliding window: find the longest run of indices
-        // [l, r] where ts[r] - ts[l] <= window_micros and
-        // r - l + 1 >= min_repeats. We track the longest as
-        // we go.
-        let mut l: usize = 0;
-        let mut best: Option<(usize, usize)> = None; // (l, r)
-        for r in 0..events.len() {
-            while l < r
-                && events[r].ts_unix_micros - events[l].ts_unix_micros > window_micros
-            {
-                l += 1;
-            }
-            let run = r - l + 1;
-            if run >= min_repeats {
-                match best {
-                    None => best = Some((l, r)),
-                    Some((bl, br)) if r - l + 1 > br - bl + 1 => best = Some((l, r)),
-                    _ => {}
-                }
-            }
-        }
-        let Some((bl, br)) = best else {
-            continue;
-        };
-        let first = events[bl];
-        let last = events[br];
-        out.push(NplusOneFinding {
-            fingerprint,
-            example_sql: last.sql.clone().unwrap_or_default(),
-            txn: last.txn.clone(),
-            conn: last.conn.clone(),
-            app: last.app.clone(),
-            count: br - bl + 1,
-            first_ts_unix_micros: first.ts_unix_micros,
-            last_ts_unix_micros: last.ts_unix_micros,
-            span_micros: last.ts_unix_micros - first.ts_unix_micros,
-            // Use the LAST event's caller so the field name
-            // (`last_caller`) matches the source. In practice
-            // first and last frames usually agree inside a tight
-            // burst (same loop iteration), but consistency
-            // matters for callers that might cross loops.
-            last_caller: last.innermost_caller().map(str::to_string),
-        });
-    }
-    // Most-repeating first, then most-recent. Ties broken by
-    // fingerprint so the order is deterministic.
-    out.sort_by(|a, b| {
-        b.count
-            .cmp(&a.count)
-            .then_with(|| b.last_ts_unix_micros.cmp(&a.last_ts_unix_micros))
-            .then_with(|| a.fingerprint.cmp(&b.fingerprint))
-    });
-    out
-}
-
-/// Nearest-rank percentile on a pre-sorted slice. `p` in
-/// `[0.0, 1.0]`. Returns `0` for an empty slice. Pure;
-/// covered by the percentile_* tests below.
-fn percentile(sorted: &[u64], p: f64) -> u64 {
-    if sorted.is_empty() {
-        return 0;
-    }
-    let n = sorted.len();
-    let p = p.clamp(0.0, 1.0);
-    let rank = (p * n as f64).ceil() as usize;
-    let idx = rank.saturating_sub(1).min(n - 1);
-    sorted[idx]
-}
-
-// ---------------------------------------------------------
-// Replay — feed a captured event stream from a file into
-// the same pipeline as the live listeners. Lets pgman be
-// demoed and downstream layers (L3 advisor, L4 evidence,
-// L6 index advisor) be developed before the JVM-side JAR
-// exists or against deterministic fixture data.
-// ---------------------------------------------------------
-
-/// Parse one line of a JSONL capture into a [`TapEvent`].
-/// Blank lines are silently skipped at the caller; lines that
-/// don't validate as a `TapEvent` return their parse error so
-/// the caller can log a useful pointer to the bad line.
-#[must_use = "parse_replay_line returns the parsed event — discarding it loses replay data"]
-pub fn parse_replay_line(line: &str) -> Option<Result<TapEvent, String>> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(parse(trimmed.as_bytes()))
-}
-
-/// Serialize one event as JSON suitable for appending to a
-/// `--tap-record` capture file. `received_at_unix_micros`
-/// is skipped (it's `#[serde(skip)]` on the struct) so a
-/// captured file is portable across hosts with skewed
-/// clocks — the replay side re-stamps on receive.
-#[must_use = "record_line returns the serialised JSON — caller must write it"]
-pub fn record_line(event: &TapEvent) -> Result<String, String> {
-    serde_json::to_string(event).map_err(|e| format!("serialize failed: {e}"))
-}
-
-/// Stream `path`'s JSONL events into `tx`. Each line is one
-/// `TapEvent`; blank lines skipped, malformed lines logged
-/// + dropped (the replay continues so one bad line doesn't
-/// take out the demo).
-///
-/// `received_at_unix_micros` is stamped at replay time so the
-/// downstream pipeline can't tell a replayed event from a
-/// live one — useful for exercising L2 baseline diff / L3
-/// advisor without seeding fake timestamps.
-pub async fn run_replay_file<P: AsRef<std::path::Path>>(
-    path: P,
-    tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<usize> {
-    use tokio::io::AsyncBufReadExt;
-    let file = tokio::fs::File::open(&path).await?;
-    let reader = tokio::io::BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut accepted = 0usize;
-    let mut skipped = 0usize;
-    let mut line_no = 0usize;
-    while let Some(line) = lines.next_line().await? {
-        line_no += 1;
-        match parse_replay_line(&line) {
-            None => {}
-            Some(Ok(mut event)) => {
-                event.received_at_unix_micros = now_unix_micros();
-                // Use `.send().await` for replay specifically:
-                // backpressure here means the operator wants
-                // the events in the App, so blocking the file
-                // pump until the channel has room is more
-                // useful than dropping replayed events.
-                if tx.send(event).await.is_err() {
-                    break; // receiver gone
-                }
-                accepted += 1;
-            }
-            Some(Err(e)) => {
-                tracing::warn!("tap-replay: line {line_no}: {e}");
-                skipped += 1;
-            }
-        }
-    }
-    tracing::info!(
-        "tap-replay: {accepted} event(s) accepted, {skipped} line(s) skipped, from {}",
-        path.as_ref().display()
-    );
-    Ok(accepted)
-}
-
-// ---------------------------------------------------------
-// OTLP/HTTP server — accepts POST /v1/traces, feeds the
-// receive pipeline.
-// ---------------------------------------------------------
-
-/// Maximum OTLP HTTP body size we'll accept. 16 MiB — well
-/// above any reasonable single OTLP batch. Bigger would
-/// suggest a misbehaving agent or a hostile client trying to
-/// exhaust memory.
-pub const OTLP_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-
-/// Spawn an OTLP/HTTP listener on `addr`. Accepts only
-/// `POST /v1/traces` with `Content-Type: application/json`;
-/// other methods/paths get the standard HTTP error response
-/// so a curl-poking operator sees a useful message. Returns
-/// only on socket-bind failure; per-connection errors are
-/// logged + dropped so other clients keep flowing.
-pub async fn run_otlp_listener(
-    addr: std::net::SocketAddr,
-    tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("tap: OTLP/HTTP listener bound on {addr}");
-    loop {
-        let (sock, peer) = match listener.accept().await {
-            Ok(pair) => pair,
-            Err(e) => {
-                tracing::warn!("tap-otlp: accept failed: {e}");
-                continue;
-            }
-        };
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_otlp_conn(sock, &tx).await {
-                tracing::warn!("tap-otlp: conn {peer} ended: {e}");
-            }
-        });
-    }
-}
-
-/// How long we'll wait for a complete request (headers +
-/// body) on one connection. Defends against slow-loris
-/// clients holding sockets open with trickle reads — at the
-/// JVM agent / OTel collector tier this is generous; at the
-/// "someone curl'd a malformed POST" tier it's the right cap.
-pub const OTLP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-async fn handle_otlp_conn(
-    mut sock: tokio::net::TcpStream,
-    tx: &tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    // One request per connection in v1; OTel exporters
-    // typically open + POST + close. Keep-alive is fine but
-    // unnecessary at this stage.
-    let req = match tokio::time::timeout(
-        OTLP_REQUEST_TIMEOUT,
-        read_http_request(&mut sock, OTLP_MAX_BODY_BYTES),
-    )
-    .await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            let _ = write_http_response(&mut sock, 400, "Bad Request", &e).await;
-            return Ok(());
-        }
-        Err(_) => {
-            let msg = format!(
-                "request timed out after {}s (slow-loris guard)",
-                OTLP_REQUEST_TIMEOUT.as_secs()
-            );
-            let _ = write_http_response(&mut sock, 408, "Request Timeout", &msg).await;
-            return Ok(());
-        }
-    };
-    let response = process_otlp_request(req, tx);
-    write_http_response(&mut sock, response.status, response.reason, &response.body).await?;
-    sock.shutdown().await.ok();
-    Ok(())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct HttpResponse {
-    status: u16,
-    reason: &'static str,
-    body: String,
-}
-
-/// Pure: turn a parsed HTTP request into the response we
-/// should send. Routes OTLP `POST /v1/traces` through
-/// [`parse_otlp_json`] and forwards each event into `tx`.
-/// Exposed for the unit tests that exercise routing without
-/// a real socket.
-fn process_otlp_request(
-    req: HttpRequest,
-    tx: &tokio::sync::mpsc::Sender<TapEvent>,
-) -> HttpResponse {
-    if req.method != "POST" {
-        return HttpResponse {
-            status: 405,
-            reason: "Method Not Allowed",
-            body: "OTLP/HTTP accepts only POST".into(),
-        };
-    }
-    // Chunked-encoding bodies silently parse as empty because
-    // our minimal reader honours Content-Length only. Reject
-    // explicitly with 501 so the agent surfaces a real error
-    // instead of "succeeded with no events accepted." Most
-    // OTel exporters can switch to Content-Length easily.
-    if let Some(enc) = req.headers.get("transfer-encoding") {
-        if enc.to_ascii_lowercase().contains("chunked") {
-            return HttpResponse {
-                status: 501,
-                reason: "Not Implemented",
-                body: format!(
-                    "Transfer-Encoding {enc:?} not supported; use Content-Length \
-                     (set OTEL_EXPORTER_OTLP_PROTOCOL=http/json on the agent)"
-                ),
-            };
-        }
-    }
-    // Only /v1/traces in v1. /v1/metrics + /v1/logs can come
-    // later if real users need them. Strip a possible
-    // trailing slash so `/v1/traces/` matches too.
-    let path = req.path.trim_end_matches('/');
-    if path != "/v1/traces" {
-        return HttpResponse {
-            status: 404,
-            reason: "Not Found",
-            body: format!(
-                "unknown path {:?}; v1 OTLP accepts only POST /v1/traces",
-                req.path
-            ),
-        };
-    }
-    // Require JSON; protobuf is a v2 follow-up.
-    let ct = req.headers.get("content-type").map(String::as_str).unwrap_or("");
-    if !ct.starts_with("application/json") {
-        return HttpResponse {
-            status: 415,
-            reason: "Unsupported Media Type",
-            body: format!(
-                "expected application/json (set OTEL_EXPORTER_OTLP_PROTOCOL=http/json); got {ct:?}"
-            ),
-        };
-    }
-    let (mut events, skipped) = match parse_otlp_json(&req.body) {
-        Ok(pair) => pair,
-        Err(e) => {
-            return HttpResponse {
-                status: 400,
-                reason: "Bad Request",
-                body: format!("OTLP parse error: {e}"),
-            };
-        }
-    };
-    let total = events.len();
-    let mut accepted = 0usize;
-    let mut closed_mid_batch = false;
-    for event in events.drain(..) {
-        let mut event = event;
-        // Stamp per span (not once for the batch) so spans
-        // arriving in one POST keep a strictly-monotonic
-        // received_at — preserves the FIFO-within-batch
-        // ordering the downstream Hotspots / N+1 detectors
-        // (and tests like
-        // `tcp_listener_round_trip_decodes_events_and_stamps_received_at`)
-        // implicitly assume.
-        event.received_at_unix_micros = now_unix_micros();
-        if forward_or_drop(tx, event, "otlp").is_err() {
-            // App side has gone away. Don't return a clean
-            // 200: the agent should know some spans were not
-            // delivered.
-            closed_mid_batch = true;
-            break;
-        }
-        accepted += 1;
-    }
-    if skipped > 0 || accepted != total {
-        tracing::debug!(
-            "tap-otlp: accepted {accepted} / parsed {total} span(s), skipped {skipped} non-postgres"
-        );
-    }
-    if closed_mid_batch {
-        // OTLP/HTTP semantics: report partial success so the
-        // agent surfaces the loss instead of treating the
-        // batch as fully accepted.
-        let rejected = total - accepted;
-        return HttpResponse {
-            status: 200,
-            reason: "OK",
-            body: format!(
-                "{{\"partialSuccess\":{{\"rejectedSpans\":{rejected},\"errorMessage\":\"pgman App receiver closed mid-batch\"}}}}"
-            ),
-        };
-    }
-    // OTel collectors expect an empty
-    // ExportTraceServiceResponse on success. `{}` satisfies
-    // the protobuf-JSON encoding for "no partial_success."
-    HttpResponse {
-        status: 200,
-        reason: "OK",
-        body: "{}".into(),
-    }
-}
-
-/// A parsed HTTP/1.1 request — enough to route OTLP. We
-/// deliberately don't model chunked encoding or
-/// `Transfer-Encoding`; OTel exporters always use
-/// Content-Length for OTLP bodies.
-#[derive(Debug, PartialEq, Eq)]
-struct HttpRequest {
-    method: String,
-    path: String,
-    headers: std::collections::HashMap<String, String>,
-    body: Vec<u8>,
-}
-
-async fn read_http_request<R>(reader: &mut R, max_body: usize) -> Result<HttpRequest, String>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt;
-    // Read headers into a chunked buffer (1 KiB at a time)
-    // and scan for `\r\n\r\n`. Cap accumulated headers at
-    // 16 KiB so a hostile client can't buffer-bomb us before
-    // we hit the body. Chunked reads avoid the per-byte
-    // syscall cost the original implementation had — the
-    // slow-loris guard is a separate deadline at the call
-    // site.
-    const MAX_HEADER_BYTES: usize = 16 * 1024;
-    const READ_CHUNK: usize = 1024;
-    let mut buf: Vec<u8> = Vec::with_capacity(2048);
-    let mut chunk = [0u8; READ_CHUNK];
-    let mut header_end: Option<usize> = None;
-    while buf.len() <= MAX_HEADER_BYTES {
-        let n = reader
-            .read(&mut chunk)
-            .await
-            .map_err(|e| format!("read failed: {e}"))?;
-        if n == 0 {
-            return Err("connection closed before headers complete".into());
-        }
-        let prior_len = buf.len();
-        buf.extend_from_slice(&chunk[..n]);
-        // Scan only the new region (plus a 3-byte overlap so
-        // a CRLFCRLF straddling the read boundary still hits).
-        let scan_from = prior_len.saturating_sub(3);
-        if let Some(rel) = find_subsequence(&buf[scan_from..], b"\r\n\r\n") {
-            header_end = Some(scan_from + rel);
-            break;
-        }
-    }
-    let Some(end) = header_end else {
-        return Err(format!(
-            "header section exceeded {MAX_HEADER_BYTES} bytes without CRLF-CRLF terminator"
-        ));
-    };
-    let header_text =
-        std::str::from_utf8(&buf[..end]).map_err(|e| format!("non-utf8 in headers: {e}"))?;
-    // Anything past end+4 is over-read into the body region —
-    // keep it and combine with whatever we still need to read.
-    let body_prefix: Vec<u8> = buf[end + 4..].to_vec();
-
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines.next().ok_or("empty request line")?;
-    let mut parts = request_line.split_whitespace();
-    let method = parts.next().ok_or("missing method")?.to_string();
-    let path = parts.next().ok_or("missing path")?.to_string();
-    let _version = parts.next().unwrap_or("HTTP/1.1");
-    let mut headers: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    for line in lines {
-        if line.is_empty() {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once(':') {
-            headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
-        }
-    }
-    let content_length: usize = headers
-        .get("content-length")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    if content_length > max_body {
-        return Err(format!(
-            "Content-Length {content_length} exceeds cap {max_body}"
-        ));
-    }
-    let mut body = vec![0u8; content_length];
-    let mut filled = body_prefix.len().min(content_length);
-    if filled > 0 {
-        body[..filled].copy_from_slice(&body_prefix[..filled]);
-    }
-    if filled < content_length {
-        reader
-            .read_exact(&mut body[filled..])
-            .await
-            .map_err(|e| format!("body read failed: {e}"))?;
-        filled = content_length;
-    }
-    debug_assert_eq!(filled, content_length);
-    Ok(HttpRequest {
-        method,
-        path,
-        headers,
-        body,
-    })
-}
-
-/// Naive byte-substring search. `memchr` would be faster but
-/// the needle here is 4 bytes and the haystack is bounded at
-/// 17 KiB per request — the naive walk is sub-microsecond.
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || needle.len() > haystack.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
-}
-
-async fn write_http_response<W>(
-    writer: &mut W,
-    status: u16,
-    reason: &str,
-    body: &str,
-) -> std::io::Result<()>
-where
-    W: tokio::io::AsyncWrite + Unpin,
-{
-    use tokio::io::AsyncWriteExt;
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
-        len = body.len()
-    );
-    writer.write_all(response.as_bytes()).await
-}
-
-// ---------------------------------------------------------
-// Listener — TCP length-prefixed, the default transport.
-// ---------------------------------------------------------
-
-/// Maximum frame size we'll accept on the TCP stream. Bigger
-/// payloads mean a misbehaving (or hostile) client tries to
-/// pull pgman into a large allocation; we cap it well above
-/// any reasonable SQL string + parameters.
-pub const TAP_MAX_FRAME_BYTES: usize = 1024 * 1024;
-
-/// Spawn a TCP listener that accepts pgman-tap connections,
-/// reads length-prefixed frames, decodes each via [`parse`],
-/// stamps `received_at_unix_micros` at receive time, and
-/// forwards events through `tx`. The returned task handle
-/// resolves only on socket-bind failure; per-connection
-/// errors are logged via `tracing` and the connection is
-/// dropped so other clients keep flowing.
-///
-/// Framing: a 4-byte big-endian length prefix followed by
-/// that many JSON bytes (one event per frame). The JAR
-/// trivially produces this from any Java `OutputStream`
-/// (`writeInt(json.length); write(json)`).
-pub async fn run_tcp_listener(
-    addr: std::net::SocketAddr,
-    tx: tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("tap: TCP listener bound on {addr}");
-    loop {
-        let (sock, peer) = match listener.accept().await {
-            Ok(pair) => pair,
-            Err(e) => {
-                tracing::warn!("tap: accept failed: {e}");
-                continue;
-            }
-        };
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_tcp_conn(sock, &tx).await {
-                tracing::warn!("tap: conn {peer} ended: {e}");
-            }
-        });
-    }
-}
-
-async fn handle_tcp_conn(
-    mut sock: tokio::net::TcpStream,
-    tx: &tokio::sync::mpsc::Sender<TapEvent>,
-) -> std::io::Result<()> {
-    loop {
-        match read_frame(&mut sock, TAP_MAX_FRAME_BYTES).await? {
-            None => return Ok(()), // peer closed cleanly
-            Some(bytes) => match parse(&bytes) {
-                Ok(mut event) => {
-                    event.received_at_unix_micros = now_unix_micros();
-                    if forward_or_drop(tx, event, "tcp").is_err() {
-                        // Receiver gone — abandon the listener.
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("tap: dropped malformed frame: {e}");
-                }
-            },
-        }
-    }
-}
-
-/// Read one length-prefixed frame from any [`AsyncRead`].
-/// Returns `Ok(None)` on a clean EOF before the length prefix
-/// (peer closed); `Ok(Some(bytes))` on success; `Err` on a
-/// short read mid-frame or a length larger than `max_size`.
-///
-/// Pure-ish: parameterised over the reader so the test can
-/// drive it with an in-memory buffer.
-pub async fn read_frame<R>(reader: &mut R, max_size: usize) -> std::io::Result<Option<Vec<u8>>>
-where
-    R: tokio::io::AsyncRead + Unpin,
-{
-    use tokio::io::AsyncReadExt;
-    let mut len_buf = [0u8; 4];
-    // First byte specifically — distinguish "clean close at
-    // a frame boundary" (Ok(None)) from "short read inside
-    // the prefix" (Err).
-    match reader.read_exact(&mut len_buf[..1]).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(e),
-    }
-    reader.read_exact(&mut len_buf[1..]).await?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > max_size {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("tap frame too large: {len} > {max_size}"),
-        ));
-    }
-    if len == 0 {
-        return Ok(Some(Vec::new()));
-    }
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf).await?;
-    Ok(Some(buf))
-}
-
-fn now_unix_micros() -> u64 {
+pub(super) fn now_unix_micros() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_micros() as u64)
@@ -2311,9 +685,7 @@ mod tests {
         let e = parse(bytes).unwrap();
         assert_eq!(
             e.error_one_line().as_deref(),
-            Some(
-                "BatchUpdateException: Batch entry 0 failed → PSQLException: ERROR: syntax error"
-            )
+            Some("BatchUpdateException: Batch entry 0 failed → PSQLException: ERROR: syntax error")
         );
     }
 
@@ -2377,7 +749,11 @@ mod tests {
             params_redacted: false,
             duration_micros: Some(duration),
             rows: None,
-            error: if error { Some(vec!["err".into()]) } else { None },
+            error: if error {
+                Some(vec!["err".into()])
+            } else {
+                None
+            },
             caller: caller.map(|c| vec![c.into()]),
             dropped_events_total: None,
             txn_outcome: None,
@@ -2388,9 +764,27 @@ mod tests {
     fn group_hotspots_collapses_literals_into_one_bucket() {
         // Same shape, different literals → one fingerprint → one bucket.
         let events = vec![
-            q("SELECT * FROM users WHERE id = 1", 100, false, None, "billing"),
-            q("SELECT * FROM users WHERE id = 2", 200, false, None, "billing"),
-            q("SELECT * FROM users WHERE id = 999", 300, false, None, "billing"),
+            q(
+                "SELECT * FROM users WHERE id = 1",
+                100,
+                false,
+                None,
+                "billing",
+            ),
+            q(
+                "SELECT * FROM users WHERE id = 2",
+                200,
+                false,
+                None,
+                "billing",
+            ),
+            q(
+                "SELECT * FROM users WHERE id = 999",
+                300,
+                false,
+                None,
+                "billing",
+            ),
             // Different shape — its own bucket.
             q("SELECT * FROM orders", 50, false, None, "billing"),
         ];
@@ -2413,7 +807,7 @@ mod tests {
         txn.sql = None;
         txn.txn = Some("c-1#1".into());
         txn.txn_outcome = Some(TxnOutcome::Commit);
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "x"),
             hb,
             txn,
@@ -2426,7 +820,7 @@ mod tests {
 
     #[test]
     fn group_hotspots_counts_errors_separately() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "x"),
             q("SELECT 1", 20, true, None, "x"),
             q("SELECT 1", 30, true, None, "x"),
@@ -2494,7 +888,7 @@ mod tests {
     fn group_hotspots_sort_is_deterministic_when_keys_tie() {
         // Two buckets with the same total/count/p95; tiebreak
         // is the fingerprint (ascending) so the output is stable.
-        let events = vec![
+        let events = [
             q("SELECT 'a'", 10, false, None, "x"),
             q("SELECT 'b'", 10, false, None, "x"),
         ];
@@ -2516,7 +910,7 @@ mod tests {
 
     #[test]
     fn hotspot_mean_handles_single_call_gracefully() {
-        let events = vec![q("SELECT 1", 42, false, None, "x")];
+        let events = [q("SELECT 1", 42, false, None, "x")];
         let hotspots = group_hotspots(events.iter(), HotspotSort::TotalTime);
         assert_eq!(hotspots[0].mean_micros(), 42);
     }
@@ -2526,7 +920,7 @@ mod tests {
         // Two distinct fingerprint shapes so the buckets stay
         // separate after grouping (the fingerprinter collapses
         // string literals; vary table names instead).
-        let events = vec![
+        let events = [
             q("SELECT cheap FROM many", 1, false, None, "x"),
             q("SELECT cheap FROM many", 1, false, None, "x"),
             q("SELECT cheap FROM many", 1, false, None, "x"),
@@ -2744,7 +1138,7 @@ mod tests {
         // At least our own drop landed; concurrent tests may
         // have added more but never fewer.
         assert!(
-            dropped_at_listener() >= baseline + 1,
+            dropped_at_listener() > baseline,
             "drop counter must advance at least by our own contribution"
         );
     }
@@ -2803,16 +1197,17 @@ mod tests {
     async fn run_replay_file_streams_each_line_as_one_event() {
         use tokio::io::AsyncWriteExt;
         // Write a 3-event JSONL fixture to a temp file.
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-tap-replay-{}.jsonl",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("pgman-tap-replay-{}.jsonl", std::process::id()));
         let mut f = tokio::fs::File::create(&tmp).await.unwrap();
         let body = concat!(
-            r#"{"v":1,"ts_unix_micros":1,"sql":"SELECT 1","duration_micros":10}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":1,"sql":"SELECT 1","duration_micros":10}"#,
+            "\n",
             "\n", // blank line — should be skipped
-            r#"{"v":1,"ts_unix_micros":2,"sql":"SELECT 2","duration_micros":20}"#, "\n",
-            r#"{"v":1,"ts_unix_micros":3,"sql":"SELECT 3","duration_micros":30}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":2,"sql":"SELECT 2","duration_micros":20}"#,
+            "\n",
+            r#"{"v":1,"ts_unix_micros":3,"sql":"SELECT 3","duration_micros":30}"#,
+            "\n",
         );
         f.write_all(body.as_bytes()).await.unwrap();
         f.flush().await.unwrap();
@@ -2836,15 +1231,16 @@ mod tests {
     #[tokio::test]
     async fn run_replay_file_drops_malformed_lines_but_continues() {
         use tokio::io::AsyncWriteExt;
-        let tmp = std::env::temp_dir().join(format!(
-            "pgman-tap-replay-bad-{}.jsonl",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("pgman-tap-replay-bad-{}.jsonl", std::process::id()));
         let mut f = tokio::fs::File::create(&tmp).await.unwrap();
         let body = concat!(
-            r#"{"v":1,"ts_unix_micros":1,"sql":"good 1","duration_micros":1}"#, "\n",
-            "{not valid json", "\n", // malformed — should be dropped
-            r#"{"v":1,"ts_unix_micros":2,"sql":"good 2","duration_micros":2}"#, "\n",
+            r#"{"v":1,"ts_unix_micros":1,"sql":"good 1","duration_micros":1}"#,
+            "\n",
+            "{not valid json",
+            "\n", // malformed — should be dropped
+            r#"{"v":1,"ts_unix_micros":2,"sql":"good 2","duration_micros":2}"#,
+            "\n",
         );
         f.write_all(body.as_bytes()).await.unwrap();
         f.flush().await.unwrap();
@@ -2875,10 +1271,8 @@ mod tests {
     /// Build the UDP-listener future + bound-addr pair that
     /// tests dial into. Spawns the recv loop on the runtime;
     /// the returned address lets the client `send_to(...)` it.
-    async fn spawn_udp_listener_for_test() -> (
-        std::net::SocketAddr,
-        tokio::sync::mpsc::Receiver<TapEvent>,
-    ) {
+    async fn spawn_udp_listener_for_test(
+    ) -> (std::net::SocketAddr, tokio::sync::mpsc::Receiver<TapEvent>) {
         let (tx, rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
         // Bind upfront so the test knows the port, then drive
         // the same accept loop as the public helper would.
@@ -2916,13 +1310,10 @@ mod tests {
             "sql": "SELECT 1", "duration_micros": 42
         }"#;
         client.send_to(payload, addr).await.unwrap();
-        let event = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        )
-        .await
-        .expect("UDP event delivered in time")
-        .expect("channel still open");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("UDP event delivered in time")
+            .expect("channel still open");
         assert_eq!(event.sql.as_deref(), Some("SELECT 1"));
         // Listener stamped received_at on the way through.
         assert!(event.received_at_unix_micros > 0);
@@ -2940,13 +1331,10 @@ mod tests {
             "sql": "SELECT 2", "duration_micros": 1
         }"#;
         client.send_to(payload, addr).await.unwrap();
-        let event = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            rx.recv(),
-        )
-        .await
-        .expect("good event delivered")
-        .expect("channel still open");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("good event delivered")
+            .expect("channel still open");
         assert_eq!(event.sql.as_deref(), Some("SELECT 2"));
     }
 
@@ -2955,9 +1343,8 @@ mod tests {
         let (addr, mut rx) = spawn_udp_listener_for_test().await;
         let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         for i in 0..3u64 {
-            let payload = format!(
-                r#"{{"v":1,"ts_unix_micros":{i},"sql":"SELECT {i}","duration_micros":1}}"#
-            );
+            let payload =
+                format!(r#"{{"v":1,"ts_unix_micros":{i},"sql":"SELECT {i}","duration_micros":1}}"#);
             client.send_to(payload.as_bytes(), addr).await.unwrap();
         }
         let mut got: Vec<String> = Vec::new();
@@ -2996,7 +1383,10 @@ mod tests {
         let req = read_http_request(&mut reader, 1024).await.unwrap();
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/v1/traces");
-        assert_eq!(req.headers.get("content-type").map(String::as_str), Some("application/json"));
+        assert_eq!(
+            req.headers.get("content-type").map(String::as_str),
+            Some("application/json")
+        );
         assert_eq!(req.body, body);
     }
 
@@ -3073,10 +1463,7 @@ mod tests {
         let req_bytes = b"POST /v1/traces HTTP/1.1\r\nContent-Type: application/json";
         let mut reader = std::io::Cursor::new(&req_bytes[..]);
         let err = read_http_request(&mut reader, 1024).await.unwrap_err();
-        assert!(
-            err.contains("closed before headers complete"),
-            "got: {err}"
-        );
+        assert!(err.contains("closed before headers complete"), "got: {err}");
     }
 
     #[tokio::test]
@@ -3144,12 +1531,9 @@ mod tests {
         let req = HttpRequest {
             method: "POST".into(),
             path: "/v1/traces".into(),
-            headers: [(
-                "content-type".into(),
-                "application/x-protobuf".into(),
-            )]
-            .into_iter()
-            .collect(),
+            headers: [("content-type".into(), "application/x-protobuf".into())]
+                .into_iter()
+                .collect(),
             body: Vec::new(),
         };
         let resp = process_otlp_request(req, &tx);
@@ -3409,7 +1793,10 @@ mod tests {
         let e = &events[0];
         assert_eq!(e.kind, TapKind::Query);
         assert_eq!(e.app.as_deref(), Some("billing-service"));
-        assert_eq!(e.sql.as_deref(), Some("SELECT * FROM accounts WHERE id = ?"));
+        assert_eq!(
+            e.sql.as_deref(),
+            Some("SELECT * FROM accounts WHERE id = ?")
+        );
         // duration = 10ms = 10_000us
         assert_eq!(e.duration_micros, Some(10_000));
         // ts = end / 1000 (ns → µs)
@@ -3649,13 +2036,7 @@ mod tests {
 
     // --- transaction view tests -----------------------
 
-    fn q_in_txn(
-        sql: &str,
-        ts: u64,
-        duration: u64,
-        txn: Option<&str>,
-        conn: &str,
-    ) -> TapEvent {
+    fn q_in_txn(sql: &str, ts: u64, duration: u64, txn: Option<&str>, conn: &str) -> TapEvent {
         q_in_txn_with_pool(sql, ts, duration, txn, conn, None)
     }
 
@@ -3712,7 +2093,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_buckets_per_txn_id() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 2", 200, 20, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 3", 300, 30, Some("c-1#2"), "c-1"),
@@ -3729,7 +2110,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_closes_on_txn_boundary_event() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT 2", 200, 20, Some("c-1#1"), "c-1"),
             boundary(300, "c-1#1", "c-1", TxnOutcome::Commit),
@@ -3745,7 +2126,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_separates_commit_and_rollback() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, Some("c-1#1"), "c-1"),
             boundary(200, "c-1#1", "c-1", TxnOutcome::Commit),
             q_in_txn("SELECT 2", 300, 10, Some("c-1#2"), "c-1"),
@@ -3812,7 +2193,7 @@ mod tests {
     fn group_by_txn_falls_back_to_conn_when_txn_is_absent() {
         // Autocommit: each statement has no txn but the conn
         // groups them.
-        let events = vec![
+        let events = [
             q_in_txn("SELECT 1", 100, 10, None, "c-1"),
             q_in_txn("SELECT 2", 200, 10, None, "c-1"),
         ];
@@ -3827,7 +2208,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_drops_events_with_neither_txn_nor_conn() {
-        let events = vec![TapEvent {
+        let events = [TapEvent {
             v: 1,
             kind: TapKind::Query,
             ts_unix_micros: 1,
@@ -3854,7 +2235,7 @@ mod tests {
     fn group_by_txn_drops_boundary_with_no_preceding_queries() {
         // A boundary event arrives after the ring evicted
         // its query events — nothing to surface.
-        let events = vec![boundary(1, "c-1#1", "c-1", TxnOutcome::Commit)];
+        let events = [boundary(1, "c-1#1", "c-1", TxnOutcome::Commit)];
         let stats = group_by_txn(events.iter());
         assert!(stats.is_empty());
     }
@@ -3864,10 +2245,7 @@ mod tests {
         let mut hb = q_in_txn("ignored", 0, 0, None, "c-1");
         hb.kind = TapKind::Heartbeat;
         hb.sql = None;
-        let events = vec![
-            hb,
-            q_in_txn("SELECT 1", 1, 10, Some("c-1#1"), "c-1"),
-        ];
+        let events = [hb, q_in_txn("SELECT 1", 1, 10, Some("c-1#1"), "c-1")];
         let stats = group_by_txn(events.iter());
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].statement_count, 1);
@@ -4056,7 +2434,7 @@ mod tests {
 
     #[test]
     fn group_by_caller_buckets_events_by_innermost_frame() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, Some("OrderService.foo:1"), "svc"),
             q("SELECT 2", 20, false, Some("OrderService.foo:1"), "svc"),
             q("SELECT 3", 30, false, Some("UserService.bar:5"), "svc"),
@@ -4078,7 +2456,7 @@ mod tests {
         // Events with caller=None must still appear in the rollup
         // (under UNKNOWN_CALLER) — otherwise the rollup loses
         // events and stops being total-conserving.
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, None, "svc"),
             q("SELECT 2", 20, false, Some("Foo.bar:1"), "svc"),
             q("SELECT 3", 30, false, None, "svc"),
@@ -4111,10 +2489,7 @@ mod tests {
         let mut hb = q("ignored", 0, false, Some("x"), "svc");
         hb.kind = TapKind::Heartbeat;
         hb.sql = None;
-        let events = vec![
-            hb,
-            q("SELECT 1", 1, false, Some("Foo.bar:1"), "svc"),
-        ];
+        let events = [hb, q("SELECT 1", 1, false, Some("Foo.bar:1"), "svc")];
         let groups = group_by_caller(events.iter(), HotspotSort::TotalTime);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].count, 1);
@@ -4122,7 +2497,7 @@ mod tests {
 
     #[test]
     fn group_by_caller_counts_errors_and_computes_percentiles() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 10, false, Some("Foo.bar:1"), "svc"),
             q("SELECT 1", 20, true, Some("Foo.bar:1"), "svc"),
             q("SELECT 1", 30, true, Some("Foo.bar:1"), "svc"),
@@ -4136,7 +2511,7 @@ mod tests {
 
     #[test]
     fn caller_stats_mean_handles_single_call() {
-        let events = vec![q("SELECT 1", 42, false, Some("Foo.bar:1"), "svc")];
+        let events = [q("SELECT 1", 42, false, Some("Foo.bar:1"), "svc")];
         let groups = group_by_caller(events.iter(), HotspotSort::TotalTime);
         assert_eq!(groups[0].mean_micros(), 42);
     }
@@ -4145,7 +2520,7 @@ mod tests {
     fn group_by_caller_total_is_conserved_across_named_and_unknown() {
         // Sum of counts across all buckets should equal the
         // total number of query events.
-        let events = vec![
+        let events = [
             q("SELECT 1", 1, false, None, "svc"),
             q("SELECT 2", 1, false, Some("A.b:1"), "svc"),
             q("SELECT 3", 1, false, Some("A.b:1"), "svc"),
@@ -4217,6 +2592,142 @@ mod tests {
         }
     }
 
+    /// Pool-tagged query event: `(pool, conn, ts, duration)`.
+    fn q_pool(pool: Option<&str>, conn: &str, ts: u64, dur: u64) -> TapEvent {
+        TapEvent {
+            v: 1,
+            kind: TapKind::Query,
+            ts_unix_micros: ts,
+            received_at_unix_micros: ts,
+            app: Some("svc".into()),
+            pool: pool.map(str::to_string),
+            conn: Some(conn.into()),
+            txn: None,
+            sql: Some("SELECT 1".into()),
+            params: None,
+            params_redacted: false,
+            duration_micros: Some(dur),
+            rows: None,
+            error: None,
+            caller: None,
+            dropped_events_total: None,
+            txn_outcome: None,
+        }
+    }
+
+    #[test]
+    fn peak_concurrency_empty_is_zero() {
+        assert_eq!(insights::peak_concurrency(&[]), 0);
+    }
+
+    #[test]
+    fn peak_concurrency_disjoint_intervals_is_one() {
+        // [0,10), [20,30), [40,50) — never overlap.
+        let intervals = [(0u64, 10u64), (20, 10), (40, 10)];
+        assert_eq!(insights::peak_concurrency(&intervals), 1);
+    }
+
+    #[test]
+    fn peak_concurrency_full_overlap_counts_all() {
+        // Three queries all running 0..100.
+        let intervals = [(0u64, 100u64), (10, 80), (20, 50)];
+        assert_eq!(insights::peak_concurrency(&intervals), 3);
+    }
+
+    #[test]
+    fn peak_concurrency_zero_duration_registers_one() {
+        // A point query [5,5] still occupies a slot momentarily.
+        assert_eq!(insights::peak_concurrency(&[(5, 0)]), 1);
+    }
+
+    #[test]
+    fn peak_concurrency_partial_overlap_finds_the_peak() {
+        // A: [0,30), B: [20,40), C: [35,60). Peak is 2 (A+B).
+        let intervals = [(0u64, 30u64), (20, 20), (35, 25)];
+        assert_eq!(insights::peak_concurrency(&intervals), 2);
+    }
+
+    #[test]
+    fn group_by_pool_buckets_by_pool_name() {
+        let events = [
+            q_pool(Some("primary"), "p-1", 0, 10),
+            q_pool(Some("primary"), "p-2", 5, 10),
+            q_pool(Some("replica"), "r-1", 0, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 2);
+        let primary = pools.iter().find(|p| p.pool == "primary").unwrap();
+        assert_eq!(primary.query_count, 2);
+        assert_eq!(primary.distinct_conns, 2);
+        // p-1 [0,10) overlaps p-2 [5,15) → peak 2.
+        assert_eq!(primary.peak_concurrent, 2);
+        let replica = pools.iter().find(|p| p.pool == "replica").unwrap();
+        assert_eq!(replica.query_count, 1);
+        assert_eq!(replica.distinct_conns, 1);
+        assert_eq!(replica.peak_concurrent, 1);
+    }
+
+    #[test]
+    fn group_by_pool_untagged_lands_in_unknown_bucket() {
+        let events = [
+            q_pool(None, "c-1", 0, 10),
+            q_pool(Some("primary"), "p-1", 0, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert!(pools.iter().any(|p| p.pool == UNKNOWN_POOL));
+        // Total-conserving: every query event is bucketed.
+        let total: usize = pools.iter().map(|p| p.query_count).sum();
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn group_by_pool_skips_non_query_events() {
+        let mut hb = q_pool(Some("primary"), "p-1", 0, 10);
+        hb.kind = TapKind::Heartbeat;
+        let events = [hb, q_pool(Some("primary"), "p-1", 0, 10)];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].query_count, 1);
+    }
+
+    #[test]
+    fn group_by_pool_counts_errors_and_distinct_conns() {
+        let mut err = q_pool(Some("primary"), "p-1", 0, 10);
+        err.error = Some(vec!["boom".into()]);
+        let events = vec![
+            err,
+            q_pool(Some("primary"), "p-1", 20, 10), // same conn reused
+            q_pool(Some("primary"), "p-2", 40, 10),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 1);
+        assert_eq!(pools[0].error_count, 1);
+        assert_eq!(pools[0].distinct_conns, 2);
+        // All disjoint in time → peak 1 despite 3 queries.
+        assert_eq!(pools[0].peak_concurrent, 1);
+    }
+
+    #[test]
+    fn group_by_pool_sorts_most_contended_first() {
+        // hot pool: 3 overlapping conns. cold pool: 1 conn.
+        let events = [
+            q_pool(Some("cold"), "c-1", 0, 10),
+            q_pool(Some("hot"), "h-1", 0, 100),
+            q_pool(Some("hot"), "h-2", 10, 100),
+            q_pool(Some("hot"), "h-3", 20, 100),
+        ];
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools[0].pool, "hot");
+        assert_eq!(pools[0].peak_concurrent, 3);
+        assert_eq!(pools[1].pool, "cold");
+    }
+
+    #[test]
+    fn group_by_pool_empty_input_is_empty() {
+        let events: Vec<TapEvent> = Vec::new();
+        assert!(group_by_pool(events.iter()).is_empty());
+    }
+
     #[test]
     fn detect_nplus1_fires_on_a_tight_burst_in_one_txn() {
         // 6 SELECTs at the same shape inside one txn within
@@ -4268,13 +2779,7 @@ mod tests {
         // hits the threshold.
         let mut events: Vec<TapEvent> = Vec::new();
         for i in 0..3 {
-            events.push(q_at(
-                "SELECT 1",
-                i * 10_000,
-                Some("c-1#1"),
-                "c-1",
-                None,
-            ));
+            events.push(q_at("SELECT 1", i * 10_000, Some("c-1#1"), "c-1", None));
         }
         for i in 0..3 {
             events.push(q_at(
@@ -4369,13 +2874,7 @@ mod tests {
         // Only 4 query events — under threshold even after
         // non-query frames are filtered out.
         for i in 0..4 {
-            events.push(q_at(
-                "SELECT 1",
-                i * 10_000,
-                Some("c-1#1"),
-                "c-1",
-                None,
-            ));
+            events.push(q_at("SELECT 1", i * 10_000, Some("c-1#1"), "c-1", None));
         }
         let findings = detect_nplus1(events.iter(), NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
         assert!(findings.is_empty());
@@ -4420,10 +2919,10 @@ mod tests {
     #[test]
     fn percentile_clamps_p_to_unit_interval() {
         let sorted: Vec<u64> = vec![10, 20, 30, 40, 50];
-        assert_eq!(percentile(&sorted, -1.0), 10);  // clamped to 0 → first
-        assert_eq!(percentile(&sorted, 0.0), 10);   // rank 0 → idx 0
-        assert_eq!(percentile(&sorted, 1.0), 50);   // rank N → idx N-1
-        assert_eq!(percentile(&sorted, 2.0), 50);   // clamped to 1 → last
+        assert_eq!(percentile(&sorted, -1.0), 10); // clamped to 0 → first
+        assert_eq!(percentile(&sorted, 0.0), 10); // rank 0 → idx 0
+        assert_eq!(percentile(&sorted, 1.0), 50); // rank N → idx N-1
+        assert_eq!(percentile(&sorted, 2.0), 50); // clamped to 1 → last
     }
 
     #[test]

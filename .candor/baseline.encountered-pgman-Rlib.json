@@ -1,0 +1,1 @@
+["anyhow","arboard","crossterm","futures_util","quick_xml","ratatui","rustls","rustls_native_certs","serde","serde_core","serde_json","tb_tui_common","tokio","tokio_postgres","tokio_postgres_rustls","toml","tracing","tracing_core"]

@@ -1,7 +1,32 @@
 # pgman
 
+[![CI](https://github.com/tombaldwin/pgman/actions/workflows/test.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+
 A k9s-style Postgres TUI aimed at Java / AWS shops. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
+
+![pgman demo — live filter, schema browser, saved-query :param prompt](demo.gif)
+
+> Captured from `pgman --demo`, the synthetic-data mode baked into the binary
+> (no database needed). Regenerate after a code change with `vhs demo.tape`.
+
+At a glance:
+
+- **Connect fast** — auto-discovers datasources from Spring
+  `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a
+  committed `.pgman/pgman.toml`.
+- **Logs / pasted code → runnable SQL** — Hibernate logs, Postgres/RDS server
+  logs, and pasted JDBC, with N+1 detection.
+- **Safe by default** — read-only connections, `statement_timeout`, and
+  per-database guard rails on every statement.
+- **Editor** — syntax highlighting, `pg_format`, history, saved queries
+  (`:param` prompts, rename, search), DBUnit fixture apply + capture.
+- **DBA panels** — schema browser, EXPLAIN tree, slow queries, active
+  sessions/locks, schema-lint wizard, result diff.
+- **JDBC tap** — live app-side query observability (TCP / UDP / OTLP) with
+  hotspots, per-caller / per-pool rollups, transaction view, and live N+1
+  detection.
 
 ## The wedge
 
@@ -54,14 +79,31 @@ data sources found in `.idea/dataSources.xml`.
 pgman connects to production databases. It opens read-only by default, enforces
 a `statement_timeout`, classifies every statement, and applies **per-database
 guard rails** (`safety.rs`) — e.g. block `DROP`, confirm `TRUNCATE` /
-unqualified `DELETE`, and wrap DML in a transaction you can roll back.
+unqualified `DELETE`, and wrap DML in a transaction you can roll back. (This is
+a guard rail, not a replacement for least-privilege database roles — scope the
+role you connect with.)
+
+Two things worth knowing:
+
+- **TLS:** `sslmode=require` / `prefer` encrypt the connection but do **not**
+  verify the server certificate (matching libpq). Use `sslmode=verify-full` on
+  untrusted networks.
+- **JDBC tap:** the `--tap-listen` / `--tap-otlp` / `--tap-udp` listeners are
+  unauthenticated and bind to `127.0.0.1` by default. Only bind a non-loopback
+  address on a trusted/firewalled network.
 
 ## Install
 
-From a local checkout (recommended while pgman is private and pre-v1):
+Straight from the repo:
 
 ```sh
-cargo install --path ~/git/pgman --locked
+cargo install --git https://github.com/tombaldwin/pgman --locked
+```
+
+Or from a local checkout (handy while hacking on it):
+
+```sh
+cargo install --path . --locked
 ```
 
 The binary lands at `~/.cargo/bin/pgman`, which is on `$PATH` if your shell
@@ -132,3 +174,19 @@ coverage report via `cargo-llvm-cov`, and `cargo fmt --check` +
 ## Status
 
 Pre-v1. See `BACKLOG.md` for what's shipped and what's next.
+
+## License
+
+Dual-licensed under either of
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. Unless you explicitly state otherwise, any contribution you
+submit for inclusion shall be dual-licensed as above, without additional terms.
+
+---
+
+Built by [Polymorphism Ltd](https://polymorphism.co.uk). pgman is one of the
+tools we build for ourselves and our clients — if you want this kind of
+internal developer tooling for your team, get in touch.

@@ -159,6 +159,12 @@ impl TuiHost for HeadlessTui {
     }
 }
 
+impl Drop for Tui {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,11 +200,5 @@ mod tests {
         assert_eq!(h.draws, 2);
         assert_eq!(h.suspends, 1);
         assert_eq!(h.resumes, 1);
-    }
-}
-
-impl Drop for Tui {
-    fn drop(&mut self) {
-        restore_terminal();
     }
 }

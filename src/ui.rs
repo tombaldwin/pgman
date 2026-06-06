@@ -96,11 +96,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::TapMonitor {
         draw_tap_monitor(f, area, app);
     }
-    if app.mode == Mode::SavedQueries {
+    if app.mode == Mode::SavedQueries || app.mode == Mode::SavedQueriesFilter {
         draw_saved_queries(f, area, app);
+    }
+    if app.mode == Mode::RenameQueryPrompt {
+        // Panel underneath stays drawn; the rename box floats over it.
+        draw_saved_queries(f, area, app);
+        draw_rename_prompt(f, area, app);
     }
     if app.mode == Mode::SaveQueryPrompt {
         draw_save_query_prompt(f, area, app);
+    }
+    if app.mode == Mode::ParamPrompt {
+        draw_param_prompt(f, area, app);
+    }
+    if app.mode == Mode::ResultDiff {
+        draw_result_diff(f, area, app);
     }
 }
 
@@ -717,7 +728,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · / filter · f find",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
@@ -729,9 +740,13 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::ErrorDetail => "esc / q / F2 close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
-                Mode::TapMonitor => "j/k navigate · v cycle 6 views · Shift-B baseline · s sort · c clear · q close",
-                Mode::SavedQueries => "j/k navigate · enter load · d delete · q / esc close",
+                Mode::TapMonitor => "j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close",
+                Mode::SavedQueries => "j/k navigate · enter load · r rename · d delete · / search · q close",
+                Mode::SavedQueriesFilter => "type to narrow · enter accept · esc clear",
+                Mode::RenameQueryPrompt => "edit name · enter save · esc cancel",
                 Mode::SaveQueryPrompt => "type a name · enter persist · esc cancel",
+                Mode::ParamPrompt => "type value · enter next · esc cancel",
+                Mode::ResultDiff => "j/k navigate · r re-pin B as A · c clear pin · q / esc close",
             }
         };
         // Append a universal "F1 help" pointer to every non-modal
@@ -752,6 +767,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 | Mode::SchemaBrowserFilter
                 | Mode::GridFind
                 | Mode::SaveQueryPrompt
+                | Mode::ParamPrompt
+                | Mode::SavedQueriesFilter
+                | Mode::RenameQueryPrompt
         ) || failed_normal
             || connecting_normal
             || hints.contains("help")
@@ -1216,10 +1234,8 @@ fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area: Rect, app:
         0
     } else if focus_idx >= total - VISIBLE / 2 {
         total - VISIBLE
-    } else if focus_idx < VISIBLE / 2 {
-        0
     } else {
-        focus_idx - VISIBLE / 2
+        focus_idx.saturating_sub(VISIBLE / 2)
     };
 
     // Anchor flush under the editor's bottom border, left-aligned.
@@ -1632,7 +1648,7 @@ pub(crate) fn render_json_tree(app: &App, width: usize) -> Vec<Line<'static>> {
         let rendered: String = spans.iter().map(|s| s.content.as_ref()).collect();
         let visible_len = rendered.chars().count();
         if visible_len < width {
-            let pad: String = std::iter::repeat(' ').take(width - visible_len).collect();
+            let pad: String = std::iter::repeat_n(' ', width - visible_len).collect();
             spans.push(Span::styled(pad, base_style));
         }
         out.push(Line::from(spans));
@@ -2491,6 +2507,10 @@ pub(crate) fn help_body(
         row("    \\report [path]   write advisor + tap report (Markdown / HTML)"),
         &mut lines,
     );
+    push(
+        row("    \\fixture [path]  capture current result as a DBUnit fixture (XML)"),
+        &mut lines,
+    );
     push(Line::from(""), &mut lines);
 
     heading("tabs", &mut lines, &mut anchors);
@@ -2740,7 +2760,7 @@ fn draw_explain_tree(f: &mut Frame, area: Rect, app: &App) {
             header.push_str(rel);
             if let Some(alias) = &row.alias {
                 if alias != rel {
-                    header.push_str(" ");
+                    header.push(' ');
                     header.push_str(alias);
                 }
             }
@@ -3412,17 +3432,28 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 88, 80);
     f.render_widget(Clear, popup);
+    // Title carries the live filter when searching, plus a
+    // shown/total count so a narrowed list is obvious.
+    let visible = app.visible_saved_indices();
+    let total = app.saved_queries.entries.len();
+    let title = match app.saved_queries_filter.as_ref().map(|t| t.text()) {
+        Some(f) => format!(
+            " saved queries — /{f}  ({}/{} shown) · enter load · esc clear ",
+            visible.len(),
+            total
+        ),
+        None => {
+            " saved queries — enter load · r rename · d delete · / search · q close ".to_string()
+        }
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
-            " saved queries — enter load · d delete · q close ",
-            Style::default().fg(theme.title),
-        ));
+        .title(Span::styled(title, Style::default().fg(theme.title)));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    if app.saved_queries.entries.is_empty() {
+    if total == 0 {
         f.render_widget(
             Paragraph::new(Text::from(vec![
                 Line::from(Span::styled(
@@ -3439,6 +3470,23 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+    if visible.is_empty() {
+        // Entries exist but the filter excludes them all.
+        f.render_widget(
+            Paragraph::new(Text::from(vec![Line::from(Span::styled(
+                format!(
+                    "no saved queries match '{}'",
+                    app.saved_queries_filter
+                        .as_ref()
+                        .map(|t| t.text())
+                        .unwrap_or("")
+                ),
+                Style::default().fg(theme.muted),
+            ))])),
+            inner,
+        );
+        return;
+    }
 
     let split = Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
@@ -3447,22 +3495,17 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     let top = split[0];
     let detail = split[1];
 
+    let cursor = app.saved_queries_cursor.min(visible.len() - 1);
     let visible_h = top.height as usize;
-    let scroll = if app.saved_queries_cursor >= visible_h {
-        app.saved_queries_cursor + 1 - visible_h
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
     } else {
         0
     };
     let mut lines: Vec<Line> = Vec::new();
-    for (i, q) in app
-        .saved_queries
-        .entries
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(visible_h)
-    {
-        let is_focus = i == app.saved_queries_cursor;
+    for (row, &entry_idx) in visible.iter().enumerate().skip(scroll).take(visible_h) {
+        let q = &app.saved_queries.entries[entry_idx];
+        let is_focus = row == cursor;
         let style = if is_focus {
             Style::default()
                 .fg(theme.text)
@@ -3484,9 +3527,7 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)), top);
 
     // Detail strip: focused query's full body, wrapped.
-    let focused = &app.saved_queries.entries[app
-        .saved_queries_cursor
-        .min(app.saved_queries.entries.len() - 1)];
+    let focused = &app.saved_queries.entries[visible[cursor]];
     let mut detail_lines: Vec<Line> = Vec::new();
     detail_lines.push(Line::from(Span::styled(
         format!("  {}", focused.name),
@@ -3501,6 +3542,41 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
     f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+}
+
+/// Rename prompt for the focused saved query — a small input box
+/// floating over the saved-queries panel. Mirrors the save-query
+/// name prompt but pre-fills the current name for editing.
+fn draw_rename_prompt(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let w = 70u16.min(area.width.saturating_sub(2));
+    let popup = centered(area, w, 5);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            format!(
+                " rename '{}' · enter save · esc cancel ",
+                app.rename_query_from
+            ),
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let lines = vec![
+        Line::from(Span::styled("new name:", Style::default().fg(theme.muted))),
+        Line::from(Span::styled(
+            app.rename_query_buffer.text().to_string(),
+            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    let x = inner.x + app.rename_query_buffer.cursor_col() as u16;
+    let y = inner.y + 1;
+    if x < inner.x + inner.width {
+        f.set_cursor_position((x, y));
+    }
 }
 
 /// Name-prompt overlay for `Ctrl-S` — small centred box; the
@@ -3534,6 +3610,61 @@ fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
     let x = inner.x + prefix + app.save_query_name.chars().count() as u16;
     let y = inner.y + 1; // second line of the popup body
     if x < inner.x + inner.width {
+        f.set_cursor_position((x, y));
+    }
+}
+
+/// `:param` value prompt shown when loading a parameterised saved
+/// query. Renders one input box for the current placeholder, the
+/// progress (`2/3`), and the values already entered so the
+/// operator can see what they've filled.
+fn draw_param_prompt(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let Some(pp) = app.param_prompt.as_ref() else {
+        return;
+    };
+    let w = 70u16.min(area.width.saturating_sub(2));
+    // One line per already-entered value, plus header + current.
+    let h = ((pp.values.len() as u16) + 6).min(area.height.saturating_sub(2));
+    let popup = centered(area, w, h);
+    f.render_widget(Clear, popup);
+    let title = format!(
+        " load '{}' · param {}/{} · enter next · esc cancel ",
+        pp.query_name,
+        (pp.idx + 1).min(pp.params.len()),
+        pp.params.len(),
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(title, Style::default().fg(theme.title)));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let mut lines: Vec<Line> = Vec::new();
+    // Already-entered values, dimmed.
+    for (name, val) in pp.params.iter().zip(pp.values.iter()) {
+        lines.push(Line::from(vec![
+            Span::styled(format!(":{name} = "), Style::default().fg(theme.muted)),
+            Span::styled(val.clone(), Style::default().fg(theme.text)),
+        ]));
+    }
+    // Current prompt.
+    let current = pp.params.get(pp.idx).map(String::as_str).unwrap_or("");
+    lines.push(Line::from(Span::styled(
+        format!("value for :{current}"),
+        Style::default().fg(theme.muted),
+    )));
+    lines.push(Line::from(Span::styled(
+        pp.input.text().to_string(),
+        Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+    )));
+    let input_row = lines.len() as u16 - 1;
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Cursor at its position within the current input.
+    let x = inner.x + pp.input.cursor_col() as u16;
+    let y = inner.y + input_row;
+    if x < inner.x + inner.width && y < inner.y + inner.height {
         f.set_cursor_position((x, y));
     }
 }
@@ -3607,6 +3738,152 @@ fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+/// Result-diff overlay (`Mode::ResultDiff`). Renders A-vs-B as a
+/// grouped list: removed rows, then changed rows (with per-cell
+/// old→new deltas), then added rows. Unchanged rows are only
+/// counted in the header.
+fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+    let Some(state) = app.result_diff.as_ref() else {
+        return;
+    };
+    let diff = &state.diff;
+    let key_desc = match &state.key {
+        crate::query::row_diff::RowKey::Columns(cols) => {
+            let names: Vec<&str> = cols
+                .iter()
+                .map(|&i| state.a.columns.get(i).map(String::as_str).unwrap_or("?"))
+                .collect();
+            format!("key: {}", names.join(", "))
+        }
+        crate::query::row_diff::RowKey::FullRow => "key: full row".to_string(),
+    };
+    let title = format!(
+        " Result diff — A: {a} ({an} rows) vs B: {b} ({bn} rows) · {key} · r re-pin · c clear · q close ",
+        a = state.a.label,
+        an = state.a.rows.len(),
+        b = state.b_label,
+        bn = state.b_rows.len(),
+        key = key_desc,
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(title, Style::default().fg(theme.title)));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    // Summary line, always shown.
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("+{} added", diff.added.len()),
+            Style::default().fg(theme.health_green),
+        ),
+        Span::styled("   ", Style::default()),
+        Span::styled(
+            format!("-{} removed", diff.removed.len()),
+            Style::default().fg(theme.health_red),
+        ),
+        Span::styled("   ", Style::default()),
+        Span::styled(
+            format!("~{} changed", diff.changed.len()),
+            Style::default().fg(theme.health_yellow),
+        ),
+        Span::styled(
+            format!("   ={} unchanged", diff.unchanged),
+            Style::default().fg(theme.muted),
+        ),
+    ]));
+
+    if diff.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "no differences — A and B match.",
+            Style::default().fg(theme.health_green),
+        )));
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+
+    // Entry rows are removed, then changed, then added — matching the
+    // cursor model in `diff_row_count`. Format only the visible window
+    // rather than every diff row each frame: a large diff (a batch
+    // UPDATE against its baseline) can carry thousands of rows, and the
+    // overlay only ever shows `visible_h` of them.
+    let row_w = inner.width.saturating_sub(4) as usize;
+    let render_row =
+        |row: &[String]| -> String { crate::grid::truncate_cell(&row.join(" | "), row_w) };
+    let nr = diff.removed.len();
+    let nc = diff.changed.len();
+    let total = nr + nc + diff.added.len();
+    // Map a flat entry index to its (style, text), touching only the
+    // one underlying row it names.
+    let fmt_entry = |flat: usize| -> (Style, String) {
+        if flat < nr {
+            let body = state
+                .a
+                .rows
+                .get(diff.removed[flat])
+                .map(|r| render_row(r))
+                .unwrap_or_default();
+            (Style::default().fg(theme.health_red), format!("- {body}"))
+        } else if flat < nr + nc {
+            let ch = &diff.changed[flat - nr];
+            let deltas: Vec<String> = ch
+                .cells
+                .iter()
+                .map(|c| {
+                    let col = state
+                        .a
+                        .columns
+                        .get(c.col)
+                        .map(String::as_str)
+                        .unwrap_or("?");
+                    format!("{col}: {} → {}", c.old, c.new)
+                })
+                .collect();
+            let text = format!("~ [{}] {}", ch.key.join(", "), deltas.join("  ·  "));
+            (
+                Style::default().fg(theme.health_yellow),
+                crate::grid::truncate_cell(&text, row_w),
+            )
+        } else {
+            let body = state
+                .b_rows
+                .get(diff.added[flat - nr - nc])
+                .map(|r| render_row(r))
+                .unwrap_or_default();
+            (Style::default().fg(theme.health_green), format!("+ {body}"))
+        }
+    };
+
+    // Reserve the summary line; scroll the entry list under it.
+    let visible_h = (inner.height as usize).saturating_sub(2);
+    let cursor = app.result_diff_cursor.min(total.saturating_sub(1));
+    let scroll = if cursor >= visible_h {
+        cursor + 1 - visible_h
+    } else {
+        0
+    };
+    lines.push(Line::from(""));
+    for flat in scroll..(scroll + visible_h).min(total) {
+        let (base, text) = fmt_entry(flat);
+        let style = if flat == cursor {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            base
+        };
+        lines.push(Line::from(Span::styled(format!("  {text}"), style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 /// JDBC-tap event monitor (`F4` from anywhere). Dispatches
 /// to the recency list (L1) or the hotspots grouped view
 /// (L2) depending on `app.tap_view`. Shift-G toggles between
@@ -3626,6 +3903,7 @@ fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         crate::app::TapView::Hotspots => "hotspots",
         crate::app::TapView::Callers => "callers",
         crate::app::TapView::Transactions => "transactions",
+        crate::app::TapView::Pools => "pools",
         crate::app::TapView::NplusOne => "N+1",
         crate::app::TapView::Baseline => "baseline",
     };
@@ -3652,6 +3930,7 @@ fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         crate::app::TapView::Hotspots => draw_tap_monitor_hotspots(f, inner, app),
         crate::app::TapView::Callers => draw_tap_monitor_callers(f, inner, app),
         crate::app::TapView::Transactions => draw_tap_monitor_txns(f, inner, app),
+        crate::app::TapView::Pools => draw_tap_monitor_pools(f, inner, app),
         crate::app::TapView::NplusOne => draw_tap_monitor_nplus1(f, inner, app),
         crate::app::TapView::Baseline => draw_tap_monitor_baseline(f, inner, app),
         crate::app::TapView::List => draw_tap_monitor_list(f, inner, app),
@@ -3736,14 +4015,12 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         let body = match e.kind {
             crate::tap::TapKind::Query => e.sql_preview(sql_col),
             crate::tap::TapKind::TxnBoundary => match e.txn_outcome {
-                Some(crate::tap::TxnOutcome::Commit) => format!(
-                    "[COMMIT] {}",
-                    e.txn.as_deref().unwrap_or("")
-                ),
-                Some(crate::tap::TxnOutcome::Rollback) => format!(
-                    "[ROLLBACK] {}",
-                    e.txn.as_deref().unwrap_or("")
-                ),
+                Some(crate::tap::TxnOutcome::Commit) => {
+                    format!("[COMMIT] {}", e.txn.as_deref().unwrap_or(""))
+                }
+                Some(crate::tap::TxnOutcome::Rollback) => {
+                    format!("[ROLLBACK] {}", e.txn.as_deref().unwrap_or(""))
+                }
                 None => "[txn boundary]".into(),
             },
             // Heartbeats never land here (filtered upstream).
@@ -3816,7 +4093,11 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
             Style::default().fg(theme.text)
         };
         let body = match &h.last_caller {
-            Some(c) => format!("{} · {}", short_fingerprint(&h.fingerprint, body_col / 2), c),
+            Some(c) => format!(
+                "{} · {}",
+                short_fingerprint(&h.fingerprint, body_col / 2),
+                c
+            ),
             None => short_fingerprint(&h.fingerprint, body_col),
         };
         let line = format!(
@@ -3874,8 +4155,7 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )));
     let inner_w = inner.width as usize;
-    let body_col =
-        inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2);
+    let body_col = inner_w.saturating_sub(2 + 6 + 2 + 5 + 2 + 9 + 2 + 9 + 2 + 4 + 2);
     for (i, g) in groups
         .iter()
         .enumerate()
@@ -3958,7 +4238,13 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
     };
     let diffs = app.current_baseline_diff();
     let captured_age = baseline_age_label(baseline.captured_at_unix_micros);
-    let header_lines: Vec<Line> = vec![
+    // Show drops-since-capture in a third header line when
+    // non-zero: those events would have shaped the diff but
+    // were never seen by current_hotspots. Without this the
+    // baseline view silently misreports "no regression" on the
+    // very burst shape (thundering herd) most likely to need
+    // it.
+    let mut header_lines: Vec<Line> = vec![
         Line::from(Span::styled(
             format!(
                 "baseline captured {captured_age} · {} fingerprint(s) · {} event(s) at capture",
@@ -3975,8 +4261,18 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
             ),
             Style::default().fg(theme.muted),
         )),
-        Line::from(""),
     ];
+    if let Some(delta) = app.baseline_listener_drops_since_capture() {
+        if delta > 0 {
+            header_lines.push(Line::from(Span::styled(
+                format!(
+                    "⚠ {delta} event(s) dropped at listener since capture — diff below is a subsample"
+                ),
+                Style::default().fg(theme.health_yellow),
+            )));
+        }
+    }
+    header_lines.push(Line::from(""));
     if diffs.is_empty() {
         let mut lines = header_lines;
         lines.push(Line::from(Span::styled(
@@ -4130,8 +4426,7 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )));
     let inner_w = inner.width as usize;
-    let body_col =
-        inner_w.saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2);
+    let body_col = inner_w.saturating_sub(2 + 10 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 10 + 2 + 12 + 2);
     for (i, t) in txns
         .iter()
         .enumerate()
@@ -4158,10 +4453,7 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
         };
         let id_label = match t.txn.as_deref() {
             Some(id) => id.to_string(),
-            None => format!(
-                "(autocommit · {})",
-                t.conn.as_deref().unwrap_or("?")
-            ),
+            None => format!("(autocommit · {})", t.conn.as_deref().unwrap_or("?")),
         };
         let last_fp = t.last_fingerprint.as_deref().unwrap_or("");
         let body = format!(
@@ -4180,6 +4472,88 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
             dbt = format_duration(t.total_query_micros),
         );
         lines.push(Line::from(Span::styled(line, row_style)));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// L2 pool-saturation gauge — groups the ring by connection-
+/// pool name and renders one row per pool with distinct-
+/// connection breadth, peak in-flight concurrency, query
+/// volume / errors, total busy time, and p95 latency.
+/// Surfaces "is this pool running hot?" and the classic
+/// read-replica misrouting (a write-heavy pool named
+/// `replica`). The configured HikariCP max isn't shown yet —
+/// it waits on the JAR shipping `pool-max` in its heartbeat.
+fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let pools = app.current_pools();
+    if pools.is_empty() {
+        let lines = vec![
+            Line::from(Span::styled(
+                "no pools observed yet — waiting for query events",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Pools appear once query events carry a `pool` name (HikariCP poolName).",
+                Style::default().fg(theme.muted),
+            )),
+            Line::from(Span::styled(
+                "Untagged traffic groups under <unknown>.",
+                Style::default().fg(theme.muted),
+            )),
+        ];
+        f.render_widget(Paragraph::new(Text::from(lines)), inner);
+        return;
+    }
+    // The header row consumes one line, so the scrollable body is
+    // `inner.height - 1` rows. Anchor the scroll on that height, else
+    // the focused last pool lands one row past the visible window.
+    let body_h = (inner.height as usize).saturating_sub(1);
+    let cursor = app.tap_pools_cursor.min(pools.len() - 1);
+    let scroll = if cursor >= body_h {
+        cursor + 1 - body_h
+    } else {
+        0
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {:>5}  {:>5}  {:>6}  {:>5}  {:>10}  {:>9}  {}",
+            "conns", "peak", "calls", "err", "busy", "p95", "pool · app"
+        ),
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    let inner_w = inner.width as usize;
+    let body_col = inner_w.saturating_sub(2 + 5 + 2 + 5 + 2 + 6 + 2 + 5 + 2 + 10 + 2 + 9 + 2);
+    for (i, p) in pools.iter().enumerate().skip(scroll).take(body_h) {
+        let is_focus = i == cursor;
+        let style = if is_focus {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if p.error_count > 0 {
+            Style::default().fg(theme.health_red)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        let body = match &p.last_app {
+            Some(a) => format!("{} · {}", short_fingerprint(&p.pool, body_col / 2), a),
+            None => short_fingerprint(&p.pool, body_col),
+        };
+        let line = format!(
+            "  {conns:>5}  {peak:>5}  {calls:>6}  {err:>5}  {busy:>10}  {p95:>9}  {body}",
+            conns = p.distinct_conns,
+            peak = p.peak_concurrent,
+            calls = p.query_count,
+            err = p.error_count,
+            busy = format_duration(p.total_micros),
+            p95 = format_duration(p.p95_micros),
+        );
+        lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
@@ -4257,7 +4631,10 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
         let body = format!(
             "{} · {}",
             caller,
-            short_fingerprint(&fnd.fingerprint, body_col.saturating_sub(caller.chars().count() + 3))
+            short_fingerprint(
+                &fnd.fingerprint,
+                body_col.saturating_sub(caller.chars().count() + 3)
+            )
         );
         let line = format!(
             "  {count:>6}  {span:>10}  {group:<18}  {body}",
@@ -4309,10 +4686,7 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
         title,
     )));
     lines.push(Line::from(Span::styled("  start pgman with:", muted)));
-    lines.push(Line::from(Span::styled(
-        "    pgman --tap-otlp :4318",
-        code,
-    )));
+    lines.push(Line::from(Span::styled("    pgman --tap-otlp :4318", code)));
     lines.push(Line::from(Span::styled("  on the JVM side:", muted)));
     lines.push(Line::from(Span::styled(
         "    -javaagent:opentelemetry-javaagent.jar",
@@ -4333,18 +4707,12 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
         "Route 2: pgman-tap (richer context — caller / pool / txn)",
         title,
     )));
-    lines.push(Line::from(Span::styled(
-        "  add to build.gradle:",
-        muted,
-    )));
+    lines.push(Line::from(Span::styled("  add to build.gradle:", muted)));
     lines.push(Line::from(Span::styled(
         "    implementation 'co.polymorphism:pgman-tap-spring-boot-starter:0.1.0'",
         code,
     )));
-    lines.push(Line::from(Span::styled(
-        "  add to application.yml:",
-        muted,
-    )));
+    lines.push(Line::from(Span::styled("  add to application.yml:", muted)));
     lines.push(Line::from(Span::styled(
         "    pgman.tap.enabled: true",
         code,
@@ -4648,10 +5016,10 @@ mod tests {
         // Labels padded to label_width.
         assert_eq!(got[0].label.chars().count(), 16);
         assert!(got[0].label.starts_with("id"));
-        assert_eq!(got[0].is_empty, false);
+        assert!(!got[0].is_empty);
         assert_eq!(got[0].values, vec!["42"]);
         // Empty cell rendered with "(empty)" sentinel.
-        assert_eq!(got[1].is_empty, true);
+        assert!(got[1].is_empty);
         assert_eq!(got[1].values, vec!["(empty)"]);
     }
 
@@ -4788,7 +5156,10 @@ mod tests {
         );
         assert!(dump.contains("OTEL_EXPORTER_OTLP_PROTOCOL"), "got:\n{dump}");
         // Spring Boot starter snippet.
-        assert!(dump.contains("pgman-tap-spring-boot-starter"), "got:\n{dump}");
+        assert!(
+            dump.contains("pgman-tap-spring-boot-starter"),
+            "got:\n{dump}"
+        );
         assert!(dump.contains("pgman.tap.enabled"), "got:\n{dump}");
         // Honest about the JAR still being in development.
         assert!(

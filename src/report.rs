@@ -166,10 +166,7 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
         "- **{}** transaction(s) observed (**{}** still open)\n",
         summary.txn_count, summary.txn_open_count
     ));
-    out.push_str(&format!(
-        "- baseline: {}\n",
-        summary.baseline_label
-    ));
+    out.push_str(&format!("- baseline: {}\n", summary.baseline_label));
     if summary.listener_dropped > 0 || summary.jar_dropped > 0 {
         out.push_str(&format!(
             "- ⚠ **{} listener drop(s)** · **{} JAR drop(s)** — figures below are a subsample of the real workload\n",
@@ -192,7 +189,7 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
             out.push_str(&format!(
                 "| {sev:?} | {code} | {obj} | {title} |\n",
                 sev = f.severity,
-                code = md_escape(&f.code),
+                code = md_escape(f.code),
                 obj = md_escape(&f.object),
                 title = md_escape(&f.title),
             ));
@@ -255,7 +252,9 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
     if snapshot.transactions.is_empty() {
         out.push_str("_no transactions observed yet._\n\n");
     } else {
-        out.push_str("| State | Stmts | SQL shapes | Span (µs) | DB time (µs) | Pool | Txn / Conn |\n");
+        out.push_str(
+            "| State | Stmts | SQL shapes | Span (µs) | DB time (µs) | Pool | Txn / Conn |\n",
+        );
         out.push_str("|---|---:|---:|---:|---:|---|---|\n");
         for t in &snapshot.transactions {
             let state = match t.outcome {
@@ -307,13 +306,19 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
     out.push_str("## Baseline diff\n\n");
     match &snapshot.baseline_diff {
         None => {
-            out.push_str("_no baseline captured — press Shift-B in the TapMonitor to set one._\n\n");
+            out.push_str(
+                "_no baseline captured — press Shift-B in the TapMonitor to set one._\n\n",
+            );
         }
         Some(diff) if diff.is_empty() => {
-            out.push_str("_no changes since baseline — nothing new, no regressions, no disappearances._\n\n");
+            out.push_str(
+                "_no changes since baseline — nothing new, no regressions, no disappearances._\n\n",
+            );
         }
         Some(diff) => {
-            out.push_str("| Change | Calls (now) | p95 now (µs) | p95 baseline (µs) | Fingerprint |\n");
+            out.push_str(
+                "| Change | Calls (now) | p95 now (µs) | p95 baseline (µs) | Fingerprint |\n",
+            );
             out.push_str("|---|---:|---:|---:|---|\n");
             for d in diff {
                 let label = match d.kind {
@@ -356,10 +361,7 @@ pub fn render_html(snapshot: &ReportSnapshot) -> String {
     out.push_str("code{background:#f7f7f7;padding:0 0.2rem}");
     out.push_str(".muted{color:#666;font-style:italic}");
     out.push_str("</style></head><body>");
-    out.push_str(&format!(
-        "<h1>{}</h1>",
-        html_escape(&snapshot.title)
-    ));
+    out.push_str(&format!("<h1>{}</h1>", html_escape(&snapshot.title)));
     out.push_str(&format!(
         "<p class=\"muted\">generated at {}</p>",
         html_escape(&snapshot.generated_at)
@@ -412,7 +414,7 @@ pub fn render_html(snapshot: &ReportSnapshot) -> String {
             out.push_str(&format!(
                 "<tr><td>{sev:?}</td><td>{code}</td><td>{obj}</td><td>{title}</td></tr>",
                 sev = f.severity,
-                code = html_escape(&f.code),
+                code = html_escape(f.code),
                 obj = html_escape(&f.object),
                 title = html_escape(&f.title),
             ));
@@ -451,7 +453,9 @@ pub fn render_html(snapshot: &ReportSnapshot) -> String {
         n = snapshot.callers.len()
     ));
     if snapshot.callers.is_empty() {
-        out.push_str("<p class=\"muted\">no caller frames — the JAR may have stack capture disabled.</p>");
+        out.push_str(
+            "<p class=\"muted\">no caller frames — the JAR may have stack capture disabled.</p>",
+        );
     } else {
         out.push_str(
             "<table><tr><th>Calls</th><th>Errors</th><th>Distinct SQL</th><th>Total (µs)</th><th>Caller</th></tr>",
@@ -706,7 +710,7 @@ mod tests {
         let mut s = empty_snapshot();
         s.lint_findings.push(LintFinding {
             severity: Severity::High,
-            code: "LINT001".into(),
+            code: "LINT001",
             title: "missing primary key".into(),
             object: "public.orders".into(),
             detail: String::new(),
@@ -756,7 +760,10 @@ mod tests {
         let html = render_html(&s);
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.contains("<title>pgman report</title>"));
-        assert!(html.contains("<style>"), "must include inline style for portability");
+        assert!(
+            html.contains("<style>"),
+            "must include inline style for portability"
+        );
         assert!(html.ends_with("</html>"));
     }
 
@@ -765,14 +772,17 @@ mod tests {
         let mut s = empty_snapshot();
         s.lint_findings.push(LintFinding {
             severity: Severity::High,
-            code: "<script>".into(),
+            code: "<script>",
             title: "x & y".into(),
             object: "\"foo\"".into(),
             detail: String::new(),
             suggestion: None,
         });
         let html = render_html(&s);
-        assert!(html.contains("&lt;script&gt;"), "code field must be escaped");
+        assert!(
+            html.contains("&lt;script&gt;"),
+            "code field must be escaped"
+        );
         assert!(html.contains("x &amp; y"), "amp must be escaped");
         assert!(
             html.contains("&quot;foo&quot;"),
@@ -827,10 +837,7 @@ mod tests {
             current_count: 3,
             current_p95_micros: 100,
         }]);
-        assert_eq!(
-            summary_stats(&s).baseline_label,
-            "1 changed fingerprint(s)"
-        );
+        assert_eq!(summary_stats(&s).baseline_label, "1 changed fingerprint(s)");
     }
 
     #[test]
@@ -948,11 +955,23 @@ mod tests {
             outcome: Some(crate::tap::TxnOutcome::Commit),
         });
         let md = render_markdown(&s);
-        assert!(md.contains("| Pool |"), "markdown header missing Pool column:\n{md}");
-        assert!(md.contains("| primary |"), "markdown row missing pool value:\n{md}");
+        assert!(
+            md.contains("| Pool |"),
+            "markdown header missing Pool column:\n{md}"
+        );
+        assert!(
+            md.contains("| primary |"),
+            "markdown row missing pool value:\n{md}"
+        );
         let html = render_html(&s);
-        assert!(html.contains("<th>Pool</th>"), "HTML header missing Pool column:\n{html}");
-        assert!(html.contains("<td>primary</td>"), "HTML row missing pool value:\n{html}");
+        assert!(
+            html.contains("<th>Pool</th>"),
+            "HTML header missing Pool column:\n{html}"
+        );
+        assert!(
+            html.contains("<td>primary</td>"),
+            "HTML row missing pool value:\n{html}"
+        );
     }
 
     #[test]
@@ -988,10 +1007,7 @@ mod tests {
     #[test]
     fn html_escape_includes_single_quote() {
         assert_eq!(html_escape("it's"), "it&#39;s");
-        assert_eq!(
-            html_escape("<a href='x'>"),
-            "&lt;a href=&#39;x&#39;&gt;"
-        );
+        assert_eq!(html_escape("<a href='x'>"), "&lt;a href=&#39;x&#39;&gt;");
     }
 
     #[test]
@@ -1003,7 +1019,7 @@ mod tests {
         let mut s = empty_snapshot();
         s.lint_findings.push(LintFinding {
             severity: Severity::High,
-            code: "<script>alert(1)</script>".into(),
+            code: "<script>alert(1)</script>",
             title: "title".into(),
             object: "obj".into(),
             detail: String::new(),

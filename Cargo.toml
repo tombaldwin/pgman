@@ -1,11 +1,15 @@
 [package]
 name = "pgman"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 authors = ["Tom Baldwin <tom@polymorphism.co.uk>"]
 description = "k9s-style Postgres TUI for Java/AWS shops"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/tombaldwin/pgman"
+homepage = "https://github.com/tombaldwin/pgman"
+keywords = ["postgresql", "tui", "database", "cli", "ratatui"]
+categories = ["command-line-utilities", "database"]
 
 [dependencies]
 ratatui = "0.29"
