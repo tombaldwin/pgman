@@ -40,19 +40,10 @@ pub enum StatementKind {
 
 impl StatementKind {
     /// Anything that is not a plain `SELECT`. Unknown statements count as writes.
+    /// The auto-tx wrap (see [`evaluate`]) keys off this, so every write —
+    /// DML, DDL, and `Other` (e.g. MERGE) — gets a rollback-able transaction.
     pub fn is_write(self) -> bool {
         !matches!(self, StatementKind::Select)
-    }
-
-    /// Data-modifying statements that benefit from a rollback-able transaction.
-    pub fn is_dml(self) -> bool {
-        matches!(
-            self,
-            StatementKind::Insert
-                | StatementKind::Update { .. }
-                | StatementKind::Delete { .. }
-                | StatementKind::Truncate
-        )
     }
 }
 

@@ -94,6 +94,26 @@ now cover most painful real-world schema sins. Last one:
   the first page; a portal-backed "fetch next N" / scroll-to-load
   is the v2.
 
+### Code-review follow-ups (from the open-source-prep review)
+- **Memoise per-frame tap groupings** *(evaluated — not pursued)*. The
+  tap L2 views (`draw_tap_monitor_pools` and siblings) call
+  `group_by_pool` / `group_by_txn` / `current_hotspots` over the whole
+  ring on every redraw. A cross-frame cache needs interior mutability
+  plus invalidation keyed on the ring's version + sort. The grouping is
+  documented (and measured) as sub-millisecond over the ~2k-event ring
+  — "cheap relative to the rest of the frame budget" — so a cache trades
+  the simple, obviously-correct pure methods for a staleness-bug surface
+  in the exact feature being optimised. Net-negative; left as-is. Revisit
+  only if profiling shows it on a hot path (e.g. if the ring cap grows
+  by orders of magnitude).
+- **Extend `TextInput` to the remaining prompts** *(partial — done for
+  the three review-flagged prompts)*. `ParamPrompt`, `SavedQueriesFilter`,
+  and `RenameQueryPrompt` now share `text_input::TextInput` (cursor
+  movement, Home/End, Ctrl-W word-delete, paste). The older single-line
+  inputs (`SaveQueryPrompt` name, `GridFilter`, `GridFind`,
+  `HistorySearch`, `SchemaBrowserFilter`) still hand-roll append-only
+  editing and could adopt the same widget for consistency.
+
 ### JDBC tap — layered build
 The committed observability path. **pgman-tap is not a
 ground-up JDBC wrapper** — it's a thin

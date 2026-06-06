@@ -441,15 +441,13 @@ pub struct GridBookmark {
     pub col: usize,
 }
 
-/// A result set frozen as the diff baseline ("A"). Holds enough
-/// to recompute and render a diff against a later result without
-/// touching the live grid.
+/// A result set frozen as the diff baseline ("A"). Holds the
+/// columns + rows needed to render a diff against a later result
+/// without touching the live grid, plus a short header label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
-    /// `(schema, table)` when A came from a single-table SELECT.
-    pub source: Option<(String, String)>,
     /// Short label for the header — the SQL that produced A
     /// (collapsed / truncated) or a fallback.
     pub label: String,
@@ -2743,6 +2741,24 @@ impl App {
         }
     }
 
+    /// Clear the tap event ring (`c` from any tap view) and re-home
+    /// every per-view cursor. One ring backs all views, so a clear must
+    /// reset all cursors — hand-maintained per-view copies had drifted,
+    /// leaving stale cursors after a clear. The captured baseline
+    /// snapshot is intentionally preserved (only the live ring is wiped).
+    fn clear_tap_ring(&mut self) {
+        let n = self.tap_events.len();
+        self.tap_events.clear();
+        self.tap_events_cursor = 0;
+        self.tap_hotspots_cursor = 0;
+        self.tap_callers_cursor = 0;
+        self.tap_txns_cursor = 0;
+        self.tap_pools_cursor = 0;
+        self.tap_nplus1_cursor = 0;
+        self.tap_baseline_cursor = 0;
+        self.last_status = Some(format!("cleared {n} tap event(s)"));
+    }
+
     fn on_tap_monitor_txns_key(&mut self, key: KeyEvent) {
         let last = self.current_txns().len().saturating_sub(1);
         match key.code {
@@ -2765,18 +2781,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_txns_cursor = self.tap_txns_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_txns_cursor = 0;
-                self.tap_pools_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.tap_baseline_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2809,18 +2814,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_pools_cursor = self.tap_pools_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_txns_cursor = 0;
-                self.tap_pools_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.tap_baseline_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2889,21 +2883,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_baseline_cursor = self.tap_baseline_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_txns_cursor = 0;
-                self.tap_pools_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.tap_baseline_cursor = 0;
-                // Keep the baseline — `c` clears the ring, not
-                // the captured snapshot. A separate keypress
-                // (recapture via Shift-B) drops the old baseline.
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2948,15 +2928,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_callers_cursor = self.tap_callers_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_callers_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -2983,14 +2955,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_nplus1_cursor = self.tap_nplus1_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.tap_nplus1_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -3021,12 +2986,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_events_cursor = self.tap_events_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -3064,13 +3024,7 @@ impl App {
             KeyCode::PageUp => {
                 self.tap_hotspots_cursor = self.tap_hotspots_cursor.saturating_sub(10);
             }
-            KeyCode::Char('c') => {
-                let n = self.tap_events.len();
-                self.tap_events.clear();
-                self.tap_events_cursor = 0;
-                self.tap_hotspots_cursor = 0;
-                self.last_status = Some(format!("cleared {n} tap event(s)"));
-            }
+            KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
         }
     }
@@ -3543,7 +3497,12 @@ impl App {
     }
 
     fn on_saved_queries_key(&mut self, key: KeyEvent) {
-        let last = self.visible_saved_indices().len().saturating_sub(1);
+        // Compute the filtered/visible index list once per keypress —
+        // it lowercases every entry name + body, so re-deriving it for
+        // the cursor clamp and again for the focused entry was wasteful.
+        let visible = self.visible_saved_indices();
+        let last = visible.len().saturating_sub(1);
+        let focused = visible.get(self.saved_queries_cursor).copied();
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Leaving the panel clears the filter so the next
@@ -3563,14 +3522,14 @@ impl App {
             KeyCode::Char('/') => self.start_saved_queries_filter(),
             KeyCode::Char('r') => self.start_rename_query(),
             KeyCode::Enter => {
-                if let Some(q) = self
-                    .focused_saved_index()
+                if let Some(q) = focused
                     .and_then(|i| self.saved_queries.entries.get(i))
                     .cloned()
                 {
-                    // load_saved_query switches mode; clear the
-                    // filter so a later open is unfiltered.
-                    self.saved_queries_filter = None;
+                    // Keep the filter: load_saved_query may open the
+                    // :param prompt, and Esc there returns to this
+                    // (still-filtered) list. A fresh `open_saved_queries`
+                    // clears the filter on its own.
                     self.load_saved_query(q);
                 }
             }
@@ -3581,8 +3540,7 @@ impl App {
                 // ungracefully; but practically once saved is
                 // written, gone is gone). Status hints what
                 // happened.
-                if let Some(name) = self
-                    .focused_saved_index()
+                if let Some(name) = focused
                     .and_then(|i| self.saved_queries.entries.get(i))
                     .map(|q| q.name.clone())
                 {
@@ -5553,17 +5511,24 @@ impl App {
             crate::report::ReportFormat::Markdown => crate::report::render_markdown(&snapshot),
             crate::report::ReportFormat::Html => crate::report::render_html(&snapshot),
         };
+        let ok = format!("wrote report to {}", path.display());
+        self.write_export(&path, &body, "\\report", ok);
+    }
+
+    /// Shared write path for `\report` / `\fixture`: create the parent
+    /// directory if needed, write atomically, and set the status (on
+    /// success, `ok_status`) or error line. `cmd` names the backslash
+    /// command for the error message.
+    fn write_export(&mut self, path: &std::path::Path, body: &str, cmd: &str, ok_status: String) {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 let _ = std::fs::create_dir_all(parent);
             }
         }
-        match tui_common::util::write_atomic(&path, &body) {
-            Ok(()) => {
-                self.last_status = Some(format!("wrote report to {}", path.display()));
-            }
+        match tui_common::util::write_atomic(path, body) {
+            Ok(()) => self.last_status = Some(ok_status),
             Err(e) => {
-                self.last_error = Some(format!("\\report failed: {} ({e})", path.display()));
+                self.last_error = Some(format!("{cmd} failed: {} ({e})", path.display()));
             }
         }
     }
@@ -5591,23 +5556,8 @@ impl App {
             Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
             _ => default_fixture_path(&table),
         };
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-        }
-        match tui_common::util::write_atomic(&path, &xml) {
-            Ok(()) => {
-                self.last_status = Some(format!(
-                    "wrote {} row(s) to {}",
-                    fixture.rows.len(),
-                    path.display()
-                ));
-            }
-            Err(e) => {
-                self.last_error = Some(format!("\\fixture failed: {} ({e})", path.display()));
-            }
-        }
+        let ok = format!("wrote {} row(s) to {}", fixture.rows.len(), path.display());
+        self.write_export(&path, &xml, "\\fixture", ok);
     }
 
     /// Build a [`crate::report::ReportSnapshot`] from the
@@ -5911,7 +5861,7 @@ impl App {
     /// Reset the per-grid view state — sort / filter / column cursor
     /// — so a fresh result set starts clean. Called whenever a new
     /// `Grid` lands on the App via `QueryOk` or `Booted`.
-    fn reset_grid_view(&mut self) {
+    pub(crate) fn reset_grid_view(&mut self) {
         self.grid_col_cursor = 0;
         self.grid_sort = None;
         self.grid_raw_rows = None;
@@ -6099,7 +6049,6 @@ impl App {
                 self.pinned_result = Some(PinnedResult {
                     columns: self.grid.columns.clone(),
                     rows: self.grid.rows.clone(),
-                    source: self.grid_source.clone(),
                     label: self.current_result_label(),
                 });
                 self.last_status = Some(format!(
@@ -6188,7 +6137,6 @@ impl App {
                     self.pinned_result = Some(PinnedResult {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
-                        source: self.grid_source.clone(),
                         label: d.b_label.clone(),
                     });
                     self.mode = Mode::Normal;
@@ -7530,13 +7478,21 @@ pub fn saved_queries_path() -> std::path::PathBuf {
 /// second (or by two pgman instances at once) don't clobber
 /// each other.
 pub fn default_report_path() -> std::path::PathBuf {
+    cache_stamped_path("report", "md")
+}
+
+/// `<cache>/<stem>-<secs>-<nanos>-<pid>.<ext>` — a wall-clock + pid
+/// stamped path under the cache dir. The pid + nanosecond fraction
+/// keep two writes within the same second (or from two pgman
+/// instances at once) from clobbering each other.
+fn cache_stamped_path(stem: &str, ext: &str) -> std::path::PathBuf {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = now.as_secs();
     let nanos = now.subsec_nanos();
     let pid = std::process::id();
-    crate::util::cache_dir().join(format!("report-{secs}-{nanos:09}-{pid}.md"))
+    crate::util::cache_dir().join(format!("{stem}-{secs}-{nanos:09}-{pid}.{ext}"))
 }
 
 /// Default path for `\fixture` when the operator gives none:
@@ -7544,12 +7500,6 @@ pub fn default_report_path() -> std::path::PathBuf {
 /// name is sanitised so a schema-qualified or odd identifier
 /// can't escape the cache dir.
 pub fn default_fixture_path(table: &str) -> std::path::PathBuf {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let nanos = now.subsec_nanos();
-    let pid = std::process::id();
     let safe: String = table
         .chars()
         .map(|c| {
@@ -7560,7 +7510,7 @@ pub fn default_fixture_path(table: &str) -> std::path::PathBuf {
             }
         })
         .collect();
-    crate::util::cache_dir().join(format!("{safe}-fixture-{secs}-{nanos:09}-{pid}.xml"))
+    cache_stamped_path(&format!("{safe}-fixture"), "xml")
 }
 
 /// Minimal "current UTC moment" formatted as
