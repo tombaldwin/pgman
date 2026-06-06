@@ -71,7 +71,7 @@ jobs:
       - run: cargo install cargo-llvm-cov --locked
       - run: cargo llvm-cov --all-targets --lcov --output-path lcov.info
       - run: cargo llvm-cov report
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: lcov
           path: lcov.info
