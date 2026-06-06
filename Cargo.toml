@@ -36,7 +36,7 @@ arboard = "3"
 # flow between both. Local copies of these used to live under
 # src/util.rs and src/font_probe.rs; see `// tui-common: …` notes
 # inline where the migration replaced them.
-tui-common = { package = "tb-tui-common", version = "0.1.1" }
+tui-common = { package = "tb-tui-common", version = "0.1.2" }
 
 # Deferred — added as the milestones that need them land (see BACKLOG.md):
 #   M2  deadpool-postgres                      — connection pool for interactive queries
@@ -65,3 +65,8 @@ harness = false
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Local co-development of tb-tui-common: uncomment to build against a
+# sibling checkout instead of crates.io. Leave commented in git.
+# [patch.crates-io]
+# tb-tui-common = { path = "../tb-tui-common" }
