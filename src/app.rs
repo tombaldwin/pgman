@@ -9439,14 +9439,20 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('/')));
         assert_eq!(a.mode, Mode::SavedQueriesFilter);
         type_str(&mut a, "ord");
-        assert_eq!(a.saved_queries_filter.as_ref().map(|t| t.text()), Some("ord"));
+        assert_eq!(
+            a.saved_queries_filter.as_ref().map(|t| t.text()),
+            Some("ord")
+        );
         assert_eq!(a.visible_saved_indices(), vec![1]);
         // Cursor 0 in the filtered view maps to real entry index 1.
         assert_eq!(a.focused_saved_index(), Some(1));
         // Enter keeps the filter applied and returns to navigation.
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::SavedQueries);
-        assert_eq!(a.saved_queries_filter.as_ref().map(|t| t.text()), Some("ord"));
+        assert_eq!(
+            a.saved_queries_filter.as_ref().map(|t| t.text()),
+            Some("ord")
+        );
     }
 
     #[test]
