@@ -1,6 +1,6 @@
 {
   "candor": {
-    "version": "d9e8063",
+    "version": "fce3119",
     "toolchain": "nightly-2026-04-16"
   },
   "functions": [
@@ -24,7 +24,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b04ac965568b7aaee48",
+      "hash": "960b8f46d05ffd66d64bf8fc6f1e11dc",
       "fs": [
         "read"
       ]
@@ -47,7 +47,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b04aec8809bab6ebb31",
+      "hash": "960b8f46d05ffd66e49c50aaceed690c",
       "fs": [
         "read"
       ]
@@ -69,7 +69,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b048c517e6a455946b5",
+      "hash": "960b8f46d05ffd665786562cfcdee787",
       "fs": [
         "write"
       ]
@@ -94,7 +94,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b0456534dd13e8acc38",
+      "hash": "960b8f46d05ffd66941fde0b151533de",
       "fs": [
         "read"
       ]
@@ -130,11 +130,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b04744533afa56e0b36",
-      "fs": [
-        "read",
-        "write"
-      ],
+      "hash": "960b8f46d05ffd66c287d36d01931f91",
       "calls": [
         "discover_intellij_datasources",
         "discover_spring_datasources",
@@ -162,10 +158,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b042171372971cd74e9",
-      "fs": [
-        "read"
-      ],
+      "hash": "960b8f46d05ffd6667dd3ed7a77a6bd3",
       "calls": [
         "discover_intellij_datasources",
         "discover_spring_datasources"
@@ -196,10 +189,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "296ff1d451623b04db8e56a78b4860aa",
-      "fs": [
-        "read"
-      ],
+      "hash": "960b8f46d05ffd667516a160bd7d4499",
       "calls": [
         "load_safety_config",
         "resolve_batch_dsn"
