@@ -26,8 +26,8 @@ impl App {
         // O(N²) because each `String::insert(idx, c)` shifts the tail
         // of the buffer. A 5MB schema-diff paste froze the UI for
         // multiple seconds; insert_str makes it instant.
-        self.editor_buffer.insert_str(self.editor_cursor, &cleaned);
-        self.editor_cursor += cleaned.len();
+        self.editor.buffer.insert_str(self.editor.cursor, &cleaned);
+        self.editor.cursor += cleaned.len();
     }
 
     /// Inner editor-key handler. Wrapper above adds undo/redo
@@ -130,7 +130,7 @@ impl App {
             // ASCII control code for /) — accept either.
             KeyCode::Char('/') | KeyCode::Char('_') if ctrl => {
                 self.editor_dirty();
-                editor_toggle_line_comment(&mut self.editor_buffer, &mut self.editor_cursor);
+                editor_toggle_line_comment(&mut self.editor.buffer, &mut self.editor.cursor);
             }
             // Some terminals report Ctrl-Enter; others fold it into
             // Ctrl-J. Both run.
@@ -150,8 +150,8 @@ impl App {
             KeyCode::Char('p') if ctrl => self.history_prev(),
             KeyCode::Char('n') if ctrl => self.history_next(),
             KeyCode::Char('u') if ctrl => {
-                self.editor_buffer.clear();
-                self.editor_cursor = 0;
+                self.editor.buffer.clear();
+                self.editor.cursor = 0;
                 self.editor_dirty();
             }
 
@@ -171,64 +171,64 @@ impl App {
             {
                 self.editor_dirty();
                 if matches!(c, '(' | '[' | '{') {
-                    editor_insert_pair(&mut self.editor_buffer, &mut self.editor_cursor, c);
+                    editor_insert_pair(&mut self.editor.buffer, &mut self.editor.cursor, c);
                 } else if matches!(c, ')' | ']' | '}')
-                    && editor_maybe_skip_close(&self.editor_buffer, &mut self.editor_cursor, c)
+                    && editor_maybe_skip_close(&self.editor.buffer, &mut self.editor.cursor, c)
                 {
                     // Skipped over the matching close.
                 } else if matches!(c, '\'' | '"')
-                    && editor_maybe_skip_quote(&self.editor_buffer, &mut self.editor_cursor, c)
+                    && editor_maybe_skip_quote(&self.editor.buffer, &mut self.editor.cursor, c)
                 {
                     // Skipped over the matching quote.
                 } else if matches!(c, '\'' | '"')
-                    && editor_maybe_pair_quote(&mut self.editor_buffer, &mut self.editor_cursor, c)
+                    && editor_maybe_pair_quote(&mut self.editor.buffer, &mut self.editor.cursor, c)
                 {
                     // Paired and placed cursor between the quotes.
                 } else {
-                    editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, c);
+                    editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, c);
                 }
             }
             KeyCode::Enter => {
                 self.editor_dirty();
-                editor_insert(&mut self.editor_buffer, &mut self.editor_cursor, '\n');
+                editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, '\n');
             }
             KeyCode::Backspace => {
                 self.editor_dirty();
-                editor_backspace(&mut self.editor_buffer, &mut self.editor_cursor);
+                editor_backspace(&mut self.editor.buffer, &mut self.editor.cursor);
             }
             KeyCode::Delete => {
                 self.editor_dirty();
-                editor_delete(&mut self.editor_buffer, &mut self.editor_cursor);
+                editor_delete(&mut self.editor.buffer, &mut self.editor.cursor);
             }
             KeyCode::Left => {
-                self.editor_preferred_col = None;
-                editor_move_left(&self.editor_buffer, &mut self.editor_cursor);
+                self.editor.preferred_col = None;
+                editor_move_left(&self.editor.buffer, &mut self.editor.cursor);
             }
             KeyCode::Right => {
-                self.editor_preferred_col = None;
-                editor_move_right(&self.editor_buffer, &mut self.editor_cursor);
+                self.editor.preferred_col = None;
+                editor_move_right(&self.editor.buffer, &mut self.editor.cursor);
             }
             KeyCode::Up => {
                 editor_move_up(
-                    &self.editor_buffer,
-                    &mut self.editor_cursor,
-                    &mut self.editor_preferred_col,
+                    &self.editor.buffer,
+                    &mut self.editor.cursor,
+                    &mut self.editor.preferred_col,
                 );
             }
             KeyCode::Down => {
                 editor_move_down(
-                    &self.editor_buffer,
-                    &mut self.editor_cursor,
-                    &mut self.editor_preferred_col,
+                    &self.editor.buffer,
+                    &mut self.editor.cursor,
+                    &mut self.editor.preferred_col,
                 );
             }
             KeyCode::Home => {
-                self.editor_preferred_col = None;
-                self.editor_cursor = line_start_byte(&self.editor_buffer, self.editor_cursor);
+                self.editor.preferred_col = None;
+                self.editor.cursor = line_start_byte(&self.editor.buffer, self.editor.cursor);
             }
             KeyCode::End => {
-                self.editor_preferred_col = None;
-                self.editor_cursor = line_end_byte(&self.editor_buffer, self.editor_cursor);
+                self.editor.preferred_col = None;
+                self.editor.cursor = line_end_byte(&self.editor.buffer, self.editor.cursor);
             }
             _ => {}
         }
@@ -260,8 +260,8 @@ impl App {
             // quoted-name-style `"My Table".` once we support those —
             // still trigger. Reading `bytes[dot_byte - 1]` would catch
             // only ASCII suffixes.
-            let dot_byte = self.editor_cursor.saturating_sub(1);
-            let prev_char = self.editor_buffer[..dot_byte].chars().next_back();
+            let dot_byte = self.editor.cursor.saturating_sub(1);
+            let prev_char = self.editor.buffer[..dot_byte].chars().next_back();
             if matches!(prev_char, Some(c) if c.is_alphabetic() || c == '_') {
                 let saved_status = self.last_status.clone();
                 self.editor_complete();
@@ -288,13 +288,13 @@ impl App {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         if just_typed_space && self.completion.is_none() {
-            // The just-typed space is at `editor_cursor - 1`. Strip it
+            // The just-typed space is at `editor.cursor - 1`. Strip it
             // and any further trailing whitespace, then read back the
             // last alphanumeric / `_` word. Walk char_indices in reverse
             // so a multi-byte boundary char (en-dash, smart quote, NBSP,
             // …) doesn't land us mid-codepoint — `rfind(predicate) + 1`
             // would have panicked on those.
-            let before_space = &self.editor_buffer[..self.editor_cursor.saturating_sub(1)];
+            let before_space = &self.editor.buffer[..self.editor.cursor.saturating_sub(1)];
             let trimmed = before_space.trim_end();
             let word_start = trimmed
                 .char_indices()
@@ -321,7 +321,7 @@ impl App {
     /// preferred-column tracking.
     fn editor_dirty(&mut self) {
         self.history_pos = None;
-        self.editor_preferred_col = None;
+        self.editor.preferred_col = None;
         // Mark the buffer dirty for the periodic auto-save in run().
         // We don't persist inline because editor_dirty is called
         // BEFORE the actual mutation at most call sites — the run-
@@ -333,20 +333,20 @@ impl App {
     /// Pop the most recent undo entry and restore. Push the current
     /// state to the redo ring so Ctrl-Y can flip back.
     pub fn editor_undo(&mut self) {
-        let Some(prev) = self.editor_undo.pop() else {
+        let Some(prev) = self.editor.undo.pop() else {
             self.last_status = Some("nothing to undo".into());
             return;
         };
         let now = std::time::Instant::now();
-        self.editor_redo.push(UndoEntry {
-            buffer: std::mem::take(&mut self.editor_buffer),
-            cursor: self.editor_cursor,
+        self.editor.redo.push(UndoEntry {
+            buffer: std::mem::take(&mut self.editor.buffer),
+            cursor: self.editor.cursor,
             kind: EditorActionKind::Other,
             merge_window_end: now,
         });
-        self.editor_buffer = prev.buffer;
-        self.editor_cursor = prev.cursor.min(self.editor_buffer.len());
-        self.editor_preferred_col = None;
+        self.editor.buffer = prev.buffer;
+        self.editor.cursor = prev.cursor.min(self.editor.buffer.len());
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.draft_dirty = true;
     }
@@ -355,20 +355,20 @@ impl App {
     /// state to the undo ring so Ctrl-Z can flip back. Mirror of
     /// [`Self::editor_undo`].
     pub fn editor_redo(&mut self) {
-        let Some(next) = self.editor_redo.pop() else {
+        let Some(next) = self.editor.redo.pop() else {
             self.last_status = Some("nothing to redo".into());
             return;
         };
         let now = std::time::Instant::now();
-        self.editor_undo.push(UndoEntry {
-            buffer: std::mem::take(&mut self.editor_buffer),
-            cursor: self.editor_cursor,
+        self.editor.undo.push(UndoEntry {
+            buffer: std::mem::take(&mut self.editor.buffer),
+            cursor: self.editor.cursor,
             kind: EditorActionKind::Other,
             merge_window_end: now,
         });
-        self.editor_buffer = next.buffer;
-        self.editor_cursor = next.cursor.min(self.editor_buffer.len());
-        self.editor_preferred_col = None;
+        self.editor.buffer = next.buffer;
+        self.editor.cursor = next.cursor.min(self.editor.buffer.len());
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.draft_dirty = true;
     }
@@ -387,16 +387,17 @@ impl App {
         // refresh-narrow may have shrunk the buffer below the
         // pre-Tab cursor position; clamp to current buffer length
         // (which is always a valid char boundary).
-        if cycle.start <= self.editor_buffer.len()
-            && cycle.end <= self.editor_buffer.len()
+        if cycle.start <= self.editor.buffer.len()
+            && cycle.end <= self.editor.buffer.len()
             && cycle.start <= cycle.end
-            && self.editor_buffer.is_char_boundary(cycle.start)
-            && self.editor_buffer.is_char_boundary(cycle.end)
+            && self.editor.buffer.is_char_boundary(cycle.start)
+            && self.editor.buffer.is_char_boundary(cycle.end)
         {
-            self.editor_buffer
+            self.editor
+                .buffer
                 .replace_range(cycle.start..cycle.end, &cycle.origin);
         }
-        self.editor_cursor = cycle.origin_cursor.min(self.editor_buffer.len());
+        self.editor.cursor = cycle.origin_cursor.min(self.editor.buffer.len());
         self.last_status = Some("completion cancelled".to_string());
     }
 
@@ -420,7 +421,7 @@ impl App {
         // Editor housekeeping (mirrors editor_dirty) — without clearing
         // the cycle, which we own here.
         self.history_pos = None;
-        self.editor_preferred_col = None;
+        self.editor.preferred_col = None;
 
         if let Some(cycle) = self.completion.clone() {
             if cycle.candidates.is_empty() {
@@ -434,10 +435,11 @@ impl App {
                 Some(i) => (i + 1) % cycle.candidates.len(),
             };
             let cand = cycle.candidates[next].clone();
-            self.editor_buffer
+            self.editor
+                .buffer
                 .replace_range(cycle.start..cycle.end, &cand.insert);
             let new_end = cycle.start + cand.insert.len();
-            self.editor_cursor = new_end;
+            self.editor.cursor = new_end;
             self.last_status = Some(format!(
                 "completion {}/{} · {}",
                 next + 1,
@@ -457,12 +459,12 @@ impl App {
         }
 
         // -- start a fresh cycle --
-        let Some(id) = complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
+        let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             return;
         };
         let cands =
-            complete_q::candidates_for(&self.editor_buffer, self.editor_cursor, &self.schema_cache);
+            complete_q::candidates_for(&self.editor.buffer, self.editor.cursor, &self.schema_cache);
         if cands.is_empty() {
             // Tailor the message: empty-cache vs. nothing-to-suggest vs.
             // typed-prefix-but-no-match. SQL vocabulary (keywords,
@@ -483,10 +485,10 @@ impl App {
             return;
         }
 
-        let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let prefix_start = self.editor.cursor.saturating_sub(id.prefix.len());
         let replace_end = id.end;
-        let original_text = self.editor_buffer[prefix_start..replace_end].to_string();
-        let original_cursor = self.editor_cursor;
+        let original_text = self.editor.buffer[prefix_start..replace_end].to_string();
+        let original_cursor = self.editor.cursor;
 
         // 1) Exact-match fast path: the typed prefix already IS one of
         //    the candidates (case-insensitively). The operator typed the
@@ -501,10 +503,11 @@ impl App {
             .find(|c| !c.insert.is_empty() && c.insert.eq_ignore_ascii_case(&id.prefix))
         {
             let cand = exact.clone();
-            self.editor_buffer
+            self.editor
+                .buffer
                 .replace_range(prefix_start..replace_end, &cand.insert);
             let new_end = prefix_start + cand.insert.len();
-            self.editor_cursor = new_end;
+            self.editor.cursor = new_end;
             self.last_status = Some(format!("completion · exact match · {}", cand.kind.label()));
             self.completion = None;
             return;
@@ -541,10 +544,11 @@ impl App {
         //    around so Esc undoes the auto-insert.
         if cands.len() == 1 {
             let cand = cands[0].clone();
-            self.editor_buffer
+            self.editor
+                .buffer
                 .replace_range(prefix_start..replace_end, &cand.insert);
             let new_end = prefix_start + cand.insert.len();
-            self.editor_cursor = new_end;
+            self.editor.cursor = new_end;
             self.last_status = Some(format!("completion 1/1 · {}", cand.kind.label()));
             self.completion = Some(CompletionCycle {
                 start: prefix_start,
@@ -575,10 +579,11 @@ impl App {
             // text — don't insert anything yet.
             id.prefix.clone()
         };
-        self.editor_buffer
+        self.editor
+            .buffer
             .replace_range(prefix_start..replace_end, &insert_text);
         let new_end = prefix_start + insert_text.len();
-        self.editor_cursor = new_end;
+        self.editor.cursor = new_end;
         self.last_status = Some(format!(
             "completion: {} match{} · Tab to pick",
             cands.len(),

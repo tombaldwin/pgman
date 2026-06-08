@@ -16,8 +16,8 @@ impl App {
         // operators often toggle it back off in the same buffer.
         let clear_buffer = !matches!(cmd, BackslashCmd::Timing(_));
         if clear_buffer {
-            self.editor_buffer.clear();
-            self.editor_cursor = 0;
+            self.editor.buffer.clear();
+            self.editor.cursor = 0;
             self.draft_dirty = true;
         }
         match cmd {
