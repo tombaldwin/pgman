@@ -527,31 +527,6 @@ pub fn format_row_estimate(rows: f64) -> String {
     }
 }
 
-/// Run `EXPLAIN (FORMAT JSON) …` and pluck the top node's `Plan
-/// Rows` estimate. Async; returns the estimate or a stringified
-/// error suitable for the status footer / log.
-async fn run_cost_explain(
-    client: &tokio_postgres::Client,
-    explain_sql: &str,
-) -> Result<f64, String> {
-    let row = client
-        .query_one(explain_sql, &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    let json_str: String = row.try_get::<_, String>(0).map_err(|e| e.to_string())?;
-    let parsed: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
-    // EXPLAIN JSON output is an array with one entry per plan; we
-    // care about the first plan's top node.
-    let top = parsed
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.get("Plan"))
-        .ok_or_else(|| "no Plan in EXPLAIN output".to_string())?;
-    top.get("Plan Rows")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| "no Plan Rows on top node".to_string())
-}
-
 /// Pure predicate: should `sql` be subjected to a pre-flight cost
 /// preview? True for plain SELECT / WITH queries (where row-count
 /// estimates are useful) when the SQL doesn't already cap itself
