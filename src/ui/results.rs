@@ -410,7 +410,7 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
-    let Some(state) = app.diff.active.as_ref() else {
+    let Some(state) = app.result_diff.active.as_ref() else {
         return;
     };
     let diff = &state.diff;
@@ -526,7 +526,7 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
 
     // Reserve the summary line; scroll the entry list under it.
     let visible_h = (inner.height as usize).saturating_sub(2);
-    let cursor = app.diff.cursor.min(total.saturating_sub(1));
+    let cursor = app.result_diff.cursor.min(total.saturating_sub(1));
     let scroll = scroll_offset(cursor, visible_h);
     lines.push(Line::from(""));
     for flat in scroll..(scroll + visible_h).min(total) {

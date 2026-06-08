@@ -814,6 +814,18 @@ pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
     })
 }
 
+/// Terminate the backend with `pid` via `pg_terminate_backend`. A
+/// data-layer primitive so the parameterised `Db` call stays out of the
+/// app layer (the session-terminate confirm flow lives in the UI, but
+/// the query runs here).
+pub async fn terminate_backend(client: &tokio_postgres::Client, pid: i32) -> Result<(), String> {
+    client
+        .query_opt("SELECT pg_terminate_backend($1)", &[&pid])
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 /// Render one cell as a display string. Handles common scalar types; SQL NULL
 /// renders empty, and a type we can't decode renders `?`.
 fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
