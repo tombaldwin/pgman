@@ -347,8 +347,8 @@ fn cell_detail_json_tree_renders_object_with_cursor_on_root() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
-    a.row_detail_field_count = 1;
+    a.row_detail.field = 0;
+    a.row_detail.field_count = 1;
     a.mode = Mode::RowDetail;
     // Drive the open path so json_cell_rows / value get populated.
     a.on_key(crossterm::event::KeyEvent::from(
