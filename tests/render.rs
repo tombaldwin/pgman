@@ -154,7 +154,7 @@ fn grid_render_shows_sort_marker_on_focused_column() {
 fn tap_monitor_baseline_empty_prompts_for_shift_b() {
     let mut a = settle_app();
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Baseline;
+    a.tap_nav.view = pgman::app::TapView::Baseline;
     let buf = render(&mut a, 120, 30);
     let rendered = dump(&buf);
     assert!(
@@ -212,7 +212,7 @@ fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
         txn_outcome: None,
     });
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Baseline;
+    a.tap_nav.view = pgman::app::TapView::Baseline;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
     assert!(
@@ -259,7 +259,7 @@ fn tap_monitor_pools_view_renders_pool_rows() {
         });
     }
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Pools;
+    a.tap_nav.view = pgman::app::TapView::Pools;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
     assert!(
@@ -337,7 +337,7 @@ fn saved_queries_panel_filters_live_and_shows_count() {
             body: b.into(),
         });
     }
-    a.saved_queries_filter = Some("ord".into());
+    a.saved_ui.filter = Some("ord".into());
     a.mode = Mode::SavedQueriesFilter;
     let buf = render(&mut a, 120, 24);
     let rendered = dump(&buf);
@@ -361,8 +361,8 @@ fn rename_prompt_renders_prefilled_name() {
         name: "old-name".into(),
         body: "SELECT 1".into(),
     });
-    a.rename_query_from = "old-name".into();
-    a.rename_query_buffer = "new-name".into();
+    a.saved_ui.rename_from = "old-name".into();
+    a.saved_ui.rename_buf = "new-name".into();
     a.mode = Mode::RenameQueryPrompt;
     let buf = render(&mut a, 120, 24);
     let rendered = dump(&buf);
@@ -407,7 +407,7 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
 #[test]
 fn param_prompt_renders_progress_and_entered_values() {
     let mut a = settle_app();
-    a.param_prompt = Some(pgman::app::ParamPrompt {
+    a.saved_ui.param_prompt = Some(pgman::app::ParamPrompt {
         query_name: "by-id".into(),
         template: "WHERE id = :id AND org = :org".into(),
         params: vec!["id".into(), "org".into()],
@@ -534,8 +534,8 @@ fn tap_monitor_hotspots_view_groups_and_shows_sort() {
         });
     }
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Hotspots;
-    a.tap_sort = pgman::tap::HotspotSort::CallCount;
+    a.tap_nav.view = pgman::app::TapView::Hotspots;
+    a.tap_nav.sort = pgman::tap::HotspotSort::CallCount;
     let buf = render(&mut a, 140, 24);
     let rendered = dump(&buf);
     assert!(
