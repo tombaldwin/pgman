@@ -57,7 +57,7 @@ async fn run_loop_typing_and_quit_terminates() {
         .expect("run_with returned Err");
 
     assert!(app.should_quit);
-    assert_eq!(app.editor_buffer, "hi");
+    assert_eq!(app.editor.buffer, "hi");
     // Drew at least the initial frame + after each event.
     assert!(
         tui.draws >= 1,

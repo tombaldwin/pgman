@@ -283,7 +283,7 @@ impl App {
                     self.last_status = Some("name required".into());
                     return;
                 }
-                let body = self.editor_buffer.clone();
+                let body = self.editor.buffer.clone();
                 let replaced = self.saved_queries.upsert(crate::saved::SavedQuery {
                     name: name.clone(),
                     body,
@@ -849,8 +849,8 @@ impl App {
         // Snapshot the pre-mutation state so we can push it to the
         // undo ring AFTER the inner handler runs, if (and only if)
         // the buffer actually changed.
-        let pre_buf = self.editor_buffer.clone();
-        let pre_cur = self.editor_cursor;
+        let pre_buf = self.editor.buffer.clone();
+        let pre_cur = self.editor.cursor;
         let kind = match key.code {
             KeyCode::Char(_)
                 if !key
@@ -862,7 +862,7 @@ impl App {
             _ => EditorActionKind::Other,
         };
         self.on_editor_key_inner(key);
-        if self.editor_buffer != pre_buf {
+        if self.editor.buffer != pre_buf {
             self.push_undo(pre_buf, pre_cur, kind);
         }
     }
@@ -876,8 +876,8 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 if let Some(state) = self.history_search.take() {
-                    self.editor_buffer = state.saved_buffer;
-                    self.editor_cursor = state.saved_cursor;
+                    self.editor.buffer = state.saved_buffer;
+                    self.editor.cursor = state.saved_cursor;
                 }
                 self.last_status = None;
                 self.mode = Mode::Editor;
@@ -992,13 +992,13 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.log_pick.index = last,
             KeyCode::Enter => {
                 if let Some(sql) = self.focused_log_pick_sql() {
-                    self.editor_buffer = sql;
-                    self.editor_cursor = self.editor_buffer.len();
-                    self.editor_preferred_col = None;
+                    self.editor.buffer = sql;
+                    self.editor.cursor = self.editor.buffer.len();
+                    self.editor.preferred_col = None;
                     self.history_pos = None;
                     self.last_status = Some(format!(
                         "loaded query · {} char(s)",
-                        self.editor_buffer.len()
+                        self.editor.buffer.len()
                     ));
                 }
                 self.log_pick.picks.clear();
@@ -1253,14 +1253,14 @@ impl App {
                 // then exit back to the editor. Empty when the
                 // panel is empty.
                 if let Some(row) = self.slow_queries.rows.get(self.slow_queries.cursor) {
-                    self.editor_buffer = row.query.clone();
-                    self.editor_cursor = self.editor_buffer.len();
-                    self.editor_preferred_col = None;
+                    self.editor.buffer = row.query.clone();
+                    self.editor.cursor = self.editor.buffer.len();
+                    self.editor.preferred_col = None;
                     self.draft_dirty = true;
                     self.mode = Mode::Editor;
                     self.last_status = Some(format!(
                         "loaded slow query · {} char(s)",
-                        self.editor_buffer.len()
+                        self.editor.buffer.len()
                     ));
                 }
             }

@@ -18,7 +18,7 @@
 //!    earlier (red = typo flag; green/default = it exists somewhere).
 //!
 //! Spans are byte-indexed against the input buffer so the renderer
-//! can slice straight into `editor_buffer` to get the display text.
+//! can slice straight into `editor.buffer` to get the display text.
 
 use crate::query::clause::CteDef;
 use crate::query::from_parse::TableRefInQuery;

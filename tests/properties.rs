@@ -284,8 +284,8 @@ proptest! {
         // Seed non-trivial starting state so the test exercises
         // history search, filter, completion, and cursor placement
         // over a wider envelope than "empty buffer, no history".
-        a.editor_buffer = seed_buffer;
-        a.editor_cursor = a.editor_buffer.len();
+        a.editor.buffer = seed_buffer;
+        a.editor.cursor = a.editor.buffer.len();
         a.history = seed_history;
         for ev in events {
             a.on_key(ev);
@@ -294,13 +294,13 @@ proptest! {
             // buffer (we slice by byte; this is the panic-prone
             // invariant).
             prop_assert!(
-                a.editor_buffer.is_char_boundary(a.editor_cursor),
+                a.editor.buffer.is_char_boundary(a.editor.cursor),
                 "cursor {} not on char boundary in {:?}",
-                a.editor_cursor,
-                a.editor_buffer
+                a.editor.cursor,
+                a.editor.buffer
             );
             // Cursor is in range.
-            prop_assert!(a.editor_cursor <= a.editor_buffer.len());
+            prop_assert!(a.editor.cursor <= a.editor.buffer.len());
 
             // grid_visible_rows is a subset of 0..rows.len() (the
             // filter helper guarantees this, but the random key

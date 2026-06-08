@@ -72,8 +72,8 @@ fn empty_normal_mode() {
 fn editor_with_sql_buffer() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT id, email\nFROM users\nWHERE active = true".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT id, email\nFROM users\nWHERE active = true".into();
+    a.editor.cursor = 0;
     a.schema_cache.tables.push(TableMeta {
         schema: "public".into(),
         name: "users".into(),
@@ -154,8 +154,8 @@ fn history_search_in_progress() {
         saved_cursor: 0,
     });
     a.last_status = Some("(reverse-i-search) 'sel'".into());
-    a.editor_buffer = "SELECT * FROM users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT * FROM users".into();
+    a.editor.cursor = a.editor.buffer.len();
     let buf = render(&mut a, 80, 16);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -164,8 +164,8 @@ fn history_search_in_progress() {
 fn watch_mode_status_visible() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT count(*) FROM users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT count(*) FROM users".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.watch = Some(WatchState {
         sql: "SELECT count(*) FROM users".into(),
         interval: std::time::Duration::from_secs(2),
@@ -180,14 +180,14 @@ fn watch_mode_status_visible() {
 fn completion_popup_with_candidates() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT * FROM us".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.completion = Some(CompletionCycle {
-        start: a.editor_cursor - 2,
-        end: a.editor_cursor,
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
         origin: "us".into(),
         origin_prefix: "us".into(),
-        origin_cursor: a.editor_cursor,
+        origin_cursor: a.editor.cursor,
         candidates: vec![
             Candidate {
                 display: "users".into(),

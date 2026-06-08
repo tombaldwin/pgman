@@ -55,7 +55,7 @@ fn should_coalesce_undo_refuses_non_charinsert_neighbours() {
 fn f1_from_editor_opens_help() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
+    a.editor.buffer = "select 1".into();
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Help);
     assert_eq!(a.help.origin, Some(Mode::Editor));
@@ -124,8 +124,8 @@ fn ctrl_enter_in_editor_attempts_to_run_query() {
     // the run path was reached.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     // request_run rejects with "not connected" — that's the
     // intended signal here. If we still see "editor is empty"
@@ -142,8 +142,8 @@ fn ctrl_j_in_editor_attempts_to_run_query() {
     // Some terminals report Ctrl-Enter as Ctrl-J.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
     let err = a.last_error.as_deref().unwrap_or("");
     assert!(
@@ -156,17 +156,17 @@ fn ctrl_j_in_editor_attempts_to_run_query() {
 fn editor_undo_restores_pre_typing_buffer() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
     // Type a char — pushes the prior state to undo.
     a.on_key(KeyEvent::from(KeyCode::Char(';')));
-    assert_eq!(a.editor_buffer, "select 1;");
+    assert_eq!(a.editor.buffer, "select 1;");
     // Undo: buffer returns to its pre-typing value.
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "select 1");
+    assert_eq!(a.editor.buffer, "select 1");
     // Redo: forward to the typed state.
     a.on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "select 1;");
+    assert_eq!(a.editor.buffer, "select 1;");
 }
 
 #[test]
@@ -181,14 +181,14 @@ fn editor_undo_when_empty_surfaces_status_not_crash() {
 fn editor_redo_invalidated_by_a_new_edit() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "a".into();
-    a.editor_cursor = 1;
+    a.editor.buffer = "a".into();
+    a.editor.cursor = 1;
     a.on_key(KeyEvent::from(KeyCode::Char('b'))); // buf = "ab"
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)); // undo → "a"
-    assert!(!a.editor_redo.is_empty(), "undo should populate redo");
+    assert!(!a.editor.redo.is_empty(), "undo should populate redo");
     a.on_key(KeyEvent::from(KeyCode::Char('c'))); // new edit invalidates redo
-    assert!(a.editor_redo.is_empty(), "new mutation must clear redo");
-    assert_eq!(a.editor_buffer, "ac");
+    assert!(a.editor.redo.is_empty(), "new mutation must clear redo");
+    assert_eq!(a.editor.buffer, "ac");
 }
 
 #[test]
@@ -201,10 +201,10 @@ fn editor_consecutive_char_inserts_coalesce_into_one_undo_step() {
     a.on_key(KeyEvent::from(KeyCode::Char('x')));
     a.on_key(KeyEvent::from(KeyCode::Char('y')));
     a.on_key(KeyEvent::from(KeyCode::Char('z')));
-    assert_eq!(a.editor_buffer, "xyz");
+    assert_eq!(a.editor.buffer, "xyz");
     // One undo unwinds the whole typing run.
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "");
+    assert_eq!(a.editor.buffer, "");
 }
 
 #[test]
@@ -217,13 +217,13 @@ fn editor_backspace_does_not_coalesce_with_char_inserts() {
     a.on_key(KeyEvent::from(KeyCode::Char('a')));
     a.on_key(KeyEvent::from(KeyCode::Char('b'))); // buf = "ab"
     a.on_key(KeyEvent::from(KeyCode::Backspace)); // buf = "a"
-    assert_eq!(a.editor_buffer, "a");
+    assert_eq!(a.editor.buffer, "a");
     // First undo restores the pre-backspace state ("ab").
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "ab");
+    assert_eq!(a.editor.buffer, "ab");
     // Second undo unwinds the typing run.
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "");
+    assert_eq!(a.editor.buffer, "");
 }
 
 #[test]
@@ -232,14 +232,14 @@ fn editor_undo_caps_at_undo_cap_entries() {
     a.mode = Mode::Editor;
     // Each Backspace is a non-coalescing edit. Drive past the cap.
     for i in 0..(UNDO_CAP + 20) {
-        a.editor_buffer = format!("buf{i}");
-        a.editor_cursor = a.editor_buffer.len();
+        a.editor.buffer = format!("buf{i}");
+        a.editor.cursor = a.editor.buffer.len();
         a.push_undo("prev".to_string(), 0, EditorActionKind::Other);
     }
     assert!(
-        a.editor_undo.len() <= UNDO_CAP,
+        a.editor.undo.len() <= UNDO_CAP,
         "undo ring grew past cap: {}",
-        a.editor_undo.len()
+        a.editor.undo.len()
     );
 }
 
@@ -391,13 +391,13 @@ fn typing_quote_inside_sql_literal_inserts_escape_not_skip() {
     // Start from the state pair_quote would leave us in after
     // typing `'`, then typing `don` literally: `'don'` with
     // cursor=4 between `n` and the closer.
-    a.editor_buffer = "'don'".into();
-    a.editor_cursor = 4;
+    a.editor.buffer = "'don'".into();
+    a.editor.cursor = 4;
     a.on_key(KeyEvent::from(KeyCode::Char('\'')));
     // Inserts an escape apostrophe instead of skipping past
     // the existing closer — the buffer grows by one char.
-    assert_eq!(a.editor_buffer, "'don''");
-    assert_eq!(a.editor_cursor, 5);
+    assert_eq!(a.editor.buffer, "'don''");
+    assert_eq!(a.editor.cursor, 5);
 }
 
 #[test]
@@ -405,25 +405,25 @@ fn typing_quote_at_eof_pairs_and_leaves_cursor_between() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
     a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-    assert_eq!(a.editor_buffer, "''");
-    assert_eq!(a.editor_cursor, 1);
+    assert_eq!(a.editor.buffer, "''");
+    assert_eq!(a.editor.cursor, 1);
     // Typing another `'` skips past the pair instead of stacking.
     a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-    assert_eq!(a.editor_buffer, "''");
-    assert_eq!(a.editor_cursor, 2);
+    assert_eq!(a.editor.buffer, "''");
+    assert_eq!(a.editor.cursor, 2);
 }
 
 #[test]
 fn typing_quote_inside_word_inserts_literal_not_pair() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "it".into();
-    a.editor_cursor = 2;
+    a.editor.buffer = "it".into();
+    a.editor.cursor = 2;
     a.on_key(KeyEvent::from(KeyCode::Char('\'')));
     // Falls through to literal insert — covers contractions
     // like `it's` in -- comments.
-    assert_eq!(a.editor_buffer, "it'");
-    assert_eq!(a.editor_cursor, 3);
+    assert_eq!(a.editor.buffer, "it'");
+    assert_eq!(a.editor.cursor, 3);
 }
 
 #[test]
@@ -611,8 +611,8 @@ fn test_app_with_cache(tables: &[(&str, &[&str])]) -> App {
 }
 
 fn set_editor(a: &mut App, text: &str) {
-    a.editor_buffer = text.into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = text.into();
+    a.editor.cursor = a.editor.buffer.len();
 }
 
 #[test]
@@ -626,7 +626,7 @@ fn exact_match_commits_and_dismisses_popup() {
     ]);
     set_editor(&mut a, "SELECT * FROM user");
     a.editor_complete();
-    assert_eq!(a.editor_buffer, "SELECT * FROM user");
+    assert_eq!(a.editor.buffer, "SELECT * FROM user");
     assert!(
         a.completion.is_none(),
         "exact match should dismiss the popup; got {:?}",
@@ -642,7 +642,7 @@ fn exact_match_is_case_insensitive_and_canonicalises_case() {
     let mut a = test_app_with_cache(&[("users", &["id"]), ("users_archived", &["id"])]);
     set_editor(&mut a, "SELECT * FROM USERS");
     a.editor_complete();
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     assert!(
         a.completion.is_none(),
         "exact match should dismiss the popup"
@@ -660,12 +660,12 @@ fn auto_trigger_after_dot_opens_popup() {
     let mut a = test_app_with_cache(&[("users", &["id", "email"])]);
     a.mode = Mode::Editor;
     set_editor(&mut a, "SELECT  FROM users u WHERE u");
-    a.editor_cursor = 7; // between the two spaces, no cycle yet
+    a.editor.cursor = 7; // between the two spaces, no cycle yet
                          // Move the cursor to just after `u` of `u WHERE u` — actually,
                          // type `.` at end (cursor positioned after the second `u`).
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.cursor = a.editor.buffer.len();
     type_key(&mut a, KeyCode::Char('.'));
-    assert_eq!(a.editor_buffer, "SELECT  FROM users u WHERE u.");
+    assert_eq!(a.editor.buffer, "SELECT  FROM users u WHERE u.");
     let cycle = a
         .completion
         .as_ref()
@@ -691,7 +691,7 @@ fn auto_trigger_skipped_for_numeric_literals() {
     set_editor(&mut a, "SELECT 3");
     a.last_status = Some("preserved status".into());
     type_key(&mut a, KeyCode::Char('.'));
-    assert_eq!(a.editor_buffer, "SELECT 3.");
+    assert_eq!(a.editor.buffer, "SELECT 3.");
     assert!(
         a.completion.is_none(),
         "should not auto-trigger on numeric `3.`"
@@ -711,7 +711,7 @@ fn dot_after_lcp_expansion_narrows_via_refresh_not_auto_trigger() {
     set_editor(&mut a, "SELECT * FROM t_");
     // First Tab: LCP-expands to `t_user_`, popup with 2 candidates.
     a.editor_complete();
-    assert_eq!(a.editor_buffer, "SELECT * FROM t_user_");
+    assert_eq!(a.editor.buffer, "SELECT * FROM t_user_");
     assert!(a.completion.as_ref().unwrap().selected.is_none());
     let cycle_id_before = a.completion.as_ref().unwrap() as *const _;
     // Now type `l` — narrowing key, cycle survives via refresh.
@@ -788,7 +788,7 @@ fn auto_trigger_after_from_space_opens_tables() {
     a.mode = Mode::Editor;
     set_editor(&mut a, "SELECT * FROM");
     type_key(&mut a, KeyCode::Char(' '));
-    assert_eq!(a.editor_buffer, "SELECT * FROM ");
+    assert_eq!(a.editor.buffer, "SELECT * FROM ");
     let cycle = a
         .completion
         .as_ref()
@@ -870,7 +870,7 @@ fn exact_match_with_only_one_candidate_still_dismisses_popup() {
     a.mode = Mode::Editor;
     set_editor(&mut a, "SELECT * FROM users");
     a.editor_complete();
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     assert!(
         a.completion.is_none(),
         "exact match must dismiss the popup even when it's the only candidate"
@@ -901,7 +901,7 @@ fn empty_unqualified_prefix_with_single_candidate_shows_popup_no_insert() {
         cycle.selected
     );
     // Buffer unchanged — no silent insert.
-    assert_eq!(a.editor_buffer, "SELECT * FROM ");
+    assert_eq!(a.editor.buffer, "SELECT * FROM ");
 }
 
 // Note: auto-trigger after `.` for non-ASCII identifier endings
@@ -974,7 +974,7 @@ fn lcp_expands_when_no_exact_match() {
     let mut a = test_app_with_cache(&[("user_logs", &["id"]), ("user_roles", &["id"])]);
     set_editor(&mut a, "SELECT * FROM user");
     a.editor_complete();
-    assert_eq!(a.editor_buffer, "SELECT * FROM user_");
+    assert_eq!(a.editor.buffer, "SELECT * FROM user_");
     // Cycle is in the LCP-expanded state — popup visible, nothing
     // selected yet.
     let cycle = a.completion.as_ref().expect("cycle should be alive");
@@ -990,8 +990,8 @@ fn query_failed_with_position_jumps_editor_cursor() {
     // exercise char→byte conversion. `é` is 2 bytes; `id` is at
     // chars 8..10. Postgres positions are 1-indexed chars, so
     // position 9 points at `d`.
-    a.editor_buffer = "SELECT é, id FROM t".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT é, id FROM t".into();
+    a.editor.cursor = 0;
     a.generation = 1;
     let _ = a.msg_tx.send(AppMsg::QueryFailed {
         generation: 1,
@@ -1009,7 +1009,7 @@ fn query_failed_with_position_jumps_editor_cursor() {
     // offset of char 8 in "SELECT é, id FROM t" — chars are
     // S(1) E(1) L(1) E(1) C(1) T(1) space(1) é(2)... so char 8
     // is `,` at byte 9.
-    assert_eq!(a.editor_cursor, 9, "cursor should land at byte 9");
+    assert_eq!(a.editor.cursor, 9, "cursor should land at byte 9");
     assert!(a.last_error.as_deref().unwrap().contains("does not exist"));
 }
 
@@ -1027,7 +1027,7 @@ fn history_search_ctrl_d_deletes_focused_entry() {
     for c in "secret".chars() {
         a.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
-    assert!(a.editor_buffer.contains("secret"));
+    assert!(a.editor.buffer.contains("secret"));
     // Ctrl-D deletes it.
     a.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
     assert_eq!(a.history.len(), 2);
@@ -1044,25 +1044,25 @@ fn history_search_finds_most_recent_match_and_walks_older() {
         "UPDATE users SET active=true".into(),
     ];
     a.mode = Mode::Editor;
-    a.editor_buffer = "draft".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "draft".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.start_history_search();
     // Empty query → most-recent entry shown.
     assert_eq!(a.mode, Mode::HistorySearch);
-    assert_eq!(a.editor_buffer, "UPDATE users SET active=true");
+    assert_eq!(a.editor.buffer, "UPDATE users SET active=true");
     // Type 'sel' through on_key so the mode dispatcher routes
     // each keystroke to the history-search handler.
     a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
     a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
     a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
-    assert_eq!(a.editor_buffer, "SELECT count(*) FROM orders");
+    assert_eq!(a.editor.buffer, "SELECT count(*) FROM orders");
     // Ctrl-R again → next-older match (index 0, `SELECT * FROM users`).
     a.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     // Enter accepts: stays in Editor with the matched buffer.
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     assert!(a.history_search.is_none());
 }
 
@@ -1071,14 +1071,14 @@ fn history_search_esc_restores_pre_search_buffer() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.history = vec!["SELECT 1".into()];
     a.mode = Mode::Editor;
-    a.editor_buffer = "draft in progress".into();
-    a.editor_cursor = 5;
+    a.editor.buffer = "draft in progress".into();
+    a.editor.cursor = 5;
     a.start_history_search();
-    assert_eq!(a.editor_buffer, "SELECT 1");
+    assert_eq!(a.editor.buffer, "SELECT 1");
     // Esc: restore.
     a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    assert_eq!(a.editor_buffer, "draft in progress");
-    assert_eq!(a.editor_cursor, 5);
+    assert_eq!(a.editor.buffer, "draft in progress");
+    assert_eq!(a.editor.cursor, 5);
     assert_eq!(a.mode, Mode::Editor);
 }
 
@@ -1094,10 +1094,10 @@ fn history_search_no_match_keeps_last_good_buffer() {
     a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
     a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
     a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     // 'selz' doesn't match → buffer unchanged; status flags failure.
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
-    assert_eq!(a.editor_buffer, "SELECT * FROM users");
+    assert_eq!(a.editor.buffer, "SELECT * FROM users");
     assert!(
         a.last_status
             .as_deref()
@@ -1112,7 +1112,7 @@ fn history_search_no_match_keeps_last_good_buffer() {
 fn start_watch_uses_editor_buffer_when_set() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT NOW()".into();
+    a.editor.buffer = "SELECT NOW()".into();
     a.start_watch();
     let w = a.watch.as_ref().expect("watch should be set");
     assert_eq!(w.sql, "SELECT NOW()");
@@ -1141,7 +1141,7 @@ fn start_watch_with_no_input_errors() {
 #[test]
 fn start_watch_refused_during_query() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.editor_buffer = "SELECT 1".into();
+    a.editor.buffer = "SELECT 1".into();
     a.query_running = true;
     a.start_watch();
     assert!(a.watch.is_none());
@@ -1444,7 +1444,7 @@ fn param_prompt_no_params_loads_directly() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.load_saved_query(saved("plain", "SELECT 1"));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "SELECT 1");
+    assert_eq!(a.editor.buffer, "SELECT 1");
     assert!(a.saved_ui.param_prompt.is_none());
 }
 
@@ -1474,7 +1474,7 @@ fn param_prompt_collects_values_and_substitutes() {
     type_str(&mut a, "7");
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
+    assert_eq!(a.editor.buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
     assert!(a.saved_ui.param_prompt.is_none());
 }
 
@@ -1486,7 +1486,7 @@ fn param_prompt_same_param_twice_fills_both() {
     assert_eq!(a.saved_ui.param_prompt.as_ref().unwrap().params.len(), 1);
     type_str(&mut a, "9");
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    assert_eq!(a.editor_buffer, "SELECT 9 WHERE a = 9");
+    assert_eq!(a.editor.buffer, "SELECT 9 WHERE a = 9");
 }
 
 #[test]
@@ -1519,7 +1519,7 @@ fn param_prompt_backspace_edits_input() {
     a.on_key(KeyEvent::from(KeyCode::Backspace));
     type_str(&mut a, "2");
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    assert_eq!(a.editor_buffer, "WHERE id = 42");
+    assert_eq!(a.editor.buffer, "WHERE id = 42");
 }
 
 fn app_with_saved(entries: &[(&str, &str)]) -> App {
@@ -1721,14 +1721,14 @@ fn load_dbunit_fixture_uses_per_db_clean_mode() {
     );
     let dsn = crate::conn::Dsn::parse("postgres://u@h/legacy").ok();
     let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
-    a.editor_buffer = fx.to_string_lossy().to_string();
+    a.editor.buffer = fx.to_string_lossy().to_string();
     a.load_dbunit_fixture();
     assert!(
-        a.editor_buffer.contains("DELETE FROM users"),
+        a.editor.buffer.contains("DELETE FROM users"),
         "expected DELETE FROM; got:\n{}",
-        a.editor_buffer
+        a.editor.buffer
     );
-    assert!(!a.editor_buffer.contains("TRUNCATE"));
+    assert!(!a.editor.buffer.contains("TRUNCATE"));
     let _ = std::fs::remove_file(&fx);
 }
 
@@ -1736,12 +1736,12 @@ fn load_dbunit_fixture_uses_per_db_clean_mode() {
 fn load_dbunit_fixture_defaults_to_truncate() {
     let fx = write_temp_fixture("trunc");
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.editor_buffer = fx.to_string_lossy().to_string();
+    a.editor.buffer = fx.to_string_lossy().to_string();
     a.load_dbunit_fixture();
     assert!(
-        a.editor_buffer.contains("TRUNCATE TABLE users"),
+        a.editor.buffer.contains("TRUNCATE TABLE users"),
         "expected TRUNCATE; got:\n{}",
-        a.editor_buffer
+        a.editor.buffer
     );
     let _ = std::fs::remove_file(&fx);
 }
@@ -2047,7 +2047,7 @@ fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
     a.slow_queries.cursor = 1;
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "UPDATE x SET y=1");
+    assert_eq!(a.editor.buffer, "UPDATE x SET y=1");
 }
 
 #[test]
@@ -2376,9 +2376,9 @@ fn log_pick_enter_in_cluster_view_loads_example_sql() {
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
     assert!(
-        a.editor_buffer.contains("from item where order_id"),
+        a.editor.buffer.contains("from item where order_id"),
         "buffer should be the cluster's example; got: {:?}",
-        a.editor_buffer
+        a.editor.buffer
     );
 }
 
@@ -3004,10 +3004,11 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
     assert_eq!(a.active_tab, 1);
     // Editor in the new tab holds the parent SELECT.
     assert!(
-        a.editor_buffer
+        a.editor
+            .buffer
             .contains("SELECT * FROM public.users WHERE id = 42"),
         "expected parent select; got: {}",
-        a.editor_buffer
+        a.editor.buffer
     );
     // We're in the editor ready to F5.
     assert_eq!(a.mode, Mode::Editor);
@@ -3017,29 +3018,29 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
 fn new_tab_pushes_a_fresh_state_and_switches() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "tab one".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "tab one".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
     assert_eq!(a.tabs.len(), 2);
     assert_eq!(a.active_tab, 1);
     // New tab's editor is empty.
-    assert_eq!(a.editor_buffer, "");
+    assert_eq!(a.editor.buffer, "");
 }
 
 #[test]
 fn cycle_tab_round_trips_state_per_tab() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "one".into();
+    a.editor.buffer = "one".into();
     a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
-    a.editor_buffer = "two".into();
+    a.editor.buffer = "two".into();
     // Cycle back to first tab.
     a.cycle_tab(false);
-    assert_eq!(a.editor_buffer, "one");
+    assert_eq!(a.editor.buffer, "one");
     assert_eq!(a.active_tab, 0);
     // Forward to second.
     a.cycle_tab(true);
-    assert_eq!(a.editor_buffer, "two");
+    assert_eq!(a.editor.buffer, "two");
     assert_eq!(a.active_tab, 1);
 }
 
@@ -3138,24 +3139,24 @@ fn tab_switch_dismisses_an_open_result_diff_overlay() {
 fn close_tab_drops_current_and_loads_neighbour() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
-    a.editor_buffer = "first".into();
+    a.editor.buffer = "first".into();
     a.new_tab(); // → tab 2
-    a.editor_buffer = "second".into();
+    a.editor.buffer = "second".into();
     // Close the active (2nd) tab → load first.
     a.close_active_tab();
     assert_eq!(a.tabs.len(), 1);
     assert_eq!(a.active_tab, 0);
-    assert_eq!(a.editor_buffer, "first");
+    assert_eq!(a.editor.buffer, "first");
 }
 
 #[test]
 fn close_tab_on_only_tab_is_a_noop_with_hint() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
-    a.editor_buffer = "lonely".into();
+    a.editor.buffer = "lonely".into();
     a.close_active_tab();
     assert_eq!(a.tabs.len(), 1);
-    assert_eq!(a.editor_buffer, "lonely");
+    assert_eq!(a.editor.buffer, "lonely");
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(status.contains("only one tab"));
 }
@@ -3179,24 +3180,24 @@ fn new_tab_refuses_past_cap() {
 fn alt_digit_jumps_directly_to_tab() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
-    a.editor_buffer = "t1".into();
+    a.editor.buffer = "t1".into();
     a.new_tab();
-    a.editor_buffer = "t2".into();
+    a.editor.buffer = "t2".into();
     a.new_tab();
-    a.editor_buffer = "t3".into();
+    a.editor.buffer = "t3".into();
     // Alt-1 → jump to the first tab.
     a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
-    assert_eq!(a.editor_buffer, "t1");
+    assert_eq!(a.editor.buffer, "t1");
 }
 
 #[test]
 fn tab_switch_blocked_during_query_running() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "one".into();
+    a.editor.buffer = "one".into();
     a.new_tab();
-    a.editor_buffer = "two".into();
+    a.editor.buffer = "two".into();
     a.query_running = true;
     // Try to switch back — should be blocked.
     let before = a.active_tab;
@@ -3227,8 +3228,8 @@ fn default_query_name_sanitises_to_kebab() {
 fn save_query_prompt_persists_buffer_under_name() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
     // Ctrl-S — open the prompt.
     a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
     assert_eq!(a.mode, Mode::SaveQueryPrompt);
@@ -3248,7 +3249,7 @@ fn save_query_prompt_persists_buffer_under_name() {
 fn save_query_prompt_esc_cancels_without_persist() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor_buffer = "select 1".into();
+    a.editor.buffer = "select 1".into();
     a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
     a.on_key(KeyEvent::from(KeyCode::Esc));
     assert_eq!(a.mode, Mode::Editor);
@@ -3263,14 +3264,14 @@ fn saved_queries_panel_enter_loads_into_editor() {
         body: "SELECT now();".into(),
     });
     a.mode = Mode::Normal;
-    a.editor_buffer = "draft".into();
+    a.editor.buffer = "draft".into();
     // Q opens.
     a.on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT));
     assert_eq!(a.mode, Mode::SavedQueries);
     // Enter loads into editor.
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "SELECT now();");
+    assert_eq!(a.editor.buffer, "SELECT now();");
 }
 
 #[test]
@@ -4242,21 +4243,21 @@ fn query_ok_status_omits_cap_when_not_truncated() {
 fn backslash_d_with_target_opens_browser_with_filter() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\d users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\d users".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(a.mode, Mode::SchemaBrowser);
     assert_eq!(a.schema_browser.filter.as_deref(), Some("users"));
     // Buffer cleared so a second F5 doesn't re-fire.
-    assert!(a.editor_buffer.is_empty());
+    assert!(a.editor.buffer.is_empty());
 }
 
 #[test]
 fn backslash_d_without_target_just_opens_browser() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\d".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\d".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(a.mode, Mode::SchemaBrowser);
     assert!(a.schema_browser.filter.is_none());
@@ -4266,8 +4267,8 @@ fn backslash_d_without_target_just_opens_browser() {
 fn backslash_help_routes_to_help_overlay() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\?".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\?".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(a.mode, Mode::Help);
     // The Editor section is the active anchor since we came
@@ -4279,8 +4280,8 @@ fn backslash_help_routes_to_help_overlay() {
 fn backslash_quit_sets_should_quit() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\q".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\q".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert!(a.should_quit);
 }
@@ -4289,13 +4290,13 @@ fn backslash_quit_sets_should_quit() {
 fn backslash_timing_toggles_state() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\timing".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\timing".into();
+    a.editor.cursor = a.editor.buffer.len();
     assert!(!a.timing_on);
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert!(a.timing_on);
     // Buffer preserved (operator commonly toggles back).
-    assert_eq!(a.editor_buffer, "\\timing");
+    assert_eq!(a.editor.buffer, "\\timing");
     // Toggle again → off.
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert!(!a.timing_on);
@@ -4305,8 +4306,8 @@ fn backslash_timing_toggles_state() {
 fn backslash_unknown_surfaces_actionable_error() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
-    a.editor_buffer = "\\xyz".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "\\xyz".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     let err = a.last_error.as_deref().unwrap_or("");
     assert!(err.contains("unknown backslash command"));
@@ -4319,8 +4320,8 @@ fn backslash_report_writes_markdown_to_explicit_path() {
     let mut a = app_with_schemas();
     let tmp = std::env::temp_dir().join(format!("pgman-report-test-{}.md", std::process::id()));
     a.mode = Mode::Editor;
-    a.editor_buffer = format!("\\report {}", tmp.display());
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = format!("\\report {}", tmp.display());
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     let contents = std::fs::read_to_string(&tmp).expect("report written");
     assert!(
@@ -4341,8 +4342,8 @@ fn backslash_report_writes_html_when_extension_matches() {
     let mut a = app_with_schemas();
     let tmp = std::env::temp_dir().join(format!("pgman-report-test-{}.html", std::process::id()));
     a.mode = Mode::Editor;
-    a.editor_buffer = format!("\\report {}", tmp.display());
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = format!("\\report {}", tmp.display());
+    a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     let contents = std::fs::read_to_string(&tmp).expect("html report written");
     assert!(contents.starts_with("<!doctype html>"));
@@ -4805,8 +4806,8 @@ fn ctrl_r_on_empty_history_no_ops_with_status() {
 #[test]
 fn query_failed_with_position_past_buffer_clamps_to_end() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.editor_buffer = "SELECT 1".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT 1".into();
+    a.editor.cursor = 0;
     a.generation = 1;
     let _ = a.msg_tx.send(AppMsg::QueryFailed {
         generation: 1,
@@ -4819,5 +4820,5 @@ fn query_failed_with_position_past_buffer_clamps_to_end() {
             a.on_msg(msg);
         }
     }
-    assert_eq!(a.editor_cursor, a.editor_buffer.len());
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
 }
