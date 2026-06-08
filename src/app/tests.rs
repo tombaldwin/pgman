@@ -2023,7 +2023,7 @@ fn cell_detail_json_esc_returns_to_row_detail() {
 fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::SlowQueries;
-    a.slow_queries = vec![
+    a.slow_queries.rows = vec![
         crate::query::slow_queries::SlowQueryRow {
             query: "SELECT 1".into(),
             calls: 100,
@@ -2039,7 +2039,7 @@ fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
             rows: 10,
         },
     ];
-    a.slow_queries_cursor = 1;
+    a.slow_queries.cursor = 1;
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Editor);
     assert_eq!(a.editor_buffer, "UPDATE x SET y=1");
@@ -2049,7 +2049,7 @@ fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
 fn slow_queries_jk_clamps_to_row_range() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::SlowQueries;
-    a.slow_queries = vec![
+    a.slow_queries.rows = vec![
         crate::query::slow_queries::SlowQueryRow {
             query: "a".into(),
             calls: 1,
@@ -2068,7 +2068,7 @@ fn slow_queries_jk_clamps_to_row_range() {
     for _ in 0..10 {
         a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
     }
-    assert_eq!(a.slow_queries_cursor, 1);
+    assert_eq!(a.slow_queries.cursor, 1);
 }
 
 #[test]
@@ -2338,34 +2338,34 @@ fn log_picks_with_an_n_plus_one_cluster() -> Vec<crate::query::reconstruct::Reco
 #[test]
 fn log_pick_visible_len_reflects_view() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.log_picks = log_picks_with_an_n_plus_one_cluster();
-    a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
+    a.log_pick.picks = log_picks_with_an_n_plus_one_cluster();
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
     a.mode = Mode::LogPick;
-    assert_eq!(a.log_pick_view, LogPickView::AllQueries);
+    assert_eq!(a.log_pick.view, LogPickView::AllQueries);
     assert_eq!(a.log_pick_visible_len(), 4);
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
-    assert_eq!(a.log_pick_view, LogPickView::Clusters);
+    assert_eq!(a.log_pick.view, LogPickView::Clusters);
     assert_eq!(a.log_pick_visible_len(), 1); // one repeated shape
 }
 
 #[test]
 fn log_pick_toggle_resets_cursor() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.log_picks = log_picks_with_an_n_plus_one_cluster();
-    a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
+    a.log_pick.picks = log_picks_with_an_n_plus_one_cluster();
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
     a.mode = Mode::LogPick;
     // Cursor at row 3 in AllQueries view.
-    a.log_pick_index = 3;
+    a.log_pick.index = 3;
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
     // Clusters view has only 1 row → cursor must clamp.
-    assert_eq!(a.log_pick_index, 0);
+    assert_eq!(a.log_pick.index, 0);
 }
 
 #[test]
 fn log_pick_enter_in_cluster_view_loads_example_sql() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.log_picks = log_picks_with_an_n_plus_one_cluster();
-    a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
+    a.log_pick.picks = log_picks_with_an_n_plus_one_cluster();
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
     a.mode = Mode::LogPick;
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
     a.on_key(KeyEvent::from(KeyCode::Enter));
@@ -2860,7 +2860,7 @@ fn start_schema_lint_with_findings_opens_panel_and_summarises() {
     a.schema_cache = cache;
     a.start_schema_lint();
     assert_eq!(a.mode, Mode::SchemaLint);
-    assert!(!a.schema_lint_findings.is_empty());
+    assert!(!a.schema_lint.findings.is_empty());
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
         status.contains("finding(s)") && status.contains("high"),
@@ -3309,9 +3309,9 @@ fn notification_message_appends_to_ring_and_caps() {
             },
         });
     }
-    assert_eq!(a.notifications.len(), NOTIFICATION_CAP);
+    assert_eq!(a.notifications.items.len(), NOTIFICATION_CAP);
     // Newest at the end.
-    let last = a.notifications.last().unwrap();
+    let last = a.notifications.items.last().unwrap();
     assert_eq!(last.payload, format!("event-{}", NOTIFICATION_CAP + 49));
 }
 
@@ -3926,14 +3926,14 @@ fn f3_opens_notifications_from_any_mode() {
 fn notifications_c_clears_the_ring() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Notifications;
-    a.notifications = vec![crate::conn::NotificationMsg {
+    a.notifications.items = vec![crate::conn::NotificationMsg {
         channel: "x".into(),
         pid: 1,
         payload: "p".into(),
     }];
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
-    assert!(a.notifications.is_empty());
-    assert_eq!(a.notifications_cursor, 0);
+    assert!(a.notifications.items.is_empty());
+    assert_eq!(a.notifications.cursor, 0);
 }
 
 #[test]
@@ -3983,7 +3983,7 @@ fn tick_auto_refresh_noop_when_query_running() {
 fn capital_k_in_sessions_opens_confirm_terminate_with_pid() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Sessions;
-    a.sessions = vec![crate::query::sessions::SessionRow {
+    a.sessions.rows = vec![crate::query::sessions::SessionRow {
         pid: 12345,
         user: "app".into(),
         application: "service-x".into(),
@@ -3993,7 +3993,7 @@ fn capital_k_in_sessions_opens_confirm_terminate_with_pid() {
         query: "SELECT * FROM events".into(),
         wait_event: None,
     }];
-    a.sessions_cursor = 0;
+    a.sessions.cursor = 0;
     a.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
     assert_eq!(a.mode, Mode::ConfirmTerminate);
     assert_eq!(a.pending_terminate, Some(12345));
@@ -4036,7 +4036,7 @@ fn confirm_terminate_esc_cancels() {
 fn capital_k_with_empty_session_list_does_not_open_confirm() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Sessions;
-    a.sessions.clear();
+    a.sessions.rows.clear();
     a.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
     // No session to terminate → stay in Sessions, no pending.
     assert_eq!(a.mode, Mode::Sessions);
@@ -4369,7 +4369,7 @@ fn live_lint_loaded_merges_into_findings_and_resorts() {
     // High entry first.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::SchemaLint;
-    a.schema_lint_findings = vec![crate::query::lint::Finding {
+    a.schema_lint.findings = vec![crate::query::lint::Finding {
         severity: crate::query::lint::Severity::Medium,
         code: "LINT002",
         title: "mixed-case".into(),
@@ -4386,9 +4386,9 @@ fn live_lint_loaded_merges_into_findings_and_resorts() {
             "user_id",
         )]),
     });
-    assert_eq!(a.schema_lint_findings.len(), 2);
+    assert_eq!(a.schema_lint.findings.len(), 2);
     // High entry now first.
-    assert_eq!(a.schema_lint_findings[0].code, "LINT101");
+    assert_eq!(a.schema_lint.findings[0].code, "LINT101");
     // Status reflects the count + live delta.
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
@@ -4404,7 +4404,7 @@ fn live_lint_loaded_after_panel_closed_is_dropped_silently() {
     // we must not mutate findings or status in that case.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal; // not on the lint panel
-    a.schema_lint_findings.clear();
+    a.schema_lint.findings.clear();
     a.on_msg(AppMsg::LiveLintLoaded {
         generation: a.generation,
         result: Ok(vec![crate::query::lint::fk_without_index_finding(
@@ -4412,7 +4412,7 @@ fn live_lint_loaded_after_panel_closed_is_dropped_silently() {
         )]),
     });
     // Findings untouched.
-    assert!(a.schema_lint_findings.is_empty());
+    assert!(a.schema_lint.findings.is_empty());
 }
 
 #[test]
@@ -4427,14 +4427,14 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
         detail: "…".into(),
         suggestion: None,
     };
-    a.schema_lint_findings = vec![pure.clone()];
+    a.schema_lint.findings = vec![pure.clone()];
     a.on_msg(AppMsg::LiveLintLoaded {
         generation: a.generation,
         result: Err("LINT101: permission denied for pg_constraint".into()),
     });
     // Pure findings still there.
-    assert_eq!(a.schema_lint_findings.len(), 1);
-    assert_eq!(a.schema_lint_findings[0].code, pure.code);
+    assert_eq!(a.schema_lint.findings.len(), 1);
+    assert_eq!(a.schema_lint.findings[0].code, pure.code);
     // Status surfaces the failure.
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
@@ -4460,12 +4460,12 @@ fn schema_lint_jk_navigation_clamps_to_findings() {
     ];
     a.schema_cache = cache;
     a.start_schema_lint();
-    let n = a.schema_lint_findings.len();
+    let n = a.schema_lint.findings.len();
     assert!(n >= 2);
     for _ in 0..(n * 2) {
         a.on_key(KeyEvent::from(KeyCode::Char('j')));
     }
-    assert_eq!(a.schema_lint_cursor, n - 1);
+    assert_eq!(a.schema_lint.cursor, n - 1);
 }
 
 #[test]
@@ -4574,7 +4574,7 @@ fn explain_app_with_plan() -> App {
           }
         }]"#;
     let plan = crate::query::explain::parse(json).unwrap();
-    a.explain_plan = Some(plan);
+    a.explain.plan = Some(plan);
     a.mode = Mode::ExplainTree;
     a
 }
@@ -4599,7 +4599,7 @@ fn flattened_explain_lists_each_node_once() {
 fn explain_enter_collapses_focused_node_and_hides_children() {
     let mut a = explain_app_with_plan();
     // Focus row 2 (the "Hash" node, which has children).
-    a.explain_cursor = 2;
+    a.explain.cursor = 2;
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let rows = a.flattened_explain_rows();
     // Hash's child Seq Scan is hidden now.
@@ -4619,11 +4619,11 @@ fn explain_jk_moves_cursor_g_jumps_to_ends() {
     for _ in 0..10 {
         a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
     }
-    assert_eq!(a.explain_cursor, 3); // clamped to last
+    assert_eq!(a.explain.cursor, 3); // clamped to last
     a.on_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
-    assert_eq!(a.explain_cursor, 0);
+    assert_eq!(a.explain.cursor, 0);
     a.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
-    assert_eq!(a.explain_cursor, 3);
+    assert_eq!(a.explain.cursor, 3);
 }
 
 #[test]
@@ -4636,12 +4636,12 @@ fn explain_esc_returns_to_normal() {
 #[test]
 fn explain_enter_on_leaf_node_is_a_noop() {
     let mut a = explain_app_with_plan();
-    a.explain_cursor = 1; // leaf Seq Scan on `a`
+    a.explain.cursor = 1; // leaf Seq Scan on `a`
     let before = a.flattened_explain_rows().len();
     a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     let after = a.flattened_explain_rows().len();
     assert_eq!(before, after);
-    assert!(a.explain_collapsed.is_empty());
+    assert!(a.explain.collapsed.is_empty());
 }
 
 #[test]

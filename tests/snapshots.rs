@@ -213,7 +213,7 @@ fn slow_queries_renders_top_n_panel() {
     use pgman::query::slow_queries::SlowQueryRow;
     let mut a = settle_app();
     a.mode = Mode::SlowQueries;
-    a.slow_queries = vec![
+    a.slow_queries.rows = vec![
         SlowQueryRow {
             query: "SELECT * FROM users WHERE active = true".into(),
             calls: 1_000_000,
@@ -229,7 +229,7 @@ fn slow_queries_renders_top_n_panel() {
             rows: 250,
         },
     ];
-    a.slow_queries_cursor = 0;
+    a.slow_queries.cursor = 0;
     let buf = render(&mut a, 110, 26);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -239,7 +239,7 @@ fn sessions_renders_blocked_then_idle() {
     use pgman::query::sessions::SessionRow;
     let mut a = settle_app();
     a.mode = Mode::Sessions;
-    a.sessions = vec![
+    a.sessions.rows = vec![
         SessionRow {
             pid: 1234,
             user: "alice".into(),
@@ -261,7 +261,7 @@ fn sessions_renders_blocked_then_idle() {
             age_secs: 300.0,
         },
     ];
-    a.sessions_cursor = 0;
+    a.sessions.cursor = 0;
     let buf = render(&mut a, 110, 18);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -330,9 +330,9 @@ fn explain_tree_renders_hash_join_plan() {
         ]
       }
     }]"#;
-    a.explain_plan = Some(pgman::query::explain::parse(json).unwrap());
+    a.explain.plan = Some(pgman::query::explain::parse(json).unwrap());
     a.mode = Mode::ExplainTree;
-    a.explain_cursor = 0; // root highlighted
+    a.explain.cursor = 0; // root highlighted
     let buf = render(&mut a, 100, 24);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -406,8 +406,8 @@ fn schema_wizard_renders_findings_sorted_by_severity() {
         },
     ];
     a.schema_cache = cache;
-    a.schema_lint_findings = pgman::query::lint::run_all(&a.schema_cache);
-    a.schema_lint_cursor = 0;
+    a.schema_lint.findings = pgman::query::lint::run_all(&a.schema_cache);
+    a.schema_lint.cursor = 0;
     a.mode = Mode::SchemaLint;
     let buf = render(&mut a, 110, 24);
     insta::assert_snapshot!(dump(&buf));

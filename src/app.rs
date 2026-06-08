@@ -1329,6 +1329,84 @@ pub struct SchemaBrowserUi {
     pub expanded: std::collections::HashSet<String>,
 }
 
+/// Log-import pick state — the reconstructed queries from the most recent
+/// import, the active view, the cached cluster list, and the selected entry.
+#[derive(Debug, Default)]
+pub struct LogPickUi {
+    /// Reconstructed queries from the most recent log-import; `Mode::LogPick`
+    /// browses these.
+    pub picks: Vec<ReconstructedQuery>,
+    /// Which view LogPick is currently rendering — toggle with `c`.
+    pub view: LogPickView,
+    /// Cached cluster list for the Clusters view. Rebuilt on
+    /// `picks` set and on view toggle so repeated j/k keystrokes
+    /// don't re-cluster on each frame.
+    pub clusters: Vec<crate::query::nplus1::Cluster>,
+    /// Selected entry in `picks`.
+    pub index: usize,
+}
+
+/// EXPLAIN-tree state — the parsed plan, the cursor into the flattened
+/// (visible-after-collapses) list, and the set of collapsed node paths.
+#[derive(Debug, Default)]
+pub struct ExplainUi {
+    /// Most recent EXPLAIN / EXPLAIN ANALYZE plan, when `Mode::ExplainTree`
+    /// is active. Built from `EXPLAIN (FORMAT JSON)` output on a
+    /// successful run.
+    pub plan: Option<crate::query::explain::PlanNode>,
+    /// Cursor into the flattened (visible-after-collapses) plan list.
+    /// j/k move it; Enter toggles collapse on the focused node.
+    pub cursor: usize,
+    /// Paths (chains of child-array indices from the root) of nodes
+    /// the operator has collapsed. The renderer hides anything below
+    /// these.
+    pub collapsed: std::collections::HashSet<Vec<usize>>,
+}
+
+/// Slow-queries panel state — the most recent `pg_stat_statements`
+/// snapshot and the cursor into it.
+#[derive(Debug, Default)]
+pub struct SlowQueriesUi {
+    /// Most recent `pg_stat_statements` snapshot, when
+    /// `Mode::SlowQueries` is active.
+    pub rows: Vec<crate::query::slow_queries::SlowQueryRow>,
+    pub cursor: usize,
+}
+
+/// Sessions panel state — the most recent `pg_stat_activity` snapshot
+/// and the cursor into it.
+#[derive(Debug, Default)]
+pub struct SessionsUi {
+    /// Most recent `pg_stat_activity` snapshot, when
+    /// `Mode::Sessions` is active.
+    pub rows: Vec<crate::query::sessions::SessionRow>,
+    pub cursor: usize,
+}
+
+/// Notifications panel state — the ring buffer of recent `NOTIFY`
+/// arrivals and the cursor into it.
+#[derive(Debug, Default)]
+pub struct NotificationsUi {
+    /// Ring buffer of recent `NOTIFY` arrivals from the server.
+    /// Newest at the end. Capped at `NOTIFICATION_CAP` so a
+    /// chatty channel can't grow unbounded.
+    pub items: Vec<crate::conn::NotificationMsg>,
+    /// Cursor into `items` for the `N` panel.
+    pub cursor: usize,
+}
+
+/// Schema-lint panel state — the findings over the current schema cache
+/// and the cursor into them.
+#[derive(Debug, Default)]
+pub struct SchemaLintUi {
+    /// Findings produced by `query::lint::run_all` over the
+    /// current schema cache. Rebuilt on entry to `Mode::SchemaLint`
+    /// (cheap — pure pass over the cache).
+    pub findings: Vec<crate::query::lint::Finding>,
+    /// Cursor into `findings`.
+    pub cursor: usize,
+}
+
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
@@ -1387,17 +1465,8 @@ pub struct App {
     /// True while an explicit transaction is open (auto_tx write succeeded —
     /// waiting on the user to commit or rollback).
     pub tx_open: bool,
-    /// Reconstructed queries from the most recent log-import; `Mode::LogPick`
-    /// browses these.
-    pub log_picks: Vec<ReconstructedQuery>,
-    /// Which view LogPick is currently rendering — toggle with `c`.
-    pub log_pick_view: LogPickView,
-    /// Cached cluster list for the Clusters view. Rebuilt on
-    /// `log_picks` set and on view toggle so repeated j/k keystrokes
-    /// don't re-cluster on each frame.
-    pub log_pick_clusters: Vec<crate::query::nplus1::Cluster>,
-    /// Selected entry in `log_picks`.
-    pub log_pick_index: usize,
+    /// Log-import pick state (reconstructed queries, view, clusters, cursor).
+    pub log_pick: LogPickUi,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
     pub last_status: Option<String>,
     /// A query / safety error to surface to the user.
@@ -1448,12 +1517,8 @@ pub struct App {
     /// would do, but `HashMap` keeps the slot key open for any
     /// printable char operators might want later.
     pub bookmarks: std::collections::HashMap<char, GridBookmark>,
-    /// Ring buffer of recent `NOTIFY` arrivals from the server.
-    /// Newest at the end. Capped at `NOTIFICATION_CAP` so a
-    /// chatty channel can't grow unbounded.
-    pub notifications: Vec<crate::conn::NotificationMsg>,
-    /// Cursor into `notifications` for the `N` panel.
-    pub notifications_cursor: usize,
+    /// Notifications panel state (ring buffer + cursor).
+    pub notifications: NotificationsUi,
     /// Ring buffer of recent JDBC-tap events (queries +
     /// txn boundaries from the pgman-tap JAR). Newest at the
     /// end. Heartbeat events don't land here — they update
@@ -1574,33 +1639,16 @@ pub struct App {
     /// the active filter. Equal to `0..rows.len()` when no filter is
     /// set. Rebuilt whenever filter / sort / grid changes.
     pub grid_visible_rows: Vec<usize>,
-    /// Most recent EXPLAIN / EXPLAIN ANALYZE plan, when `Mode::ExplainTree`
-    /// is active. Built from `EXPLAIN (FORMAT JSON)` output on a
-    /// successful run.
-    pub explain_plan: Option<crate::query::explain::PlanNode>,
-    /// Cursor into the flattened (visible-after-collapses) plan list.
-    /// j/k move it; Enter toggles collapse on the focused node.
-    pub explain_cursor: usize,
-    /// Paths (chains of child-array indices from the root) of nodes
-    /// the operator has collapsed. The renderer hides anything below
-    /// these.
-    pub explain_collapsed: std::collections::HashSet<Vec<usize>>,
+    /// EXPLAIN-tree state (plan, cursor, collapsed node paths).
+    pub explain: ExplainUi,
     /// Schema-browser navigation/modal state (cursor, filter, expanded set).
     pub schema_browser: SchemaBrowserUi,
-    /// Findings produced by `query::lint::run_all` over the
-    /// current schema cache. Rebuilt on entry to `Mode::SchemaLint`
-    /// (cheap — pure pass over the cache).
-    pub schema_lint_findings: Vec<crate::query::lint::Finding>,
-    /// Cursor into `schema_lint_findings`.
-    pub schema_lint_cursor: usize,
-    /// Most recent `pg_stat_statements` snapshot, when
-    /// `Mode::SlowQueries` is active.
-    pub slow_queries: Vec<crate::query::slow_queries::SlowQueryRow>,
-    pub slow_queries_cursor: usize,
-    /// Most recent `pg_stat_activity` snapshot, when
-    /// `Mode::Sessions` is active.
-    pub sessions: Vec<crate::query::sessions::SessionRow>,
-    pub sessions_cursor: usize,
+    /// Schema-lint panel state (findings + cursor).
+    pub schema_lint: SchemaLintUi,
+    /// Slow-queries panel state (snapshot + cursor).
+    pub slow_queries: SlowQueriesUi,
+    /// Sessions panel state (snapshot + cursor).
+    pub sessions: SessionsUi,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1705,10 +1753,7 @@ impl App {
             history_draft: String::new(),
             pending_run: None,
             tx_open: false,
-            log_picks: Vec::new(),
-            log_pick_view: LogPickView::AllQueries,
-            log_pick_clusters: Vec::new(),
-            log_pick_index: 0,
+            log_pick: LogPickUi::default(),
             last_status: None,
             last_error: None,
             query_running: false,
@@ -1722,8 +1767,7 @@ impl App {
             auto_refresh: false,
             auto_refresh_last: None,
             bookmarks: std::collections::HashMap::new(),
-            notifications: Vec::new(),
-            notifications_cursor: 0,
+            notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
             tap_nav: TapNavState::default(),
             tap_health: TapHealth::default(),
@@ -1760,16 +1804,11 @@ impl App {
             grid_find_matches: Vec::new(),
             grid_find_pos: 0,
             grid_visible_rows: Vec::new(),
-            explain_plan: None,
-            explain_cursor: 0,
-            explain_collapsed: std::collections::HashSet::new(),
+            explain: ExplainUi::default(),
             schema_browser: SchemaBrowserUi::default(),
-            schema_lint_findings: Vec::new(),
-            schema_lint_cursor: 0,
-            slow_queries: Vec::new(),
-            slow_queries_cursor: 0,
-            sessions: Vec::new(),
-            sessions_cursor: 0,
+            schema_lint: SchemaLintUi::default(),
+            slow_queries: SlowQueriesUi::default(),
+            sessions: SessionsUi::default(),
             last_run_sql: None,
             json_cell_rows: Vec::new(),
             json_cell_cursor: 0,
@@ -2228,12 +2267,13 @@ impl App {
     /// driver as notifications arrive. Even an empty ring opens
     /// (with a hint to LISTEN to a channel first).
     fn start_notifications(&mut self) {
-        self.notifications_cursor = self
-            .notifications_cursor
-            .min(self.notifications.len().saturating_sub(1));
+        self.notifications.cursor = self
+            .notifications
+            .cursor
+            .min(self.notifications.items.len().saturating_sub(1));
         self.last_status = Some(format!(
             "NOTIFY arrivals · {} stashed · LISTEN <chan> from the editor to subscribe",
-            self.notifications.len()
+            self.notifications.items.len()
         ));
         self.mode = Mode::Notifications;
     }
@@ -2402,7 +2442,7 @@ impl App {
 
     /// Copy the focused notification's payload to the clipboard.
     fn yank_focused_notification(&mut self) {
-        let Some(n) = self.notifications.get(self.notifications_cursor) else {
+        let Some(n) = self.notifications.items.get(self.notifications.cursor) else {
             return;
         };
         let text = n.payload.clone();
@@ -2942,19 +2982,19 @@ impl App {
         }
         self.last_error = None;
         self.last_status = Some(format!("{} pick(s) found", picks.len()));
-        self.log_pick_clusters = crate::query::nplus1::detect(&picks);
-        self.log_picks = picks;
-        self.log_pick_view = LogPickView::AllQueries;
-        self.log_pick_index = 0;
+        self.log_pick.clusters = crate::query::nplus1::detect(&picks);
+        self.log_pick.picks = picks;
+        self.log_pick.view = LogPickView::AllQueries;
+        self.log_pick.index = 0;
         self.mode = Mode::LogPick;
     }
 
     /// Number of rows the LogPick popup is currently rendering.
     /// Folds the view choice (all queries vs. cluster summary).
     pub fn log_pick_visible_len(&self) -> usize {
-        match self.log_pick_view {
-            LogPickView::AllQueries => self.log_picks.len(),
-            LogPickView::Clusters => self.log_pick_clusters.len(),
+        match self.log_pick.view {
+            LogPickView::AllQueries => self.log_pick.picks.len(),
+            LogPickView::Clusters => self.log_pick.clusters.len(),
         }
     }
 
@@ -2962,17 +3002,17 @@ impl App {
     /// summary. Resets the cursor to row 0 so a stale index from
     /// the previous view doesn't render out-of-range.
     fn toggle_log_pick_view(&mut self) {
-        self.log_pick_view = match self.log_pick_view {
+        self.log_pick.view = match self.log_pick.view {
             LogPickView::AllQueries => LogPickView::Clusters,
             LogPickView::Clusters => LogPickView::AllQueries,
         };
-        self.log_pick_index = 0;
-        self.last_status = Some(match self.log_pick_view {
-            LogPickView::AllQueries => format!("all queries · {}", self.log_picks.len()),
+        self.log_pick.index = 0;
+        self.last_status = Some(match self.log_pick.view {
+            LogPickView::AllQueries => format!("all queries · {}", self.log_pick.picks.len()),
             LogPickView::Clusters => format!(
                 "N+1 clusters · {} (of {} queries)",
-                self.log_pick_clusters.len(),
-                self.log_picks.len()
+                self.log_pick.clusters.len(),
+                self.log_pick.picks.len()
             ),
         });
     }
@@ -2980,14 +3020,16 @@ impl App {
     /// Resolve the focused row's runnable SQL — `runnable_sql` for
     /// the AllQueries view, the cluster's `example` for Clusters.
     fn focused_log_pick_sql(&self) -> Option<String> {
-        match self.log_pick_view {
+        match self.log_pick.view {
             LogPickView::AllQueries => self
-                .log_picks
-                .get(self.log_pick_index)
+                .log_pick
+                .picks
+                .get(self.log_pick.index)
                 .map(|q| q.runnable_sql.clone()),
             LogPickView::Clusters => self
-                .log_pick_clusters
-                .get(self.log_pick_index)
+                .log_pick
+                .clusters
+                .get(self.log_pick.index)
                 .map(|c| c.example.clone()),
         }
     }
@@ -3171,7 +3213,7 @@ impl App {
             title: "pgman report".into(),
             generated_at,
             connection,
-            lint_findings: self.schema_lint_findings.clone(),
+            lint_findings: self.schema_lint.findings.clone(),
             hotspots: self.current_hotspots(),
             callers: self.current_callers(),
             transactions: self.current_txns(),
@@ -3739,12 +3781,12 @@ impl App {
     /// over `(plan, collapsed)` — same logic both the renderer and
     /// the key handler consult.
     pub fn flattened_explain_rows(&self) -> Vec<ExplainRow> {
-        let Some(plan) = self.explain_plan.as_ref() else {
+        let Some(plan) = self.explain.plan.as_ref() else {
             return Vec::new();
         };
         let mut out = Vec::new();
         let mut path = Vec::new();
-        flatten_plan(plan, &mut path, 0, &self.explain_collapsed, &mut out);
+        flatten_plan(plan, &mut path, 0, &self.explain.collapsed, &mut out);
         out
     }
 
@@ -3809,8 +3851,8 @@ impl App {
         } else {
             format!("schema lint · {n} finding(s) · {high} high · checking live…")
         });
-        self.schema_lint_findings = findings;
-        self.schema_lint_cursor = 0;
+        self.schema_lint.findings = findings;
+        self.schema_lint.cursor = 0;
         self.mode = Mode::SchemaLint;
         // Kick off the live-query checks (LINT101+). Results land
         // via `AppMsg::LiveLintLoaded` and get merged into
@@ -3830,7 +3872,7 @@ impl App {
     /// editor. Surfaces an actionable status when the finding has
     /// no suggestion (LINT002 / LINT003 / LINT004 are advisory).
     fn yank_schema_lint_suggestion(&mut self) {
-        let Some(finding) = self.schema_lint_findings.get(self.schema_lint_cursor) else {
+        let Some(finding) = self.schema_lint.findings.get(self.schema_lint.cursor) else {
             return;
         };
         let Some(snippet) = finding.suggestion.clone() else {
@@ -3929,7 +3971,7 @@ impl App {
             self.last_error = Some("not connected".into());
             return;
         };
-        self.slow_queries_cursor = 0;
+        self.slow_queries.cursor = 0;
         self.mode = Mode::SlowQueries;
         self.last_status = Some("loading pg_stat_statements…".into());
         self.spawn_slow_queries_load(client);
@@ -3950,7 +3992,7 @@ impl App {
             self.last_error = Some("not connected".into());
             return;
         };
-        self.sessions_cursor = 0;
+        self.sessions.cursor = 0;
         self.mode = Mode::Sessions;
         self.last_status = Some("loading pg_stat_activity…".into());
         self.spawn_sessions_load(client);
@@ -3969,7 +4011,7 @@ impl App {
     /// spawn fires; the panel auto-refreshes when the result
     /// lands.
     fn start_terminate_focused_session(&mut self) {
-        let Some(row) = self.sessions.get(self.sessions_cursor) else {
+        let Some(row) = self.sessions.rows.get(self.sessions.cursor) else {
             return;
         };
         let pid = row.pid;
