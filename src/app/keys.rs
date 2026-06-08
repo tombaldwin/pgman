@@ -12,7 +12,7 @@ impl App {
             self.capture_tap_baseline();
             return;
         }
-        match self.tap_view {
+        match self.tap_nav.view {
             TapView::List => self.on_tap_monitor_list_key(key),
             TapView::Hotspots => self.on_tap_monitor_hotspots_key(key),
             TapView::Callers => self.on_tap_monitor_callers_key(key),
@@ -32,18 +32,18 @@ impl App {
             }
             KeyCode::Char('v') => self.cycle_tap_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_txns_cursor = (self.tap_txns_cursor + 1).min(last);
+                self.tap_nav.txns_cursor = (self.tap_nav.txns_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_txns_cursor = self.tap_txns_cursor.saturating_sub(1);
+                self.tap_nav.txns_cursor = self.tap_nav.txns_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_txns_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_txns_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.txns_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.txns_cursor = last,
             KeyCode::PageDown => {
-                self.tap_txns_cursor = (self.tap_txns_cursor + 10).min(last);
+                self.tap_nav.txns_cursor = (self.tap_nav.txns_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_txns_cursor = self.tap_txns_cursor.saturating_sub(10);
+                self.tap_nav.txns_cursor = self.tap_nav.txns_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -59,18 +59,18 @@ impl App {
             }
             KeyCode::Char('v') => self.cycle_tap_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_pools_cursor = (self.tap_pools_cursor + 1).min(last);
+                self.tap_nav.pools_cursor = (self.tap_nav.pools_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_pools_cursor = self.tap_pools_cursor.saturating_sub(1);
+                self.tap_nav.pools_cursor = self.tap_nav.pools_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_pools_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_pools_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.pools_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.pools_cursor = last,
             KeyCode::PageDown => {
-                self.tap_pools_cursor = (self.tap_pools_cursor + 10).min(last);
+                self.tap_nav.pools_cursor = (self.tap_nav.pools_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_pools_cursor = self.tap_pools_cursor.saturating_sub(10);
+                self.tap_nav.pools_cursor = self.tap_nav.pools_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -86,18 +86,18 @@ impl App {
             }
             KeyCode::Char('v') => self.cycle_tap_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_baseline_cursor = (self.tap_baseline_cursor + 1).min(last);
+                self.tap_nav.baseline_cursor = (self.tap_nav.baseline_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_baseline_cursor = self.tap_baseline_cursor.saturating_sub(1);
+                self.tap_nav.baseline_cursor = self.tap_nav.baseline_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_baseline_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_baseline_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.baseline_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.baseline_cursor = last,
             KeyCode::PageDown => {
-                self.tap_baseline_cursor = (self.tap_baseline_cursor + 10).min(last);
+                self.tap_nav.baseline_cursor = (self.tap_nav.baseline_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_baseline_cursor = self.tap_baseline_cursor.saturating_sub(10);
+                self.tap_nav.baseline_cursor = self.tap_nav.baseline_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -115,22 +115,23 @@ impl App {
             // `s` cycles the sort (shared HotspotSort with the
             // hotspots view — TotalTime / CallCount / P95Latency).
             KeyCode::Char('s') => {
-                self.tap_sort = self.tap_sort.next();
-                self.last_status = Some(format!("tap callers · sort: {}", self.tap_sort.label()));
+                self.tap_nav.sort = self.tap_nav.sort.next();
+                self.last_status =
+                    Some(format!("tap callers · sort: {}", self.tap_nav.sort.label()));
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_callers_cursor = (self.tap_callers_cursor + 1).min(last);
+                self.tap_nav.callers_cursor = (self.tap_nav.callers_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_callers_cursor = self.tap_callers_cursor.saturating_sub(1);
+                self.tap_nav.callers_cursor = self.tap_nav.callers_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_callers_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_callers_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.callers_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.callers_cursor = last,
             KeyCode::PageDown => {
-                self.tap_callers_cursor = (self.tap_callers_cursor + 10).min(last);
+                self.tap_nav.callers_cursor = (self.tap_nav.callers_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_callers_cursor = self.tap_callers_cursor.saturating_sub(10);
+                self.tap_nav.callers_cursor = self.tap_nav.callers_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -146,18 +147,18 @@ impl App {
             }
             KeyCode::Char('v') => self.cycle_tap_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nplus1_cursor = (self.tap_nplus1_cursor + 1).min(last);
+                self.tap_nav.nplus1_cursor = (self.tap_nav.nplus1_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nplus1_cursor = self.tap_nplus1_cursor.saturating_sub(1);
+                self.tap_nav.nplus1_cursor = self.tap_nav.nplus1_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nplus1_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nplus1_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.nplus1_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.nplus1_cursor = last,
             KeyCode::PageDown => {
-                self.tap_nplus1_cursor = (self.tap_nplus1_cursor + 10).min(last);
+                self.tap_nav.nplus1_cursor = (self.tap_nav.nplus1_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_nplus1_cursor = self.tap_nplus1_cursor.saturating_sub(10);
+                self.tap_nav.nplus1_cursor = self.tap_nav.nplus1_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -177,18 +178,18 @@ impl App {
             // ("view").
             KeyCode::Char('v') => self.cycle_tap_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_events_cursor = (self.tap_events_cursor + 1).min(last);
+                self.tap_nav.events_cursor = (self.tap_nav.events_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_events_cursor = self.tap_events_cursor.saturating_sub(1);
+                self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_events_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_events_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.events_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.events_cursor = last,
             KeyCode::PageDown => {
-                self.tap_events_cursor = (self.tap_events_cursor + 10).min(last);
+                self.tap_nav.events_cursor = (self.tap_nav.events_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_events_cursor = self.tap_events_cursor.saturating_sub(10);
+                self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
@@ -208,25 +209,28 @@ impl App {
             // 's' cycles the sort mode and flashes the new mode
             // so the operator sees what they just selected.
             KeyCode::Char('s') => {
-                self.tap_sort = self.tap_sort.next();
-                self.last_status = Some(format!("tap hotspots · sort: {}", self.tap_sort.label()));
+                self.tap_nav.sort = self.tap_nav.sort.next();
+                self.last_status = Some(format!(
+                    "tap hotspots · sort: {}",
+                    self.tap_nav.sort.label()
+                ));
                 // Resort uses the same grouping; cursor stays at
                 // its index (callers parking on a row see the row
                 // move under them — acceptable for a sort cycle).
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_hotspots_cursor = (self.tap_hotspots_cursor + 1).min(last);
+                self.tap_nav.hotspots_cursor = (self.tap_nav.hotspots_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_hotspots_cursor = self.tap_hotspots_cursor.saturating_sub(1);
+                self.tap_nav.hotspots_cursor = self.tap_nav.hotspots_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_hotspots_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_hotspots_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.hotspots_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.tap_nav.hotspots_cursor = last,
             KeyCode::PageDown => {
-                self.tap_hotspots_cursor = (self.tap_hotspots_cursor + 10).min(last);
+                self.tap_nav.hotspots_cursor = (self.tap_nav.hotspots_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.tap_hotspots_cursor = self.tap_hotspots_cursor.saturating_sub(10);
+                self.tap_nav.hotspots_cursor = self.tap_nav.hotspots_cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => self.clear_tap_ring(),
             _ => {}
