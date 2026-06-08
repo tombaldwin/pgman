@@ -817,6 +817,29 @@ Historical record. Newest at the top within each section.
   seven views and the HTML-sections test to include
   Connection pools).
 
+- **Refactor — decompose `ui.rs` + DRY scroll math.** The
+  5,200-line render module was split into `src/ui/` with
+  `ui.rs` kept as the module root (the `draw` dispatcher,
+  chrome — header / body / footer / tab-bar / splash — and the
+  shared helpers `centered` / `centered_pct` / `scroll_offset` /
+  `bordered` / format + `pub(crate)` helpers and tests). The
+  panel renderers moved out byte-identical (only a relocation +
+  `pub(super)`) into `ui/editor.rs` (editor + completion popup),
+  `ui/results.rs` (grid, row/cell detail, result-diff),
+  `ui/schema.rs` (schema browser + lint), `ui/panels.rs`
+  (about / help / confirm / log-pick / conn-pick / explain-tree /
+  slow-queries / sessions / saved-queries + prompts /
+  notifications / error-detail), and `ui/tap.rs` (the
+  `draw_tap_monitor*` family + tap-only helpers). Each child is
+  `use super::*;`. The submodule is named `results` (not `grid`)
+  to avoid clashing with `crate::grid`. Also extracted the
+  inlined scroll-offset idiom (`if c >= v { c+1-v } else { 0 }`)
+  into one `scroll_offset(cursor, visible)` helper and replaced
+  16 exact-match sites; non-matching variants (reserved-header
+  rows, three-branch cell-detail scroll) left inline. 1 new
+  unit test; all insta snapshots unchanged (render byte-for-byte
+  identical). Build + 1,099 tests green.
+
 - **Refactor — split `tap.rs` into a directory.** The single
   file had grown past 4,300 lines, mixing wire schema, L1
   transports (TCP / UDP / OTLP / replay), and L2 insights
