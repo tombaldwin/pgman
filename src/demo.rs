@@ -45,7 +45,7 @@ pub fn app(theme: Theme) -> App {
     // through the same path a real QueryOk uses, so the demo can't
     // drift from the live renderer.
     a.reset_grid_view();
-    a.grid_source = Some(("public".into(), "users".into()));
+    a.grid_view.source = Some(("public".into(), "users".into()));
     a.editor.buffer = "SELECT id, email, plan, created_at\n\
                        FROM users\n\
                        WHERE plan = 'pro'\n\
@@ -313,7 +313,7 @@ mod tests {
         assert!(a.demo, "demo flag must be set so persistence is skipped");
         assert!(matches!(a.conn_state, ConnState::Connected { .. }));
         assert!(!a.grid.rows.is_empty(), "grid has data");
-        assert_eq!(a.grid_source.as_ref().unwrap().1, "users");
+        assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
         assert_eq!(a.schema_cache.tables.len(), 3);
         assert!(a
             .saved_queries

@@ -138,9 +138,9 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     };
     // Initialise the view state the way the run-loop would after a
     // QueryOk lands (visible rows + sort state).
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
-    a.grid_col_cursor = 0;
-    a.grid_sort = Some((0, true));
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.col_cursor = 0;
+    a.grid_view.sort = Some((0, true));
     a.grid.rows.sort_by(|x, y| cmp_cells(&x[0], &y[0]));
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
@@ -572,7 +572,7 @@ fn grid_render_shows_capped_hint_when_truncated() {
         rows: vec![vec!["1".into()], vec!["2".into()]],
         truncated: true,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
@@ -595,9 +595,9 @@ fn grid_render_shows_filtered_count_in_title() {
         ],
         truncated: false,
     };
-    a.grid_filter = Some("a".into());
-    a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
-    a.grid_state.select(if a.grid_visible_rows.is_empty() {
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_state.select(if a.grid_view.visible_rows.is_empty() {
         None
     } else {
         Some(0)

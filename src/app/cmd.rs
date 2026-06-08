@@ -113,7 +113,7 @@ impl App {
             self.last_error = Some("no result to capture — run a query first".into());
             return;
         }
-        let Some((_schema, table)) = self.grid_source.clone() else {
+        let Some((_schema, table)) = self.grid_view.source.clone() else {
             self.last_error = Some(
                 "fixture capture needs a single-table result (no source table inferred)".into(),
             );

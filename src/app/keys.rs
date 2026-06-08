@@ -729,7 +729,7 @@ impl App {
                         c,
                         GridBookmark {
                             row,
-                            col: self.grid_col_cursor,
+                            col: self.grid_view.col_cursor,
                         },
                     );
                     self.last_status = Some(format!("bookmark '{c}' set"));
@@ -1324,8 +1324,8 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
-                self.grid_find = None;
-                self.grid_find_matches.clear();
+                self.grid_find.needle = None;
+                self.grid_find.matches.clear();
                 self.last_status = Some("find cleared".into());
                 self.mode = Mode::Normal;
             }
@@ -1334,8 +1334,8 @@ impl App {
                 // input but keep the matches for `n`/`N` from
                 // Normal mode? For v1, just exit — operator can
                 // re-press `f` to keep stepping.
-                self.grid_find = None;
-                self.grid_find_matches.clear();
+                self.grid_find.needle = None;
+                self.grid_find.matches.clear();
                 self.last_status = None;
                 self.mode = Mode::Normal;
             }
@@ -1349,14 +1349,14 @@ impl App {
             KeyCode::Char('n') if !ctrl => self.step_grid_find(true),
             KeyCode::Char('N') if !ctrl => self.step_grid_find(false),
             KeyCode::Backspace => {
-                if let Some(f) = self.grid_find.as_mut() {
+                if let Some(f) = self.grid_find.needle.as_mut() {
                     f.pop();
                 }
                 self.rebuild_grid_find();
                 self.refresh_grid_find_status();
             }
             KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                if let Some(f) = self.grid_find.as_mut() {
+                if let Some(f) = self.grid_find.needle.as_mut() {
                     f.push(c);
                 }
                 self.rebuild_grid_find();
@@ -1370,7 +1370,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
-                self.grid_filter = None;
+                self.grid_view.filter = None;
                 self.rebuild_visible_rows();
                 self.last_status = Some("filter cleared".into());
                 self.mode = Mode::Normal;
@@ -1380,14 +1380,14 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Backspace => {
-                if let Some(f) = self.grid_filter.as_mut() {
+                if let Some(f) = self.grid_view.filter.as_mut() {
                     f.pop();
                 }
                 self.rebuild_visible_rows();
                 self.refresh_filter_status();
             }
             KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                if let Some(f) = self.grid_filter.as_mut() {
+                if let Some(f) = self.grid_view.filter.as_mut() {
                     f.push(c);
                 }
                 self.rebuild_visible_rows();

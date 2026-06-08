@@ -163,7 +163,7 @@ fn grid_filter_typing_narrows_visible_rows() {
         ],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
     drive(
         &mut a,
@@ -173,9 +173,9 @@ fn grid_filter_typing_narrows_visible_rows() {
         ],
     );
     assert_eq!(a.mode, Mode::GridFilter);
-    assert_eq!(a.grid_visible_rows, vec![1, 2]);
+    assert_eq!(a.grid_view.visible_rows, vec![1, 2]);
     drive(&mut a, &[special(KeyCode::Esc)]);
-    assert!(a.grid_filter.is_none());
+    assert!(a.grid_view.filter.is_none());
     assert_eq!(a.mode, Mode::Normal);
 }
 
@@ -208,21 +208,21 @@ fn grid_sort_cycle_through_three_states() {
         rows: vec![vec!["3".into()], vec!["1".into()], vec!["2".into()]],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
     // ASC.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, Some((0, true)));
+    assert_eq!(a.grid_view.sort, Some((0, true)));
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["1", "2", "3"]);
     // DESC.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, Some((0, false)));
+    assert_eq!(a.grid_view.sort, Some((0, false)));
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["3", "2", "1"]);
     // Off — restores original order.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, None);
+    assert_eq!(a.grid_view.sort, None);
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["3", "1", "2"]);
 }
