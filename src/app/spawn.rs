@@ -85,8 +85,9 @@ impl App {
     /// case (when the ring is empty but heartbeats arrived) and
     /// the dominant "live stream" case.
     pub(super) fn start_tap_monitor(&mut self) {
-        self.tap_events_cursor = self
-            .tap_events_cursor
+        self.tap_nav.events_cursor = self
+            .tap_nav
+            .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
         let queries = self.tap_health.query_count;
         let beats = self.tap_health.heartbeat_count;
