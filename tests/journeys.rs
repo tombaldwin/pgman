@@ -69,18 +69,18 @@ fn focus_editor_type_select_and_back_to_normal() {
         ],
     );
     assert_eq!(a.mode, Mode::Normal);
-    assert_eq!(a.editor_buffer, "SELECT 1");
+    assert_eq!(a.editor.buffer, "SELECT 1");
 }
 
 #[test]
 fn ctrl_u_clears_editor_buffer() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "DROP TABLE everything".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "DROP TABLE everything".into();
+    a.editor.cursor = a.editor.buffer.len();
     drive(&mut a, &[ctrl('u')]);
-    assert_eq!(a.editor_buffer, "");
-    assert_eq!(a.editor_cursor, 0);
+    assert_eq!(a.editor.buffer, "");
+    assert_eq!(a.editor.cursor, 0);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn enter_editor_then_backspace_back_to_empty() {
         ],
     );
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "");
+    assert_eq!(a.editor.buffer, "");
 }
 
 #[test]
@@ -122,8 +122,8 @@ fn history_search_opens_and_loads_matching_entry() {
         "INSERT INTO logs (id) VALUES (1)".into(),
         "SELECT count(*) FROM users".into(),
     ];
-    a.editor_buffer = "in-progress".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "in-progress".into();
+    a.editor.cursor = a.editor.buffer.len();
     drive(
         &mut a,
         &[
@@ -135,7 +135,7 @@ fn history_search_opens_and_loads_matching_entry() {
         ],
     );
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "SELECT count(*) FROM users");
+    assert_eq!(a.editor.buffer, "SELECT count(*) FROM users");
 }
 
 #[test]
@@ -143,11 +143,11 @@ fn history_search_esc_restores_pre_search_buffer() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
     a.history = vec!["SELECT 1".into()];
-    a.editor_buffer = "scratch".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "scratch".into();
+    a.editor.cursor = a.editor.buffer.len();
     drive(&mut a, &[ctrl('r'), special(KeyCode::Esc)]);
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor_buffer, "scratch");
+    assert_eq!(a.editor.buffer, "scratch");
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn grid_filter_typing_narrows_visible_rows() {
         ],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
     drive(
         &mut a,
@@ -173,9 +173,9 @@ fn grid_filter_typing_narrows_visible_rows() {
         ],
     );
     assert_eq!(a.mode, Mode::GridFilter);
-    assert_eq!(a.grid_visible_rows, vec![1, 2]);
+    assert_eq!(a.grid_view.visible_rows, vec![1, 2]);
     drive(&mut a, &[special(KeyCode::Esc)]);
-    assert!(a.grid_filter.is_none());
+    assert!(a.grid_view.filter.is_none());
     assert_eq!(a.mode, Mode::Normal);
 }
 
@@ -208,21 +208,21 @@ fn grid_sort_cycle_through_three_states() {
         rows: vec![vec!["3".into()], vec!["1".into()], vec!["2".into()]],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_state.select(Some(0));
     // ASC.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, Some((0, true)));
+    assert_eq!(a.grid_view.sort, Some((0, true)));
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["1", "2", "3"]);
     // DESC.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, Some((0, false)));
+    assert_eq!(a.grid_view.sort, Some((0, false)));
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["3", "2", "1"]);
     // Off — restores original order.
     drive(&mut a, &[k('s')]);
-    assert_eq!(a.grid_sort, None);
+    assert_eq!(a.grid_view.sort, None);
     let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
     assert_eq!(ids, vec!["3", "1", "2"]);
 }
