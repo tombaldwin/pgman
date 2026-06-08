@@ -99,3 +99,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # Architecture gate: direct database access (the Db effect) must stay in the data layer
+  # (src/conn.rs + src/query/). A UI/app function reaching the DB directly fails the job.
+  # Enforced with candor's stable scanner (no nightly). See .candor/policy + ci/candor-check.sh.
+  candor:
+    name: candor (DB boundary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install candor-scan
+        run: cargo install candor-scan --locked
+      - name: enforce DB-access boundary (Db only in conn.rs + query/)
+        run: bash ci/candor-check.sh

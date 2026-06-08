@@ -1,0 +1,21 @@
+# candor effect policy for pgman.
+#
+# DATA-ACCESS BOUNDARY: direct database access (the `Db` effect — a query/exec/transaction call) must
+# stay in the DATA LAYER:
+#   - src/conn.rs   — the connection + transaction primitives
+#   - src/query/    — the query modules (lint, explain, schema, …)
+#
+# A UI/app function that reaches the database DIRECTLY is an architectural leak: it should route through
+# the data layer instead, so connection handling, transactions, and query construction stay in one place.
+# (Transitively reaching Db via a conn/query call is fine — only a DIRECT Db call outside the data layer
+# is a violation.)
+#
+# Enforced in CI by ci/candor-check.sh using the stable scanner (`cargo install candor-scan`) — no
+# nightly toolchain. The nightly candor lint's `cargo candor policy` expresses the same intent as
+# `deny Db` scoped to the app layer (AS-EFF-006).
+#
+# Known exception (documented in ci/candor-check.sh): `app::run_cost_explain` — a self-contained
+# EXPLAIN-cost helper still living in app.rs. Its natural home is src/query/explain.rs; moving it there
+# drops the exception and tightens the boundary.
+
+deny Db   # outside the data layer (src/conn.rs, src/query/) — see ci/candor-check.sh for the scoped check
