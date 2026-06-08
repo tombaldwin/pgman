@@ -546,7 +546,7 @@ pub struct PendingRun {
 /// per-view cursors. Grouped so the cursors reset together (see
 /// `reset_cursors`) instead of being hand-listed at each call site.
 #[derive(Debug, Default)]
-pub struct TapNavState {
+pub struct TapNavUi {
     pub view: TapView,                 // was tap_view
     pub sort: crate::tap::HotspotSort, // was tap_sort
     pub events_cursor: usize,          // was tap_events_cursor
@@ -557,7 +557,7 @@ pub struct TapNavState {
     pub baseline_cursor: usize,
     pub nplus1_cursor: usize,
 }
-impl TapNavState {
+impl TapNavUi {
     /// Reset every per-view cursor to the top (the ring backs all views).
     pub fn reset_cursors(&mut self) {
         self.events_cursor = 0;

@@ -295,7 +295,7 @@ fn result_diff_view_renders_added_removed_changed() {
         rows: a_rows,
         label: "A-query".into(),
     };
-    a.diff.active = Some(pgman::app::ResultDiffState {
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
@@ -303,7 +303,7 @@ fn result_diff_view_renders_added_removed_changed() {
         key,
         diff,
     });
-    a.diff.pinned = Some(pinned);
+    a.result_diff.pinned = Some(pinned);
     a.mode = Mode::ResultDiff;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
