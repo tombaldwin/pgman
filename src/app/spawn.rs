@@ -195,7 +195,7 @@ impl App {
         // or opening the Confirm modal.
         self.query_running = true;
         tokio::spawn(async move {
-            let estimated = run_cost_explain(&client, &explain_sql).await;
+            let estimated = crate::query::explain::run_cost_explain(&client, &explain_sql).await;
             let _ = tx.send(AppMsg::CostPreviewLoaded {
                 sql,
                 decision,

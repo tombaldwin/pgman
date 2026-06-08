@@ -1,6 +1,8 @@
 //! Parse PostgreSQL `EXPLAIN (FORMAT JSON)` output into a tree the
-//! TUI can render. Pure: takes a string, returns a [`PlanNode`].
-//! I/O lives elsewhere.
+//! TUI can render. The parse path is pure (string → [`PlanNode`]);
+//! [`run_cost_explain`] is the one I/O helper — it runs an EXPLAIN and
+//! returns the top node's row estimate, kept here in the data layer so
+//! the `Db` call stays out of the UI/app layer.
 //!
 //! The JSON shape Postgres emits is well-documented in the manual.
 //! Each node carries:
@@ -167,6 +169,32 @@ impl PlanNode {
             children: Vec::new(),
         }
     }
+}
+
+/// Run `EXPLAIN (FORMAT JSON) …` against `client` and pluck the top
+/// node's `Plan Rows` estimate. The one I/O helper in this module (the
+/// parse path above is pure); it lives here, in the data layer, so the
+/// `Db` call stays out of the UI/app layer.
+pub async fn run_cost_explain(
+    client: &tokio_postgres::Client,
+    explain_sql: &str,
+) -> Result<f64, String> {
+    let row = client
+        .query_one(explain_sql, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    let json_str: String = row.try_get::<_, String>(0).map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+    // EXPLAIN JSON output is an array with one entry per plan; we
+    // care about the first plan's top node.
+    let top = parsed
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.get("Plan"))
+        .ok_or_else(|| "no Plan in EXPLAIN output".to_string())?;
+    top.get("Plan Rows")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| "no Plan Rows on top node".to_string())
 }
 
 #[cfg(test)]
