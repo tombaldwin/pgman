@@ -3,11 +3,14 @@
 mod cmd;
 mod editor;
 mod handle;
+mod history;
 mod keys;
 pub mod msg;
 mod spawn;
 mod tabs;
 mod types;
+mod views;
+mod yank;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
 use crate::grid::Grid;
@@ -1559,19 +1562,6 @@ impl App {
         self.last_status = Some(format!("cleared {n} tap event(s)"));
     }
 
-    /// Compute the current per-transaction stats. Cheap —
-    /// one pass over the ring.
-    pub fn current_txns(&self) -> Vec<crate::tap::TxnStats> {
-        crate::tap::group_by_txn(self.tap_events.iter())
-    }
-
-    /// Compute the current per-pool saturation stats. Cheap —
-    /// one pass over the ring (plus a per-pool endpoint sweep
-    /// for peak concurrency).
-    pub fn current_pools(&self) -> Vec<crate::tap::PoolStats> {
-        crate::tap::group_by_pool(self.tap_events.iter())
-    }
-
     /// Freeze the current hotspots list as the diff baseline
     /// and flash a status confirming it. Re-pressing `B`
     /// recaptures (the snapshot is always vs the most recent
@@ -1605,18 +1595,6 @@ impl App {
         let captured = self.tap_baseline.as_ref()?.captured_listener_dropped;
         let current = crate::tap::dropped_at_listener();
         Some(current.saturating_sub(captured))
-    }
-
-    /// Compute the current baseline diff. Returns an empty
-    /// vec when no baseline has been captured — the renderer
-    /// detects that case and prompts the operator to press
-    /// `Shift-B`.
-    pub fn current_baseline_diff(&self) -> Vec<crate::tap::HotspotDiff> {
-        let Some(baseline) = self.tap_baseline.as_ref() else {
-            return Vec::new();
-        };
-        let current = self.current_hotspots();
-        crate::tap::diff_hotspots(&baseline.hotspots, &current, false)
     }
 
     /// Cycle the TapMonitor view (List → Hotspots → Callers
@@ -1678,50 +1656,6 @@ impl App {
                 };
                 self.last_status = Some(summary);
             }
-        }
-    }
-
-    /// Compute the current hotspot list per `tap_sort`. Called
-    /// each frame from the renderer and from the key handler.
-    /// Cheap relative to the rest of the frame budget — ~2k
-    /// events × one fingerprint each is sub-millisecond.
-    pub fn current_hotspots(&self) -> Vec<crate::tap::Hotspot> {
-        crate::tap::group_hotspots(self.tap_events.iter(), self.tap_nav.sort)
-    }
-
-    /// Compute the current N+1 findings — called by the panel
-    /// renderer on demand. Uses the defaults
-    /// (`NPLUS1_WINDOW_MICROS`, `NPLUS1_MIN_REPEATS`) which
-    /// match the offline classifier's operating point.
-    pub fn current_nplus1(&self) -> Vec<crate::tap::NplusOneFinding> {
-        crate::tap::detect_nplus1(
-            self.tap_events.iter(),
-            crate::tap::NPLUS1_WINDOW_MICROS,
-            crate::tap::NPLUS1_MIN_REPEATS,
-        )
-    }
-
-    /// Compute the current per-caller rollup per `tap_sort`.
-    /// Same shape as `current_hotspots` but the grouping key
-    /// is the innermost caller frame instead of the SQL
-    /// fingerprint.
-    pub fn current_callers(&self) -> Vec<crate::tap::CallerStats> {
-        crate::tap::group_by_caller(self.tap_events.iter(), self.tap_nav.sort)
-    }
-
-    /// Copy the focused notification's payload to the clipboard.
-    fn yank_focused_notification(&mut self) {
-        let Some(n) = self.notifications.items.get(self.notifications.cursor) else {
-            return;
-        };
-        let text = n.payload.clone();
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text.clone())) {
-            Ok(()) => {
-                self.last_status =
-                    Some(format!("yanked payload ({} char(s))", text.chars().count()));
-                self.last_error = None;
-            }
-            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
 
@@ -1918,58 +1852,6 @@ impl App {
         self.cell_detail.json_cursor = new_idx;
     }
 
-    /// Yank the focused JSON node's jq-style path (`.foo[0].bar`) to
-    /// the clipboard. The root node yanks `.` for convenience.
-    fn yank_json_cell_path(&mut self) {
-        let Some(row) = self.cell_detail.json_rows.get(self.cell_detail.json_cursor) else {
-            return;
-        };
-        let path = if row.path.is_empty() {
-            ".".to_string()
-        } else {
-            row.path.clone()
-        };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(path.clone())) {
-            Ok(()) => {
-                self.last_status = Some(format!("yanked path '{path}'"));
-                self.last_error = None;
-            }
-            Err(e) => {
-                self.last_error = Some(format!("yank failed: {e}"));
-            }
-        }
-    }
-
-    /// Copy the currently-focused field's value to the system clipboard.
-    /// Surfaces success / failure via `last_status` / `last_error`.
-    fn yank_focused_field(&mut self) {
-        let Some(idx) = self.selected_grid_row_idx() else {
-            return;
-        };
-        let Some(row) = self.grid.rows.get(idx) else {
-            return;
-        };
-        let Some(value) = row.get(self.row_detail.field) else {
-            return;
-        };
-        let column = self
-            .grid
-            .columns
-            .get(self.row_detail.field)
-            .cloned()
-            .unwrap_or_default();
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
-            Ok(()) => {
-                let chars = value.chars().count();
-                self.last_status = Some(format!("yanked '{column}' · {chars} char(s)"));
-                self.last_error = None;
-            }
-            Err(e) => {
-                self.last_error = Some(format!("yank failed: {e}"));
-            }
-        }
-    }
-
     /// Open the help overlay from `from`. Captures `from` so the
     /// close path restores that mode (instead of always going to
     /// Normal), and pre-scrolls the help body to the section that
@@ -2108,109 +1990,6 @@ impl App {
             // small (UNDO_CAP) and undos are rare keys.
             self.editor.undo.remove(0);
         }
-    }
-
-    /// Step back into older history (Ctrl-P). The first step saves the live
-    /// draft so Ctrl-N past the newest entry can restore it.
-    fn history_prev(&mut self) {
-        if self.history.is_empty() {
-            return;
-        }
-        let new_pos = match self.history_pos {
-            None => {
-                self.history_draft = self.editor.buffer.clone();
-                self.history.len() - 1
-            }
-            Some(i) if i > 0 => i - 1,
-            Some(_) => return,
-        };
-        self.history_pos = Some(new_pos);
-        self.editor.buffer = self.history[new_pos].clone();
-        self.editor.cursor = self.editor.buffer.len();
-        self.editor.preferred_col = None;
-    }
-
-    /// Step forward into newer history (Ctrl-N). Past the newest entry,
-    /// restores the saved draft.
-    fn history_next(&mut self) {
-        let Some(pos) = self.history_pos else {
-            return;
-        };
-        if pos + 1 < self.history.len() {
-            self.history_pos = Some(pos + 1);
-            self.editor.buffer = self.history[pos + 1].clone();
-        } else {
-            self.editor.buffer = std::mem::take(&mut self.history_draft);
-            self.history_pos = None;
-        }
-        self.editor.cursor = self.editor.buffer.len();
-        self.editor.preferred_col = None;
-    }
-
-    /// Ctrl-R from the editor — enter reverse-incremental history
-    /// search. Snapshots the buffer/cursor so Esc can restore them;
-    /// then begins searching from the newest history entry. The
-    /// initial query is empty, so the most-recent entry shows by
-    /// default (matches bash's "Ctrl-R then Enter recalls the last
-    /// command" idiom). If history is empty, surface a status and
-    /// stay in editor mode.
-    fn start_history_search(&mut self) {
-        if self.history.is_empty() {
-            self.last_status = Some("history is empty".to_string());
-            return;
-        }
-        let saved_buffer = self.editor.buffer.clone();
-        let saved_cursor = self.editor.cursor;
-        let initial = self.history.len() - 1;
-        self.history_search = Some(HistorySearchState {
-            query: String::new(),
-            matched: Some(initial),
-            saved_buffer,
-            saved_cursor,
-        });
-        // Mirror the most-recent entry into the buffer so the
-        // operator can see what they'd commit to with Enter.
-        self.editor.buffer = self.history[initial].clone();
-        self.editor.cursor = self.editor.buffer.len();
-        self.mode = Mode::HistorySearch;
-        self.refresh_history_search_status();
-    }
-
-    /// Sync the footer status to the active history-search session —
-    /// `(reverse-i-search) 'query'` when there's a match, or
-    /// `(failed reverse-i-search) 'query'` when not (mirroring bash).
-    fn refresh_history_search_status(&mut self) {
-        let Some(state) = self.history_search.as_ref() else {
-            return;
-        };
-        self.last_status = Some(match state.matched {
-            Some(_) => format!("(reverse-i-search) '{}'", state.query),
-            None => format!("(failed reverse-i-search) '{}'", state.query),
-        });
-    }
-
-    /// Reverse-incremental search step: starting from
-    /// `state.matched.unwrap_or(history.len())`, walk backward (older)
-    /// looking for an entry whose lowercased text contains the lower-
-    /// cased query as a substring. Updates `state.matched` and the
-    /// editor buffer in place.
-    fn history_search_step(&mut self, from_index: Option<usize>) {
-        let Some(state) = self.history_search.as_ref() else {
-            return;
-        };
-        let found = history_search_next(&self.history, &state.query, from_index);
-        // Borrow `history_search` mutably for the write of `matched`.
-        if let Some(s) = self.history_search.as_mut() {
-            s.matched = found;
-        }
-        if let Some(i) = found {
-            self.editor.buffer = self.history[i].clone();
-            self.editor.cursor = self.editor.buffer.len();
-        }
-        // If `found` is None we leave the buffer alone (showing the
-        // last good match) — same UX as bash, where a failed search
-        // displays `(failed reverse-i-search)` but keeps the prior
-        // match on screen.
     }
 
     /// Spawn a `COMMIT` or `ROLLBACK` of the open transaction.
@@ -2924,47 +2703,6 @@ impl App {
         RowKey::FullRow
     }
 
-    fn yank_row_as_insert(&mut self) {
-        let Some((schema, table)) = self.grid_view.source.clone() else {
-            self.last_error = Some(
-                "can't infer source table — row-as-INSERT only works for single-table SELECTs"
-                    .into(),
-            );
-            return;
-        };
-        let Some(idx) = self.selected_grid_row_idx() else {
-            return;
-        };
-        let Some(row) = self.grid.rows.get(idx) else {
-            return;
-        };
-        let cols = self
-            .grid
-            .columns
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let vals = row
-            .iter()
-            .map(|s| format_sql_literal(s))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});");
-        match arboard::Clipboard::new() {
-            Ok(mut cb) => match cb.set_text(sql.clone()) {
-                Ok(()) => {
-                    self.last_status = Some(format!(
-                        "copied INSERT for {schema}.{table} · {} char(s)",
-                        sql.len()
-                    ));
-                }
-                Err(e) => self.last_error = Some(format!("clipboard write: {e}")),
-            },
-            Err(e) => self.last_error = Some(format!("clipboard init: {e}")),
-        }
-    }
-
     /// `Y` in Normal mode — copy the (sorted, filtered) grid to the
     /// clipboard as CSV. `arboard` is already a dep for cell yank.
     fn export_grid_to_clipboard(&mut self) {
@@ -3144,30 +2882,6 @@ impl App {
         }
     }
 
-    /// Yank the focused finding's `suggestion` (an SQL snippet)
-    /// to the clipboard so the operator can paste it into the
-    /// editor. Surfaces an actionable status when the finding has
-    /// no suggestion (LINT002 / LINT003 / LINT004 are advisory).
-    fn yank_schema_lint_suggestion(&mut self) {
-        let Some(finding) = self.schema_lint.findings.get(self.schema_lint.cursor) else {
-            return;
-        };
-        let Some(snippet) = finding.suggestion.clone() else {
-            self.last_status = Some(format!(
-                "{}: no SQL suggestion — advisory finding",
-                finding.code
-            ));
-            return;
-        };
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(snippet.clone())) {
-            Ok(()) => {
-                self.last_status = Some(format!("yanked {} suggestion", finding.code));
-                self.last_error = None;
-            }
-            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
-        }
-    }
-
     fn start_schema_browser_filter(&mut self) {
         self.schema_browser.filter = Some(String::new());
         self.schema_browser.cursor = 0;
@@ -3181,65 +2895,6 @@ impl App {
         self.last_status = Some(format!(
             "filter: /{pat}  · {n} row(s) · enter accept · esc clear"
         ));
-    }
-
-    /// Resolve the focused schema-browser row to its owning
-    /// (schema, table) — returns None when focused on a Schema row
-    /// (no table context) or when the cursor is out-of-bounds.
-    /// Column / Constraint rows resolve to their parent table.
-    fn focused_schema_browser_table(&self) -> Option<(String, String)> {
-        let rows = self.flattened_schema_browser();
-        match rows.get(self.schema_browser.cursor)? {
-            SchemaBrowserRow::Table { schema, name, .. } => Some((schema.clone(), name.clone())),
-            SchemaBrowserRow::Column { schema, table, .. } => Some((schema.clone(), table.clone())),
-            SchemaBrowserRow::Constraint { schema, table, .. } => {
-                Some((schema.clone(), table.clone()))
-            }
-            SchemaBrowserRow::Schema { .. } => None,
-        }
-    }
-
-    fn yank_schema_browser_select(&mut self) {
-        let Some((schema, table)) = self.focused_schema_browser_table() else {
-            self.last_error = Some("focus a table, column, or constraint first".into());
-            return;
-        };
-        let sql = build_select_all_template(&schema, &table);
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(sql.clone())) {
-            Ok(()) => {
-                self.last_status = Some(format!("yanked SELECT template for {schema}.{table}"));
-                self.last_error = None;
-            }
-            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
-        }
-    }
-
-    fn yank_schema_browser_insert(&mut self) {
-        let Some((schema, table)) = self.focused_schema_browser_table() else {
-            self.last_error = Some("focus a table, column, or constraint first".into());
-            return;
-        };
-        let cols = self
-            .schema_cache
-            .columns_by_table
-            .get(&(schema.clone(), table.clone()))
-            .cloned()
-            .unwrap_or_default();
-        if cols.is_empty() {
-            self.last_error = Some(format!("no column info cached for {schema}.{table}"));
-            return;
-        }
-        let sql = build_insert_template(&schema, &table, &cols);
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(sql.clone())) {
-            Ok(()) => {
-                self.last_status = Some(format!(
-                    "yanked INSERT template for {schema}.{table} · {} col(s)",
-                    cols.len()
-                ));
-                self.last_error = None;
-            }
-            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
-        }
     }
 
     /// `T` from Normal — load + open the slow-queries panel.
