@@ -826,7 +826,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             };
             prefix + s.query.chars().count() as u16
         }),
-        Mode::SchemaBrowserFilter => app.schema_browser_filter.as_ref().map(|f| {
+        Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …" — same shape as
             // GridFilter.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
@@ -2846,14 +2846,14 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
 
     // Left: scrollable tree.
     let visible_h = left.height as usize;
-    let scroll = if app.schema_browser_cursor >= visible_h {
-        app.schema_browser_cursor + 1 - visible_h
+    let scroll = if app.schema_browser.cursor >= visible_h {
+        app.schema_browser.cursor + 1 - visible_h
     } else {
         0
     };
     let mut lines: Vec<Line> = Vec::new();
     for (i, row) in rows.iter().enumerate().skip(scroll).take(visible_h) {
-        let is_focus = i == app.schema_browser_cursor;
+        let is_focus = i == app.schema_browser.cursor;
         let style = if is_focus {
             Style::default()
                 .fg(theme.text)
@@ -2910,7 +2910,7 @@ fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
 
     // Right: details for the focused row.
     let mut right_lines: Vec<Line> = Vec::new();
-    match rows.get(app.schema_browser_cursor) {
+    match rows.get(app.schema_browser.cursor) {
         Some(SchemaBrowserRow::Schema {
             name, table_count, ..
         }) => {
@@ -3436,7 +3436,7 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     // shown/total count so a narrowed list is obvious.
     let visible = app.visible_saved_indices();
     let total = app.saved_queries.entries.len();
-    let title = match app.saved_queries_filter.as_ref().map(|t| t.text()) {
+    let title = match app.saved_ui.filter.as_ref().map(|t| t.text()) {
         Some(f) => format!(
             " saved queries — /{f}  ({}/{} shown) · enter load · esc clear ",
             visible.len(),
@@ -3476,10 +3476,7 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
             Paragraph::new(Text::from(vec![Line::from(Span::styled(
                 format!(
                     "no saved queries match '{}'",
-                    app.saved_queries_filter
-                        .as_ref()
-                        .map(|t| t.text())
-                        .unwrap_or("")
+                    app.saved_ui.filter.as_ref().map(|t| t.text()).unwrap_or("")
                 ),
                 Style::default().fg(theme.muted),
             ))])),
@@ -3495,7 +3492,7 @@ fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
     let top = split[0];
     let detail = split[1];
 
-    let cursor = app.saved_queries_cursor.min(visible.len() - 1);
+    let cursor = app.saved_ui.cursor.min(visible.len() - 1);
     let visible_h = top.height as usize;
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
@@ -3558,7 +3555,7 @@ fn draw_rename_prompt(f: &mut Frame, area: Rect, app: &App) {
         .title(Span::styled(
             format!(
                 " rename '{}' · enter save · esc cancel ",
-                app.rename_query_from
+                app.saved_ui.rename_from
             ),
             Style::default().fg(theme.title),
         ));
@@ -3567,12 +3564,12 @@ fn draw_rename_prompt(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::from(Span::styled("new name:", Style::default().fg(theme.muted))),
         Line::from(Span::styled(
-            app.rename_query_buffer.text().to_string(),
+            app.saved_ui.rename_buf.text().to_string(),
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         )),
     ];
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
-    let x = inner.x + app.rename_query_buffer.cursor_col() as u16;
+    let x = inner.x + app.saved_ui.rename_buf.cursor_col() as u16;
     let y = inner.y + 1;
     if x < inner.x + inner.width {
         f.set_cursor_position((x, y));
@@ -3600,14 +3597,14 @@ fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![
         Line::from(Span::styled("name:", Style::default().fg(theme.muted))),
         Line::from(Span::styled(
-            app.save_query_name.clone(),
+            app.saved_ui.save_name.clone(),
             Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
         )),
     ];
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
     // Place the terminal cursor at end of the typed name.
     let prefix = 0u16; // already on its own line, no leading indent here
-    let x = inner.x + prefix + app.save_query_name.chars().count() as u16;
+    let x = inner.x + prefix + app.saved_ui.save_name.chars().count() as u16;
     let y = inner.y + 1; // second line of the popup body
     if x < inner.x + inner.width {
         f.set_cursor_position((x, y));
@@ -3620,7 +3617,7 @@ fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
 /// operator can see what they've filled.
 fn draw_param_prompt(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let Some(pp) = app.param_prompt.as_ref() else {
+    let Some(pp) = app.saved_ui.param_prompt.as_ref() else {
         return;
     };
     let w = 70u16.min(area.width.saturating_sub(2));

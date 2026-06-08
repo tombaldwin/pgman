@@ -141,14 +141,14 @@ pub enum Mode {
     /// `:param` value prompt shown when loading a saved query that
     /// contains named placeholders. One prompt per distinct
     /// placeholder; Enter advances, Esc cancels back to the list.
-    /// State lives in `App::param_prompt`.
+    /// State lives in `App::saved_ui.param_prompt`.
     ParamPrompt,
     /// Live substring search over the saved-queries panel (`/`
     /// from `SavedQueries`). Each char narrows the list in place;
     /// Enter accepts (keeps the filter), Esc clears it.
     SavedQueriesFilter,
     /// Rename prompt for the focused saved query (`r` from
-    /// `SavedQueries`). Edits `App::rename_query_buffer`; Enter
+    /// `SavedQueries`). Edits `App::saved_ui.rename_buf`; Enter
     /// commits (refused on name collision), Esc cancels.
     RenameQueryPrompt,
     /// JDBC-tap event monitor (`F4` from anywhere). Lists
@@ -1287,6 +1287,46 @@ impl TapNavState {
     }
 }
 
+/// Modal/interaction state for the saved-queries panel and its prompts.
+/// The store itself (`App::saved_queries`) stays separate — only the UI
+/// cursor / typed buffers / active prompts live here.
+#[derive(Debug, Default)]
+pub struct SavedQueriesUi {
+    /// Cursor into `saved_queries.entries` for the panel.
+    pub cursor: usize,
+    /// Name being typed in `Mode::SaveQueryPrompt`.
+    pub save_name: String,
+    /// Active `:param` collection while loading a parameterised
+    /// saved query (`Mode::ParamPrompt`). `None` otherwise.
+    pub param_prompt: Option<ParamPrompt>,
+    /// Live substring filter for the saved-queries panel
+    /// (`Mode::SavedQueriesFilter`). `None` = show everything.
+    /// Matches case-insensitively on name OR body.
+    pub filter: Option<TextInput>,
+    /// Input buffer for `Mode::RenameQueryPrompt` (the new name
+    /// being typed).
+    pub rename_buf: TextInput,
+    /// The original name being renamed.
+    pub rename_from: String,
+}
+
+/// Schema-browser navigation/modal state — cursor, in-tree filter, and
+/// the set of expanded schema/table nodes.
+#[derive(Debug, Default)]
+pub struct SchemaBrowserUi {
+    /// Schema browser cursor — index into the flattened
+    /// (post-expand-state) row list.
+    pub cursor: usize,
+    /// Active in-tree filter; `Some` when typing or accepted (Enter
+    /// keeps it applied). `None` = no filter. Empty string while in
+    /// SchemaBrowserFilter mode is fine — it just means "show
+    /// everything until the operator types something."
+    pub filter: Option<String>,
+    /// Names of schemas the operator has expanded. Schemas start
+    /// collapsed; the operator picks which to drill into.
+    pub expanded: std::collections::HashSet<String>,
+}
+
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
@@ -1430,21 +1470,8 @@ pub struct App {
     /// Persisted saved queries — loaded at startup, written back
     /// on quit (and on save / delete during the session).
     pub saved_queries: crate::saved::SavedQueries,
-    /// Cursor into `saved_queries.entries` for the panel.
-    pub saved_queries_cursor: usize,
-    /// Name being typed in `Mode::SaveQueryPrompt`.
-    pub save_query_name: String,
-    /// Active `:param` collection while loading a parameterised
-    /// saved query (`Mode::ParamPrompt`). `None` otherwise.
-    pub param_prompt: Option<ParamPrompt>,
-    /// Live substring filter for the saved-queries panel
-    /// (`Mode::SavedQueriesFilter`). `None` = show everything.
-    /// Matches case-insensitively on name OR body.
-    pub saved_queries_filter: Option<TextInput>,
-    /// Input buffer for `Mode::RenameQueryPrompt` (the new name
-    /// being typed), and the original name being renamed.
-    pub rename_query_buffer: TextInput,
-    pub rename_query_from: String,
+    /// Modal/interaction state for the saved-queries panel.
+    pub saved_ui: SavedQueriesUi,
     /// Saved state for the non-active tabs. The active tab's
     /// state always lives in the per-session fields above; on
     /// switch we snapshot out / load in.
@@ -1556,23 +1583,14 @@ pub struct App {
     /// the operator has collapsed. The renderer hides anything below
     /// these.
     pub explain_collapsed: std::collections::HashSet<Vec<usize>>,
-    /// Schema browser cursor — index into the flattened
-    /// (post-expand-state) row list.
-    pub schema_browser_cursor: usize,
-    /// Active in-tree filter; `Some` when typing or accepted (Enter
-    /// keeps it applied). `None` = no filter. Empty string while in
-    /// SchemaBrowserFilter mode is fine — it just means "show
-    /// everything until the operator types something."
-    pub schema_browser_filter: Option<String>,
+    /// Schema-browser navigation/modal state (cursor, filter, expanded set).
+    pub schema_browser: SchemaBrowserUi,
     /// Findings produced by `query::lint::run_all` over the
     /// current schema cache. Rebuilt on entry to `Mode::SchemaLint`
     /// (cheap — pure pass over the cache).
     pub schema_lint_findings: Vec<crate::query::lint::Finding>,
     /// Cursor into `schema_lint_findings`.
     pub schema_lint_cursor: usize,
-    /// Names of schemas the operator has expanded. Schemas start
-    /// collapsed; the operator picks which to drill into.
-    pub schema_browser_expanded: std::collections::HashSet<String>,
     /// Most recent `pg_stat_statements` snapshot, when
     /// `Mode::SlowQueries` is active.
     pub slow_queries: Vec<crate::query::slow_queries::SlowQueryRow>,
@@ -1709,12 +1727,7 @@ impl App {
             tap_health: TapHealth::default(),
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
-            saved_queries_cursor: 0,
-            save_query_name: String::new(),
-            param_prompt: None,
-            saved_queries_filter: None,
-            rename_query_buffer: TextInput::new(),
-            rename_query_from: String::new(),
+            saved_ui: SavedQueriesUi::default(),
             // Start with a single tab whose state IS the per-
             // session fields. The Vec entry is a placeholder that
             // gets refreshed on every tab switch.
@@ -1748,9 +1761,7 @@ impl App {
             explain_plan: None,
             explain_cursor: 0,
             explain_collapsed: std::collections::HashSet::new(),
-            schema_browser_cursor: 0,
-            schema_browser_expanded: std::collections::HashSet::new(),
-            schema_browser_filter: None,
+            schema_browser: SchemaBrowserUi::default(),
             schema_lint_findings: Vec::new(),
             schema_lint_cursor: 0,
             slow_queries: Vec::new(),
@@ -2936,7 +2947,7 @@ impl App {
         // buffer with a non-identifier sanitisation, so the
         // operator has a starting point. They can backspace and
         // type their own.
-        self.save_query_name = default_query_name(&self.editor_buffer);
+        self.saved_ui.save_name = default_query_name(&self.editor_buffer);
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }
@@ -2948,9 +2959,10 @@ impl App {
             self.last_status = Some("no saved queries · Ctrl-S in editor to save one".into());
             return;
         }
-        self.saved_queries_filter = None;
-        self.saved_queries_cursor = self
-            .saved_queries_cursor
+        self.saved_ui.filter = None;
+        self.saved_ui.cursor = self
+            .saved_ui
+            .cursor
             .min(self.saved_queries.entries.len() - 1);
         self.last_status = Some(format!(
             "saved queries · {} entries",
@@ -2973,7 +2985,7 @@ impl App {
             "'{}' needs {n} value(s) · enter each · esc cancels",
             q.name
         ));
-        self.param_prompt = Some(ParamPrompt {
+        self.saved_ui.param_prompt = Some(ParamPrompt {
             query_name: q.name,
             template: q.body,
             params,
@@ -3000,7 +3012,7 @@ impl App {
     pub fn visible_saved_indices(&self) -> Vec<usize> {
         filter_saved_indices(
             &self.saved_queries.entries,
-            self.saved_queries_filter.as_ref().map(|t| t.text()),
+            self.saved_ui.filter.as_ref().map(|t| t.text()),
         )
     }
 
@@ -3008,13 +3020,13 @@ impl App {
     /// through the current filter. `None` when nothing matches.
     fn focused_saved_index(&self) -> Option<usize> {
         self.visible_saved_indices()
-            .get(self.saved_queries_cursor)
+            .get(self.saved_ui.cursor)
             .copied()
     }
 
     fn start_saved_queries_filter(&mut self) {
-        self.saved_queries_filter = Some(TextInput::new());
-        self.saved_queries_cursor = 0;
+        self.saved_ui.filter = Some(TextInput::new());
+        self.saved_ui.cursor = 0;
         self.mode = Mode::SavedQueriesFilter;
         self.last_status = Some("filter saved queries · type to narrow".into());
     }
@@ -3028,8 +3040,8 @@ impl App {
             self.last_status = Some("nothing to rename".into());
             return;
         };
-        self.rename_query_from = name.clone();
-        self.rename_query_buffer = TextInput::with_text(name);
+        self.saved_ui.rename_from = name.clone();
+        self.saved_ui.rename_buf = TextInput::with_text(name);
         self.mode = Mode::RenameQueryPrompt;
         self.last_status = Some("rename · edit name · enter save · esc cancel".into());
     }
@@ -4284,12 +4296,12 @@ impl App {
         // table so matches deep in the tree are visible without the
         // operator having to manually expand each ancestor. Then
         // run the row-level filter.
-        let filter = self.schema_browser_filter.as_deref().unwrap_or("");
+        let filter = self.schema_browser.filter.as_deref().unwrap_or("");
         let expanded_owned: std::collections::HashSet<String>;
         let expanded_ref: &std::collections::HashSet<String> = if filter.is_empty() {
-            &self.schema_browser_expanded
+            &self.schema_browser.expanded
         } else {
-            let mut s = self.schema_browser_expanded.clone();
+            let mut s = self.schema_browser.expanded.clone();
             for t in &self.schema_cache.tables {
                 s.insert(t.schema.clone());
                 s.insert(schema_browser_table_key(&t.schema, &t.name));
@@ -4313,7 +4325,7 @@ impl App {
             self.last_status = Some("schema cache empty — connect to a database first".into());
             return;
         }
-        self.schema_browser_cursor = 0;
+        self.schema_browser.cursor = 0;
         self.mode = Mode::SchemaBrowser;
     }
 
@@ -4378,14 +4390,14 @@ impl App {
     }
 
     fn start_schema_browser_filter(&mut self) {
-        self.schema_browser_filter = Some(String::new());
-        self.schema_browser_cursor = 0;
+        self.schema_browser.filter = Some(String::new());
+        self.schema_browser.cursor = 0;
         self.last_status = Some("filter: /  · type to narrow · enter accept · esc clear".into());
         self.mode = Mode::SchemaBrowserFilter;
     }
 
     fn refresh_schema_browser_filter_status(&mut self) {
-        let pat = self.schema_browser_filter.as_deref().unwrap_or("");
+        let pat = self.schema_browser.filter.as_deref().unwrap_or("");
         let n = self.flattened_schema_browser().len();
         self.last_status = Some(format!(
             "filter: /{pat}  · {n} row(s) · enter accept · esc clear"
@@ -4398,7 +4410,7 @@ impl App {
     /// Column / Constraint rows resolve to their parent table.
     fn focused_schema_browser_table(&self) -> Option<(String, String)> {
         let rows = self.flattened_schema_browser();
-        match rows.get(self.schema_browser_cursor)? {
+        match rows.get(self.schema_browser.cursor)? {
             SchemaBrowserRow::Table { schema, name, .. } => Some((schema.clone(), name.clone())),
             SchemaBrowserRow::Column { schema, table, .. } => Some((schema.clone(), table.clone())),
             SchemaBrowserRow::Constraint { schema, table, .. } => {
@@ -6708,7 +6720,7 @@ mod tests {
         a.load_saved_query(saved("plain", "SELECT 1"));
         assert_eq!(a.mode, Mode::Editor);
         assert_eq!(a.editor_buffer, "SELECT 1");
-        assert!(a.param_prompt.is_none());
+        assert!(a.saved_ui.param_prompt.is_none());
     }
 
     #[test]
@@ -6717,7 +6729,7 @@ mod tests {
         a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id"));
         assert_eq!(a.mode, Mode::ParamPrompt);
         assert_eq!(
-            a.param_prompt.as_ref().unwrap().params,
+            a.saved_ui.param_prompt.as_ref().unwrap().params,
             vec!["id".to_string()]
         );
     }
@@ -6733,12 +6745,12 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Enter));
         // First value taken; still prompting for the second.
         assert_eq!(a.mode, Mode::ParamPrompt);
-        assert_eq!(a.param_prompt.as_ref().unwrap().idx, 1);
+        assert_eq!(a.saved_ui.param_prompt.as_ref().unwrap().idx, 1);
         type_str(&mut a, "7");
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::Editor);
         assert_eq!(a.editor_buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
-        assert!(a.param_prompt.is_none());
+        assert!(a.saved_ui.param_prompt.is_none());
     }
 
     #[test]
@@ -6746,7 +6758,7 @@ mod tests {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.load_saved_query(saved("dup", "SELECT :x WHERE a = :x"));
         // Only one prompt (distinct param), substituted everywhere.
-        assert_eq!(a.param_prompt.as_ref().unwrap().params.len(), 1);
+        assert_eq!(a.saved_ui.param_prompt.as_ref().unwrap().params.len(), 1);
         type_str(&mut a, "9");
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.editor_buffer, "SELECT 9 WHERE a = 9");
@@ -6771,7 +6783,7 @@ mod tests {
         a.load_saved_query(saved("byid", "WHERE id = :id"));
         a.on_key(KeyEvent::from(KeyCode::Esc));
         assert_eq!(a.mode, Mode::SavedQueries);
-        assert!(a.param_prompt.is_none());
+        assert!(a.saved_ui.param_prompt.is_none());
     }
 
     #[test]
@@ -6829,20 +6841,14 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('/')));
         assert_eq!(a.mode, Mode::SavedQueriesFilter);
         type_str(&mut a, "ord");
-        assert_eq!(
-            a.saved_queries_filter.as_ref().map(|t| t.text()),
-            Some("ord")
-        );
+        assert_eq!(a.saved_ui.filter.as_ref().map(|t| t.text()), Some("ord"));
         assert_eq!(a.visible_saved_indices(), vec![1]);
         // Cursor 0 in the filtered view maps to real entry index 1.
         assert_eq!(a.focused_saved_index(), Some(1));
         // Enter keeps the filter applied and returns to navigation.
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::SavedQueries);
-        assert_eq!(
-            a.saved_queries_filter.as_ref().map(|t| t.text()),
-            Some("ord")
-        );
+        assert_eq!(a.saved_ui.filter.as_ref().map(|t| t.text()), Some("ord"));
     }
 
     #[test]
@@ -6853,7 +6859,7 @@ mod tests {
         type_str(&mut a, "ord");
         a.on_key(KeyEvent::from(KeyCode::Esc));
         assert_eq!(a.mode, Mode::SavedQueries);
-        assert!(a.saved_queries_filter.is_none());
+        assert!(a.saved_ui.filter.is_none());
     }
 
     #[test]
@@ -6873,8 +6879,8 @@ mod tests {
         a.open_saved_queries();
         a.on_key(KeyEvent::from(KeyCode::Char('r')));
         assert_eq!(a.mode, Mode::RenameQueryPrompt);
-        assert_eq!(a.rename_query_buffer.text(), "old");
-        assert_eq!(a.rename_query_from, "old");
+        assert_eq!(a.saved_ui.rename_buf.text(), "old");
+        assert_eq!(a.saved_ui.rename_from, "old");
     }
 
     #[test]
@@ -7431,7 +7437,7 @@ mod tests {
         let mut a = app_with_schemas();
         a.mode = Mode::SchemaBrowser;
         // Focus row 1 (public).
-        a.schema_browser_cursor = 1;
+        a.schema_browser.cursor = 1;
         a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         let rows = a.flattened_schema_browser();
         // Now: audit (collapsed), public (expanded), orders, users.
@@ -7458,7 +7464,7 @@ mod tests {
             a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
         }
         // Only 2 visible rows (schemas collapsed); cursor at 1.
-        assert_eq!(a.schema_browser_cursor, 1);
+        assert_eq!(a.schema_browser.cursor, 1);
     }
 
     #[test]
@@ -7480,11 +7486,11 @@ mod tests {
         }];
         a.mode = Mode::SchemaBrowser;
         // Expand "public" first, then drill into "users".
-        a.schema_browser_cursor = 1; // public
+        a.schema_browser.cursor = 1; // public
         a.on_key(KeyEvent::from(KeyCode::Enter));
         // Now rows: audit, public(expanded), orders, users.
         // Move to "users" (row 3) and toggle.
-        a.schema_browser_cursor = 3;
+        a.schema_browser.cursor = 3;
         a.on_key(KeyEvent::from(KeyCode::Enter));
         let rows = a.flattened_schema_browser();
         // audit, public, orders, users(expanded), id, email, users_pkey.
@@ -7517,11 +7523,12 @@ mod tests {
         let mut a = app_with_schemas();
         a.mode = Mode::SchemaBrowser;
         // Expand "public", expand "public.users".
-        a.schema_browser_expanded.insert("public".into());
-        a.schema_browser_expanded
+        a.schema_browser.expanded.insert("public".into());
+        a.schema_browser
+            .expanded
             .insert(schema_browser_table_key("public", "users"));
         // Now collapse "public" again.
-        a.schema_browser_cursor = 1;
+        a.schema_browser.cursor = 1;
         a.on_key(KeyEvent::from(KeyCode::Enter));
         let rows = a.flattened_schema_browser();
         // Only the two schema rows are visible.
@@ -7650,7 +7657,7 @@ mod tests {
     fn schema_browser_s_on_schema_row_surfaces_error_not_garbage() {
         let mut a = app_with_schemas();
         a.mode = Mode::SchemaBrowser;
-        a.schema_browser_cursor = 0; // a schema row
+        a.schema_browser.cursor = 0; // a schema row
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
         assert!(a.last_error.is_some());
     }
@@ -7659,7 +7666,7 @@ mod tests {
     fn schema_browser_i_with_no_cached_columns_surfaces_error() {
         let mut a = app_with_schemas();
         // public.orders has no columns_by_table entry.
-        a.schema_browser_expanded.insert("public".into());
+        a.schema_browser.expanded.insert("public".into());
         a.mode = Mode::SchemaBrowser;
         // Walk to orders.
         let rows = a.flattened_schema_browser();
@@ -7667,7 +7674,7 @@ mod tests {
             .iter()
             .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
             .unwrap();
-        a.schema_browser_cursor = idx;
+        a.schema_browser.cursor = idx;
         a.on_key(KeyEvent::from(KeyCode::Char('i')));
         let err = a.last_error.as_deref().unwrap_or("");
         assert!(err.contains("no column info"), "got: {err}");
@@ -7926,7 +7933,7 @@ mod tests {
         a.mode = Mode::SchemaBrowser;
         a.on_key(KeyEvent::from(KeyCode::Char('/')));
         assert_eq!(a.mode, Mode::SchemaBrowserFilter);
-        assert_eq!(a.schema_browser_filter.as_deref(), Some(""));
+        assert_eq!(a.schema_browser.filter.as_deref(), Some(""));
     }
 
     #[test]
@@ -7951,7 +7958,7 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('u')));
         a.on_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert_eq!(a.schema_browser_filter.as_deref(), Some("au"));
+        assert_eq!(a.schema_browser.filter.as_deref(), Some("au"));
     }
 
     #[test]
@@ -7962,7 +7969,7 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('a')));
         a.on_key(KeyEvent::from(KeyCode::Esc));
         assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert!(a.schema_browser_filter.is_none());
+        assert!(a.schema_browser.filter.is_none());
     }
 
     fn synthetic_browser_rows() -> Vec<SchemaBrowserRow> {
@@ -8027,21 +8034,21 @@ mod tests {
         a.mode = Mode::SchemaBrowser;
         // Expand "public" so we have schema + tables + (collapsed)
         // schema below for an interesting jump.
-        a.schema_browser_expanded.insert("public".into());
+        a.schema_browser.expanded.insert("public".into());
         // Cursor at row 0 (audit schema, first).
-        a.schema_browser_cursor = 0;
+        a.schema_browser.cursor = 0;
         // `]` jumps to the next schema row.
         a.on_key(KeyEvent::from(KeyCode::Char(']')));
         let rows = a.flattened_schema_browser();
         assert!(matches!(
-            rows.get(a.schema_browser_cursor),
+            rows.get(a.schema_browser.cursor),
             Some(SchemaBrowserRow::Schema { name, .. }) if name == "public"
         ));
         // `[` goes back.
         a.on_key(KeyEvent::from(KeyCode::Char('[')));
         let rows = a.flattened_schema_browser();
         assert!(matches!(
-            rows.get(a.schema_browser_cursor),
+            rows.get(a.schema_browser.cursor),
             Some(SchemaBrowserRow::Schema { name, .. }) if name == "audit"
         ));
     }
@@ -8082,7 +8089,7 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('-')));
         // Back to one row per schema.
         assert_eq!(a.flattened_schema_browser().len(), 2);
-        assert!(a.schema_browser_expanded.is_empty());
+        assert!(a.schema_browser.expanded.is_empty());
     }
 
     #[test]
@@ -8091,11 +8098,11 @@ mod tests {
         a.mode = Mode::SchemaBrowser;
         // Synthetic: drive enough rows by expanding everything.
         a.on_key(KeyEvent::from(KeyCode::Char('+')));
-        a.schema_browser_cursor = 0;
+        a.schema_browser.cursor = 0;
         a.on_key(KeyEvent::from(KeyCode::PageDown));
         let rows_len = a.flattened_schema_browser().len();
         let expected = 10usize.min(rows_len.saturating_sub(1));
-        assert_eq!(a.schema_browser_cursor, expected);
+        assert_eq!(a.schema_browser.cursor, expected);
     }
 
     #[test]
@@ -8335,7 +8342,7 @@ mod tests {
         a.new_tab(); // two tabs, so close_active_tab would otherwise fire
         assert_eq!(a.tabs.len(), 2);
         a.mode = Mode::ParamPrompt;
-        a.param_prompt = Some(ParamPrompt {
+        a.saved_ui.param_prompt = Some(ParamPrompt {
             query_name: "q".into(),
             template: "SELECT :x".into(),
             params: vec!["x".into()],
@@ -8497,7 +8504,7 @@ mod tests {
         a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
         assert_eq!(a.mode, Mode::SaveQueryPrompt);
         // Type a name (the default is pre-filled but we overwrite).
-        a.save_query_name.clear();
+        a.saved_ui.save_name.clear();
         for c in "mine".chars() {
             a.on_key(KeyEvent::from(KeyCode::Char(c)));
         }
@@ -8549,7 +8556,7 @@ mod tests {
             body: "select 2".into(),
         });
         a.mode = Mode::SavedQueries;
-        a.saved_queries_cursor = 0;
+        a.saved_ui.cursor = 0;
         a.on_key(KeyEvent::from(KeyCode::Char('d')));
         assert_eq!(a.saved_queries.entries.len(), 1);
         assert_eq!(a.saved_queries.entries[0].name, "b");
@@ -9510,7 +9517,7 @@ mod tests {
         a.editor_cursor = a.editor_buffer.len();
         a.on_key(KeyEvent::from(KeyCode::F(5)));
         assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert_eq!(a.schema_browser_filter.as_deref(), Some("users"));
+        assert_eq!(a.schema_browser.filter.as_deref(), Some("users"));
         // Buffer cleared so a second F5 doesn't re-fire.
         assert!(a.editor_buffer.is_empty());
     }
@@ -9523,7 +9530,7 @@ mod tests {
         a.editor_cursor = a.editor_buffer.len();
         a.on_key(KeyEvent::from(KeyCode::F(5)));
         assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert!(a.schema_browser_filter.is_none());
+        assert!(a.schema_browser.filter.is_none());
     }
 
     #[test]
@@ -9749,12 +9756,12 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('a')));
         a.on_key(KeyEvent::from(KeyCode::Char('u')));
         a.on_key(KeyEvent::from(KeyCode::Enter)); // accept filter
-        assert_eq!(a.schema_browser_filter.as_deref(), Some("au"));
+        assert_eq!(a.schema_browser.filter.as_deref(), Some("au"));
         // Now close the browser via Esc from SchemaBrowser mode.
         a.on_key(KeyEvent::from(KeyCode::Esc));
         assert_eq!(a.mode, Mode::Normal);
         assert!(
-            a.schema_browser_filter.is_none(),
+            a.schema_browser.filter.is_none(),
             "filter should be cleared on browser close"
         );
     }
@@ -9764,16 +9771,16 @@ mod tests {
         let mut a = app_with_schemas();
         a.mode = Mode::SchemaBrowser;
         // Expand public so we have 4 visible rows; focus the last one.
-        a.schema_browser_expanded.insert("public".into());
-        a.schema_browser_cursor = 3;
+        a.schema_browser.expanded.insert("public".into());
+        a.schema_browser.cursor = 3;
         // Collapse public (focused on "public" row at index 1 won't
         // collapse if we're focused on a Table — move focus first).
-        a.schema_browser_cursor = 1;
+        a.schema_browser.cursor = 1;
         a.on_key(KeyEvent::from(KeyCode::Enter));
         // After collapse, only the 2 schema rows remain. Cursor must
         // be inside [0, 1], not the stale 3.
         let rows = a.flattened_schema_browser();
-        assert!(a.schema_browser_cursor < rows.len());
+        assert!(a.schema_browser.cursor < rows.len());
     }
 
     #[test]
@@ -9791,7 +9798,7 @@ mod tests {
                 name: "users_email_uk".into(),
             },
         ];
-        a.schema_browser_expanded.insert("public".into());
+        a.schema_browser.expanded.insert("public".into());
         let rows = a.flattened_schema_browser();
         let users = rows
             .iter()

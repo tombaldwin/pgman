@@ -273,12 +273,12 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
-                self.save_query_name.clear();
+                self.saved_ui.save_name.clear();
                 self.last_status = Some("save cancelled".into());
                 self.mode = Mode::Editor;
             }
             KeyCode::Enter => {
-                let name = self.save_query_name.trim().to_string();
+                let name = self.saved_ui.save_name.trim().to_string();
                 if name.is_empty() {
                     self.last_status = Some("name required".into());
                     return;
@@ -298,14 +298,14 @@ impl App {
                     "saved query '{name}' ({})",
                     if replaced { "replaced" } else { "new" }
                 ));
-                self.save_query_name.clear();
+                self.saved_ui.save_name.clear();
                 self.mode = Mode::Editor;
             }
             KeyCode::Backspace => {
-                self.save_query_name.pop();
+                self.saved_ui.save_name.pop();
             }
             KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                self.save_query_name.push(c);
+                self.saved_ui.save_name.push(c);
             }
             _ => {}
         }
@@ -314,7 +314,7 @@ impl App {
     pub(super) fn on_param_prompt_key(&mut self, key: KeyEvent) {
         // Take the prompt out so the completion path can borrow
         // `self` mutably (to load the editor) without aliasing.
-        let Some(mut pp) = self.param_prompt.take() else {
+        let Some(mut pp) = self.saved_ui.param_prompt.take() else {
             self.mode = Mode::Normal;
             return;
         };
@@ -330,7 +330,7 @@ impl App {
                     // Empty would splice into broken SQL — make the
                     // operator type something (or esc to cancel).
                     self.last_status = Some("value required (esc to cancel)".into());
-                    self.param_prompt = Some(pp);
+                    self.saved_ui.param_prompt = Some(pp);
                     return;
                 }
                 pp.values.push(val);
@@ -348,14 +348,14 @@ impl App {
                     let name = pp.query_name.clone();
                     self.load_sql_into_editor(sql, format!("loaded '{name}' with {n} param(s)"));
                 } else {
-                    self.param_prompt = Some(pp);
+                    self.saved_ui.param_prompt = Some(pp);
                 }
             }
             // All editing (insert / backspace / cursor move / word-delete)
             // routes through the shared single-line widget.
             _ => {
                 pp.input.handle_key(key);
-                self.param_prompt = Some(pp);
+                self.saved_ui.param_prompt = Some(pp);
             }
         }
     }
@@ -366,23 +366,23 @@ impl App {
         // the cursor clamp and again for the focused entry was wasteful.
         let visible = self.visible_saved_indices();
         let last = visible.len().saturating_sub(1);
-        let focused = visible.get(self.saved_queries_cursor).copied();
+        let focused = visible.get(self.saved_ui.cursor).copied();
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 // Leaving the panel clears the filter so the next
                 // open starts fresh.
-                self.saved_queries_filter = None;
+                self.saved_ui.filter = None;
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.saved_queries_cursor = (self.saved_queries_cursor + 1).min(last);
+                self.saved_ui.cursor = (self.saved_ui.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.saved_queries_cursor = self.saved_queries_cursor.saturating_sub(1);
+                self.saved_ui.cursor = self.saved_ui.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.saved_queries_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.saved_queries_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.saved_ui.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.saved_ui.cursor = last,
             KeyCode::Char('/') => self.start_saved_queries_filter(),
             KeyCode::Char('r') => self.start_rename_query(),
             KeyCode::Enter => {
@@ -415,8 +415,8 @@ impl App {
                         self.last_error = Some(format!("delete failed: {e}"));
                     }
                     let last_after = self.visible_saved_indices().len().saturating_sub(1);
-                    if self.saved_queries_cursor > last_after {
-                        self.saved_queries_cursor = last_after;
+                    if self.saved_ui.cursor > last_after {
+                        self.saved_ui.cursor = last_after;
                     }
                     self.last_status = Some(format!("deleted saved query '{name}'"));
                 }
@@ -430,8 +430,8 @@ impl App {
             KeyCode::Esc => {
                 // Cancel the search: drop the filter, back to the
                 // full list.
-                self.saved_queries_filter = None;
-                self.saved_queries_cursor = 0;
+                self.saved_ui.filter = None;
+                self.saved_ui.cursor = 0;
                 self.mode = Mode::SavedQueries;
                 self.last_status = None;
             }
@@ -444,11 +444,11 @@ impl App {
             // cursor only when the filter *text* changed (the visible set
             // may have shrunk) — not on bare cursor movement.
             _ => {
-                let filter = self.saved_queries_filter.get_or_insert_with(TextInput::new);
+                let filter = self.saved_ui.filter.get_or_insert_with(TextInput::new);
                 let before = filter.text().len();
                 filter.handle_key(key);
                 if filter.text().len() != before {
-                    self.saved_queries_cursor = 0;
+                    self.saved_ui.cursor = 0;
                 }
             }
         }
@@ -457,18 +457,18 @@ impl App {
     pub(super) fn on_rename_query_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
-                self.rename_query_buffer.clear();
-                self.rename_query_from.clear();
+                self.saved_ui.rename_buf.clear();
+                self.saved_ui.rename_from.clear();
                 self.mode = Mode::SavedQueries;
                 self.last_status = Some("rename cancelled".into());
             }
             KeyCode::Enter => {
-                let to = self.rename_query_buffer.trimmed().to_string();
+                let to = self.saved_ui.rename_buf.trimmed().to_string();
                 if to.is_empty() {
                     self.last_status = Some("name required (esc to cancel)".into());
                     return;
                 }
-                let from = self.rename_query_from.clone();
+                let from = self.saved_ui.rename_from.clone();
                 match self.saved_queries.rename(&from, &to) {
                     Ok(true) => {
                         if let Err(e) =
@@ -477,8 +477,8 @@ impl App {
                             self.last_error = Some(format!("rename save failed: {e}"));
                         }
                         self.last_status = Some(format!("renamed '{from}' → '{to}'"));
-                        self.rename_query_buffer.clear();
-                        self.rename_query_from.clear();
+                        self.saved_ui.rename_buf.clear();
+                        self.saved_ui.rename_from.clear();
                         self.mode = Mode::SavedQueries;
                     }
                     Ok(false) => {
@@ -494,7 +494,7 @@ impl App {
             }
             // Editing routes through the shared single-line widget.
             _ => {
-                self.rename_query_buffer.handle_key(key);
+                self.saved_ui.rename_buf.handle_key(key);
             }
         }
     }
@@ -1070,47 +1070,48 @@ impl App {
                 // Drop the in-tree filter on the way out so re-opening
                 // the browser shows the full tree, not a stale
                 // narrowed view.
-                self.schema_browser_filter = None;
+                self.schema_browser.filter = None;
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.schema_browser_cursor = (self.schema_browser_cursor + 1).min(last);
+                self.schema_browser.cursor = (self.schema_browser.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.schema_browser_cursor = self.schema_browser_cursor.saturating_sub(1);
+                self.schema_browser.cursor = self.schema_browser.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.schema_browser_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.schema_browser_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.schema_browser.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.schema_browser.cursor = last,
             KeyCode::PageDown => {
-                self.schema_browser_cursor = (self.schema_browser_cursor + 10).min(last);
+                self.schema_browser.cursor = (self.schema_browser.cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.schema_browser_cursor = self.schema_browser_cursor.saturating_sub(10);
+                self.schema_browser.cursor = self.schema_browser.cursor.saturating_sub(10);
             }
             KeyCode::Char(']') => {
                 // Jump to the next Schema-level row; useful for
                 // walking past a fully-expanded table's column
                 // list in one keypress.
                 if let Some(idx) =
-                    next_schema_row_idx(&rows, self.schema_browser_cursor, Direction::Forward)
+                    next_schema_row_idx(&rows, self.schema_browser.cursor, Direction::Forward)
                 {
-                    self.schema_browser_cursor = idx;
+                    self.schema_browser.cursor = idx;
                 }
             }
             KeyCode::Char('[') => {
                 if let Some(idx) =
-                    next_schema_row_idx(&rows, self.schema_browser_cursor, Direction::Backward)
+                    next_schema_row_idx(&rows, self.schema_browser.cursor, Direction::Backward)
                 {
-                    self.schema_browser_cursor = idx;
+                    self.schema_browser.cursor = idx;
                 }
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 // `+` (and the unshifted `=` alias) — expand every
                 // schema AND table in the cache. Cursor stays put.
                 for t in &self.schema_cache.tables {
-                    self.schema_browser_expanded.insert(t.schema.clone());
-                    self.schema_browser_expanded
+                    self.schema_browser.expanded.insert(t.schema.clone());
+                    self.schema_browser
+                        .expanded
                         .insert(schema_browser_table_key(&t.schema, &t.name));
                 }
                 self.last_status = Some("expanded all".into());
@@ -1118,10 +1119,10 @@ impl App {
             KeyCode::Char('-') | KeyCode::Char('_') => {
                 // `-` collapse all. Cursor clamps to the new last
                 // row because the visible-row count crashes.
-                self.schema_browser_expanded.clear();
+                self.schema_browser.expanded.clear();
                 let new_last = self.flattened_schema_browser().len().saturating_sub(1);
-                if self.schema_browser_cursor > new_last {
-                    self.schema_browser_cursor = new_last;
+                if self.schema_browser.cursor > new_last {
+                    self.schema_browser.cursor = new_last;
                 }
                 self.last_status = Some("collapsed all".into());
             }
@@ -1129,13 +1130,13 @@ impl App {
                 // Toggle the focused node's expanded state. Schema rows
                 // key on `"schema"`; table rows key on `"schema.table"`.
                 // Column / Constraint rows are leaves — no-op.
-                match rows.get(self.schema_browser_cursor) {
+                match rows.get(self.schema_browser.cursor) {
                     Some(SchemaBrowserRow::Schema { name, expanded, .. }) => {
                         let name = name.clone();
                         if *expanded {
-                            self.schema_browser_expanded.remove(&name);
+                            self.schema_browser.expanded.remove(&name);
                         } else {
-                            self.schema_browser_expanded.insert(name);
+                            self.schema_browser.expanded.insert(name);
                         }
                     }
                     Some(SchemaBrowserRow::Table {
@@ -1146,9 +1147,9 @@ impl App {
                     }) => {
                         let key = schema_browser_table_key(schema, name);
                         if *expanded {
-                            self.schema_browser_expanded.remove(&key);
+                            self.schema_browser.expanded.remove(&key);
                         } else {
-                            self.schema_browser_expanded.insert(key);
+                            self.schema_browser.expanded.insert(key);
                         }
                     }
                     _ => {}
@@ -1157,8 +1158,8 @@ impl App {
                 // cursor doesn't render out-of-range until the next
                 // j/k press.
                 let new_last = self.flattened_schema_browser().len().saturating_sub(1);
-                if self.schema_browser_cursor > new_last {
-                    self.schema_browser_cursor = new_last;
+                if self.schema_browser.cursor > new_last {
+                    self.schema_browser.cursor = new_last;
                 }
             }
             KeyCode::Char('s') => self.yank_schema_browser_select(),
@@ -1172,8 +1173,8 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
-                self.schema_browser_filter = None;
-                self.schema_browser_cursor = 0;
+                self.schema_browser.filter = None;
+                self.schema_browser.cursor = 0;
                 self.last_status = Some("filter cleared".into());
                 self.mode = Mode::SchemaBrowser;
             }
@@ -1181,24 +1182,24 @@ impl App {
                 // Accept: keep whatever's in the filter and pop back
                 // to SchemaBrowser navigation. An empty filter
                 // collapses to None (no filter applied).
-                if matches!(self.schema_browser_filter.as_deref(), Some("")) {
-                    self.schema_browser_filter = None;
+                if matches!(self.schema_browser.filter.as_deref(), Some("")) {
+                    self.schema_browser.filter = None;
                 }
                 self.last_status = None;
                 self.mode = Mode::SchemaBrowser;
             }
             KeyCode::Backspace => {
-                if let Some(f) = self.schema_browser_filter.as_mut() {
+                if let Some(f) = self.schema_browser.filter.as_mut() {
                     f.pop();
                 }
-                self.schema_browser_cursor = 0;
+                self.schema_browser.cursor = 0;
                 self.refresh_schema_browser_filter_status();
             }
             KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
-                if let Some(f) = self.schema_browser_filter.as_mut() {
+                if let Some(f) = self.schema_browser.filter.as_mut() {
                     f.push(c);
                 }
-                self.schema_browser_cursor = 0;
+                self.schema_browser.cursor = 0;
                 self.refresh_schema_browser_filter_status();
             }
             _ => {}
