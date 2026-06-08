@@ -5,6 +5,34 @@
 
 use super::*;
 
+/// Shared list-cursor navigation for the panel state structs that own
+/// both their rows and the cursor into them. Centralises the in-range
+/// clamp (previously hand-written at each key handler).
+pub trait ListCursorNav {
+    fn nav_len(&self) -> usize;
+    fn nav_cursor(&self) -> usize;
+    fn nav_set(&mut self, i: usize);
+
+    fn select_next(&mut self) {
+        self.nav_set((self.nav_cursor() + 1).min(self.nav_len().saturating_sub(1)));
+    }
+    fn select_prev(&mut self) {
+        self.nav_set(self.nav_cursor().saturating_sub(1));
+    }
+    fn select_first(&mut self) {
+        self.nav_set(0);
+    }
+    fn select_last(&mut self) {
+        self.nav_set(self.nav_len().saturating_sub(1));
+    }
+    fn page_down(&mut self) {
+        self.nav_set((self.nav_cursor() + 10).min(self.nav_len().saturating_sub(1)));
+    }
+    fn page_up(&mut self) {
+        self.nav_set(self.nav_cursor().saturating_sub(10));
+    }
+}
+
 /// Which view the LogPick popup is rendering. Toggle with `c`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogPickView {
@@ -627,6 +655,21 @@ pub struct LogPickUi {
     pub index: usize,
 }
 
+impl ListCursorNav for LogPickUi {
+    fn nav_len(&self) -> usize {
+        match self.view {
+            LogPickView::AllQueries => self.picks.len(),
+            LogPickView::Clusters => self.clusters.len(),
+        }
+    }
+    fn nav_cursor(&self) -> usize {
+        self.index
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.index = i;
+    }
+}
+
 /// EXPLAIN-tree state — the parsed plan, the cursor into the flattened
 /// (visible-after-collapses) list, and the set of collapsed node paths.
 #[derive(Debug, Default)]
@@ -654,6 +697,18 @@ pub struct SlowQueriesUi {
     pub cursor: usize,
 }
 
+impl ListCursorNav for SlowQueriesUi {
+    fn nav_len(&self) -> usize {
+        self.rows.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
+}
+
 /// Sessions panel state — the most recent `pg_stat_activity` snapshot
 /// and the cursor into it.
 #[derive(Debug, Default)]
@@ -662,6 +717,18 @@ pub struct SessionsUi {
     /// `Mode::Sessions` is active.
     pub rows: Vec<crate::query::sessions::SessionRow>,
     pub cursor: usize,
+}
+
+impl ListCursorNav for SessionsUi {
+    fn nav_len(&self) -> usize {
+        self.rows.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
 }
 
 /// Notifications panel state — the ring buffer of recent `NOTIFY`
@@ -676,6 +743,18 @@ pub struct NotificationsUi {
     pub cursor: usize,
 }
 
+impl ListCursorNav for NotificationsUi {
+    fn nav_len(&self) -> usize {
+        self.items.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
+}
+
 /// Schema-lint panel state — the findings over the current schema cache
 /// and the cursor into them.
 #[derive(Debug, Default)]
@@ -686,6 +765,18 @@ pub struct SchemaLintUi {
     pub findings: Vec<crate::query::lint::Finding>,
     /// Cursor into `findings`.
     pub cursor: usize,
+}
+
+impl ListCursorNav for SchemaLintUi {
+    fn nav_len(&self) -> usize {
+        self.findings.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
 }
 
 /// Help-overlay state — vertical scroll, the mode to restore on close,
@@ -716,6 +807,18 @@ pub struct ConnPickUi {
     pub picks: Vec<DataSourcePick>,
     /// Selected entry in `picks`.
     pub index: usize,
+}
+
+impl ListCursorNav for ConnPickUi {
+    fn nav_len(&self) -> usize {
+        self.picks.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.index
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.index = i;
+    }
 }
 
 /// Result-diff state — the pinned baseline ("A"), the computed diff

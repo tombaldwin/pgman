@@ -238,26 +238,17 @@ impl App {
     }
 
     pub(super) fn on_notifications_key(&mut self, key: KeyEvent) {
-        let last = self.notifications.items.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.notifications.cursor = (self.notifications.cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.notifications.cursor = self.notifications.cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.notifications.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.notifications.cursor = last,
-            KeyCode::PageDown => {
-                self.notifications.cursor = (self.notifications.cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.notifications.cursor = self.notifications.cursor.saturating_sub(10);
-            }
+            KeyCode::Char('j') | KeyCode::Down => self.notifications.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.notifications.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.notifications.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.notifications.select_last(),
+            KeyCode::PageDown => self.notifications.page_down(),
+            KeyCode::PageUp => self.notifications.page_up(),
             KeyCode::Char('c') => {
                 let n = self.notifications.items.len();
                 self.notifications.items.clear();
@@ -645,19 +636,14 @@ impl App {
     /// Connection picker (startup): j/k navigate, Enter selects + connects,
     /// Esc/q quits since there's nothing else to do without a connection.
     pub(super) fn on_conn_pick_key(&mut self, key: KeyEvent) {
-        let last = self.conn_pick.picks.len().saturating_sub(1);
         match key.code {
             // q (and Ctrl-C) quit; Esc is a no-op so a reflex press
             // can't abandon the picker by accident.
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.conn_pick.index = (self.conn_pick.index + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.conn_pick.index = self.conn_pick.index.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.conn_pick.index = 0,
-            KeyCode::Char('G') | KeyCode::End => self.conn_pick.index = last,
+            KeyCode::Char('j') | KeyCode::Down => self.conn_pick.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.conn_pick.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.conn_pick.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.conn_pick.select_last(),
             KeyCode::Enter => {
                 if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index) {
                     let dsn = pick.dsn.clone();
@@ -974,7 +960,6 @@ impl App {
     /// Log-pick browser: j/k navigate, Enter loads the selection into the
     /// editor, Esc cancels, `c` toggles cluster view.
     pub(super) fn on_log_pick_key(&mut self, key: KeyEvent) {
-        let last = self.log_pick_visible_len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.log_pick.picks.clear();
@@ -982,14 +967,10 @@ impl App {
                 self.mode = Mode::Editor;
             }
             KeyCode::Char('c') => self.toggle_log_pick_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.log_pick.index = (self.log_pick.index + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.log_pick.index = self.log_pick.index.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.log_pick.index = 0,
-            KeyCode::Char('G') | KeyCode::End => self.log_pick.index = last,
+            KeyCode::Char('j') | KeyCode::Down => self.log_pick.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.log_pick.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.log_pick.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.log_pick.select_last(),
             KeyCode::Enter => {
                 if let Some(sql) = self.focused_log_pick_sql() {
                     self.editor.buffer = sql;
@@ -1061,26 +1042,17 @@ impl App {
     }
 
     pub(super) fn on_schema_lint_key(&mut self, key: KeyEvent) {
-        let last = self.schema_lint.findings.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.schema_lint.cursor = (self.schema_lint.cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.schema_lint.cursor = self.schema_lint.cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.schema_lint.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.schema_lint.cursor = last,
-            KeyCode::PageDown => {
-                self.schema_lint.cursor = (self.schema_lint.cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.schema_lint.cursor = self.schema_lint.cursor.saturating_sub(10);
-            }
+            KeyCode::Char('j') | KeyCode::Down => self.schema_lint.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.schema_lint.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.schema_lint.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.schema_lint.select_last(),
+            KeyCode::PageDown => self.schema_lint.page_down(),
+            KeyCode::PageUp => self.schema_lint.page_up(),
             KeyCode::Char('y') => self.yank_schema_lint_suggestion(),
             KeyCode::Char('r') => self.start_schema_lint(),
             _ => {}
@@ -1232,20 +1204,15 @@ impl App {
     }
 
     pub(super) fn on_slow_queries_key(&mut self, key: KeyEvent) {
-        let last = self.slow_queries.rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.slow_queries.cursor = (self.slow_queries.cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.slow_queries.cursor = self.slow_queries.cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.slow_queries.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.slow_queries.cursor = last,
+            KeyCode::Char('j') | KeyCode::Down => self.slow_queries.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.slow_queries.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.slow_queries.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.slow_queries.select_last(),
             KeyCode::Char('r') => self.refresh_slow_queries(),
             KeyCode::Char('R') => self.toggle_auto_refresh(),
             KeyCode::Enter => {
@@ -1269,20 +1236,15 @@ impl App {
     }
 
     pub(super) fn on_sessions_key(&mut self, key: KeyEvent) {
-        let last = self.sessions.rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.sessions.cursor = (self.sessions.cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.sessions.cursor = self.sessions.cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.sessions.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.sessions.cursor = last,
+            KeyCode::Char('j') | KeyCode::Down => self.sessions.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.sessions.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.sessions.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.sessions.select_last(),
             KeyCode::Char('r') => self.refresh_sessions(),
             KeyCode::Char('R') => self.toggle_auto_refresh(),
             KeyCode::Char('K') => self.start_terminate_focused_session(),
