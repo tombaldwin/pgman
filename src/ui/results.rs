@@ -9,7 +9,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     // two extra chars of room. Without this the marker would be
     // truncated off and the operator would think nothing happened
     // when they pressed `s`.
-    if let Some((col, _)) = app.grid_sort {
+    if let Some((col, _)) = app.grid_view.sort {
         if let Some(w) = widths.get_mut(col) {
             *w = (*w + 2).min(48);
         }
@@ -22,7 +22,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let sort_marker = match app.grid_sort {
+            let sort_marker = match app.grid_view.sort {
                 Some((col, true)) if col == i => " ▲",
                 Some((col, false)) if col == i => " ▼",
                 _ => "",
@@ -35,7 +35,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
             // a glance. App mode doesn't matter — h/l is only useful
             // in Normal mode but the indicator persists so the
             // operator knows "the sort key will target this column".
-            if i == app.grid_col_cursor {
+            if i == app.grid_view.col_cursor {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             Cell::from(text).style(style)
@@ -44,11 +44,12 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let header = Row::new(header_cells);
 
     // Walk only the visible rows (post-filter, post-sort). When no
-    // filter has ever been applied, `grid_visible_rows` was
+    // filter has ever been applied, `grid_view.visible_rows` was
     // initialised to `0..rows.len()` so this branch handles the
     // unfiltered path too.
     let rows: Vec<Row> = app
-        .grid_visible_rows
+        .grid_view
+        .visible_rows
         .iter()
         .filter_map(|&i| grid.rows.get(i))
         .map(|r| {
@@ -78,14 +79,14 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|w| Constraint::Length(*w as u16))
         .collect();
-    let visible = app.grid_visible_rows.len();
+    let visible = app.grid_view.visible_rows.len();
     let total = grid.row_count();
     let cap = if grid.truncated {
         format!(" · capped at {}", crate::grid::MAX_ROWS)
     } else {
         String::new()
     };
-    let title = if app.grid_filter.is_some() && visible != total {
+    let title = if app.grid_view.filter.is_some() && visible != total {
         format!(" result · {visible}/{total} row(s) (filtered){cap} ")
     } else {
         format!(" result · {total} row(s){cap} ")
@@ -143,9 +144,9 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     // a wide row with a narrow one while RowDetail is open) the visual
     // highlight clamps but `yank_focused_field` / `open_cell_detail`
     // still see the pre-clamp index, silently no-op-ing.
-    app.row_detail_field_count = layout.len();
-    let focus = app.row_detail_field.min(layout.len().saturating_sub(1));
-    app.row_detail_field = focus;
+    app.row_detail.field_count = layout.len();
+    let focus = app.row_detail.field.min(layout.len().saturating_sub(1));
+    app.row_detail.field = focus;
 
     let label_style = Style::default()
         .fg(theme.accent)
@@ -198,16 +199,16 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
     let total_lines = lines.len() as u16;
     let max_scroll = total_lines.saturating_sub(inner_height);
-    app.row_detail_max_scroll = max_scroll;
+    app.row_detail.max_scroll = max_scroll;
     // Auto-scroll so the focused field is visible, then clamp.
     let effective_scroll = auto_scroll_to_field(
         &field_line_counts,
         focus,
-        app.row_detail_scroll,
+        app.row_detail.scroll,
         inner_height,
         max_scroll,
     );
-    app.row_detail_scroll = effective_scroll;
+    app.row_detail.scroll = effective_scroll;
 
     let title = format!(
         " row {} of {} · field {}/{} ",
@@ -278,7 +279,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let Some(row) = app.grid.rows.get(idx).cloned() else {
         return;
     };
-    let field = app.row_detail_field;
+    let field = app.row_detail.field;
     let column = app.grid.columns.get(field).cloned().unwrap_or_default();
     let value = row.get(field).cloned().unwrap_or_default();
 
@@ -289,7 +290,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let inner_height = popup.height.saturating_sub(4);
     let is_empty = value.is_empty();
 
-    let is_json = !app.json_cell_rows.is_empty();
+    let is_json = !app.cell_detail.json_rows.is_empty();
     let body_lines: Vec<Line> = if is_json {
         render_json_tree(app, inner_width)
     } else if is_empty {
@@ -308,24 +309,24 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
     let total_lines = body_lines.len() as u16;
     let max_scroll = total_lines.saturating_sub(inner_height);
-    app.cell_detail_max_scroll = max_scroll;
+    app.cell_detail.max_scroll = max_scroll;
     let effective_scroll = if is_json {
         // Keep the focused tree row visible — auto-scroll like the
         // grid does for its cursor.
-        let cursor = app.json_cell_cursor as u16;
+        let cursor = app.cell_detail.json_cursor as u16;
         let h = inner_height.max(1);
-        let scroll = if cursor < app.cell_detail_scroll {
+        let scroll = if cursor < app.cell_detail.scroll {
             cursor
-        } else if cursor >= app.cell_detail_scroll + h {
+        } else if cursor >= app.cell_detail.scroll + h {
             cursor + 1 - h
         } else {
-            app.cell_detail_scroll
+            app.cell_detail.scroll
         };
         let scroll = scroll.min(max_scroll);
-        app.cell_detail_scroll = scroll;
+        app.cell_detail.scroll = scroll;
         scroll
     } else {
-        app.cell_detail_scroll.min(max_scroll)
+        app.cell_detail.scroll.min(max_scroll)
     };
 
     let lines: Vec<Line> = body_lines;
@@ -337,7 +338,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
             idx + 1,
             app.grid.row_count(),
             field + 1,
-            app.row_detail_field_count.max(1)
+            app.row_detail.field_count.max(1)
         )
     } else {
         format!(
@@ -346,7 +347,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
             idx + 1,
             app.grid.row_count(),
             field + 1,
-            app.row_detail_field_count.max(1)
+            app.row_detail.field_count.max(1)
         )
     };
     f.render_widget(Clear, popup);
@@ -409,7 +410,7 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
-    let Some(state) = app.result_diff.as_ref() else {
+    let Some(state) = app.diff.active.as_ref() else {
         return;
     };
     let diff = &state.diff;
@@ -525,7 +526,7 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
 
     // Reserve the summary line; scroll the entry list under it.
     let visible_h = (inner.height as usize).saturating_sub(2);
-    let cursor = app.result_diff_cursor.min(total.saturating_sub(1));
+    let cursor = app.diff.cursor.min(total.saturating_sub(1));
     let scroll = scroll_offset(cursor, visible_h);
     lines.push(Line::from(""));
     for flat in scroll..(scroll + visible_h).min(total) {

@@ -16,8 +16,8 @@ impl App {
         // operators often toggle it back off in the same buffer.
         let clear_buffer = !matches!(cmd, BackslashCmd::Timing(_));
         if clear_buffer {
-            self.editor_buffer.clear();
-            self.editor_cursor = 0;
+            self.editor.buffer.clear();
+            self.editor.cursor = 0;
             self.draft_dirty = true;
         }
         match cmd {
@@ -113,7 +113,7 @@ impl App {
             self.last_error = Some("no result to capture — run a query first".into());
             return;
         }
-        let Some((_schema, table)) = self.grid_source.clone() else {
+        let Some((_schema, table)) = self.grid_view.source.clone() else {
             self.last_error = Some(
                 "fixture capture needs a single-table result (no source table inferred)".into(),
             );

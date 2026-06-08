@@ -2,9 +2,11 @@
 
 mod cmd;
 mod editor;
+mod handle;
 mod keys;
 pub mod msg;
 mod spawn;
+mod tabs;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
 use crate::grid::Grid;
@@ -79,7 +81,7 @@ pub enum Mode {
     /// older match.
     HistorySearch,
     /// Interactive row filter on the results grid (`/` from Normal).
-    /// Each char updates `grid_filter` and re-filters live so the
+    /// Each char updates `grid_view.filter` and re-filters live so the
     /// operator sees results as they type. Enter accepts; Esc
     /// clears the filter.
     GridFilter,
@@ -396,34 +398,99 @@ pub fn default_query_name(buf: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Grouped SQL-editor state. Shared by `App` (the live editor) and
+/// `TabSnapshot` (per-tab saved editor state), so tab snapshot /
+/// restore is a single struct clone.
+#[derive(Debug, Clone, Default)]
+pub struct EditorState {
+    /// SQL editor buffer; `\n` separates lines.
+    pub buffer: String,
+    /// Byte offset of the cursor within `buffer`.
+    pub cursor: usize,
+    /// Remembered char-column for vertical motion (Up/Down). `None` outside a
+    /// vertical-motion run; cleared by any other edit or horizontal move.
+    pub preferred_col: Option<usize>,
+    /// Vertical scroll offset (lines hidden above the viewport) for the
+    /// editor pane. The renderer auto-adjusts this each frame to keep
+    /// the cursor's line visible; the field is plain state (not derived)
+    /// so the renderer doesn't have to recompute from scratch when the
+    /// buffer changes between frames.
+    pub scroll: u16,
+    /// Undo ring of pre-mutation `(buffer, cursor)` snapshots. Ctrl-Z
+    /// pops; Ctrl-Y / Ctrl-Shift-Z redoes. Capped at `UNDO_CAP`.
+    pub undo: Vec<UndoEntry>,
+    /// Redo ring — filled by `editor_undo` and drained by `editor_redo`.
+    /// Any new editor mutation invalidates redo (standard editor
+    /// behaviour: divergent edit = new history branch).
+    pub redo: Vec<UndoEntry>,
+}
+
+/// Grid view-metadata: the derived/display state that travels with a
+/// result grid (cursor column, sort, filter, row-source). Shared by
+/// `App` (the live grid) and `TabSnapshot` (per-tab persistence). The
+/// `Grid` data itself and the `TableState` are NOT here — they stay as
+/// flat fields because they are the hot read path.
+#[derive(Debug, Clone, Default)]
+pub struct GridView {
+    /// Column under the cursor in the results grid. h/l move it; sort
+    /// + future column-aware actions operate on this column.
+    pub col_cursor: usize,
+    /// Sort state for the grid: `None` = display order from the
+    /// query; `Some((col, asc))` = sorted by that column. Cycled by
+    /// `s` in Normal mode: off → ASC → DESC → off.
+    pub sort: Option<(usize, bool)>,
+    /// The grid as it landed from the query — preserved so a "clear
+    /// sort" can restore the original row order without re-running.
+    pub raw_rows: Option<Vec<Vec<String>>>,
+    /// Active row-filter pattern (case-insensitive substring across
+    /// all columns). `None` = no filter; rendered rows are
+    /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
+    pub filter: Option<String>,
+    /// Indices into `grid.rows` for the currently-visible rows under
+    /// the active filter. Equal to `0..rows.len()` when no filter is
+    /// set. Rebuilt whenever filter / sort / grid changes.
+    pub visible_rows: Vec<usize>,
+    /// `Some((schema, table))` when the current grid is the result
+    /// of a single-FROM-table SELECT, `None` otherwise. Drives the
+    /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
+    /// FK navigation.
+    pub source: Option<(String, String)>,
+}
+
+/// Grid find ("/" search) state. Lives on `App` only — find is a
+/// transient navigation aid and is NOT persisted per-tab.
+#[derive(Debug, Default)]
+pub struct GridFind {
+    /// Pattern being typed / accepted in `Mode::GridFind`. `Some`
+    /// means find is active; the matches list below is rebuilt
+    /// from this on every change.
+    pub needle: Option<String>,
+    /// Match cursor positions for the find, in row-major
+    /// order: each pair is `(visible_row_index, col_index)`.
+    pub matches: Vec<(usize, usize)>,
+    /// Current position in `matches` — `n` advances, `N`
+    /// retreats; both wrap.
+    pub pos: usize,
+}
+
 /// Per-tab snapshot of the editor + result-grid state. The
 /// connection, schema cache, history, saved queries, theme,
 /// notifications, and safety profile are SHARED across tabs and
 /// live directly on App.
 ///
 /// Invariant: the active tab's state lives in App's existing
-/// per-session fields (`editor_buffer`, `grid`, `grid_state`,
+/// per-session fields (`editor`, `grid`, `grid_state`,
 /// …). When the operator switches, the live fields are
 /// snapshot-copied into `tabs[old_active]` and `tabs[new_active]`
 /// is loaded back in. Existing read sites keep using App's
 /// fields unchanged — multi-tab is invisible to them.
 #[derive(Debug, Clone, Default)]
 pub struct TabSnapshot {
-    pub editor_buffer: String,
-    pub editor_cursor: usize,
-    pub editor_scroll: u16,
-    pub editor_preferred_col: Option<usize>,
-    pub editor_undo: Vec<UndoEntry>,
-    pub editor_redo: Vec<UndoEntry>,
+    pub editor: EditorState,
     pub grid: crate::grid::Grid,
     pub grid_selected: Option<usize>,
-    pub grid_col_cursor: usize,
-    pub grid_sort: Option<(usize, bool)>,
-    pub grid_raw_rows: Option<Vec<Vec<String>>>,
-    pub grid_filter: Option<String>,
-    pub grid_visible_rows: Vec<usize>,
+    pub grid_view: GridView,
     pub last_run_sql: Option<String>,
-    pub grid_source: Option<(String, String)>,
     /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
     /// tab can't leak into another (a fresh tab starts unpinned). The
     /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
@@ -1327,6 +1394,166 @@ pub struct SchemaBrowserUi {
     pub expanded: std::collections::HashSet<String>,
 }
 
+/// Log-import pick state — the reconstructed queries from the most recent
+/// import, the active view, the cached cluster list, and the selected entry.
+#[derive(Debug, Default)]
+pub struct LogPickUi {
+    /// Reconstructed queries from the most recent log-import; `Mode::LogPick`
+    /// browses these.
+    pub picks: Vec<ReconstructedQuery>,
+    /// Which view LogPick is currently rendering — toggle with `c`.
+    pub view: LogPickView,
+    /// Cached cluster list for the Clusters view. Rebuilt on
+    /// `picks` set and on view toggle so repeated j/k keystrokes
+    /// don't re-cluster on each frame.
+    pub clusters: Vec<crate::query::nplus1::Cluster>,
+    /// Selected entry in `picks`.
+    pub index: usize,
+}
+
+/// EXPLAIN-tree state — the parsed plan, the cursor into the flattened
+/// (visible-after-collapses) list, and the set of collapsed node paths.
+#[derive(Debug, Default)]
+pub struct ExplainUi {
+    /// Most recent EXPLAIN / EXPLAIN ANALYZE plan, when `Mode::ExplainTree`
+    /// is active. Built from `EXPLAIN (FORMAT JSON)` output on a
+    /// successful run.
+    pub plan: Option<crate::query::explain::PlanNode>,
+    /// Cursor into the flattened (visible-after-collapses) plan list.
+    /// j/k move it; Enter toggles collapse on the focused node.
+    pub cursor: usize,
+    /// Paths (chains of child-array indices from the root) of nodes
+    /// the operator has collapsed. The renderer hides anything below
+    /// these.
+    pub collapsed: std::collections::HashSet<Vec<usize>>,
+}
+
+/// Slow-queries panel state — the most recent `pg_stat_statements`
+/// snapshot and the cursor into it.
+#[derive(Debug, Default)]
+pub struct SlowQueriesUi {
+    /// Most recent `pg_stat_statements` snapshot, when
+    /// `Mode::SlowQueries` is active.
+    pub rows: Vec<crate::query::slow_queries::SlowQueryRow>,
+    pub cursor: usize,
+}
+
+/// Sessions panel state — the most recent `pg_stat_activity` snapshot
+/// and the cursor into it.
+#[derive(Debug, Default)]
+pub struct SessionsUi {
+    /// Most recent `pg_stat_activity` snapshot, when
+    /// `Mode::Sessions` is active.
+    pub rows: Vec<crate::query::sessions::SessionRow>,
+    pub cursor: usize,
+}
+
+/// Notifications panel state — the ring buffer of recent `NOTIFY`
+/// arrivals and the cursor into it.
+#[derive(Debug, Default)]
+pub struct NotificationsUi {
+    /// Ring buffer of recent `NOTIFY` arrivals from the server.
+    /// Newest at the end. Capped at `NOTIFICATION_CAP` so a
+    /// chatty channel can't grow unbounded.
+    pub items: Vec<crate::conn::NotificationMsg>,
+    /// Cursor into `items` for the `N` panel.
+    pub cursor: usize,
+}
+
+/// Schema-lint panel state — the findings over the current schema cache
+/// and the cursor into them.
+#[derive(Debug, Default)]
+pub struct SchemaLintUi {
+    /// Findings produced by `query::lint::run_all` over the
+    /// current schema cache. Rebuilt on entry to `Mode::SchemaLint`
+    /// (cheap — pure pass over the cache).
+    pub findings: Vec<crate::query::lint::Finding>,
+    /// Cursor into `findings`.
+    pub cursor: usize,
+}
+
+/// Help-overlay state — vertical scroll, the mode to restore on close,
+/// and the last-rendered max scroll used to clamp incremental scrolls.
+#[derive(Debug, Default)]
+pub struct HelpUi {
+    /// Vertical scroll offset for the help overlay (number of leading lines
+    /// hidden above the viewport).
+    pub scroll: u16,
+    /// Mode the operator came from when opening help. Used to
+    /// restore that mode on close, so F1 from inside Editor /
+    /// SchemaBrowser / etc. doesn't dump them back to Normal.
+    /// `None` for the legacy `?`-from-Normal path.
+    pub origin: Option<Mode>,
+    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
+    /// each frame and read by the j/k handler so an incremental scroll past
+    /// the bottom doesn't accumulate phantom offsets.
+    pub max_scroll: u16,
+}
+
+/// Connection-picker state — the candidate data sources surfaced at
+/// startup and the selected entry. Drives `Mode::ConnPick`.
+#[derive(Debug, Default)]
+pub struct ConnPickUi {
+    /// Candidate data sources surfaced at startup. Populated when the operator
+    /// didn't pass `--dsn` and we found multiple sources via discovery (e.g.
+    /// IntelliJ). Drives `Mode::ConnPick`.
+    pub picks: Vec<DataSourcePick>,
+    /// Selected entry in `picks`.
+    pub index: usize,
+}
+
+/// Result-diff state — the pinned baseline ("A"), the computed diff
+/// currently shown in `Mode::ResultDiff`, and the cursor into it.
+#[derive(Debug, Default)]
+pub struct ResultDiffUi {
+    /// Result pinned as the diff baseline ("A") by `D` in Normal
+    /// mode. The next `D` diffs the current grid against this.
+    /// Persists across diffs so the operator can iterate
+    /// (tweak → run → D) against a fixed baseline.
+    pub pinned: Option<PinnedResult>,
+    /// The computed diff currently shown in `Mode::ResultDiff`.
+    /// Snapshots both sides so the view is stable while open.
+    pub active: Option<ResultDiffState>,
+    /// Cursor into the rendered diff row list.
+    pub cursor: usize,
+}
+
+/// Row-detail modal state — scroll / clamp and the focused field.
+#[derive(Debug, Default)]
+pub struct RowDetailUi {
+    /// Scroll / clamp state for the row-detail modal — same shape as
+    /// `HelpUi::scroll` / `HelpUi::max_scroll`. `scroll` is normally
+    /// driven by the renderer's auto-scroll (so the focused field stays in
+    /// view); the key handler only nudges it as a side-effect of moving
+    /// `field`.
+    pub scroll: u16,
+    pub max_scroll: u16,
+    /// Currently-focused field (column index) inside the row-detail modal.
+    /// Bounded by `field_count` which the renderer writes each
+    /// frame (it's just `grid.columns.len()` today, but kept as a separate
+    /// field so the clamp matches what's actually rendered).
+    pub field: usize,
+    pub field_count: usize,
+}
+
+/// Per-cell zoom (`Mode::CellDetail`) state — scroll / clamp plus the
+/// flattened JSON tree, its cursor, the collapsed-path set, and the
+/// parsed value when the cell is a JSON object / array.
+#[derive(Debug, Default)]
+pub struct CellDetailUi {
+    /// Scroll / clamp state for the per-cell zoom view (`Mode::CellDetail`).
+    pub scroll: u16,
+    pub max_scroll: u16,
+    /// Parsed JSON value of the focused cell, when CellDetail is
+    /// active AND the cell parses as a JSON object or array. `None`
+    /// triggers the existing wrapped-text renderer (scalar /
+    /// not-JSON cells).
+    pub json_rows: Vec<crate::query::json_cell::JsonRow>,
+    pub json_cursor: usize,
+    pub json_collapsed: std::collections::HashSet<String>,
+    pub json_value: Option<serde_json::Value>,
+}
+
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
@@ -1355,26 +1582,9 @@ pub struct App {
     pub generation: u64,
     pub should_quit: bool,
 
-    /// SQL editor buffer; `\n` separates lines.
-    pub editor_buffer: String,
-    /// Byte offset of the cursor within `editor_buffer`.
-    pub editor_cursor: usize,
-    /// Remembered char-column for vertical motion (Up/Down). `None` outside a
-    /// vertical-motion run; cleared by any other edit or horizontal move.
-    pub editor_preferred_col: Option<usize>,
-    /// Vertical scroll offset (lines hidden above the viewport) for the
-    /// editor pane. The renderer auto-adjusts this each frame to keep
-    /// the cursor's line visible; the field is plain state (not derived)
-    /// so the renderer doesn't have to recompute from scratch when the
-    /// buffer changes between frames.
-    pub editor_scroll: u16,
-    /// Undo ring of pre-mutation `(buffer, cursor)` snapshots. Ctrl-Z
-    /// pops; Ctrl-Y / Ctrl-Shift-Z redoes. Capped at `UNDO_CAP`.
-    pub editor_undo: Vec<UndoEntry>,
-    /// Redo ring — filled by `editor_undo` and drained by `editor_redo`.
-    /// Any new editor mutation invalidates redo (standard editor
-    /// behaviour: divergent edit = new history branch).
-    pub editor_redo: Vec<UndoEntry>,
+    /// SQL editor state (buffer, cursor, scroll, undo/redo). Grouped so
+    /// tab snapshot / restore is a single struct clone.
+    pub editor: EditorState,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -1385,38 +1595,19 @@ pub struct App {
     /// True while an explicit transaction is open (auto_tx write succeeded —
     /// waiting on the user to commit or rollback).
     pub tx_open: bool,
-    /// Reconstructed queries from the most recent log-import; `Mode::LogPick`
-    /// browses these.
-    pub log_picks: Vec<ReconstructedQuery>,
-    /// Which view LogPick is currently rendering — toggle with `c`.
-    pub log_pick_view: LogPickView,
-    /// Cached cluster list for the Clusters view. Rebuilt on
-    /// `log_picks` set and on view toggle so repeated j/k keystrokes
-    /// don't re-cluster on each frame.
-    pub log_pick_clusters: Vec<crate::query::nplus1::Cluster>,
-    /// Selected entry in `log_picks`.
-    pub log_pick_index: usize,
+    /// Log-import pick state (reconstructed queries, view, clusters, cursor).
+    pub log_pick: LogPickUi,
     /// A short status line shown in the footer after a run (e.g. "EXPLAIN ok").
     pub last_status: Option<String>,
     /// A query / safety error to surface to the user.
     pub last_error: Option<String>,
     /// True while a query is in flight (drives the spinner).
     pub query_running: bool,
-    /// Candidate data sources surfaced at startup. Populated when the operator
-    /// didn't pass `--dsn` and we found multiple sources via discovery (e.g.
-    /// IntelliJ). Drives `Mode::ConnPick`.
-    pub data_source_picks: Vec<DataSourcePick>,
-    /// Selected entry in `data_source_picks`.
-    pub data_source_pick_index: usize,
+    /// Connection-picker state (candidate data sources + selected index).
+    pub conn_pick: ConnPickUi,
 
-    /// Vertical scroll offset for the help overlay (number of leading lines
-    /// hidden above the viewport).
-    pub help_scroll: u16,
-    /// Mode the operator came from when opening help. Used to
-    /// restore that mode on close, so F1 from inside Editor /
-    /// SchemaBrowser / etc. doesn't dump them back to Normal.
-    /// `None` for the legacy `?`-from-Normal path.
-    pub help_origin: Option<Mode>,
+    /// Help-overlay state (scroll, origin mode, max scroll).
+    pub help: HelpUi,
     /// Modes the operator has already entered this session. Used by
     /// `note_mode_entry` to flash a one-time "key hint" status the
     /// first time each mode opens — discoverability nudge without
@@ -1446,12 +1637,8 @@ pub struct App {
     /// would do, but `HashMap` keeps the slot key open for any
     /// printable char operators might want later.
     pub bookmarks: std::collections::HashMap<char, GridBookmark>,
-    /// Ring buffer of recent `NOTIFY` arrivals from the server.
-    /// Newest at the end. Capped at `NOTIFICATION_CAP` so a
-    /// chatty channel can't grow unbounded.
-    pub notifications: Vec<crate::conn::NotificationMsg>,
-    /// Cursor into `notifications` for the `N` panel.
-    pub notifications_cursor: usize,
+    /// Notifications panel state (ring buffer + cursor).
+    pub notifications: NotificationsUi,
     /// Ring buffer of recent JDBC-tap events (queries +
     /// txn boundaries from the pgman-tap JAR). Newest at the
     /// end. Heartbeat events don't land here — they update
@@ -1490,26 +1677,10 @@ pub struct App {
     /// and read in `QueryOk` / `QueryFailed` to surface elapsed
     /// time when `\timing` is on.
     pub query_started: Option<Instant>,
-    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
-    /// each frame and read by the j/k handler so an incremental scroll past
-    /// the bottom doesn't accumulate phantom offsets.
-    pub help_max_scroll: u16,
-    /// Scroll / clamp state for the row-detail modal — same shape as
-    /// `help_scroll` / `help_max_scroll`. `row_detail_scroll` is normally
-    /// driven by the renderer's auto-scroll (so the focused field stays in
-    /// view); the key handler only nudges it as a side-effect of moving
-    /// `row_detail_field`.
-    pub row_detail_scroll: u16,
-    pub row_detail_max_scroll: u16,
-    /// Scroll / clamp state for the per-cell zoom view (`Mode::CellDetail`).
-    pub cell_detail_scroll: u16,
-    pub cell_detail_max_scroll: u16,
-    /// Currently-focused field (column index) inside the row-detail modal.
-    /// Bounded by `row_detail_field_count` which the renderer writes each
-    /// frame (it's just `grid.columns.len()` today, but kept as a separate
-    /// field so the clamp matches what's actually rendered).
-    pub row_detail_field: usize,
-    pub row_detail_field_count: usize,
+    /// Row-detail modal state (scroll / clamp + focused field).
+    pub row_detail: RowDetailUi,
+    /// Per-cell zoom (`Mode::CellDetail`) state (scroll / clamp + JSON tree).
+    pub cell_detail: CellDetailUi,
 
     /// Snapshot of the database catalog used by Tab-completion in the
     /// editor. Refilled on every successful `Booted`. Empty before
@@ -1544,89 +1715,30 @@ pub struct App {
     /// Set whenever the buffer is mutated; cleared on save. Avoids
     /// `write_atomic`-ing a buffer that hasn't changed.
     pub draft_dirty: bool,
-    /// Column under the cursor in the results grid. h/l move it; sort
-    /// + future column-aware actions operate on this column.
-    pub grid_col_cursor: usize,
-    /// Sort state for the grid: `None` = display order from the
-    /// query; `Some((col, asc))` = sorted by that column. Cycled by
-    /// `s` in Normal mode: off → ASC → DESC → off.
-    pub grid_sort: Option<(usize, bool)>,
-    /// The grid as it landed from the query — preserved so a "clear
-    /// sort" can restore the original row order without re-running.
-    pub grid_raw_rows: Option<Vec<Vec<String>>>,
-    /// Active row-filter pattern (case-insensitive substring across
-    /// all columns). `None` = no filter; rendered rows are
-    /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
-    pub grid_filter: Option<String>,
-    /// Pattern being typed / accepted in `Mode::GridFind`. `Some`
-    /// means find is active; the matches list below is rebuilt
-    /// from this on every change.
-    pub grid_find: Option<String>,
-    /// Match cursor positions for `grid_find`, in row-major
-    /// order: each pair is `(visible_row_index, col_index)`.
-    pub grid_find_matches: Vec<(usize, usize)>,
-    /// Current position in `grid_find_matches` — `n` advances, `N`
-    /// retreats; both wrap.
-    pub grid_find_pos: usize,
-    /// Indices into `grid.rows` for the currently-visible rows under
-    /// the active filter. Equal to `0..rows.len()` when no filter is
-    /// set. Rebuilt whenever filter / sort / grid changes.
-    pub grid_visible_rows: Vec<usize>,
-    /// Most recent EXPLAIN / EXPLAIN ANALYZE plan, when `Mode::ExplainTree`
-    /// is active. Built from `EXPLAIN (FORMAT JSON)` output on a
-    /// successful run.
-    pub explain_plan: Option<crate::query::explain::PlanNode>,
-    /// Cursor into the flattened (visible-after-collapses) plan list.
-    /// j/k move it; Enter toggles collapse on the focused node.
-    pub explain_cursor: usize,
-    /// Paths (chains of child-array indices from the root) of nodes
-    /// the operator has collapsed. The renderer hides anything below
-    /// these.
-    pub explain_collapsed: std::collections::HashSet<Vec<usize>>,
+    /// Grid view-metadata for the live result grid: cursor column,
+    /// sort, raw rows, filter, visible-row indices, and row source.
+    /// Shared shape with `TabSnapshot` (snapshotted per tab).
+    pub grid_view: GridView,
+    /// Grid find ("/" search) state: needle, match positions, and the
+    /// current match cursor. Live-only — not persisted per tab.
+    pub grid_find: GridFind,
+    /// EXPLAIN-tree state (plan, cursor, collapsed node paths).
+    pub explain: ExplainUi,
     /// Schema-browser navigation/modal state (cursor, filter, expanded set).
     pub schema_browser: SchemaBrowserUi,
-    /// Findings produced by `query::lint::run_all` over the
-    /// current schema cache. Rebuilt on entry to `Mode::SchemaLint`
-    /// (cheap — pure pass over the cache).
-    pub schema_lint_findings: Vec<crate::query::lint::Finding>,
-    /// Cursor into `schema_lint_findings`.
-    pub schema_lint_cursor: usize,
-    /// Most recent `pg_stat_statements` snapshot, when
-    /// `Mode::SlowQueries` is active.
-    pub slow_queries: Vec<crate::query::slow_queries::SlowQueryRow>,
-    pub slow_queries_cursor: usize,
-    /// Most recent `pg_stat_activity` snapshot, when
-    /// `Mode::Sessions` is active.
-    pub sessions: Vec<crate::query::sessions::SessionRow>,
-    pub sessions_cursor: usize,
+    /// Schema-lint panel state (findings + cursor).
+    pub schema_lint: SchemaLintUi,
+    /// Slow-queries panel state (snapshot + cursor).
+    pub slow_queries: SlowQueriesUi,
+    /// Sessions panel state (snapshot + cursor).
+    pub sessions: SessionsUi,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
     /// EXPLAIN / EXPLAIN ANALYZE runs.
     pub last_run_sql: Option<String>,
-    /// Parsed JSON value of the focused cell, when CellDetail is
-    /// active AND the cell parses as a JSON object or array. `None`
-    /// triggers the existing wrapped-text renderer (scalar /
-    /// not-JSON cells).
-    pub json_cell_rows: Vec<crate::query::json_cell::JsonRow>,
-    pub json_cell_cursor: usize,
-    pub json_cell_collapsed: std::collections::HashSet<String>,
-    pub json_cell_value: Option<serde_json::Value>,
-    /// `Some((schema, table))` when the current grid is the result
-    /// of a single-FROM-table SELECT, `None` otherwise. Drives the
-    /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
-    /// FK navigation.
-    pub grid_source: Option<(String, String)>,
-    /// Result pinned as the diff baseline ("A") by `D` in Normal
-    /// mode. The next `D` diffs the current grid against this.
-    /// Persists across diffs so the operator can iterate
-    /// (tweak → run → D) against a fixed baseline.
-    pub pinned_result: Option<PinnedResult>,
-    /// The computed diff currently shown in `Mode::ResultDiff`.
-    /// Snapshots both sides so the view is stable while open.
-    pub result_diff: Option<ResultDiffState>,
-    /// Cursor into the rendered diff row list.
-    pub result_diff_cursor: usize,
+    /// Result-diff state (pinned baseline, active diff, cursor).
+    pub diff: ResultDiffUi,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -1692,27 +1804,17 @@ impl App {
             anim_tick: 0,
             generation: 0,
             should_quit: false,
-            editor_buffer: String::new(),
-            editor_cursor: 0,
-            editor_preferred_col: None,
-            editor_scroll: 0,
-            editor_undo: Vec::new(),
-            editor_redo: Vec::new(),
+            editor: EditorState::default(),
             history: Vec::new(),
             history_pos: None,
             history_draft: String::new(),
             pending_run: None,
             tx_open: false,
-            log_picks: Vec::new(),
-            log_pick_view: LogPickView::AllQueries,
-            log_pick_clusters: Vec::new(),
-            log_pick_index: 0,
+            log_pick: LogPickUi::default(),
             last_status: None,
             last_error: None,
             query_running: false,
-            help_scroll: 0,
-            help_max_scroll: 0,
-            help_origin: None,
+            help: HelpUi::default(),
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
             last_error_detail: None,
@@ -1720,8 +1822,7 @@ impl App {
             auto_refresh: false,
             auto_refresh_last: None,
             bookmarks: std::collections::HashMap::new(),
-            notifications: Vec::new(),
-            notifications_cursor: 0,
+            notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
             tap_nav: TapNavState::default(),
             tap_health: TapHealth::default(),
@@ -1736,12 +1837,8 @@ impl App {
             pending_mark_set: false,
             pending_mark_jump: false,
             query_started: None,
-            row_detail_scroll: 0,
-            row_detail_max_scroll: 0,
-            row_detail_field: 0,
-            row_detail_field_count: 0,
-            cell_detail_scroll: 0,
-            cell_detail_max_scroll: 0,
+            row_detail: RowDetailUi::default(),
+            cell_detail: CellDetailUi::default(),
             schema_cache: SchemaCache::default(),
             completion: None,
             history_search: None,
@@ -1750,35 +1847,19 @@ impl App {
             external_edit_pending: false,
             draft_last_save: None,
             draft_dirty: false,
-            grid_col_cursor: 0,
-            grid_sort: None,
-            grid_raw_rows: None,
-            grid_filter: None,
-            grid_find: None,
-            grid_find_matches: Vec::new(),
-            grid_find_pos: 0,
-            grid_visible_rows: Vec::new(),
-            explain_plan: None,
-            explain_cursor: 0,
-            explain_collapsed: std::collections::HashSet::new(),
+            grid_view: GridView::default(),
+            grid_find: GridFind::default(),
+            explain: ExplainUi::default(),
             schema_browser: SchemaBrowserUi::default(),
-            schema_lint_findings: Vec::new(),
-            schema_lint_cursor: 0,
-            slow_queries: Vec::new(),
-            slow_queries_cursor: 0,
-            sessions: Vec::new(),
-            sessions_cursor: 0,
+            schema_lint: SchemaLintUi::default(),
+            slow_queries: SlowQueriesUi::default(),
+            sessions: SessionsUi::default(),
             last_run_sql: None,
-            json_cell_rows: Vec::new(),
-            json_cell_cursor: 0,
-            json_cell_collapsed: std::collections::HashSet::new(),
-            json_cell_value: None,
-            grid_source: None,
-            pinned_result: None,
-            result_diff: None,
-            result_diff_cursor: 0,
-            data_source_picks,
-            data_source_pick_index: 0,
+            diff: ResultDiffUi::default(),
+            conn_pick: ConnPickUi {
+                picks: data_source_picks,
+                index: 0,
+            },
             client: None,
             cancel_dispatcher: None,
             tunnel: None,
@@ -1883,7 +1964,7 @@ impl App {
                     Duration::from_millis(500),
                 )
             {
-                let _ = persist_draft(&self.editor_buffer);
+                let _ = persist_draft(&self.editor.buffer);
                 self.draft_last_save = Some(Instant::now());
                 self.draft_dirty = false;
             }
@@ -1895,7 +1976,7 @@ impl App {
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
             // logs and moves on — the loop is already finishing.
-            if let Err(e) = persist_draft(&self.editor_buffer) {
+            if let Err(e) = persist_draft(&self.editor.buffer) {
                 tracing::warn!("could not save editor draft: {e}");
             }
             // Persist the query history ring too. Same best-effort
@@ -1924,21 +2005,21 @@ impl App {
             self.last_error = Some(format!("could not suspend TUI: {e}"));
             return;
         }
-        let result = external_edit_via(&self.editor_buffer, &editor_cmd);
+        let result = external_edit_via(&self.editor.buffer, &editor_cmd);
         // Resume the TUI even if the editor errored — leaving the
         // operator stuck in a half-suspended terminal would be much
         // worse than a slightly delayed error message.
         let resume_err = tui.resume().err();
         match result {
             Ok(text) => {
-                self.editor_buffer = text;
-                self.editor_cursor = self.editor_buffer.len();
-                self.editor_preferred_col = None;
+                self.editor.buffer = text;
+                self.editor.cursor = self.editor.buffer.len();
+                self.editor.preferred_col = None;
                 self.history_pos = None;
                 self.draft_dirty = true;
                 self.last_status = Some(format!(
                     "loaded {} char(s) from $EDITOR",
-                    self.editor_buffer.len()
+                    self.editor.buffer.len()
                 ));
             }
             Err(e) => {
@@ -1988,369 +2069,6 @@ impl App {
             || (self.auto_refresh && matches!(self.mode, Mode::SlowQueries | Mode::Sessions))
     }
 
-    /// Apply a finished message from a spawned task. Tap events
-    /// bypass the generation filter — the tap listener is bound
-    /// at startup and lives independently of the DB connection,
-    /// so events arriving across a reconnect are still meaningful.
-    fn on_msg(&mut self, msg: AppMsg) {
-        if !matches!(msg, AppMsg::TapEvent { .. }) && msg.generation() != self.generation {
-            tracing::debug!(
-                "dropping stale message from generation {}",
-                msg.generation()
-            );
-            return;
-        }
-        match msg {
-            AppMsg::Booted {
-                server_version,
-                grid,
-                client,
-                schema_cache,
-                tunnel,
-                ..
-            } => {
-                self.conn_state = ConnState::Connected { server_version };
-                // Pre-build the cancel dispatcher so Ctrl-C can fire
-                // without touching the Client. Replaced on every new
-                // Booted so the dispatcher always matches the live
-                // backend PID.
-                self.cancel_dispatcher =
-                    Some(Box::new(PgCancelDispatcher::new(client.cancel_token())));
-                self.client = Some(client);
-                // Hold the new tunnel (if any) so its Drop fires when
-                // the App loses the client at quit / next reconnect.
-                // The PREVIOUS tunnel — if there was one — must be
-                // dropped off-thread: `SshTunnel::drop` does
-                // `child.kill()` + blocking `child.wait()`, and a
-                // wedged ssh subprocess (e.g. stuck ProxyCommand)
-                // would otherwise freeze the UI loop here.
-                if let Some(old) = self.tunnel.take() {
-                    tokio::task::spawn_blocking(move || drop(old));
-                }
-                self.tunnel = tunnel;
-                self.grid = grid;
-                self.grid_state
-                    .select(if self.grid.is_empty() { None } else { Some(0) });
-                self.reset_grid_view();
-                self.schema_cache = schema_cache;
-                // Splash stays up — `tick_splash` honours the 3s minimum.
-            }
-            AppMsg::BootFailed { error, .. } => {
-                self.conn_state = ConnState::Failed(error);
-            }
-            AppMsg::QueryOk {
-                grid,
-                kind_label,
-                tx_open_after,
-                ..
-            } => {
-                self.grid = grid;
-                self.grid_state
-                    .select(if self.grid.is_empty() { None } else { Some(0) });
-                self.reset_grid_view();
-                // Infer the source table for the new grid — used by
-                // row-as-INSERT yank (and, eventually, cell-edit-to-
-                // UPDATE / FK nav). Single-table SELECT only; anything
-                // else clears the source so the feature gates self-
-                // disable.
-                self.grid_source = self
-                    .last_run_sql
-                    .as_deref()
-                    .and_then(infer_single_source_table);
-                self.query_running = false;
-                self.last_error = None;
-                self.last_error_detail = None;
-                let elapsed = self.query_started.take().map(|t0| t0.elapsed());
-                let timing_suffix = if self.timing_on {
-                    elapsed
-                        .map(|d| format!(" · {:.0} ms", d.as_secs_f64() * 1000.0))
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                let cap_suffix = if self.grid.truncated {
-                    format!(" · capped at {}", crate::grid::MAX_ROWS)
-                } else {
-                    String::new()
-                };
-                self.last_status = Some(format!(
-                    "{kind_label} ok · {} row(s){cap_suffix}{timing_suffix}",
-                    self.grid.row_count()
-                ));
-                // EXPLAIN / EXPLAIN ANALYZE: parse the JSON we asked
-                // for and pop the tree visualiser. On parse failure
-                // we fall back to the raw grid (the JSON text is
-                // still readable that way), surface the parse error
-                // in last_status so the operator sees what happened.
-                if kind_label == "EXPLAIN" || kind_label == "EXPLAIN ANALYZE" {
-                    if let Some(text) = self.grid.rows.first().and_then(|r| r.first()).cloned() {
-                        match crate::query::explain::parse(&text) {
-                            Ok(plan) => {
-                                self.explain_plan = Some(plan);
-                                self.explain_cursor = 0;
-                                self.explain_collapsed.clear();
-                                self.mode = Mode::ExplainTree;
-                            }
-                            Err(e) => {
-                                self.last_status = Some(format!(
-                                    "{kind_label} parse: {e} — falling back to raw text"
-                                ));
-                            }
-                        }
-                    }
-                }
-                if tx_open_after {
-                    self.tx_open = true;
-                    self.mode = Mode::TxDecision;
-                }
-            }
-            AppMsg::QueryFailed {
-                error,
-                position,
-                detail,
-                ..
-            } => {
-                self.query_running = false;
-                self.query_started = None;
-                self.last_status = None;
-                self.last_error = Some(error);
-                self.last_error_detail = detail;
-                // Postgres flagged a syntax error at a specific
-                // character — move the editor cursor there so the
-                // operator sees the offending token. The position is
-                // 1-indexed CHARS into the SQL we submitted; convert
-                // to a 0-indexed BYTE offset into `editor_buffer`.
-                // Out-of-range positions are ignored (could happen
-                // for batches where we sent a transformed string).
-                if let Some(p) = position {
-                    // Postgres reports a 1-indexed CHAR position into
-                    // the string WE submitted. `request_run` trims
-                    // leading whitespace before submitting, so we
-                    // skip past the same trimmed prefix in the
-                    // editor buffer before counting chars. Without
-                    // this, `\n\nSELECT FROM x` with an error at
-                    // submitted position 8 lands the cursor 2 chars
-                    // off because the leading `\n\n` is in the
-                    // buffer but not in the submitted SQL.
-                    let trimmed_prefix_bytes =
-                        self.editor_buffer.len() - self.editor_buffer.trim_start().len();
-                    let target_chars = (p.saturating_sub(1)) as usize;
-                    let after_trim = &self.editor_buffer[trimmed_prefix_bytes..];
-                    let inner_byte = after_trim
-                        .char_indices()
-                        .nth(target_chars)
-                        .map(|(b, _)| b)
-                        .unwrap_or(after_trim.len());
-                    let byte_offset = trimmed_prefix_bytes + inner_byte;
-                    self.editor_cursor = byte_offset.min(self.editor_buffer.len());
-                    self.editor_preferred_col = None;
-                    if self.mode == Mode::Normal {
-                        self.mode = Mode::Editor;
-                    }
-                }
-            }
-            AppMsg::TxClosed {
-                committed, error, ..
-            } => {
-                self.tx_open = false;
-                self.query_running = false;
-                self.mode = Mode::Editor;
-                match error {
-                    Some(e) => self.last_error = Some(format!("tx close failed: {e}")),
-                    None => {
-                        self.last_status = Some(
-                            if committed {
-                                "committed"
-                            } else {
-                                "rolled back"
-                            }
-                            .to_string(),
-                        );
-                    }
-                }
-            }
-            AppMsg::SlowQueriesLoaded { result, .. } => match result {
-                Ok(rows) => {
-                    self.slow_queries = rows;
-                    self.slow_queries_cursor = 0;
-                    self.last_status =
-                        Some(format!("slow queries · {} row(s)", self.slow_queries.len()));
-                }
-                Err(e) => {
-                    // pg_stat_statements not installed is the most
-                    // common failure — point the operator at the
-                    // `CREATE EXTENSION` they need.
-                    let hint = if e.contains("pg_stat_statements") {
-                        " (try `CREATE EXTENSION pg_stat_statements`)"
-                    } else {
-                        ""
-                    };
-                    self.last_error = Some(format!("slow queries load failed: {e}{hint}"));
-                    self.mode = Mode::Normal;
-                }
-            },
-            AppMsg::SessionsLoaded { result, .. } => match result {
-                Ok(rows) => {
-                    let blocked = rows.iter().filter(|r| r.is_blocked()).count();
-                    self.sessions = rows;
-                    self.sessions_cursor = 0;
-                    self.last_status = Some(format!(
-                        "sessions · {} total · {} blocked",
-                        self.sessions.len(),
-                        blocked
-                    ));
-                }
-                Err(e) => {
-                    self.last_error = Some(format!("sessions load failed: {e}"));
-                    self.mode = Mode::Normal;
-                }
-            },
-            AppMsg::LiveLintLoaded { result, .. } => {
-                // Merge live findings into the existing pure list.
-                // If the operator already left the lint panel,
-                // silently drop — a fresh open re-fires the fetch.
-                if self.mode != Mode::SchemaLint {
-                    return;
-                }
-                match result {
-                    Ok(live) => {
-                        let added = live.len();
-                        self.schema_lint_findings.extend(live);
-                        // Re-sort to keep severity ordering after
-                        // merge. Same sort as `lint::run_all`.
-                        self.schema_lint_findings.sort_by(|a, b| {
-                            a.severity
-                                .cmp(&b.severity)
-                                .then_with(|| a.code.cmp(b.code))
-                                .then_with(|| a.object.cmp(&b.object))
-                        });
-                        // Clamp the cursor — re-sort may have moved
-                        // the focused row's index.
-                        let last = self.schema_lint_findings.len().saturating_sub(1);
-                        if self.schema_lint_cursor > last {
-                            self.schema_lint_cursor = last;
-                        }
-                        let total = self.schema_lint_findings.len();
-                        let high = self
-                            .schema_lint_findings
-                            .iter()
-                            .filter(|f| f.severity == crate::query::lint::Severity::High)
-                            .count();
-                        self.last_status = Some(format!(
-                            "schema lint · {total} finding(s) · {high} high · live: +{added}"
-                        ));
-                    }
-                    Err(e) => {
-                        // Live check failed — leave the pure
-                        // findings in place. Surface the failure
-                        // so the operator knows the FK-index
-                        // check didn't run.
-                        self.last_status = Some(format!(
-                            "schema lint · live check failed: {e} (showing cached-only)"
-                        ));
-                    }
-                }
-            }
-            AppMsg::CostPreviewLoaded {
-                sql,
-                decision,
-                estimated,
-                threshold,
-                ..
-            } => {
-                // Clear the pre-flight busy flag — spawn_run sets
-                // its own when the real query goes; the Confirm
-                // modal doesn't run a query so it should also clear.
-                self.query_running = false;
-                match estimated {
-                    Ok(rows) if rows > threshold as f64 => {
-                        // Over threshold — gate behind Confirm. Reuse
-                        // the existing pending_run machinery so y/n
-                        // wiring stays in one place.
-                        let summary = format!(
-                            "cost preview: estimated {} rows (threshold {threshold}) — proceed?",
-                            format_row_estimate(rows),
-                        );
-                        self.last_status = Some(summary.clone());
-                        self.pending_run = Some(PendingRun {
-                            sql,
-                            kind: RunKind::Run,
-                            decision,
-                            is_batch: false,
-                            summary: Some(summary),
-                        });
-                        self.mode = Mode::Confirm;
-                    }
-                    Ok(rows) => {
-                        // Under threshold — proceed silently.
-                        self.last_status = Some(format!(
-                            "pre-flight ok · est {} rows",
-                            format_row_estimate(rows)
-                        ));
-                        self.spawn_run(sql, RunKind::Run, decision, false);
-                    }
-                    Err(e) => {
-                        // EXPLAIN itself failed — don't block; surface
-                        // and proceed (the real query will fail too if
-                        // it's e.g. a syntax error).
-                        tracing::warn!("cost preview EXPLAIN failed: {e}");
-                        self.last_status = Some(format!("pre-flight skipped: {e}"));
-                        self.spawn_run(sql, RunKind::Run, decision, false);
-                    }
-                }
-            }
-            AppMsg::Notice { notice, .. } => {
-                // Surface server-emitted notices in the status footer,
-                // and stash recent ones so a follow-up "show notices"
-                // panel can render them. Severity goes first so a
-                // `WARNING` reads visibly different from a `NOTICE`.
-                self.last_status = Some(format!("[{}] {}", notice.severity, notice.message));
-                tracing::info!(
-                    "pg notice [{}]: {}{}{}",
-                    notice.severity,
-                    notice.message,
-                    notice
-                        .detail
-                        .as_deref()
-                        .map(|d| format!(" · detail: {d}"))
-                        .unwrap_or_default(),
-                    notice
-                        .hint
-                        .as_deref()
-                        .map(|h| format!(" · hint: {h}"))
-                        .unwrap_or_default(),
-                );
-                self.notices.push(notice);
-                if self.notices.len() > 50 {
-                    self.notices.remove(0);
-                }
-            }
-            AppMsg::Notification { notification, .. } => {
-                // Brief status flash so the operator notices an
-                // arrival even without the `N` panel open. The
-                // ring buffer carries the full history for the
-                // panel to render later.
-                let preview: String = notification.payload.chars().take(40).collect();
-                self.last_status = Some(format!(
-                    "NOTIFY {} (pid {}): {preview}",
-                    notification.channel, notification.pid
-                ));
-                tracing::info!(
-                    "pg notify · channel={} pid={} payload={}",
-                    notification.channel,
-                    notification.pid,
-                    notification.payload,
-                );
-                self.notifications.push(notification);
-                if self.notifications.len() > NOTIFICATION_CAP {
-                    let drop = self.notifications.len() - NOTIFICATION_CAP;
-                    self.notifications.drain(..drop);
-                }
-            }
-            AppMsg::TapEvent { event } => self.on_tap_event(event),
-        }
-    }
-
     /// Fold one [`crate::tap::TapEvent`] into the app state.
     /// Pure-ish (does not perform I/O) so the run-loop tests
     /// can drive it directly. Behaviour per kind:
@@ -2381,14 +2099,6 @@ impl App {
                     self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(1);
                 }
             }
-        }
-    }
-
-    fn on_event(&mut self, ev: Event) {
-        match ev {
-            Event::Key(key) if key.kind != KeyEventKind::Release => self.on_key(key),
-            Event::Paste(text) => self.on_paste(text),
-            _ => {}
         }
     }
 
@@ -2597,12 +2307,13 @@ impl App {
     /// driver as notifications arrive. Even an empty ring opens
     /// (with a hint to LISTEN to a channel first).
     fn start_notifications(&mut self) {
-        self.notifications_cursor = self
-            .notifications_cursor
-            .min(self.notifications.len().saturating_sub(1));
+        self.notifications.cursor = self
+            .notifications
+            .cursor
+            .min(self.notifications.items.len().saturating_sub(1));
         self.last_status = Some(format!(
             "NOTIFY arrivals · {} stashed · LISTEN <chan> from the editor to subscribe",
-            self.notifications.len()
+            self.notifications.items.len()
         ));
         self.mode = Mode::Notifications;
     }
@@ -2771,7 +2482,7 @@ impl App {
 
     /// Copy the focused notification's payload to the clipboard.
     fn yank_focused_notification(&mut self) {
-        let Some(n) = self.notifications.get(self.notifications_cursor) else {
+        let Some(n) = self.notifications.items.get(self.notifications.cursor) else {
             return;
         };
         let text = n.payload.clone();
@@ -2788,158 +2499,8 @@ impl App {
     /// `Ctrl-S` in editor — prompt for a name (with the existing
     /// saved entry's name pre-filled if the buffer matches one
     /// — otherwise empty). Enter persists; Esc cancels.
-    /// Snapshot the currently-active per-session fields into
-    /// `tabs[active_tab]`. Called before every switch and on
-    /// every tab-close. Pure mechanical copy — no side effects.
-    fn snapshot_active_tab(&mut self) {
-        let snap = TabSnapshot {
-            editor_buffer: self.editor_buffer.clone(),
-            editor_cursor: self.editor_cursor,
-            editor_scroll: self.editor_scroll,
-            editor_preferred_col: self.editor_preferred_col,
-            editor_undo: self.editor_undo.clone(),
-            editor_redo: self.editor_redo.clone(),
-            grid: self.grid.clone(),
-            grid_selected: self.grid_state.selected(),
-            grid_col_cursor: self.grid_col_cursor,
-            grid_sort: self.grid_sort,
-            grid_raw_rows: self.grid_raw_rows.clone(),
-            grid_filter: self.grid_filter.clone(),
-            grid_visible_rows: self.grid_visible_rows.clone(),
-            last_run_sql: self.last_run_sql.clone(),
-            grid_source: self.grid_source.clone(),
-            pinned_result: self.pinned_result.clone(),
-        };
-        if let Some(slot) = self.tabs.get_mut(self.active_tab) {
-            *slot = snap;
-        }
-    }
-
-    /// Restore `tabs[active_tab]` into the per-session fields.
-    /// Mirror of `snapshot_active_tab`.
-    fn load_active_tab(&mut self) {
-        let snap = match self.tabs.get(self.active_tab) {
-            Some(s) => s.clone(),
-            None => return,
-        };
-        self.editor_buffer = snap.editor_buffer;
-        self.editor_cursor = snap.editor_cursor;
-        self.editor_scroll = snap.editor_scroll;
-        self.editor_preferred_col = snap.editor_preferred_col;
-        self.editor_undo = snap.editor_undo;
-        self.editor_redo = snap.editor_redo;
-        self.grid = snap.grid;
-        self.grid_state.select(snap.grid_selected);
-        self.grid_col_cursor = snap.grid_col_cursor;
-        self.grid_sort = snap.grid_sort;
-        self.grid_raw_rows = snap.grid_raw_rows;
-        self.grid_filter = snap.grid_filter;
-        self.grid_visible_rows = snap.grid_visible_rows;
-        self.last_run_sql = snap.last_run_sql;
-        self.grid_source = snap.grid_source;
-        self.pinned_result = snap.pinned_result;
-    }
-
-    /// Close the transient result-diff overlay if one is open. Called
-    /// on every tab change: the overlay is bound to the tab's live grid,
-    /// which is about to swap out from under it, so it must not survive
-    /// the switch. The per-tab `pinned_result` baseline is preserved
-    /// (snapshotted/restored separately).
-    fn dismiss_result_diff(&mut self) {
-        if self.mode == Mode::ResultDiff {
-            self.mode = Mode::Normal;
-        }
-        self.result_diff = None;
-        self.result_diff_cursor = 0;
-    }
-
-    /// `Ctrl-T` — push a fresh tab and switch to it. Refuses
-    /// past `TAB_CAP` with an actionable status.
-    pub fn new_tab(&mut self) {
-        if self.tabs.len() >= TAB_CAP {
-            self.last_status = Some(format!("max tabs reached ({TAB_CAP}) — close one first"));
-            return;
-        }
-        if self.query_running {
-            self.last_status = Some("can't switch tabs while a query is running".into());
-            return;
-        }
-        self.dismiss_result_diff();
-        self.snapshot_active_tab();
-        self.tabs.push(TabSnapshot::default());
-        self.active_tab = self.tabs.len() - 1;
-        self.load_active_tab();
-        // Reset transient state that doesn't belong to a tab
-        // (completion popup, history nav).
-        self.completion = None;
-        self.history_pos = None;
-        self.last_status = Some(format!(
-            "new tab · now on tab {}/{}",
-            self.active_tab + 1,
-            self.tabs.len()
-        ));
-    }
-
-    /// `Ctrl-W` — close the active tab. The next tab becomes
-    /// active (or the previous if active was last). No-op when
-    /// only one tab exists (closing the last is a quit-via-q).
-    pub fn close_active_tab(&mut self) {
-        if self.tabs.len() <= 1 {
-            self.last_status = Some("only one tab open · q to quit".into());
-            return;
-        }
-        if self.query_running {
-            self.last_status = Some("can't close tab while a query is running".into());
-            return;
-        }
-        self.dismiss_result_diff();
-        self.tabs.remove(self.active_tab);
-        if self.active_tab >= self.tabs.len() {
-            self.active_tab = self.tabs.len() - 1;
-        }
-        self.load_active_tab();
-        self.completion = None;
-        self.last_status = Some(format!(
-            "closed tab · now on tab {}/{}",
-            self.active_tab + 1,
-            self.tabs.len()
-        ));
-    }
-
-    /// Jump to `idx` (0-based). No-op out-of-range / same tab.
-    pub fn switch_to_tab(&mut self, idx: usize) {
-        if idx >= self.tabs.len() || idx == self.active_tab {
-            return;
-        }
-        if self.query_running {
-            self.last_status = Some("can't switch tabs while a query is running".into());
-            return;
-        }
-        self.dismiss_result_diff();
-        self.snapshot_active_tab();
-        self.active_tab = idx;
-        self.load_active_tab();
-        self.completion = None;
-        self.history_pos = None;
-        self.last_status = Some(format!("tab {}/{}", self.active_tab + 1, self.tabs.len()));
-    }
-
-    /// Step forward / backward through the tab list, wrapping.
-    pub fn cycle_tab(&mut self, forward: bool) {
-        if self.tabs.len() <= 1 {
-            return;
-        }
-        let n = self.tabs.len();
-        let next = if forward {
-            (self.active_tab + 1) % n
-        } else {
-            (self.active_tab + n - 1) % n
-        };
-        self.switch_to_tab(next);
-    }
-
     fn start_save_query_prompt(&mut self) {
-        if self.editor_buffer.trim().is_empty() {
+        if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("editor empty — nothing to save".into());
             return;
         }
@@ -2947,7 +2508,7 @@ impl App {
         // buffer with a non-identifier sanitisation, so the
         // operator has a starting point. They can backspace and
         // type their own.
-        self.saved_ui.save_name = default_query_name(&self.editor_buffer);
+        self.saved_ui.save_name = default_query_name(&self.editor.buffer);
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }
@@ -2999,9 +2560,9 @@ impl App {
     /// Drop `sql` into the editor buffer and switch to the editor.
     /// Shared by the direct and post-`:param`-prompt load paths.
     fn load_sql_into_editor(&mut self, sql: String, status: String) {
-        self.editor_buffer = sql;
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.buffer = sql;
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.last_status = Some(status);
         self.mode = Mode::Editor;
@@ -3055,8 +2616,8 @@ impl App {
         if self.grid.rows.get(idx).is_none() {
             return;
         }
-        self.row_detail_scroll = 0;
-        self.row_detail_field = 0;
+        self.row_detail.scroll = 0;
+        self.row_detail.field = 0;
         self.mode = Mode::RowDetail;
     }
 
@@ -3071,20 +2632,20 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.row_detail_field) else {
+        let Some(value) = row.get(self.row_detail.field) else {
             return;
         };
-        self.cell_detail_scroll = 0;
-        self.json_cell_rows.clear();
-        self.json_cell_cursor = 0;
-        self.json_cell_collapsed.clear();
+        self.cell_detail.scroll = 0;
+        self.cell_detail.json_rows.clear();
+        self.cell_detail.json_cursor = 0;
+        self.cell_detail.json_collapsed.clear();
         if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(value) {
-            self.json_cell_rows =
-                crate::query::json_cell::flatten(&parsed, &self.json_cell_collapsed);
+            self.cell_detail.json_rows =
+                crate::query::json_cell::flatten(&parsed, &self.cell_detail.json_collapsed);
             // Stash the parsed value so collapse/expand can re-flatten.
-            self.json_cell_value = Some(parsed);
+            self.cell_detail.json_value = Some(parsed);
         } else {
-            self.json_cell_value = None;
+            self.cell_detail.json_value = None;
         }
         self.mode = Mode::CellDetail;
     }
@@ -3094,7 +2655,12 @@ impl App {
     /// remain on the same path (or, if the path vanished because a
     /// parent collapsed, on its parent's row).
     fn toggle_json_cell_node(&mut self) {
-        let Some(row) = self.json_cell_rows.get(self.json_cell_cursor).cloned() else {
+        let Some(row) = self
+            .cell_detail
+            .json_rows
+            .get(self.cell_detail.json_cursor)
+            .cloned()
+        else {
             return;
         };
         if !matches!(
@@ -3103,28 +2669,30 @@ impl App {
         ) {
             return;
         }
-        if self.json_cell_collapsed.contains(&row.path) {
-            self.json_cell_collapsed.remove(&row.path);
+        if self.cell_detail.json_collapsed.contains(&row.path) {
+            self.cell_detail.json_collapsed.remove(&row.path);
         } else {
-            self.json_cell_collapsed.insert(row.path.clone());
+            self.cell_detail.json_collapsed.insert(row.path.clone());
         }
-        if let Some(v) = &self.json_cell_value {
-            self.json_cell_rows = crate::query::json_cell::flatten(v, &self.json_cell_collapsed);
+        if let Some(v) = &self.cell_detail.json_value {
+            self.cell_detail.json_rows =
+                crate::query::json_cell::flatten(v, &self.cell_detail.json_collapsed);
         }
         // Try to keep the cursor on the same path; fall back to the
         // tail if the row list shrank past it.
         let new_idx = self
-            .json_cell_rows
+            .cell_detail
+            .json_rows
             .iter()
             .position(|r| r.path == row.path)
-            .unwrap_or_else(|| self.json_cell_rows.len().saturating_sub(1));
-        self.json_cell_cursor = new_idx;
+            .unwrap_or_else(|| self.cell_detail.json_rows.len().saturating_sub(1));
+        self.cell_detail.json_cursor = new_idx;
     }
 
     /// Yank the focused JSON node's jq-style path (`.foo[0].bar`) to
     /// the clipboard. The root node yanks `.` for convenience.
     fn yank_json_cell_path(&mut self) {
-        let Some(row) = self.json_cell_rows.get(self.json_cell_cursor) else {
+        let Some(row) = self.cell_detail.json_rows.get(self.cell_detail.json_cursor) else {
             return;
         };
         let path = if row.path.is_empty() {
@@ -3152,13 +2720,13 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.row_detail_field) else {
+        let Some(value) = row.get(self.row_detail.field) else {
             return;
         };
         let column = self
             .grid
             .columns
-            .get(self.row_detail_field)
+            .get(self.row_detail.field)
             .cloned()
             .unwrap_or_default();
         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
@@ -3179,8 +2747,8 @@ impl App {
     /// matches `from` — operators see the relevant keys without
     /// hunting for them.
     pub fn open_help_from(&mut self, from: Mode) {
-        self.help_origin = Some(from);
-        self.help_scroll = 0; // Renderer-side anchor pass will adjust.
+        self.help.origin = Some(from);
+        self.help.scroll = 0; // Renderer-side anchor pass will adjust.
         self.mode = Mode::Help;
     }
 
@@ -3230,7 +2798,7 @@ impl App {
             Some(c) => c,
             None => return,
         };
-        let Some(id) = complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
+        let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             return;
         };
@@ -3239,7 +2807,7 @@ impl App {
         // (matches the Tab-on-whitespace UX). The cycle drops naturally
         // when those produce no matches.
         let cands =
-            complete_q::candidates_for(&self.editor_buffer, self.editor_cursor, &self.schema_cache);
+            complete_q::candidates_for(&self.editor.buffer, self.editor.cursor, &self.schema_cache);
         if cands.is_empty() {
             // Mirror the tailored messaging from editor_complete so the
             // status footer doesn't show `no matches for ""` when the
@@ -3256,11 +2824,11 @@ impl App {
             self.last_status = Some(msg);
             return;
         }
-        let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let prefix_start = self.editor.cursor.saturating_sub(id.prefix.len());
         let cand_count = cands.len();
         self.completion = Some(CompletionCycle {
             start: prefix_start,
-            end: self.editor_cursor,
+            end: self.editor.cursor,
             // Original cycle's origin is preserved so Esc-restore
             // returns to the pre-Tab state, not the mid-narrow state.
             origin: existing.origin,
@@ -3282,7 +2850,7 @@ impl App {
     /// the redo ring (divergent edit = new history branch).
     fn push_undo(&mut self, buffer: String, cursor: usize, kind: EditorActionKind) {
         let now = std::time::Instant::now();
-        if let Some(last) = self.editor_undo.last_mut() {
+        if let Some(last) = self.editor.undo.last_mut() {
             if should_coalesce_undo(
                 last.kind,
                 last.merge_window_end,
@@ -3295,21 +2863,21 @@ impl App {
                 // undo is the one already on the stack, NOT this
                 // intermediate one.
                 last.merge_window_end = now;
-                self.editor_redo.clear();
+                self.editor.redo.clear();
                 return;
             }
         }
-        self.editor_redo.clear();
-        self.editor_undo.push(UndoEntry {
+        self.editor.redo.clear();
+        self.editor.undo.push(UndoEntry {
             buffer,
             cursor,
             kind,
             merge_window_end: now,
         });
-        if self.editor_undo.len() > UNDO_CAP {
+        if self.editor.undo.len() > UNDO_CAP {
             // Drop the oldest. `Vec::remove(0)` is O(N) but N is
             // small (UNDO_CAP) and undos are rare keys.
-            self.editor_undo.remove(0);
+            self.editor.undo.remove(0);
         }
     }
 
@@ -3321,16 +2889,16 @@ impl App {
         }
         let new_pos = match self.history_pos {
             None => {
-                self.history_draft = self.editor_buffer.clone();
+                self.history_draft = self.editor.buffer.clone();
                 self.history.len() - 1
             }
             Some(i) if i > 0 => i - 1,
             Some(_) => return,
         };
         self.history_pos = Some(new_pos);
-        self.editor_buffer = self.history[new_pos].clone();
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.buffer = self.history[new_pos].clone();
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
     }
 
     /// Step forward into newer history (Ctrl-N). Past the newest entry,
@@ -3341,13 +2909,13 @@ impl App {
         };
         if pos + 1 < self.history.len() {
             self.history_pos = Some(pos + 1);
-            self.editor_buffer = self.history[pos + 1].clone();
+            self.editor.buffer = self.history[pos + 1].clone();
         } else {
-            self.editor_buffer = std::mem::take(&mut self.history_draft);
+            self.editor.buffer = std::mem::take(&mut self.history_draft);
             self.history_pos = None;
         }
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
     }
 
     /// Ctrl-R from the editor — enter reverse-incremental history
@@ -3362,8 +2930,8 @@ impl App {
             self.last_status = Some("history is empty".to_string());
             return;
         }
-        let saved_buffer = self.editor_buffer.clone();
-        let saved_cursor = self.editor_cursor;
+        let saved_buffer = self.editor.buffer.clone();
+        let saved_cursor = self.editor.cursor;
         let initial = self.history.len() - 1;
         self.history_search = Some(HistorySearchState {
             query: String::new(),
@@ -3373,8 +2941,8 @@ impl App {
         });
         // Mirror the most-recent entry into the buffer so the
         // operator can see what they'd commit to with Enter.
-        self.editor_buffer = self.history[initial].clone();
-        self.editor_cursor = self.editor_buffer.len();
+        self.editor.buffer = self.history[initial].clone();
+        self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::HistorySearch;
         self.refresh_history_search_status();
     }
@@ -3407,8 +2975,8 @@ impl App {
             s.matched = found;
         }
         if let Some(i) = found {
-            self.editor_buffer = self.history[i].clone();
-            self.editor_cursor = self.editor_buffer.len();
+            self.editor.buffer = self.history[i].clone();
+            self.editor.cursor = self.editor.buffer.len();
         }
         // If `found` is None we leave the buffer alone (showing the
         // last good match) — same UX as bash, where a failed search
@@ -3448,7 +3016,7 @@ impl App {
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
     fn start_log_import(&mut self) {
-        let log = &self.editor_buffer;
+        let log = &self.editor.buffer;
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
         picks.extend(query::hibernate::parse(log));
         picks.extend(query::pglog::parse(log));
@@ -3461,19 +3029,19 @@ impl App {
         }
         self.last_error = None;
         self.last_status = Some(format!("{} pick(s) found", picks.len()));
-        self.log_pick_clusters = crate::query::nplus1::detect(&picks);
-        self.log_picks = picks;
-        self.log_pick_view = LogPickView::AllQueries;
-        self.log_pick_index = 0;
+        self.log_pick.clusters = crate::query::nplus1::detect(&picks);
+        self.log_pick.picks = picks;
+        self.log_pick.view = LogPickView::AllQueries;
+        self.log_pick.index = 0;
         self.mode = Mode::LogPick;
     }
 
     /// Number of rows the LogPick popup is currently rendering.
     /// Folds the view choice (all queries vs. cluster summary).
     pub fn log_pick_visible_len(&self) -> usize {
-        match self.log_pick_view {
-            LogPickView::AllQueries => self.log_picks.len(),
-            LogPickView::Clusters => self.log_pick_clusters.len(),
+        match self.log_pick.view {
+            LogPickView::AllQueries => self.log_pick.picks.len(),
+            LogPickView::Clusters => self.log_pick.clusters.len(),
         }
     }
 
@@ -3481,17 +3049,17 @@ impl App {
     /// summary. Resets the cursor to row 0 so a stale index from
     /// the previous view doesn't render out-of-range.
     fn toggle_log_pick_view(&mut self) {
-        self.log_pick_view = match self.log_pick_view {
+        self.log_pick.view = match self.log_pick.view {
             LogPickView::AllQueries => LogPickView::Clusters,
             LogPickView::Clusters => LogPickView::AllQueries,
         };
-        self.log_pick_index = 0;
-        self.last_status = Some(match self.log_pick_view {
-            LogPickView::AllQueries => format!("all queries · {}", self.log_picks.len()),
+        self.log_pick.index = 0;
+        self.last_status = Some(match self.log_pick.view {
+            LogPickView::AllQueries => format!("all queries · {}", self.log_pick.picks.len()),
             LogPickView::Clusters => format!(
                 "N+1 clusters · {} (of {} queries)",
-                self.log_pick_clusters.len(),
-                self.log_picks.len()
+                self.log_pick.clusters.len(),
+                self.log_pick.picks.len()
             ),
         });
     }
@@ -3499,14 +3067,16 @@ impl App {
     /// Resolve the focused row's runnable SQL — `runnable_sql` for
     /// the AllQueries view, the cluster's `example` for Clusters.
     fn focused_log_pick_sql(&self) -> Option<String> {
-        match self.log_pick_view {
+        match self.log_pick.view {
             LogPickView::AllQueries => self
-                .log_picks
-                .get(self.log_pick_index)
+                .log_pick
+                .picks
+                .get(self.log_pick.index)
                 .map(|q| q.runnable_sql.clone()),
             LogPickView::Clusters => self
-                .log_pick_clusters
-                .get(self.log_pick_index)
+                .log_pick
+                .clusters
+                .get(self.log_pick.index)
                 .map(|c| c.example.clone()),
         }
     }
@@ -3541,16 +3111,16 @@ impl App {
     /// buffer; the alternative (`spawn_blocking` + message round-
     /// trip) adds more plumbing than the operation deserves.
     fn reformat_buffer(&mut self) {
-        if self.editor_buffer.trim().is_empty() {
+        if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("nothing to format".into());
             return;
         }
-        match pg_format_via(&self.editor_buffer, "pg_format") {
+        match pg_format_via(&self.editor.buffer, "pg_format") {
             Ok(formatted) => {
                 let chars = formatted.len();
-                self.editor_buffer = formatted;
-                self.editor_cursor = self.editor_buffer.len();
-                self.editor_preferred_col = None;
+                self.editor.buffer = formatted;
+                self.editor.cursor = self.editor.buffer.len();
+                self.editor.preferred_col = None;
                 self.history_pos = None;
                 self.last_status = Some(format!("formatted via pg_format · {chars} char(s)"));
             }
@@ -3564,7 +3134,7 @@ impl App {
                 Some("can't \\watch while a query is running or a tx is open".to_string());
             return;
         }
-        let sql = self.editor_buffer.trim().to_string();
+        let sql = self.editor.buffer.trim().to_string();
         let sql = if sql.is_empty() {
             match self.history.last() {
                 Some(s) => s.clone(),
@@ -3664,12 +3234,12 @@ impl App {
         // Stash the watch state — `request_run` reads the editor
         // buffer, so we briefly swap it in, run, and then restore.
         // (Routes through the safety pipeline like a normal run.)
-        let saved_buffer = std::mem::replace(&mut self.editor_buffer, sql);
-        let saved_cursor = self.editor_cursor;
-        self.editor_cursor = self.editor_buffer.len();
+        let saved_buffer = std::mem::replace(&mut self.editor.buffer, sql);
+        let saved_cursor = self.editor.cursor;
+        self.editor.cursor = self.editor.buffer.len();
         self.request_run(RunKind::Run);
-        self.editor_buffer = saved_buffer;
-        self.editor_cursor = saved_cursor.min(self.editor_buffer.len());
+        self.editor.buffer = saved_buffer;
+        self.editor.cursor = saved_cursor.min(self.editor.buffer.len());
     }
 
     fn cancel_running_query(&mut self) {
@@ -3690,7 +3260,7 @@ impl App {
             title: "pgman report".into(),
             generated_at,
             connection,
-            lint_findings: self.schema_lint_findings.clone(),
+            lint_findings: self.schema_lint.findings.clone(),
             hotspots: self.current_hotspots(),
             callers: self.current_callers(),
             transactions: self.current_txns(),
@@ -3705,7 +3275,7 @@ impl App {
     }
 
     fn request_run(&mut self, kind: RunKind) {
-        let sql = self.editor_buffer.trim().to_string();
+        let sql = self.editor.buffer.trim().to_string();
         if sql.is_empty() {
             self.last_error = Some("editor is empty".to_string());
             return;
@@ -3842,7 +3412,7 @@ impl App {
     /// then runs via Ctrl-R (which takes the multi-statement batch path).
     fn load_dbunit_fixture(&mut self) {
         use crate::dbunit;
-        let path_str = self.editor_buffer.trim().to_string();
+        let path_str = self.editor.buffer.trim().to_string();
         if path_str.is_empty() {
             self.last_error =
                 Some("editor is empty — type a fixture file path then ctrl-d".to_string());
@@ -3878,9 +3448,9 @@ impl App {
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
         let clean_mode = self.safety_config.profile_for(db).clean_mode;
-        self.editor_buffer = dbunit::generate_apply_script(&fixture, clean_mode);
-        self.editor_cursor = 0;
-        self.editor_preferred_col = None;
+        self.editor.buffer = dbunit::generate_apply_script(&fixture, clean_mode);
+        self.editor.cursor = 0;
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.last_error = None;
         self.last_status = Some(format!(
@@ -3888,15 +3458,16 @@ impl App {
         ));
     }
 
-    /// Recompute `grid_visible_rows` against the current `grid.rows`
-    /// and `grid_filter`. Filter is a case-insensitive substring
+    /// Recompute `grid_view.visible_rows` against the current `grid.rows`
+    /// and `grid_view.filter`. Filter is a case-insensitive substring
     /// match across every column of each row. With no filter the
     /// visible set is just `0..rows.len()` (kept materialised so the
     /// render path has one code path).
     fn rebuild_visible_rows(&mut self) {
-        self.grid_visible_rows = compute_visible_rows(&self.grid.rows, self.grid_filter.as_deref());
+        self.grid_view.visible_rows =
+            compute_visible_rows(&self.grid.rows, self.grid_view.filter.as_deref());
         // Keep the selection in range.
-        let visible = self.grid_visible_rows.len();
+        let visible = self.grid_view.visible_rows.len();
         if visible == 0 {
             self.grid_state.select(None);
         } else {
@@ -3913,12 +3484,12 @@ impl App {
         if self.grid.columns.is_empty() {
             return;
         }
-        let col = self.grid_col_cursor.min(self.grid.columns.len() - 1);
-        let next = next_sort_state(self.grid_sort, col);
+        let col = self.grid_view.col_cursor.min(self.grid.columns.len() - 1);
+        let next = next_sort_state(self.grid_view.sort, col);
         match next {
             Some((col, asc)) => {
-                if self.grid_raw_rows.is_none() {
-                    self.grid_raw_rows = Some(self.grid.rows.clone());
+                if self.grid_view.raw_rows.is_none() {
+                    self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
                 self.grid.rows.sort_by(|a, b| {
                     let av = a.get(col).map(String::as_str).unwrap_or("");
@@ -3930,15 +3501,15 @@ impl App {
                         ord.reverse()
                     }
                 });
-                self.grid_sort = Some((col, asc));
+                self.grid_view.sort = Some((col, asc));
                 let dir = if asc { "ASC" } else { "DESC" };
                 self.last_status = Some(format!("sorted by {} {dir}", self.grid.columns[col]));
             }
             None => {
-                if let Some(raw) = self.grid_raw_rows.take() {
+                if let Some(raw) = self.grid_view.raw_rows.take() {
                     self.grid.rows = raw;
                 }
-                self.grid_sort = None;
+                self.grid_view.sort = None;
                 self.last_status = Some("sort cleared".into());
             }
         }
@@ -3952,9 +3523,9 @@ impl App {
         if n == 0 {
             return;
         }
-        let cur = self.grid_col_cursor as isize;
+        let cur = self.grid_view.col_cursor as isize;
         let next = (cur + delta).clamp(0, n as isize - 1);
-        self.grid_col_cursor = next as usize;
+        self.grid_view.col_cursor = next as usize;
     }
 
     /// `I` in Normal — copy the focused row to the clipboard as
@@ -3969,12 +3540,12 @@ impl App {
     /// to run. Multi-tab keeps the originating result behind for
     /// "go back" (close the new tab).
     fn navigate_fk_from_focused_cell(&mut self) {
-        let Some((schema, table)) = self.grid_source.clone() else {
+        let Some((schema, table)) = self.grid_view.source.clone() else {
             self.last_error =
                 Some("FK navigation needs a single-table SELECT for source inference".into());
             return;
         };
-        let Some(col_name) = self.grid.columns.get(self.grid_col_cursor).cloned() else {
+        let Some(col_name) = self.grid.columns.get(self.grid_view.col_cursor).cloned() else {
             self.last_error = Some("no focused column".into());
             return;
         };
@@ -3984,7 +3555,7 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.grid_col_cursor).cloned() else {
+        let Some(value) = row.get(self.grid_view.col_cursor).cloned() else {
             return;
         };
         let edge = match self
@@ -4028,8 +3599,8 @@ impl App {
         self.load_active_tab();
         self.completion = None;
         self.history_pos = None;
-        self.editor_buffer = sql;
-        self.editor_cursor = self.editor_buffer.len();
+        self.editor.buffer = sql;
+        self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::Editor;
         self.last_status = Some(format!(
             "→ {}.{} (F5 to run)",
@@ -4048,7 +3619,7 @@ impl App {
                 return crate::grid::truncate_cell(&one, 60);
             }
         }
-        match &self.grid_source {
+        match &self.grid_view.source {
             Some((schema, table)) => format!("{schema}.{table}"),
             None => format!("{} row(s)", self.grid.rows.len()),
         }
@@ -4062,10 +3633,10 @@ impl App {
             self.last_error = Some("no result to diff — run a query first".into());
             return;
         }
-        match self.pinned_result.take() {
+        match self.diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
-                self.pinned_result = Some(PinnedResult {
+                self.diff.pinned = Some(PinnedResult {
                     columns: self.grid.columns.clone(),
                     rows: self.grid.rows.clone(),
                     label: self.current_result_label(),
@@ -4089,7 +3660,7 @@ impl App {
                     diff.changed.len(),
                     diff.unchanged
                 );
-                self.result_diff = Some(ResultDiffState {
+                self.diff.active = Some(ResultDiffState {
                     a: a.clone(),
                     b_columns,
                     b_rows,
@@ -4097,8 +3668,8 @@ impl App {
                     key,
                     diff,
                 });
-                self.pinned_result = Some(a);
-                self.result_diff_cursor = 0;
+                self.diff.pinned = Some(a);
+                self.diff.cursor = 0;
                 self.mode = Mode::ResultDiff;
                 self.last_status = Some(summary);
             }
@@ -4125,7 +3696,7 @@ impl App {
     }
 
     fn yank_row_as_insert(&mut self) {
-        let Some((schema, table)) = self.grid_source.clone() else {
+        let Some((schema, table)) = self.grid_view.source.clone() else {
             self.last_error = Some(
                 "can't infer source table — row-as-INSERT only works for single-table SELECTs"
                     .into(),
@@ -4177,10 +3748,10 @@ impl App {
         // format here; format chooser is a follow-up.
         let mut export = crate::grid::Grid {
             columns: self.grid.columns.clone(),
-            rows: Vec::with_capacity(self.grid_visible_rows.len()),
+            rows: Vec::with_capacity(self.grid_view.visible_rows.len()),
             truncated: false,
         };
-        for &i in &self.grid_visible_rows {
+        for &i in &self.grid_view.visible_rows {
             if let Some(row) = self.grid.rows.get(i) {
                 export.rows.push(row.clone());
             }
@@ -4209,7 +3780,7 @@ impl App {
         // Start from an empty pattern; whatever was previously set is
         // discarded so each `/` is a fresh search. The footer's
         // status reflects the live pattern.
-        self.grid_filter = Some(String::new());
+        self.grid_view.filter = Some(String::new());
         self.rebuild_visible_rows();
         self.mode = Mode::GridFilter;
         self.refresh_filter_status();
@@ -4218,7 +3789,7 @@ impl App {
     /// `n` / `N` in Normal — step the row cursor to the next / prev
     /// matching row (only meaningful while a filter is active).
     fn filter_step(&mut self, forward: bool) {
-        if self.grid_filter.is_none() {
+        if self.grid_view.filter.is_none() {
             // Make the no-op visible — vim muscle memory expects
             // `n` to do something useful, and silent failure feels
             // like the terminal is stuck.
@@ -4227,7 +3798,7 @@ impl App {
         }
         // visible_rows is already the filtered set in display order;
         // step the existing cursor through it.
-        let visible = self.grid_visible_rows.len();
+        let visible = self.grid_view.visible_rows.len();
         if visible == 0 {
             return;
         }
@@ -4242,8 +3813,8 @@ impl App {
 
     /// Update the footer to reflect the live filter state, bash-style.
     fn refresh_filter_status(&mut self) {
-        let pat = self.grid_filter.as_deref().unwrap_or("");
-        let n = self.grid_visible_rows.len();
+        let pat = self.grid_view.filter.as_deref().unwrap_or("");
+        let n = self.grid_view.visible_rows.len();
         let total = self.grid.rows.len();
         self.last_status = Some(format!(
             "filter: /{pat}  · {n}/{total} row(s) · enter accept · esc clear"
@@ -4258,12 +3829,12 @@ impl App {
     /// over `(plan, collapsed)` — same logic both the renderer and
     /// the key handler consult.
     pub fn flattened_explain_rows(&self) -> Vec<ExplainRow> {
-        let Some(plan) = self.explain_plan.as_ref() else {
+        let Some(plan) = self.explain.plan.as_ref() else {
             return Vec::new();
         };
         let mut out = Vec::new();
         let mut path = Vec::new();
-        flatten_plan(plan, &mut path, 0, &self.explain_collapsed, &mut out);
+        flatten_plan(plan, &mut path, 0, &self.explain.collapsed, &mut out);
         out
     }
 
@@ -4328,8 +3899,8 @@ impl App {
         } else {
             format!("schema lint · {n} finding(s) · {high} high · checking live…")
         });
-        self.schema_lint_findings = findings;
-        self.schema_lint_cursor = 0;
+        self.schema_lint.findings = findings;
+        self.schema_lint.cursor = 0;
         self.mode = Mode::SchemaLint;
         // Kick off the live-query checks (LINT101+). Results land
         // via `AppMsg::LiveLintLoaded` and get merged into
@@ -4349,7 +3920,7 @@ impl App {
     /// editor. Surfaces an actionable status when the finding has
     /// no suggestion (LINT002 / LINT003 / LINT004 are advisory).
     fn yank_schema_lint_suggestion(&mut self) {
-        let Some(finding) = self.schema_lint_findings.get(self.schema_lint_cursor) else {
+        let Some(finding) = self.schema_lint.findings.get(self.schema_lint.cursor) else {
             return;
         };
         let Some(snippet) = finding.suggestion.clone() else {
@@ -4448,7 +4019,7 @@ impl App {
             self.last_error = Some("not connected".into());
             return;
         };
-        self.slow_queries_cursor = 0;
+        self.slow_queries.cursor = 0;
         self.mode = Mode::SlowQueries;
         self.last_status = Some("loading pg_stat_statements…".into());
         self.spawn_slow_queries_load(client);
@@ -4469,7 +4040,7 @@ impl App {
             self.last_error = Some("not connected".into());
             return;
         };
-        self.sessions_cursor = 0;
+        self.sessions.cursor = 0;
         self.mode = Mode::Sessions;
         self.last_status = Some("loading pg_stat_activity…".into());
         self.spawn_sessions_load(client);
@@ -4488,7 +4059,7 @@ impl App {
     /// spawn fires; the panel auto-refreshes when the result
     /// lands.
     fn start_terminate_focused_session(&mut self) {
-        let Some(row) = self.sessions.get(self.sessions_cursor) else {
+        let Some(row) = self.sessions.rows.get(self.sessions.cursor) else {
             return;
         };
         let pid = row.pid;
@@ -4519,7 +4090,11 @@ impl App {
         // The bookmark's `row` was the underlying grid index at
         // the time of set. Find its position in the current
         // visible-rows list (filter may have moved / dropped it).
-        let target_visible = self.grid_visible_rows.iter().position(|&i| i == bm.row);
+        let target_visible = self
+            .grid_view
+            .visible_rows
+            .iter()
+            .position(|&i| i == bm.row);
         let visible_idx = match target_visible {
             Some(i) => i,
             None => {
@@ -4529,7 +4104,7 @@ impl App {
         };
         self.grid_state.select(Some(visible_idx));
         let last_col = self.grid.columns.len().saturating_sub(1);
-        self.grid_col_cursor = bm.col.min(last_col);
+        self.grid_view.col_cursor = bm.col.min(last_col);
     }
 
     /// `f` from Normal — open the grid-find input. Re-uses the
@@ -4540,22 +4115,22 @@ impl App {
             self.last_status = Some("nothing to find · grid is empty".into());
             return;
         }
-        self.grid_find = Some(String::new());
-        self.grid_find_matches.clear();
-        self.grid_find_pos = 0;
+        self.grid_find.needle = Some(String::new());
+        self.grid_find.matches.clear();
+        self.grid_find.pos = 0;
         self.last_status =
             Some("find:    · type to search · n/N jump · enter accept · esc cancel".into());
         self.mode = Mode::GridFind;
     }
 
     fn refresh_grid_find_status(&mut self) {
-        let pat = self.grid_find.as_deref().unwrap_or("");
-        let n = self.grid_find_matches.len();
+        let pat = self.grid_find.needle.as_deref().unwrap_or("");
+        let n = self.grid_find.matches.len();
         if pat.is_empty() {
             self.last_status = Some("find:    · type to search · enter accept · esc cancel".into());
             return;
         }
-        let pos = if n == 0 { 0 } else { self.grid_find_pos + 1 };
+        let pos = if n == 0 { 0 } else { self.grid_find.pos + 1 };
         self.last_status = Some(format!(
             "find: {pat}  · {pos}/{n} match · n/N jump · enter accept · esc cancel"
         ));
@@ -4565,31 +4140,31 @@ impl App {
     /// match. Called on every keystroke while the find input is
     /// live.
     fn rebuild_grid_find(&mut self) {
-        let pat = self.grid_find.clone().unwrap_or_default();
-        self.grid_find_matches =
-            compute_grid_find_matches(&self.grid, &self.grid_visible_rows, &pat);
-        self.grid_find_pos = 0;
-        if let Some(&(vi, ci)) = self.grid_find_matches.first() {
+        let pat = self.grid_find.needle.clone().unwrap_or_default();
+        self.grid_find.matches =
+            compute_grid_find_matches(&self.grid, &self.grid_view.visible_rows, &pat);
+        self.grid_find.pos = 0;
+        if let Some(&(vi, ci)) = self.grid_find.matches.first() {
             self.grid_state.select(Some(vi));
-            self.grid_col_cursor = ci;
+            self.grid_view.col_cursor = ci;
         }
     }
 
     /// Step to the next / previous match (wrapping). No-op when
     /// no matches.
     fn step_grid_find(&mut self, forward: bool) {
-        if self.grid_find_matches.is_empty() {
+        if self.grid_find.matches.is_empty() {
             return;
         }
-        let n = self.grid_find_matches.len();
-        self.grid_find_pos = if forward {
-            (self.grid_find_pos + 1) % n
+        let n = self.grid_find.matches.len();
+        self.grid_find.pos = if forward {
+            (self.grid_find.pos + 1) % n
         } else {
-            (self.grid_find_pos + n - 1) % n
+            (self.grid_find.pos + n - 1) % n
         };
-        let (vi, ci) = self.grid_find_matches[self.grid_find_pos];
+        let (vi, ci) = self.grid_find.matches[self.grid_find.pos];
         self.grid_state.select(Some(vi));
-        self.grid_col_cursor = ci;
+        self.grid_view.col_cursor = ci;
         self.refresh_grid_find_status();
     }
 
@@ -5251,4825 +4826,4 @@ async fn execute(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_coalesce_undo_merges_consecutive_char_inserts_inside_window() {
-        use std::time::{Duration, Instant};
-        let t0 = Instant::now();
-        let t1 = t0 + Duration::from_millis(50);
-        let window = Duration::from_millis(500);
-        assert!(should_coalesce_undo(
-            EditorActionKind::CharInsert,
-            t0,
-            EditorActionKind::CharInsert,
-            t1,
-            window,
-        ));
-    }
-
-    #[test]
-    fn should_coalesce_undo_refuses_after_window_expires() {
-        use std::time::{Duration, Instant};
-        let t0 = Instant::now();
-        let t1 = t0 + Duration::from_millis(600);
-        let window = Duration::from_millis(500);
-        assert!(!should_coalesce_undo(
-            EditorActionKind::CharInsert,
-            t0,
-            EditorActionKind::CharInsert,
-            t1,
-            window,
-        ));
-    }
-
-    #[test]
-    fn should_coalesce_undo_refuses_non_charinsert_neighbours() {
-        use std::time::{Duration, Instant};
-        let t0 = Instant::now();
-        let window = Duration::from_millis(500);
-        assert!(!should_coalesce_undo(
-            EditorActionKind::Other,
-            t0,
-            EditorActionKind::CharInsert,
-            t0,
-            window,
-        ));
-        assert!(!should_coalesce_undo(
-            EditorActionKind::CharInsert,
-            t0,
-            EditorActionKind::Other,
-            t0,
-            window,
-        ));
-    }
-
-    #[test]
-    fn f1_from_editor_opens_help() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Help);
-        assert_eq!(a.help_origin, Some(Mode::Editor));
-    }
-
-    #[test]
-    fn f1_from_help_closes_back_to_origin_mode() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Help);
-        a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
-        // Restored to the source mode, not Normal.
-        assert_eq!(a.mode, Mode::Editor);
-        assert!(a.help_origin.is_none());
-    }
-
-    #[test]
-    fn help_anchor_for_known_modes_picks_their_section() {
-        assert_eq!(
-            App::help_anchor_for(Mode::SchemaBrowser),
-            Some("schema browser")
-        );
-        assert_eq!(
-            App::help_anchor_for(Mode::ExplainTree),
-            Some("EXPLAIN tree")
-        );
-        assert_eq!(App::help_anchor_for(Mode::Editor), Some("editor"));
-        assert_eq!(App::help_anchor_for(Mode::LogPick), Some("log pick"));
-        assert_eq!(App::help_anchor_for(Mode::Help), None);
-    }
-
-    #[test]
-    fn mode_entry_hint_fires_only_first_time_per_session() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Synthetic transition: schema cache empty, but
-        // note_mode_entry is mode-aware and doesn't care about
-        // contents. We call it directly to bypass the schema-empty
-        // guard on start_schema_browser.
-        a.note_mode_entry(Mode::SchemaBrowser);
-        let first = a.last_status.clone();
-        assert!(
-            first
-                .as_deref()
-                .map(|s| s.starts_with("tip"))
-                .unwrap_or(false),
-            "first entry should set a tip; got {first:?}"
-        );
-        // Second entry: hint suppressed (status stays at whatever
-        // the caller left it as). We mimic that by clearing the
-        // status and re-entering.
-        a.last_status = None;
-        a.note_mode_entry(Mode::SchemaBrowser);
-        assert!(
-            a.last_status.is_none(),
-            "second entry should NOT re-fire the hint; got {:?}",
-            a.last_status
-        );
-    }
-
-    #[test]
-    fn ctrl_enter_in_editor_attempts_to_run_query() {
-        // Reproduces: "ctrl-enter doesn't execute" after the undo
-        // wrapper landed. With no client connected, `request_run`
-        // surfaces "not connected" — we use that signal to confirm
-        // the run path was reached.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
-        // request_run rejects with "not connected" — that's the
-        // intended signal here. If we still see "editor is empty"
-        // or nothing happened, the run path wasn't reached.
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("not connected"),
-            "Ctrl-Enter should hit request_run; last_error = {err:?}"
-        );
-    }
-
-    #[test]
-    fn ctrl_j_in_editor_attempts_to_run_query() {
-        // Some terminals report Ctrl-Enter as Ctrl-J.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("not connected"),
-            "Ctrl-J should hit request_run; last_error = {err:?}"
-        );
-    }
-
-    #[test]
-    fn editor_undo_restores_pre_typing_buffer() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.editor_cursor = a.editor_buffer.len();
-        // Type a char — pushes the prior state to undo.
-        a.on_key(KeyEvent::from(KeyCode::Char(';')));
-        assert_eq!(a.editor_buffer, "select 1;");
-        // Undo: buffer returns to its pre-typing value.
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "select 1");
-        // Redo: forward to the typed state.
-        a.on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "select 1;");
-    }
-
-    #[test]
-    fn editor_undo_when_empty_surfaces_status_not_crash() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert_eq!(a.last_status.as_deref(), Some("nothing to undo"));
-    }
-
-    #[test]
-    fn editor_redo_invalidated_by_a_new_edit() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "a".into();
-        a.editor_cursor = 1;
-        a.on_key(KeyEvent::from(KeyCode::Char('b'))); // buf = "ab"
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)); // undo → "a"
-        assert!(!a.editor_redo.is_empty(), "undo should populate redo");
-        a.on_key(KeyEvent::from(KeyCode::Char('c'))); // new edit invalidates redo
-        assert!(a.editor_redo.is_empty(), "new mutation must clear redo");
-        assert_eq!(a.editor_buffer, "ac");
-    }
-
-    #[test]
-    fn editor_consecutive_char_inserts_coalesce_into_one_undo_step() {
-        // Type `xyz` in quick succession (synthetic — the test runs
-        // well inside UNDO_COALESCE_WINDOW). One undo should drop
-        // ALL THREE characters at once.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::from(KeyCode::Char('x')));
-        a.on_key(KeyEvent::from(KeyCode::Char('y')));
-        a.on_key(KeyEvent::from(KeyCode::Char('z')));
-        assert_eq!(a.editor_buffer, "xyz");
-        // One undo unwinds the whole typing run.
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "");
-    }
-
-    #[test]
-    fn editor_backspace_does_not_coalesce_with_char_inserts() {
-        // Typing then backspacing should be two distinct undo
-        // steps. Otherwise an undo after a backspace would also
-        // unwind the preceding char-insert run, which is wrong.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        a.on_key(KeyEvent::from(KeyCode::Char('b'))); // buf = "ab"
-        a.on_key(KeyEvent::from(KeyCode::Backspace)); // buf = "a"
-        assert_eq!(a.editor_buffer, "a");
-        // First undo restores the pre-backspace state ("ab").
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "ab");
-        // Second undo unwinds the typing run.
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "");
-    }
-
-    #[test]
-    fn editor_undo_caps_at_undo_cap_entries() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        // Each Backspace is a non-coalescing edit. Drive past the cap.
-        for i in 0..(UNDO_CAP + 20) {
-            a.editor_buffer = format!("buf{i}");
-            a.editor_cursor = a.editor_buffer.len();
-            a.push_undo("prev".to_string(), 0, EditorActionKind::Other);
-        }
-        assert!(
-            a.editor_undo.len() <= UNDO_CAP,
-            "undo ring grew past cap: {}",
-            a.editor_undo.len()
-        );
-    }
-
-    #[test]
-    fn editor_insert_pair_places_cursor_between_brackets() {
-        let mut buf = String::new();
-        let mut cur = 0;
-        assert!(editor_insert_pair(&mut buf, &mut cur, '('));
-        assert_eq!(buf, "()");
-        assert_eq!(cur, 1);
-        // Squares + braces work the same.
-        let mut buf = String::from("a");
-        let mut cur = 1;
-        assert!(editor_insert_pair(&mut buf, &mut cur, '['));
-        assert_eq!(buf, "a[]");
-        assert_eq!(cur, 2);
-        let mut buf = String::new();
-        let mut cur = 0;
-        assert!(editor_insert_pair(&mut buf, &mut cur, '{'));
-        assert_eq!(buf, "{}");
-        assert_eq!(cur, 1);
-    }
-
-    #[test]
-    fn editor_insert_pair_refuses_non_opener_chars() {
-        let mut buf = String::new();
-        let mut cur = 0;
-        assert!(!editor_insert_pair(&mut buf, &mut cur, 'x'));
-        assert_eq!(buf, "");
-        assert_eq!(cur, 0);
-    }
-
-    #[test]
-    fn editor_maybe_skip_close_advances_over_matching_char() {
-        // Buffer is `()`, cursor between → typing `)` advances past.
-        let buf = String::from("()");
-        let mut cur = 1;
-        assert!(editor_maybe_skip_close(&buf, &mut cur, ')'));
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_maybe_skip_close_passes_through_when_no_match() {
-        // `(x` with cursor at end — typing `)` should NOT skip
-        // (and the caller falls back to a literal insert).
-        let buf = String::from("(x");
-        let mut cur = 2;
-        assert!(!editor_maybe_skip_close(&buf, &mut cur, ')'));
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_pairs_single_quote_at_token_boundary() {
-        // Empty buffer — both neighbours are EOB, prev/next ok.
-        let mut buf = String::new();
-        let mut cur = 0;
-        assert!(editor_maybe_pair_quote(&mut buf, &mut cur, '\''));
-        assert_eq!(buf, "''");
-        assert_eq!(cur, 1);
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_pairs_double_quote_after_whitespace() {
-        // `SELECT ` with cursor at end — prev is space, next is EOB.
-        let mut buf = String::from("SELECT ");
-        let mut cur = buf.len();
-        assert!(editor_maybe_pair_quote(&mut buf, &mut cur, '"'));
-        assert_eq!(buf, "SELECT \"\"");
-        assert_eq!(cur, 8); // between the two quotes
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_refuses_inside_word() {
-        // `it` cursor at end — prev is alpha. Don't pair.
-        let mut buf = String::from("it");
-        let mut cur = buf.len();
-        assert!(!editor_maybe_pair_quote(&mut buf, &mut cur, '\''));
-        // Buffer untouched so caller can fall back to literal insert.
-        assert_eq!(buf, "it");
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_refuses_when_next_is_word() {
-        // `abc` cursor at start — next is alpha. Don't pair.
-        let mut buf = String::from("abc");
-        let mut cur = 0;
-        assert!(!editor_maybe_pair_quote(&mut buf, &mut cur, '\''));
-        assert_eq!(buf, "abc");
-        assert_eq!(cur, 0);
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_refuses_when_next_is_same_quote() {
-        // `'` cursor between — typing `'` again should NOT pair
-        // (the skip-quote branch handles this, but pair_quote
-        // alone must also refuse so the caller's fallback order
-        // is correct).
-        let mut buf = String::from("''");
-        let mut cur = 1;
-        assert!(!editor_maybe_pair_quote(&mut buf, &mut cur, '\''));
-        assert_eq!(buf, "''");
-        assert_eq!(cur, 1);
-    }
-
-    #[test]
-    fn editor_maybe_pair_quote_refuses_non_quote_chars() {
-        let mut buf = String::new();
-        let mut cur = 0;
-        assert!(!editor_maybe_pair_quote(&mut buf, &mut cur, 'x'));
-        assert_eq!(buf, "");
-    }
-
-    #[test]
-    fn editor_maybe_skip_quote_advances_over_matching_quote() {
-        // Buffer `''` with cursor between — typing `'` advances past.
-        let buf = String::from("''");
-        let mut cur = 1;
-        assert!(editor_maybe_skip_quote(&buf, &mut cur, '\''));
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_maybe_skip_quote_passes_through_when_no_match() {
-        // `'x` with cursor between — typing `'` should NOT skip.
-        let buf = String::from("'x");
-        let mut cur = 1;
-        assert!(!editor_maybe_skip_quote(&buf, &mut cur, '\''));
-        assert_eq!(cur, 1);
-    }
-
-    #[test]
-    fn editor_maybe_skip_quote_does_not_skip_when_prev_is_word_char() {
-        // Buffer `'don'` with cursor at 4 (between `n` and `'`).
-        // Operator is mid-literal trying to escape — refusing to
-        // skip lets pair_quote's prev-gate also refuse, so the
-        // typing path falls through to a literal `'` insert and
-        // builds `'don''` toward `'don''t'`.
-        let buf = String::from("'don'");
-        let mut cur = 4;
-        assert!(!editor_maybe_skip_quote(&buf, &mut cur, '\''));
-        assert_eq!(cur, 4);
-    }
-
-    #[test]
-    fn typing_quote_inside_sql_literal_inserts_escape_not_skip() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        // Start from the state pair_quote would leave us in after
-        // typing `'`, then typing `don` literally: `'don'` with
-        // cursor=4 between `n` and the closer.
-        a.editor_buffer = "'don'".into();
-        a.editor_cursor = 4;
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        // Inserts an escape apostrophe instead of skipping past
-        // the existing closer — the buffer grows by one char.
-        assert_eq!(a.editor_buffer, "'don''");
-        assert_eq!(a.editor_cursor, 5);
-    }
-
-    #[test]
-    fn typing_quote_at_eof_pairs_and_leaves_cursor_between() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        assert_eq!(a.editor_buffer, "''");
-        assert_eq!(a.editor_cursor, 1);
-        // Typing another `'` skips past the pair instead of stacking.
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        assert_eq!(a.editor_buffer, "''");
-        assert_eq!(a.editor_cursor, 2);
-    }
-
-    #[test]
-    fn typing_quote_inside_word_inserts_literal_not_pair() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "it".into();
-        a.editor_cursor = 2;
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        // Falls through to literal insert — covers contractions
-        // like `it's` in -- comments.
-        assert_eq!(a.editor_buffer, "it'");
-        assert_eq!(a.editor_cursor, 3);
-    }
-
-    #[test]
-    fn editor_toggle_line_comment_adds_marker_on_first_press() {
-        let mut buf = String::from("select 1");
-        let mut cur = 3; // mid-line
-        editor_toggle_line_comment(&mut buf, &mut cur);
-        assert_eq!(buf, "-- select 1");
-        // Cursor shifts right by 3 (for `-- `).
-        assert_eq!(cur, 6);
-    }
-
-    #[test]
-    fn editor_toggle_line_comment_removes_marker_on_second_press() {
-        let mut buf = String::from("-- select 1");
-        let mut cur = 6;
-        editor_toggle_line_comment(&mut buf, &mut cur);
-        assert_eq!(buf, "select 1");
-        assert_eq!(cur, 3);
-    }
-
-    #[test]
-    fn editor_toggle_line_comment_handles_lines_with_no_trailing_space() {
-        // `--select` (no space) — remove just 2 chars.
-        let mut buf = String::from("--select 1");
-        let mut cur = 4;
-        editor_toggle_line_comment(&mut buf, &mut cur);
-        assert_eq!(buf, "select 1");
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_toggle_line_comment_operates_per_line_in_multiline_buffer() {
-        let mut buf = String::from("select 1;\nselect 2;");
-        // Cursor in the second line.
-        let mut cur = "select 1;\n".len() + 2;
-        editor_toggle_line_comment(&mut buf, &mut cur);
-        assert_eq!(buf, "select 1;\n-- select 2;");
-        // Cursor shifted right by 3 in the second line.
-        assert_eq!(cur, "select 1;\n-- se".len());
-    }
-
-    #[test]
-    fn editor_insert_advances_cursor_by_utf8_length() {
-        let mut buf = String::from("ab");
-        let mut cur = 1;
-        editor_insert(&mut buf, &mut cur, 'X');
-        assert_eq!(buf, "aXb");
-        assert_eq!(cur, 2);
-
-        // Multi-byte char: 'é' is 2 bytes.
-        editor_insert(&mut buf, &mut cur, 'é');
-        assert_eq!(buf, "aXéb");
-        assert_eq!(cur, 4);
-    }
-
-    #[test]
-    fn editor_backspace_steps_to_a_char_boundary() {
-        let mut buf = String::from("aé"); // a=1 byte, é=2 bytes
-        let mut cur = buf.len(); // 3
-        editor_backspace(&mut buf, &mut cur);
-        assert_eq!(buf, "a");
-        assert_eq!(cur, 1);
-        editor_backspace(&mut buf, &mut cur);
-        assert_eq!(buf, "");
-        assert_eq!(cur, 0);
-        // Backspace at start is a no-op.
-        editor_backspace(&mut buf, &mut cur);
-        assert_eq!(cur, 0);
-    }
-
-    #[test]
-    fn editor_delete_steps_to_a_char_boundary() {
-        let mut buf = String::from("éb"); // é=2 bytes, b=1
-        let mut cur = 0;
-        editor_delete(&mut buf, &mut cur);
-        assert_eq!(buf, "b");
-        assert_eq!(cur, 0);
-        // Delete at end is a no-op.
-        let mut buf = String::from("ab");
-        let mut cur = 2;
-        editor_delete(&mut buf, &mut cur);
-        assert_eq!(buf, "ab");
-        assert_eq!(cur, 2);
-    }
-
-    #[test]
-    fn editor_move_left_and_right_respect_utf8_boundaries() {
-        let buf = String::from("aéb"); // bytes: a(1), é(2), b(1) = 4 bytes
-        let mut cur = buf.len();
-        editor_move_left(&buf, &mut cur);
-        assert_eq!(cur, 3); // before 'b'
-        editor_move_left(&buf, &mut cur);
-        assert_eq!(cur, 1); // before 'é'
-        editor_move_left(&buf, &mut cur);
-        assert_eq!(cur, 0);
-        editor_move_left(&buf, &mut cur);
-        assert_eq!(cur, 0); // saturates
-        editor_move_right(&buf, &mut cur);
-        assert_eq!(cur, 1);
-        editor_move_right(&buf, &mut cur);
-        assert_eq!(cur, 3); // past 'é'
-    }
-
-    #[test]
-    fn cursor_position_walks_newlines() {
-        assert_eq!(cursor_position("hello", 3), (0, 3));
-        let buf = "abc\nde\nf";
-        assert_eq!(cursor_position(buf, 0), (0, 0));
-        assert_eq!(cursor_position(buf, 3), (0, 3));
-        assert_eq!(cursor_position(buf, 4), (1, 0));
-        assert_eq!(cursor_position(buf, 6), (1, 2));
-        assert_eq!(cursor_position(buf, 7), (2, 0));
-        assert_eq!(cursor_position(buf, 8), (2, 1));
-    }
-
-    #[test]
-    fn byte_offset_at_line_col_clamps_past_line_end() {
-        let buf = "abc\nde\nf";
-        assert_eq!(byte_offset_at_line_col(buf, 0, 0), 0);
-        assert_eq!(byte_offset_at_line_col(buf, 0, 3), 3);
-        assert_eq!(byte_offset_at_line_col(buf, 1, 0), 4);
-        assert_eq!(byte_offset_at_line_col(buf, 1, 99), 6); // clamps to line end
-        assert_eq!(byte_offset_at_line_col(buf, 2, 0), 7);
-        assert_eq!(byte_offset_at_line_col(buf, 5, 0), 8); // line out of range
-    }
-
-    #[test]
-    fn editor_move_up_down_track_preferred_column() {
-        let buf = String::from("abc\nde\nfgh");
-        // Start at end of "fgh" (line 2, col 3).
-        let mut cur = buf.len();
-        let mut pref = None;
-        editor_move_up(&buf, &mut cur, &mut pref);
-        // Line 1 is "de" — only 2 cols, so cursor clamps to its end.
-        assert_eq!(cur, 6);
-        assert_eq!(pref, Some(3));
-        editor_move_up(&buf, &mut cur, &mut pref);
-        // Line 0 is "abc" — 3 cols, preferred 3 lands at the end.
-        assert_eq!(cur, 3);
-        editor_move_down(&buf, &mut cur, &mut pref);
-        assert_eq!(cur, 6); // back to "de" end, preferred still 3
-        editor_move_down(&buf, &mut cur, &mut pref);
-        assert_eq!(cur, buf.len()); // "fgh" end (col 3)
-        editor_move_down(&buf, &mut cur, &mut pref);
-        assert_eq!(cur, buf.len()); // no further down — no change
-    }
-
-    #[test]
-    fn line_start_and_end_bytes_find_line_edges() {
-        let buf = "abc\nde\nf";
-        // cursor in the middle of "de" (byte 5)
-        assert_eq!(line_start_byte(buf, 5), 4);
-        assert_eq!(line_end_byte(buf, 5), 6);
-        // cursor on line 0
-        assert_eq!(line_start_byte(buf, 2), 0);
-        assert_eq!(line_end_byte(buf, 2), 3);
-        // cursor at last char
-        assert_eq!(line_start_byte(buf, 8), 7);
-        assert_eq!(line_end_byte(buf, 8), 8);
-    }
-
-    // ---- editor_complete (UI glue) -----------------------------------------
-
-    use crate::query::schema::{SchemaCache, TableMeta};
-    use crate::safety::SafetyConfig;
-    use crate::theme::Theme;
-
-    fn test_app_with_cache(tables: &[(&str, &[&str])]) -> App {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let mut cache = SchemaCache::default();
-        for (name, cols) in tables {
-            cache.tables.push(TableMeta {
-                schema: "public".into(),
-                name: (*name).into(),
-            });
-            cache.columns_by_table.insert(
-                ("public".into(), (*name).into()),
-                cols.iter().map(|s| s.to_string()).collect(),
-            );
-        }
-        cache.schemas.push("public".into());
-        a.schema_cache = cache;
-        a
-    }
-
-    fn set_editor(a: &mut App, text: &str) {
-        a.editor_buffer = text.into();
-        a.editor_cursor = a.editor_buffer.len();
-    }
-
-    #[test]
-    fn exact_match_commits_and_dismisses_popup() {
-        // Cache has `user`, `users`, `user_logs`. Operator types
-        // `FROM user` and Tab: the exact match commits, no popup.
-        let mut a = test_app_with_cache(&[
-            ("user", &["id"]),
-            ("users", &["id"]),
-            ("user_logs", &["id"]),
-        ]);
-        set_editor(&mut a, "SELECT * FROM user");
-        a.editor_complete();
-        assert_eq!(a.editor_buffer, "SELECT * FROM user");
-        assert!(
-            a.completion.is_none(),
-            "exact match should dismiss the popup; got {:?}",
-            a.completion.as_ref().map(|c| c.candidates.len())
-        );
-    }
-
-    #[test]
-    fn exact_match_is_case_insensitive_and_canonicalises_case() {
-        // Operator typed `USERS`, cache has `users`, plus a sibling that
-        // doesn't share the LCP `users` so the exact-match branch (not
-        // single-match) is exercised.
-        let mut a = test_app_with_cache(&[("users", &["id"]), ("users_archived", &["id"])]);
-        set_editor(&mut a, "SELECT * FROM USERS");
-        a.editor_complete();
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        assert!(
-            a.completion.is_none(),
-            "exact match should dismiss the popup"
-        );
-    }
-
-    fn type_key(a: &mut App, code: KeyCode) {
-        a.on_editor_key(KeyEvent::new(code, KeyModifiers::NONE));
-    }
-
-    #[test]
-    fn auto_trigger_after_dot_opens_popup() {
-        // Two columns means LCP-popup, no auto-commit — perfect for
-        // checking the auto-trigger actually opens the cycle.
-        let mut a = test_app_with_cache(&[("users", &["id", "email"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT  FROM users u WHERE u");
-        a.editor_cursor = 7; // between the two spaces, no cycle yet
-                             // Move the cursor to just after `u` of `u WHERE u` — actually,
-                             // type `.` at end (cursor positioned after the second `u`).
-        a.editor_cursor = a.editor_buffer.len();
-        type_key(&mut a, KeyCode::Char('.'));
-        assert_eq!(a.editor_buffer, "SELECT  FROM users u WHERE u.");
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("auto-trigger should open a cycle after typing `.` post-identifier");
-        // Columns of users via alias u.
-        assert!(
-            cycle.candidates.iter().any(|c| c.display == "email"),
-            "expected `email` in candidates, got {:?}",
-            cycle
-                .candidates
-                .iter()
-                .map(|c| &c.display)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn auto_trigger_skipped_for_numeric_literals() {
-        // `3.` — the char before `.` is a digit, so auto-trigger is
-        // suppressed. (No popup; status preserved.)
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT 3");
-        a.last_status = Some("preserved status".into());
-        type_key(&mut a, KeyCode::Char('.'));
-        assert_eq!(a.editor_buffer, "SELECT 3.");
-        assert!(
-            a.completion.is_none(),
-            "should not auto-trigger on numeric `3.`"
-        );
-        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
-    }
-
-    #[test]
-    fn dot_after_lcp_expansion_narrows_via_refresh_not_auto_trigger() {
-        // Operator types `t_` Tab (expands LCP to `t_user_`), then
-        // narrows by typing more chars. If they happen to type `.`
-        // (unlikely but possible if a name has a `.`-shaped suffix
-        // in some dialect), the live-narrowing path takes precedence
-        // over auto-trigger — the existing cycle stays alive.
-        let mut a = test_app_with_cache(&[("t_user_logs", &["id"]), ("t_user_roles", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM t_");
-        // First Tab: LCP-expands to `t_user_`, popup with 2 candidates.
-        a.editor_complete();
-        assert_eq!(a.editor_buffer, "SELECT * FROM t_user_");
-        assert!(a.completion.as_ref().unwrap().selected.is_none());
-        let cycle_id_before = a.completion.as_ref().unwrap() as *const _;
-        // Now type `l` — narrowing key, cycle survives via refresh.
-        type_key(&mut a, KeyCode::Char('l'));
-        assert!(a.completion.is_some(), "cycle should still be alive");
-        let cycle = a.completion.as_ref().unwrap();
-        // The cycle was rebuilt (new pointer), but selected is still
-        // None (refresh keeps pre-selection state).
-        let _ = cycle_id_before; // (we don't actually compare pointers; reassuring no panic)
-        assert!(cycle.selected.is_none());
-        assert!(cycle.candidates.iter().any(|c| c.display == "t_user_logs"));
-    }
-
-    #[test]
-    fn auto_trigger_no_matches_preserves_status() {
-        // `nonsense.` — no such identifier; auto-trigger fires but
-        // finds nothing and silently restores the prior status.
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT nonsense");
-        a.last_status = Some("preserved status".into());
-        type_key(&mut a, KeyCode::Char('.'));
-        assert!(a.completion.is_none());
-        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
-    }
-
-    #[test]
-    fn tab_on_empty_buffer_offers_statement_keywords() {
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "");
-        a.editor_complete();
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("Tab on empty buffer should offer statement keywords");
-        let labels: Vec<&str> = cycle
-            .candidates
-            .iter()
-            .map(|c| c.display.as_str())
-            .collect();
-        assert!(
-            labels.iter().any(|l| l.eq_ignore_ascii_case("SELECT")),
-            "got {labels:?}"
-        );
-        assert!(
-            labels.iter().any(|l| l.eq_ignore_ascii_case("INSERT")),
-            "got {labels:?}"
-        );
-    }
-
-    #[test]
-    fn tab_after_from_space_offers_tables() {
-        let mut a = test_app_with_cache(&[("users", &["id"]), ("orders", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM ");
-        a.editor_complete();
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("Tab after `FROM ` should open tables popup");
-        let labels: Vec<&str> = cycle
-            .candidates
-            .iter()
-            .map(|c| c.display.as_str())
-            .collect();
-        assert!(labels.contains(&"users"), "got {labels:?}");
-        assert!(labels.contains(&"orders"), "got {labels:?}");
-    }
-
-    #[test]
-    fn auto_trigger_after_from_space_opens_tables() {
-        let mut a = test_app_with_cache(&[("users", &["id"]), ("orders", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM");
-        type_key(&mut a, KeyCode::Char(' '));
-        assert_eq!(a.editor_buffer, "SELECT * FROM ");
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("auto-trigger should pop after `FROM `");
-        let labels: Vec<&str> = cycle
-            .candidates
-            .iter()
-            .map(|c| c.display.as_str())
-            .collect();
-        assert!(labels.contains(&"users"));
-        assert!(labels.contains(&"orders"));
-    }
-
-    #[test]
-    fn auto_trigger_after_and_space_opens_columns() {
-        let mut a = test_app_with_cache(&[("users", &["id", "email", "name"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM users WHERE id = 1 AND");
-        type_key(&mut a, KeyCode::Char(' '));
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("auto-trigger should pop after `AND `");
-        let labels: Vec<&str> = cycle
-            .candidates
-            .iter()
-            .map(|c| c.display.as_str())
-            .collect();
-        assert!(labels.iter().any(|l| *l == "email" || *l == "name"));
-    }
-
-    #[test]
-    fn auto_trigger_after_space_does_not_panic_on_multibyte_boundary_char() {
-        // Regression guard: rfind on a predicate that matches a
-        // multi-byte char (smart quote, en-dash, NBSP, …) would return
-        // the byte index of the char's FIRST byte; `i + 1` then lands
-        // in the middle of the codepoint and `&trimmed[start..]`
-        // panicked. Walk char_indices.rev() instead.
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        // En-dash (U+2013, 3 bytes) followed by an identifier-shaped
-        // word — the en-dash is the closest non-alphanumeric / non-`_`
-        // char to the right of the would-be word start.
-        set_editor(&mut a, "–FROM");
-        // Just typing the space — we don't actually need it to fire
-        // the trigger, only to not panic walking back over the en-dash.
-        type_key(&mut a, KeyCode::Char(' '));
-        // FROM is in the trigger list, so the popup should also open.
-        assert!(
-            a.completion.is_some(),
-            "expected popup to open after `–FROM ` (en-dash + FROM); no panic is the main thing"
-        );
-    }
-
-    #[test]
-    fn auto_trigger_does_not_fire_after_arbitrary_space() {
-        // After typing `5 ` (a literal followed by space), the auto-
-        // trigger should NOT fire — operator is probably mid-expression
-        // and a popup would be noise.
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM users WHERE id = 5");
-        a.last_status = Some("preserved status".into());
-        type_key(&mut a, KeyCode::Char(' '));
-        assert!(
-            a.completion.is_none(),
-            "auto-trigger should be silent after `5 `"
-        );
-        assert_eq!(a.last_status.as_deref(), Some("preserved status"));
-    }
-
-    #[test]
-    fn exact_match_with_only_one_candidate_still_dismisses_popup() {
-        // Cache has just `users`. Operator types `FROM users` Tab.
-        // cands.len() == 1, but the single-match path must NOT shadow
-        // exact-match — the popup should go away because the operator
-        // typed the full name.
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM users");
-        a.editor_complete();
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        assert!(
-            a.completion.is_none(),
-            "exact match must dismiss the popup even when it's the only candidate"
-        );
-    }
-
-    #[test]
-    fn empty_unqualified_prefix_with_single_candidate_shows_popup_no_insert() {
-        // Construct a context where empty-prefix completion yields a
-        // single candidate. We can't easily get cands.len() == 1 in a
-        // normal clause (the classifier extends with continuations) so
-        // this is a "doesn't auto-insert" sanity check at the API
-        // level: Tab on whitespace in a clean buffer offers statement
-        // keywords (multiple cands), and Tab on `SELECT ` offers
-        // multiple. So the property we actually want is that the
-        // popup opens with selected: None — operator decides.
-        let mut a = test_app_with_cache(&[("users", &["id"])]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM ");
-        a.editor_complete();
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("popup should open on whitespace-Tab");
-        assert!(
-            cycle.selected.is_none(),
-            "empty unqualified prefix must not pre-select; got {:?}",
-            cycle.selected
-        );
-        // Buffer unchanged — no silent insert.
-        assert_eq!(a.editor_buffer, "SELECT * FROM ");
-    }
-
-    // Note: auto-trigger after `.` for non-ASCII identifier endings
-    // (e.g. `café.`) would benefit from the char-aware lookup in
-    // `on_editor_key`, but `extract_identifier` itself walks back
-    // byte-by-byte and rejects non-ASCII suffixes — so end-to-end
-    // non-ASCII identifier completion is gated on widening the
-    // tokenizer in a follow-up. The char-aware check here is kept
-    // defensively so the auto-trigger path is correct from day one.
-
-    #[test]
-    fn backspace_to_empty_prefix_keeps_context_popup() {
-        // `FROM us` Tab → popup with users-ish tables. Then the operator
-        // backspaces both chars. We should NOT drop the cycle — instead
-        // refresh re-extracts (empty prefix) and offers the full
-        // table list for the FROM context.
-        let mut a = test_app_with_cache(&[
-            ("users", &["id"]),
-            ("user_logs", &["id"]),
-            ("orders", &["id"]),
-        ]);
-        a.mode = Mode::Editor;
-        set_editor(&mut a, "SELECT * FROM us");
-        a.editor_complete(); // LCP-expands to `user_`
-                             // Backspace through the entire identifier so the prefix
-                             // narrows to empty — the cycle should survive and broaden
-                             // back to the full table list for FROM.
-                             // After LCP-expand, buffer is `SELECT * FROM user` (the LCP
-                             // of users / user_logs is `user`, not `user_` — they diverge
-                             // at the 5th char). Four backspaces brings us to the trailing
-                             // space — empty prefix, still in TableRef context.
-        for _ in 0..4 {
-            type_key(&mut a, KeyCode::Backspace);
-        }
-        // Buffer should now be "SELECT * FROM " (or a substring thereof);
-        // cycle should still be alive and offering tables (incl. orders).
-        let cycle = a
-            .completion
-            .as_ref()
-            .expect("cycle should survive narrowing to empty prefix");
-        let labels: Vec<&str> = cycle
-            .candidates
-            .iter()
-            .map(|c| c.display.as_str())
-            .collect();
-        assert!(
-            labels.contains(&"orders"),
-            "after narrowing to empty prefix, all tables should be offered; got {labels:?}"
-        );
-    }
-
-    #[test]
-    fn tab_with_no_candidates_falls_back_to_helpful_message() {
-        // Disconnected (no cache), empty buffer: there ARE statement
-        // keywords available, so the empty-cache message should NOT
-        // fire — the popup opens with keywords.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_complete();
-        assert!(
-            a.completion.is_some(),
-            "empty cache + empty buffer should still offer keywords"
-        );
-    }
-
-    #[test]
-    fn lcp_expands_when_no_exact_match() {
-        // Two tables, `user_logs` and `user_roles`. Typing `user` Tab
-        // expands to the LCP `user_` (no exact match to short-circuit).
-        let mut a = test_app_with_cache(&[("user_logs", &["id"]), ("user_roles", &["id"])]);
-        set_editor(&mut a, "SELECT * FROM user");
-        a.editor_complete();
-        assert_eq!(a.editor_buffer, "SELECT * FROM user_");
-        // Cycle is in the LCP-expanded state — popup visible, nothing
-        // selected yet.
-        let cycle = a.completion.as_ref().expect("cycle should be alive");
-        assert!(cycle.selected.is_none());
-        assert_eq!(cycle.candidates.len(), 2);
-    }
-
-    #[test]
-    fn query_failed_with_position_jumps_editor_cursor() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        // Buffer with multibyte char before the position so we
-        // exercise char→byte conversion. `é` is 2 bytes; `id` is at
-        // chars 8..10. Postgres positions are 1-indexed chars, so
-        // position 9 points at `d`.
-        a.editor_buffer = "SELECT é, id FROM t".into();
-        a.editor_cursor = 0;
-        a.generation = 1;
-        let _ = a.msg_tx.send(AppMsg::QueryFailed {
-            generation: 1,
-            error: "ERROR: column \"d\" does not exist".into(),
-            position: Some(9),
-            detail: None,
-        });
-        // Pump the single queued message.
-        if let Some(rx) = a.msg_rx.as_mut() {
-            if let Ok(msg) = rx.try_recv() {
-                a.on_msg(msg);
-            }
-        }
-        // Position 9 (1-indexed char) → 0-indexed char 8. Byte
-        // offset of char 8 in "SELECT é, id FROM t" — chars are
-        // S(1) E(1) L(1) E(1) C(1) T(1) space(1) é(2)... so char 8
-        // is `,` at byte 9.
-        assert_eq!(a.editor_cursor, 9, "cursor should land at byte 9");
-        assert!(a.last_error.as_deref().unwrap().contains("does not exist"));
-    }
-
-    #[test]
-    fn history_search_ctrl_d_deletes_focused_entry() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.history = vec![
-            "SELECT * FROM users".into(),
-            "DELETE FROM tmp WHERE secret = 'abc123'".into(),
-            "SELECT count(*) FROM orders".into(),
-        ];
-        a.mode = Mode::Editor;
-        a.start_history_search();
-        // Type 'secret' — narrows to the leak entry (index 1).
-        for c in "secret".chars() {
-            a.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-        }
-        assert!(a.editor_buffer.contains("secret"));
-        // Ctrl-D deletes it.
-        a.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
-        assert_eq!(a.history.len(), 2);
-        assert!(!a.history.iter().any(|e| e.contains("secret")));
-    }
-
-    #[test]
-    fn history_search_finds_most_recent_match_and_walks_older() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.history = vec![
-            "SELECT * FROM users".into(),
-            "INSERT INTO logs VALUES (1)".into(),
-            "SELECT count(*) FROM orders".into(),
-            "UPDATE users SET active=true".into(),
-        ];
-        a.mode = Mode::Editor;
-        a.editor_buffer = "draft".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.start_history_search();
-        // Empty query → most-recent entry shown.
-        assert_eq!(a.mode, Mode::HistorySearch);
-        assert_eq!(a.editor_buffer, "UPDATE users SET active=true");
-        // Type 'sel' through on_key so the mode dispatcher routes
-        // each keystroke to the history-search handler.
-        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
-        a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-        a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
-        assert_eq!(a.editor_buffer, "SELECT count(*) FROM orders");
-        // Ctrl-R again → next-older match (index 0, `SELECT * FROM users`).
-        a.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        // Enter accepts: stays in Editor with the matched buffer.
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        assert!(a.history_search.is_none());
-    }
-
-    #[test]
-    fn history_search_esc_restores_pre_search_buffer() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.history = vec!["SELECT 1".into()];
-        a.mode = Mode::Editor;
-        a.editor_buffer = "draft in progress".into();
-        a.editor_cursor = 5;
-        a.start_history_search();
-        assert_eq!(a.editor_buffer, "SELECT 1");
-        // Esc: restore.
-        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(a.editor_buffer, "draft in progress");
-        assert_eq!(a.editor_cursor, 5);
-        assert_eq!(a.mode, Mode::Editor);
-    }
-
-    #[test]
-    fn history_search_no_match_keeps_last_good_buffer() {
-        // bash-like behaviour: a typo after a successful match keeps
-        // the prior match on screen and surfaces the failure in status.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.history = vec!["SELECT * FROM users".into()];
-        a.mode = Mode::Editor;
-        a.start_history_search();
-        // 'sel' matches → buffer = SELECT...
-        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
-        a.on_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-        a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        // 'selz' doesn't match → buffer unchanged; status flags failure.
-        a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE));
-        assert_eq!(a.editor_buffer, "SELECT * FROM users");
-        assert!(
-            a.last_status
-                .as_deref()
-                .unwrap_or("")
-                .contains("failed reverse-i-search"),
-            "expected failure status, got {:?}",
-            a.last_status
-        );
-    }
-
-    #[test]
-    fn start_watch_uses_editor_buffer_when_set() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "SELECT NOW()".into();
-        a.start_watch();
-        let w = a.watch.as_ref().expect("watch should be set");
-        assert_eq!(w.sql, "SELECT NOW()");
-        assert_eq!(w.interval.as_secs(), 2);
-    }
-
-    #[test]
-    fn start_watch_falls_back_to_last_history_when_buffer_empty() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.history = vec!["SELECT 1".into(), "SELECT count(*) FROM t".into()];
-        a.mode = Mode::Editor;
-        a.start_watch();
-        let w = a.watch.as_ref().expect("watch should be set");
-        assert_eq!(w.sql, "SELECT count(*) FROM t");
-    }
-
-    #[test]
-    fn start_watch_with_no_input_errors() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.start_watch();
-        assert!(a.watch.is_none());
-        assert!(a.last_error.is_some());
-    }
-
-    #[test]
-    fn start_watch_refused_during_query() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.editor_buffer = "SELECT 1".into();
-        a.query_running = true;
-        a.start_watch();
-        assert!(a.watch.is_none());
-    }
-
-    #[test]
-    fn keypress_cancels_active_watch() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.watch = Some(WatchState {
-            sql: "SELECT 1".into(),
-            interval: std::time::Duration::from_secs(2),
-            last_fire: std::time::Instant::now(),
-        });
-        a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
-        assert!(a.watch.is_none());
-    }
-
-    #[test]
-    fn split_editor_command_handles_program_with_args() {
-        let (p, a) = split_editor_command("code --wait --new-window");
-        assert_eq!(p, "code");
-        assert_eq!(a, vec!["--wait", "--new-window"]);
-    }
-
-    #[test]
-    fn split_editor_command_handles_bare_program() {
-        let (p, a) = split_editor_command("nvim");
-        assert_eq!(p, "nvim");
-        assert!(a.is_empty());
-    }
-
-    #[test]
-    fn split_editor_command_defaults_to_vi_on_empty() {
-        let (p, a) = split_editor_command("");
-        assert_eq!(p, "vi");
-        assert!(a.is_empty());
-    }
-
-    #[test]
-    fn split_editor_command_collapses_internal_whitespace() {
-        let (p, a) = split_editor_command("  emacs   -nw  ");
-        assert_eq!(p, "emacs");
-        assert_eq!(a, vec!["-nw"]);
-    }
-
-    // ---- pure decision functions ----
-
-    #[test]
-    fn watch_should_fire_respects_interval_and_blockers() {
-        use std::time::{Duration, Instant};
-        let now = Instant::now();
-        let state = WatchState {
-            sql: "SELECT 1".into(),
-            interval: Duration::from_secs(2),
-            last_fire: now,
-        };
-        let clear = WatchTickInputs {
-            query_running: false,
-            tx_open: false,
-            pending_run: false,
-            mode_blocks: false,
-        };
-        // Same instant → interval not elapsed.
-        assert!(!watch_should_fire(&state, now, clear));
-        // Just past the interval → fire.
-        assert!(watch_should_fire(
-            &state,
-            now + Duration::from_secs(2),
-            clear
-        ));
-        // Any blocker prevents fire even past the interval.
-        let fire_time = now + Duration::from_secs(10);
-        for inputs in [
-            WatchTickInputs {
-                query_running: true,
-                ..clear
-            },
-            WatchTickInputs {
-                tx_open: true,
-                ..clear
-            },
-            WatchTickInputs {
-                pending_run: true,
-                ..clear
-            },
-            WatchTickInputs {
-                mode_blocks: true,
-                ..clear
-            },
-        ] {
-            assert!(
-                !watch_should_fire(&state, fire_time, inputs),
-                "blocker {inputs:?} should suppress fire"
-            );
-        }
-    }
-
-    #[test]
-    fn next_sort_state_cycles_through_target_column() {
-        assert_eq!(next_sort_state(None, 3), Some((3, true)));
-        assert_eq!(next_sort_state(Some((3, true)), 3), Some((3, false)));
-        assert_eq!(next_sort_state(Some((3, false)), 3), None);
-        // Different column → jump to ASC on the new one.
-        assert_eq!(next_sort_state(Some((3, true)), 5), Some((5, true)));
-        assert_eq!(next_sort_state(Some((3, false)), 5), Some((5, true)));
-    }
-
-    #[test]
-    fn compute_visible_rows_filters_case_insensitively_across_columns() {
-        let rows = vec![
-            vec!["1".into(), "alice".into()],
-            vec!["2".into(), "BOB".into()],
-            vec!["3".into(), "carol".into()],
-        ];
-        // No filter → all rows in order.
-        assert_eq!(compute_visible_rows(&rows, None), vec![0, 1, 2]);
-        // Match in column 1, case-insensitive.
-        assert_eq!(compute_visible_rows(&rows, Some("bo")), vec![1]);
-        // Match in column 0 (numeric column).
-        assert_eq!(compute_visible_rows(&rows, Some("3")), vec![2]);
-        // No matches.
-        assert!(compute_visible_rows(&rows, Some("xyz")).is_empty());
-    }
-
-    #[test]
-    fn history_search_next_walks_backward_case_insensitive() {
-        let history: Vec<String> = vec![
-            "SELECT 1".into(),
-            "INSERT INTO logs VALUES (1)".into(),
-            "SELECT * FROM users".into(),
-            "UPDATE accounts SET balance=0".into(),
-        ];
-        // From end, "sel" finds idx 2 (most recent SELECT).
-        assert_eq!(history_search_next(&history, "sel", None), Some(2));
-        // From before that match, finds idx 0.
-        assert_eq!(history_search_next(&history, "sel", Some(2)), Some(0));
-        // Past the earliest match → None.
-        assert_eq!(history_search_next(&history, "sel", Some(0)), None);
-        // Case-insensitive match.
-        assert_eq!(history_search_next(&history, "INSERT", None), Some(1));
-        assert_eq!(history_search_next(&history, "insert", None), Some(1));
-    }
-
-    fn app_with_grid(grid: Grid) -> App {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid;
-        a.reset_grid_view();
-        a.grid_state
-            .select(if a.grid.is_empty() { None } else { Some(0) });
-        a
-    }
-
-    fn sample_grid() -> Grid {
-        Grid {
-            columns: vec!["id".into(), "name".into()],
-            rows: vec![
-                vec!["3".into(), "carol".into()],
-                vec!["1".into(), "alice".into()],
-                vec!["10".into(), "bob".into()],
-                vec!["2".into(), "dave".into()],
-            ],
-            truncated: false,
-        }
-    }
-
-    fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
-        Grid {
-            columns: columns.iter().map(|s| s.to_string()).collect(),
-            rows: rows
-                .iter()
-                .map(|r| r.iter().map(|s| s.to_string()).collect())
-                .collect(),
-            truncated: false,
-        }
-    }
-
-    #[test]
-    fn result_diff_d_with_empty_grid_errors() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id"], &[]);
-        a.pin_or_diff_result();
-        assert!(a.pinned_result.is_none());
-        assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
-    }
-
-    #[test]
-    fn result_diff_first_d_pins_baseline() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = sample_grid();
-        a.pin_or_diff_result();
-        let p = a.pinned_result.as_ref().expect("baseline pinned");
-        assert_eq!(p.rows.len(), 4);
-        assert_eq!(p.columns, vec!["id".to_string(), "name".to_string()]);
-        // Pinning alone doesn't open the diff view.
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a.result_diff.is_none());
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("pinned result A"));
-    }
-
-    #[test]
-    fn result_diff_second_d_opens_diff_with_inferred_key() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = sample_grid(); // ids 3,1,10,2
-        a.pin_or_diff_result(); // pins A
-                                // B: id 3 renamed, id 2 removed, id 99 added; 1 and 10 unchanged.
-        a.grid = grid_of(
-            &["id", "name"],
-            &[
-                &["3", "CAROL"],
-                &["1", "alice"],
-                &["10", "bob"],
-                &["99", "new"],
-            ],
-        );
-        a.pin_or_diff_result(); // diffs
-        assert_eq!(a.mode, Mode::ResultDiff);
-        let d = a.result_diff.as_ref().expect("diff computed");
-        // id column (0) is unique on both sides → strong key.
-        assert!(matches!(
-            &d.key,
-            crate::query::row_diff::RowKey::Columns(c) if c == &vec![0]
-        ));
-        assert_eq!(d.diff.changed.len(), 1, "id 3 name changed");
-        assert_eq!(d.diff.removed.len(), 1, "id 2 gone");
-        assert_eq!(d.diff.added.len(), 1, "id 99 new");
-        assert_eq!(d.diff.unchanged, 2, "ids 1 and 10");
-        // Baseline persists for iterative diffing.
-        assert!(a.pinned_result.is_some());
-    }
-
-    #[test]
-    fn result_diff_falls_back_to_full_row_when_columns_differ() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id", "name"], &[&["1", "x"]]);
-        a.pin_or_diff_result();
-        // B has a different column layout — cell-level keying is unsafe.
-        a.grid = grid_of(&["id", "name", "extra"], &[&["1", "x", "y"]]);
-        a.pin_or_diff_result();
-        let d = a.result_diff.as_ref().expect("diff computed");
-        assert!(matches!(d.key, crate::query::row_diff::RowKey::FullRow));
-    }
-
-    #[test]
-    fn result_diff_r_repins_b_as_new_baseline() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id"], &[&["1"]]);
-        a.pin_or_diff_result();
-        a.grid = grid_of(&["id"], &[&["1"], &["2"]]);
-        a.pin_or_diff_result();
-        assert_eq!(a.mode, Mode::ResultDiff);
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a.result_diff.is_none());
-        // New baseline = the B side (two rows).
-        assert_eq!(a.pinned_result.as_ref().unwrap().rows.len(), 2);
-    }
-
-    #[test]
-    fn result_diff_c_clears_pin() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id"], &[&["1"]]);
-        a.pin_or_diff_result();
-        a.grid = grid_of(&["id"], &[&["2"]]);
-        a.pin_or_diff_result();
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.pinned_result.is_none());
-        assert!(a.result_diff.is_none());
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn result_diff_d_keybinding_pins_from_normal_mode() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = sample_grid();
-        a.on_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
-        assert!(a.pinned_result.is_some());
-    }
-
-    fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
-        crate::saved::SavedQuery {
-            name: name.into(),
-            body: body.into(),
-        }
-    }
-
-    fn type_str(a: &mut App, s: &str) {
-        for c in s.chars() {
-            a.on_key(KeyEvent::from(KeyCode::Char(c)));
-        }
-    }
-
-    #[test]
-    fn param_prompt_no_params_loads_directly() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("plain", "SELECT 1"));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.editor_buffer, "SELECT 1");
-        assert!(a.saved_ui.param_prompt.is_none());
-    }
-
-    #[test]
-    fn param_prompt_with_params_enters_prompt_mode() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("byid", "SELECT * FROM t WHERE id = :id"));
-        assert_eq!(a.mode, Mode::ParamPrompt);
-        assert_eq!(
-            a.saved_ui.param_prompt.as_ref().unwrap().params,
-            vec!["id".to_string()]
-        );
-    }
-
-    #[test]
-    fn param_prompt_collects_values_and_substitutes() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved(
-            "two",
-            "SELECT * FROM t WHERE id = :id AND org = :org",
-        ));
-        type_str(&mut a, "42");
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        // First value taken; still prompting for the second.
-        assert_eq!(a.mode, Mode::ParamPrompt);
-        assert_eq!(a.saved_ui.param_prompt.as_ref().unwrap().idx, 1);
-        type_str(&mut a, "7");
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.editor_buffer, "SELECT * FROM t WHERE id = 42 AND org = 7");
-        assert!(a.saved_ui.param_prompt.is_none());
-    }
-
-    #[test]
-    fn param_prompt_same_param_twice_fills_both() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("dup", "SELECT :x WHERE a = :x"));
-        // Only one prompt (distinct param), substituted everywhere.
-        assert_eq!(a.saved_ui.param_prompt.as_ref().unwrap().params.len(), 1);
-        type_str(&mut a, "9");
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.editor_buffer, "SELECT 9 WHERE a = 9");
-    }
-
-    #[test]
-    fn param_prompt_rejects_empty_value() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("byid", "WHERE id = :id"));
-        a.on_key(KeyEvent::from(KeyCode::Enter)); // empty
-        assert_eq!(a.mode, Mode::ParamPrompt);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("value required"));
-    }
-
-    #[test]
-    fn param_prompt_esc_cancels_back_to_list() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("byid", "WHERE id = :id"));
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::SavedQueries);
-        assert!(a.saved_ui.param_prompt.is_none());
-    }
-
-    #[test]
-    fn param_prompt_backspace_edits_input() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.load_saved_query(saved("byid", "WHERE id = :id"));
-        type_str(&mut a, "49");
-        a.on_key(KeyEvent::from(KeyCode::Backspace));
-        type_str(&mut a, "2");
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.editor_buffer, "WHERE id = 42");
-    }
-
-    fn app_with_saved(entries: &[(&str, &str)]) -> App {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for (n, b) in entries {
-            a.saved_queries.upsert(saved(n, b));
-        }
-        a
-    }
-
-    #[test]
-    fn filter_saved_indices_blank_returns_all() {
-        let e = vec![saved("a", "x"), saved("b", "y")];
-        assert_eq!(filter_saved_indices(&e, None), vec![0, 1]);
-        assert_eq!(filter_saved_indices(&e, Some("   ")), vec![0, 1]);
-    }
-
-    #[test]
-    fn filter_saved_indices_matches_name_case_insensitive() {
-        let e = vec![saved("ActiveUsers", "..."), saved("revenue", "...")];
-        assert_eq!(filter_saved_indices(&e, Some("active")), vec![0]);
-        assert_eq!(filter_saved_indices(&e, Some("REV")), vec![1]);
-    }
-
-    #[test]
-    fn filter_saved_indices_matches_body_too() {
-        let e = vec![
-            saved("a", "SELECT * FROM orders"),
-            saved("b", "SELECT * FROM users"),
-        ];
-        assert_eq!(filter_saved_indices(&e, Some("orders")), vec![0]);
-    }
-
-    #[test]
-    fn filter_saved_indices_no_match_is_empty() {
-        let e = vec![saved("a", "x")];
-        assert!(filter_saved_indices(&e, Some("zzz")).is_empty());
-    }
-
-    #[test]
-    fn saved_filter_narrows_live_and_maps_focus_to_real_index() {
-        let mut a = app_with_saved(&[("users", "a"), ("orders", "b"), ("revenue", "c")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        assert_eq!(a.mode, Mode::SavedQueriesFilter);
-        type_str(&mut a, "ord");
-        assert_eq!(a.saved_ui.filter.as_ref().map(|t| t.text()), Some("ord"));
-        assert_eq!(a.visible_saved_indices(), vec![1]);
-        // Cursor 0 in the filtered view maps to real entry index 1.
-        assert_eq!(a.focused_saved_index(), Some(1));
-        // Enter keeps the filter applied and returns to navigation.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::SavedQueries);
-        assert_eq!(a.saved_ui.filter.as_ref().map(|t| t.text()), Some("ord"));
-    }
-
-    #[test]
-    fn saved_filter_esc_clears_filter() {
-        let mut a = app_with_saved(&[("users", "a"), ("orders", "b")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        type_str(&mut a, "ord");
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::SavedQueries);
-        assert!(a.saved_ui.filter.is_none());
-    }
-
-    #[test]
-    fn saved_filter_backspace_widens() {
-        let mut a = app_with_saved(&[("users", "a"), ("orders", "b")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        type_str(&mut a, "ordz");
-        assert!(a.visible_saved_indices().is_empty());
-        a.on_key(KeyEvent::from(KeyCode::Backspace)); // back to "ord"
-        assert_eq!(a.visible_saved_indices(), vec![1]);
-    }
-
-    #[test]
-    fn rename_prompt_prefills_current_name() {
-        let mut a = app_with_saved(&[("old", "x")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        assert_eq!(a.mode, Mode::RenameQueryPrompt);
-        assert_eq!(a.saved_ui.rename_buf.text(), "old");
-        assert_eq!(a.saved_ui.rename_from, "old");
-    }
-
-    #[test]
-    fn rename_rejects_empty_name() {
-        let mut a = app_with_saved(&[("old", "x")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        for _ in 0..8 {
-            a.on_key(KeyEvent::from(KeyCode::Backspace));
-        }
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::RenameQueryPrompt);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("name required"));
-        // Original name untouched.
-        assert_eq!(a.saved_queries.entries[0].name, "old");
-    }
-
-    #[test]
-    fn rename_refuses_collision_without_changing_entries() {
-        let mut a = app_with_saved(&[("a", "x"), ("b", "y")]);
-        a.open_saved_queries(); // cursor on "a"
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        for _ in 0..8 {
-            a.on_key(KeyEvent::from(KeyCode::Backspace));
-        }
-        type_str(&mut a, "b"); // collide with existing "b"
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::RenameQueryPrompt); // stayed put
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("already exists"));
-        assert_eq!(a.saved_queries.entries[0].name, "a");
-        assert_eq!(a.saved_queries.entries[1].name, "b");
-    }
-
-    #[test]
-    fn rename_esc_cancels_without_changing_entries() {
-        let mut a = app_with_saved(&[("a", "x")]);
-        a.open_saved_queries();
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::SavedQueries);
-        assert_eq!(a.saved_queries.entries[0].name, "a");
-    }
-
-    #[test]
-    fn dispatch_fixture_writes_parseable_dataset_to_explicit_path() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id", "name"], &[&["1", "alice"], &["2", "bob"]]);
-        a.grid_source = Some(("public".into(), "users".into()));
-        let dir = std::env::temp_dir().join(format!("pgman-fixture-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("users.xml");
-        a.dispatch_fixture(Some(path.to_string_lossy().to_string()));
-        assert!(a.last_status.as_deref().unwrap_or("").contains("2 row(s)"));
-        let xml = std::fs::read_to_string(&path).unwrap();
-        let parsed = crate::dbunit::parse_flat_xml(&xml).unwrap();
-        assert_eq!(parsed.rows.len(), 2);
-        assert_eq!(parsed.rows[0].table, "users");
-        assert_eq!(
-            parsed.rows[0].columns,
-            vec![("id".into(), "1".into()), ("name".into(), "alice".into())]
-        );
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn dispatch_fixture_errors_without_source_table() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id"], &[&["1"]]);
-        a.grid_source = None;
-        a.dispatch_fixture(None);
-        assert!(a
-            .last_error
-            .as_deref()
-            .unwrap_or("")
-            .contains("single-table"));
-    }
-
-    #[test]
-    fn dispatch_fixture_errors_on_empty_grid() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = grid_of(&["id"], &[]);
-        a.grid_source = Some(("public".into(), "users".into()));
-        a.dispatch_fixture(None);
-        assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
-    }
-
-    fn write_temp_fixture(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("pgman-clean-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let fx = dir.join("f.xml");
-        std::fs::write(&fx, r#"<dataset><users id="1"/></dataset>"#).unwrap();
-        fx
-    }
-
-    #[test]
-    fn load_dbunit_fixture_uses_per_db_clean_mode() {
-        let fx = write_temp_fixture("delete");
-        let mut cfg = SafetyConfig::default();
-        cfg.databases.insert(
-            "legacy".into(),
-            crate::safety::SafetyProfile {
-                clean_mode: crate::dbunit::CleanMode::DeleteFrom,
-                ..Default::default()
-            },
-        );
-        let dsn = crate::conn::Dsn::parse("postgres://u@h/legacy").ok();
-        let mut a = App::new(Theme::default(), dsn, Vec::new(), cfg);
-        a.editor_buffer = fx.to_string_lossy().to_string();
-        a.load_dbunit_fixture();
-        assert!(
-            a.editor_buffer.contains("DELETE FROM users"),
-            "expected DELETE FROM; got:\n{}",
-            a.editor_buffer
-        );
-        assert!(!a.editor_buffer.contains("TRUNCATE"));
-        let _ = std::fs::remove_file(&fx);
-    }
-
-    #[test]
-    fn load_dbunit_fixture_defaults_to_truncate() {
-        let fx = write_temp_fixture("trunc");
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.editor_buffer = fx.to_string_lossy().to_string();
-        a.load_dbunit_fixture();
-        assert!(
-            a.editor_buffer.contains("TRUNCATE TABLE users"),
-            "expected TRUNCATE; got:\n{}",
-            a.editor_buffer
-        );
-        let _ = std::fs::remove_file(&fx);
-    }
-
-    #[test]
-    fn cycle_sort_orders_numerically_asc_then_desc_then_off() {
-        let mut a = app_with_grid(sample_grid());
-        // Column cursor defaults to 0 (id). ASC: 1, 2, 3, 10.
-        a.cycle_sort();
-        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
-        assert_eq!(ids, vec!["1", "2", "3", "10"]);
-        assert_eq!(a.grid_sort, Some((0, true)));
-        // DESC: 10, 3, 2, 1.
-        a.cycle_sort();
-        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
-        assert_eq!(ids, vec!["10", "3", "2", "1"]);
-        // Off: original order restored.
-        a.cycle_sort();
-        let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
-        assert_eq!(ids, vec!["3", "1", "10", "2"]);
-        assert!(a.grid_sort.is_none());
-    }
-
-    #[test]
-    fn cycle_sort_on_different_column_jumps_to_asc() {
-        let mut a = app_with_grid(sample_grid());
-        a.cycle_sort(); // col 0 ASC
-        a.move_col_cursor(1);
-        a.cycle_sort(); // col 1 ASC (NOT col 0 DESC)
-        assert_eq!(a.grid_sort, Some((1, true)));
-        let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
-        assert_eq!(names, vec!["alice", "bob", "carol", "dave"]);
-    }
-
-    #[test]
-    fn filter_narrows_visible_rows_case_insensitively() {
-        let mut a = app_with_grid(sample_grid());
-        a.start_filter();
-        // Type 'AL' — case-insensitive substring across all columns.
-        a.on_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-        a.on_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::NONE));
-        // Only `alice` (row idx 1) matches.
-        assert_eq!(a.grid_visible_rows, vec![1]);
-        // Enter accepts; filter persists.
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Normal);
-        assert_eq!(a.grid_filter.as_deref(), Some("aL"));
-    }
-
-    #[test]
-    fn filter_esc_clears_pattern_and_restores_visible_rows() {
-        let mut a = app_with_grid(sample_grid());
-        a.start_filter();
-        a.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
-        assert!(a.grid_visible_rows.is_empty());
-        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(a.grid_visible_rows.len(), 4);
-        assert!(a.grid_filter.is_none());
-    }
-
-    #[test]
-    fn selected_grid_row_idx_maps_through_filter() {
-        let mut a = app_with_grid(sample_grid());
-        a.grid_filter = Some("a".into()); // matches alice, carol, dave
-        a.rebuild_visible_rows();
-        // visible_rows holds indices into grid.rows for matches in
-        // original order: carol(0), alice(1), dave(3).
-        assert_eq!(a.grid_visible_rows, vec![0, 1, 3]);
-        a.grid_state.select(Some(1)); // second visible row → alice
-        assert_eq!(a.selected_grid_row_idx(), Some(1));
-    }
-
-    #[test]
-    fn infer_single_source_table_picks_one_from_simple_select() {
-        let got = infer_single_source_table("SELECT * FROM users WHERE active = true");
-        assert_eq!(got, Some(("public".into(), "users".into())));
-    }
-
-    #[test]
-    fn infer_single_source_table_returns_none_for_joins() {
-        assert!(infer_single_source_table("SELECT * FROM users u JOIN orders o ON true").is_none());
-    }
-
-    #[test]
-    fn infer_single_source_table_returns_none_for_no_from() {
-        assert!(infer_single_source_table("SELECT 1").is_none());
-    }
-
-    #[test]
-    fn infer_single_source_table_keeps_explicit_schema() {
-        assert_eq!(
-            infer_single_source_table("SELECT * FROM audit.events"),
-            Some(("audit".into(), "events".into()))
-        );
-    }
-
-    #[test]
-    fn format_sql_literal_nulls_empty_strings() {
-        assert_eq!(format_sql_literal(""), "NULL");
-    }
-
-    #[test]
-    fn format_sql_literal_passes_numerics_unquoted() {
-        assert_eq!(format_sql_literal("42"), "42");
-        assert_eq!(format_sql_literal("3.14"), "3.14");
-        assert_eq!(format_sql_literal("-1"), "-1");
-    }
-
-    #[test]
-    fn format_sql_literal_lowercases_booleans() {
-        assert_eq!(format_sql_literal("TRUE"), "true");
-        assert_eq!(format_sql_literal("False"), "false");
-    }
-
-    #[test]
-    fn format_sql_literal_quotes_strings_and_doubles_internal_quotes() {
-        assert_eq!(format_sql_literal("alice"), "'alice'");
-        assert_eq!(format_sql_literal("it's fine"), "'it''s fine'");
-    }
-
-    #[test]
-    fn yank_row_as_insert_no_source_surfaces_actionable_error() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid_source = None;
-        a.grid = Grid {
-            columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.yank_row_as_insert();
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("single-table SELECTs"),
-            "expected actionable error; got: {err}"
-        );
-    }
-
-    #[test]
-    fn normal_mode_esc_is_a_noop_does_not_quit() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert!(!a.should_quit);
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn conn_pick_esc_is_a_noop_does_not_quit() {
-        let dsn = Dsn::parse("postgres://test@localhost/test").unwrap();
-        let picks = vec![
-            DataSourcePick {
-                name: "a".into(),
-                origin: "test",
-                dsn: dsn.clone(),
-            },
-            DataSourcePick {
-                name: "b".into(),
-                origin: "test",
-                dsn,
-            },
-        ];
-        let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
-        a.mode = Mode::ConnPick;
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert!(!a.should_quit);
-        assert_eq!(a.mode, Mode::ConnPick);
-    }
-
-    #[test]
-    fn open_cell_detail_parses_json_object_and_primes_tree() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = Grid {
-            columns: vec!["data".into()],
-            rows: vec![vec![r#"{"id":1,"name":"alice"}"#.into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.row_detail_field = 0;
-        a.open_cell_detail();
-        assert_eq!(a.mode, Mode::CellDetail);
-        // Root + 2 members.
-        assert_eq!(a.json_cell_rows.len(), 3);
-        assert!(a.json_cell_value.is_some());
-    }
-
-    #[test]
-    fn open_cell_detail_leaves_tree_empty_for_non_json_cells() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = Grid {
-            columns: vec!["note".into()],
-            rows: vec![vec!["hello world".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.row_detail_field = 0;
-        a.open_cell_detail();
-        assert_eq!(a.mode, Mode::CellDetail);
-        assert!(a.json_cell_rows.is_empty());
-        assert!(a.json_cell_value.is_none());
-    }
-
-    #[test]
-    fn cell_detail_json_jk_moves_cursor_within_bounds() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = Grid {
-            columns: vec!["data".into()],
-            rows: vec![vec![r#"{"a":1,"b":2}"#.into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.row_detail_field = 0;
-        a.open_cell_detail();
-        // 3 rows: root, .a, .b. Start at 0.
-        assert_eq!(a.json_cell_cursor, 0);
-        a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        assert_eq!(a.json_cell_cursor, 1);
-        a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        assert_eq!(a.json_cell_cursor, 2);
-        // Clamp at last row.
-        a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        assert_eq!(a.json_cell_cursor, 2);
-        // k walks back.
-        a.on_key(KeyEvent::from(KeyCode::Char('k')));
-        assert_eq!(a.json_cell_cursor, 1);
-    }
-
-    #[test]
-    fn cell_detail_json_enter_collapses_focused_container() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = Grid {
-            columns: vec!["data".into()],
-            rows: vec![vec![r#"{"a":{"x":1},"b":2}"#.into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.row_detail_field = 0;
-        a.open_cell_detail();
-        // Walk to .a (the nested object).
-        a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        let path_at_cursor = a.json_cell_rows[a.json_cell_cursor].path.clone();
-        assert_eq!(path_at_cursor, ".a");
-        // Expanded → collapsed reduces row count.
-        let expanded_count = a.json_cell_rows.len();
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert!(a.json_cell_rows.len() < expanded_count);
-        assert!(a.json_cell_collapsed.contains(".a"));
-        // Cursor stayed on .a (didn't drift to a sibling).
-        assert_eq!(a.json_cell_rows[a.json_cell_cursor].path, ".a");
-        // Toggle back: row count restored.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.json_cell_rows.len(), expanded_count);
-        assert!(!a.json_cell_collapsed.contains(".a"));
-    }
-
-    #[test]
-    fn cell_detail_json_esc_returns_to_row_detail() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.grid = Grid {
-            columns: vec!["data".into()],
-            rows: vec![vec![r#"{"a":1}"#.into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.row_detail_field = 0;
-        a.open_cell_detail();
-        assert_eq!(a.mode, Mode::CellDetail);
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::RowDetail);
-    }
-
-    #[test]
-    fn slow_queries_enter_copies_focused_sql_to_editor_and_returns() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::SlowQueries;
-        a.slow_queries = vec![
-            crate::query::slow_queries::SlowQueryRow {
-                query: "SELECT 1".into(),
-                calls: 100,
-                total_ms: 500.0,
-                mean_ms: 5.0,
-                rows: 100,
-            },
-            crate::query::slow_queries::SlowQueryRow {
-                query: "UPDATE x SET y=1".into(),
-                calls: 10,
-                total_ms: 200.0,
-                mean_ms: 20.0,
-                rows: 10,
-            },
-        ];
-        a.slow_queries_cursor = 1;
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.editor_buffer, "UPDATE x SET y=1");
-    }
-
-    #[test]
-    fn slow_queries_jk_clamps_to_row_range() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::SlowQueries;
-        a.slow_queries = vec![
-            crate::query::slow_queries::SlowQueryRow {
-                query: "a".into(),
-                calls: 1,
-                total_ms: 1.0,
-                mean_ms: 1.0,
-                rows: 1,
-            },
-            crate::query::slow_queries::SlowQueryRow {
-                query: "b".into(),
-                calls: 2,
-                total_ms: 2.0,
-                mean_ms: 1.0,
-                rows: 2,
-            },
-        ];
-        for _ in 0..10 {
-            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
-        }
-        assert_eq!(a.slow_queries_cursor, 1);
-    }
-
-    #[test]
-    fn sessions_esc_returns_to_normal() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Sessions;
-        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn start_slow_queries_without_client_surfaces_not_connected() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_slow_queries();
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a
-            .last_error
-            .as_deref()
-            .unwrap_or("")
-            .contains("not connected"));
-    }
-
-    #[test]
-    fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::SlowQueries;
-        a.generation = 1;
-        a.on_msg(AppMsg::SlowQueriesLoaded {
-            generation: 1,
-            result: Err("ERROR: relation \"pg_stat_statements\" does not exist".into()),
-        });
-        // Back to Normal + actionable hint in the error.
-        assert_eq!(a.mode, Mode::Normal);
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(
-            err.contains("CREATE EXTENSION pg_stat_statements"),
-            "expected install hint; got: {err}"
-        );
-    }
-
-    fn app_with_schemas() -> App {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let mut cache = crate::query::schema::SchemaCache::default();
-        cache.schemas = vec!["audit".into(), "public".into()];
-        cache.tables = vec![
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "users".into(),
-            },
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "orders".into(),
-            },
-            crate::query::schema::TableMeta {
-                schema: "audit".into(),
-                name: "events".into(),
-            },
-        ];
-        cache.columns_by_table.insert(
-            ("public".into(), "users".into()),
-            vec!["id".into(), "email".into()],
-        );
-        a.schema_cache = cache;
-        a
-    }
-
-    #[test]
-    fn schema_browser_flat_starts_with_schemas_collapsed() {
-        let a = app_with_schemas();
-        let rows = a.flattened_schema_browser();
-        assert_eq!(rows.len(), 2);
-        assert!(matches!(
-            rows[0],
-            SchemaBrowserRow::Schema {
-                ref name,
-                expanded: false,
-                ..
-            } if name == "audit"
-        ));
-        assert!(matches!(
-            rows[1],
-            SchemaBrowserRow::Schema {
-                ref name,
-                ..
-            } if name == "public"
-        ));
-    }
-
-    #[test]
-    fn schema_browser_enter_expands_focused_schema() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // Focus row 1 (public).
-        a.schema_browser.cursor = 1;
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        let rows = a.flattened_schema_browser();
-        // Now: audit (collapsed), public (expanded), orders, users.
-        assert_eq!(rows.len(), 4);
-        assert!(matches!(
-            rows[1],
-            SchemaBrowserRow::Schema { expanded: true, .. }
-        ));
-        assert!(matches!(
-            rows[2],
-            SchemaBrowserRow::Table { ref name, .. } if name == "orders"
-        ));
-        assert!(matches!(
-            rows[3],
-            SchemaBrowserRow::Table { ref name, .. } if name == "users"
-        ));
-    }
-
-    #[test]
-    fn schema_browser_jk_nav_clamps_to_visible() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        for _ in 0..10 {
-            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
-        }
-        // Only 2 visible rows (schemas collapsed); cursor at 1.
-        assert_eq!(a.schema_browser.cursor, 1);
-    }
-
-    #[test]
-    fn schema_browser_esc_returns_to_normal() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn schema_browser_enter_on_table_expands_to_columns_and_constraints() {
-        let mut a = app_with_schemas();
-        // Add a constraint so the third level isn't just columns.
-        a.schema_cache.constraints = vec![crate::query::schema::ConstraintMeta {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "users_pkey".into(),
-        }];
-        a.mode = Mode::SchemaBrowser;
-        // Expand "public" first, then drill into "users".
-        a.schema_browser.cursor = 1; // public
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        // Now rows: audit, public(expanded), orders, users.
-        // Move to "users" (row 3) and toggle.
-        a.schema_browser.cursor = 3;
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        let rows = a.flattened_schema_browser();
-        // audit, public, orders, users(expanded), id, email, users_pkey.
-        assert_eq!(rows.len(), 7);
-        assert!(matches!(
-            rows[3],
-            SchemaBrowserRow::Table {
-                ref name,
-                expanded: true,
-                ..
-            } if name == "users"
-        ));
-        assert!(matches!(
-            rows[4],
-            SchemaBrowserRow::Column { ref name, .. } if name == "id"
-        ));
-        assert!(matches!(
-            rows[5],
-            SchemaBrowserRow::Column { ref name, .. } if name == "email"
-        ));
-        assert!(matches!(
-            rows[6],
-            SchemaBrowserRow::Constraint { ref name, .. }
-                if name == "users_pkey"
-        ));
-    }
-
-    #[test]
-    fn schema_browser_collapsing_schema_hides_its_table_drilldown() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // Expand "public", expand "public.users".
-        a.schema_browser.expanded.insert("public".into());
-        a.schema_browser
-            .expanded
-            .insert(schema_browser_table_key("public", "users"));
-        // Now collapse "public" again.
-        a.schema_browser.cursor = 1;
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        let rows = a.flattened_schema_browser();
-        // Only the two schema rows are visible.
-        assert_eq!(rows.len(), 2);
-        assert!(rows
-            .iter()
-            .all(|r| matches!(r, SchemaBrowserRow::Schema { .. })));
-        // The "public.users" key is still set — re-expanding the schema
-        // restores the open table drilldown.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        let rows = a.flattened_schema_browser();
-        assert!(rows.iter().any(|r| matches!(
-            r,
-            SchemaBrowserRow::Column { name, .. } if name == "id"
-        )));
-    }
-
-    #[test]
-    fn quote_ident_passes_simple_snake_case_unquoted() {
-        assert_eq!(quote_ident("users"), "users");
-        assert_eq!(quote_ident("user_id"), "user_id");
-        assert_eq!(quote_ident("_internal"), "_internal");
-        assert_eq!(quote_ident("a1"), "a1");
-    }
-
-    #[test]
-    fn quote_ident_wraps_anything_unusual() {
-        assert_eq!(quote_ident("User"), "\"User\"");
-        assert_eq!(quote_ident("1col"), "\"1col\"");
-        assert_eq!(quote_ident("with space"), "\"with space\"");
-        assert_eq!(quote_ident("café"), "\"café\"");
-        assert_eq!(quote_ident("evil\"name"), "\"evil\"\"name\"");
-    }
-
-    #[test]
-    fn build_select_all_template_uses_quoted_idents_only_when_needed() {
-        assert_eq!(
-            build_select_all_template("public", "users"),
-            "SELECT * FROM public.users LIMIT 100;"
-        );
-        assert_eq!(
-            build_select_all_template("Audit", "Events"),
-            "SELECT * FROM \"Audit\".\"Events\" LIMIT 100;"
-        );
-    }
-
-    #[test]
-    fn build_insert_template_emits_one_null_per_column() {
-        let sql = build_insert_template(
-            "public",
-            "users",
-            &["id".into(), "email".into(), "active".into()],
-        );
-        assert_eq!(
-            sql,
-            "INSERT INTO public.users\n  (id, email, active)\nVALUES\n  (NULL, NULL, NULL);"
-        );
-    }
-
-    #[test]
-    fn build_insert_template_returns_empty_when_no_columns() {
-        assert!(build_insert_template("public", "t", &[]).is_empty());
-    }
-
-    fn log_picks_with_an_n_plus_one_cluster() -> Vec<crate::query::reconstruct::ReconstructedQuery>
-    {
-        use crate::query::reconstruct::{ReconstructedQuery, Source};
-        let make = |sql: &str| ReconstructedQuery {
-            raw_sql: sql.into(),
-            params: Vec::new(),
-            runnable_sql: sql.into(),
-            source: Source::HibernateLog,
-            src_line: 0,
-        };
-        vec![
-            make("select * from item where order_id = 1"),
-            make("select * from item where order_id = 2"),
-            make("select * from item where order_id = 3"),
-            make("select * from orders where id = 1"),
-        ]
-    }
-
-    #[test]
-    fn log_pick_visible_len_reflects_view() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.log_picks = log_picks_with_an_n_plus_one_cluster();
-        a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
-        a.mode = Mode::LogPick;
-        assert_eq!(a.log_pick_view, LogPickView::AllQueries);
-        assert_eq!(a.log_pick_visible_len(), 4);
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert_eq!(a.log_pick_view, LogPickView::Clusters);
-        assert_eq!(a.log_pick_visible_len(), 1); // one repeated shape
-    }
-
-    #[test]
-    fn log_pick_toggle_resets_cursor() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.log_picks = log_picks_with_an_n_plus_one_cluster();
-        a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
-        a.mode = Mode::LogPick;
-        // Cursor at row 3 in AllQueries view.
-        a.log_pick_index = 3;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        // Clusters view has only 1 row → cursor must clamp.
-        assert_eq!(a.log_pick_index, 0);
-    }
-
-    #[test]
-    fn log_pick_enter_in_cluster_view_loads_example_sql() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.log_picks = log_picks_with_an_n_plus_one_cluster();
-        a.log_pick_clusters = crate::query::nplus1::detect(&a.log_picks);
-        a.mode = Mode::LogPick;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::Editor);
-        assert!(
-            a.editor_buffer.contains("from item where order_id"),
-            "buffer should be the cluster's example; got: {:?}",
-            a.editor_buffer
-        );
-    }
-
-    #[test]
-    fn schema_browser_s_on_schema_row_surfaces_error_not_garbage() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.schema_browser.cursor = 0; // a schema row
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert!(a.last_error.is_some());
-    }
-
-    #[test]
-    fn schema_browser_i_with_no_cached_columns_surfaces_error() {
-        let mut a = app_with_schemas();
-        // public.orders has no columns_by_table entry.
-        a.schema_browser.expanded.insert("public".into());
-        a.mode = Mode::SchemaBrowser;
-        // Walk to orders.
-        let rows = a.flattened_schema_browser();
-        let idx = rows
-            .iter()
-            .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
-            .unwrap();
-        a.schema_browser.cursor = idx;
-        a.on_key(KeyEvent::from(KeyCode::Char('i')));
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(err.contains("no column info"), "got: {err}");
-    }
-
-    #[test]
-    fn is_cost_checkable_accepts_plain_selects_and_ctes() {
-        assert!(is_cost_checkable("SELECT * FROM users"));
-        assert!(is_cost_checkable("  select 1"));
-        assert!(is_cost_checkable("WITH x AS (SELECT 1) SELECT * FROM x"));
-        assert!(is_cost_checkable("TABLE users"));
-        assert!(is_cost_checkable("VALUES (1, 2)"));
-    }
-
-    #[test]
-    fn is_cost_checkable_rejects_writes_and_explain() {
-        assert!(!is_cost_checkable("INSERT INTO t VALUES (1)"));
-        assert!(!is_cost_checkable("UPDATE t SET a = 1"));
-        assert!(!is_cost_checkable("DELETE FROM t"));
-        assert!(!is_cost_checkable("EXPLAIN SELECT 1"));
-        assert!(!is_cost_checkable("CREATE TABLE t (id int)"));
-    }
-
-    #[test]
-    fn is_cost_checkable_skips_self_bounded_limit_queries() {
-        // A LIMIT means the query already self-bounds its result —
-        // pre-flight gating would be noisy.
-        assert!(!is_cost_checkable("SELECT * FROM events LIMIT 100"));
-        assert!(!is_cost_checkable("select * from t LIMIT 5"));
-    }
-
-    #[test]
-    fn is_cost_checkable_ignores_limit_inside_string_literal() {
-        // The token `limit` only counts when it's actually a clause.
-        // A literal value with the word in it must NOT skip the gate.
-        assert!(is_cost_checkable(
-            "SELECT 'over the limit' AS reason FROM t"
-        ));
-        // Same with doubled-quote escapes inside.
-        assert!(is_cost_checkable("SELECT 'it''s past the limit' FROM t"));
-    }
-
-    #[test]
-    fn is_cost_checkable_rejects_cte_wrapped_writes() {
-        // CTE-wrapped writes look like SELECT but are really DML.
-        // Reject so the cost-preview Confirm doesn't misleadingly
-        // call them "estimated N rows — proceed?".
-        assert!(!is_cost_checkable(
-            "WITH d AS (DELETE FROM t RETURNING id) SELECT count(*) FROM d"
-        ));
-        assert!(!is_cost_checkable(
-            "WITH u AS (UPDATE t SET x=1 RETURNING *) SELECT * FROM u"
-        ));
-        assert!(!is_cost_checkable(
-            "WITH i AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM i"
-        ));
-    }
-
-    #[test]
-    fn is_cost_checkable_keeps_delete_keyword_in_string_safe() {
-        // The CTE-write check would false-reject a query with
-        // 'DELETE' inside a string literal if string-stripping
-        // weren't applied. Verify the stripping rescues it.
-        assert!(is_cost_checkable("SELECT 'DELETE me later' AS note FROM t"));
-    }
-
-    #[test]
-    fn strip_strings_replaces_literal_bodies_preserving_length() {
-        let s = "SELECT 'hello' FROM t WHERE x = \"a\\b\"";
-        let out = strip_strings(s);
-        assert_eq!(out.len(), s.len());
-        // The 'hello' body got replaced; the quoting char stays.
-        assert!(out.contains("'_____'"));
-        // The double-quoted body got replaced too.
-        assert!(out.contains("\"___\""));
-    }
-
-    #[test]
-    fn strip_strings_handles_doubled_quote_escapes() {
-        let s = "SELECT 'it''s ok'";
-        let out = strip_strings(s);
-        assert_eq!(out.len(), s.len());
-        // The whole body including the `''` escape becomes `_`s
-        // (the embedded quote was treated as part of the literal,
-        // not a terminator).
-        assert!(out.contains("'________'"));
-    }
-
-    #[test]
-    fn format_row_estimate_uses_commas() {
-        assert_eq!(format_row_estimate(0.0), "0");
-        assert_eq!(format_row_estimate(999.0), "999");
-        assert_eq!(format_row_estimate(1_000.0), "1,000");
-        assert_eq!(format_row_estimate(1_234_567.0), "1,234,567");
-        assert_eq!(format_row_estimate(4_200_000.5), "4,200,001");
-    }
-
-    #[test]
-    fn history_encode_decode_round_trips_multiline() {
-        let sample = "select 1\nfrom t\nwhere x = 'a\\b'";
-        let encoded = encode_history_line(sample);
-        assert!(
-            !encoded.contains('\n'),
-            "encoded must be one line: {encoded:?}"
-        );
-        let decoded = decode_history_line(&encoded);
-        assert_eq!(decoded, sample);
-    }
-
-    #[test]
-    fn history_decode_tolerates_unknown_escapes() {
-        // Unknown `\?` sequences emit literally so we never lose bytes.
-        assert_eq!(decode_history_line("\\?"), "\\?");
-        // Trailing lone `\` at end of string keeps the literal.
-        assert_eq!(decode_history_line("foo\\"), "foo\\");
-    }
-
-    #[test]
-    fn history_persist_then_load_round_trips_via_temp_file() {
-        let dir = std::env::temp_dir().join(format!("pgman-history-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("history.log");
-        let entries: Vec<String> = vec![
-            "select 1".into(),
-            "select *\nfrom users".into(),
-            "select now()".into(),
-        ];
-        persist_history_to(&path, &entries).unwrap();
-        let loaded = load_history_from(&path);
-        assert_eq!(loaded, entries);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn history_persist_caps_to_history_cap_entries() {
-        let dir = std::env::temp_dir().join(format!("pgman-history-cap-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("history.log");
-        // 200 entries → file gets capped at HISTORY_CAP.
-        let many: Vec<String> = (0..200).map(|i| format!("query {i}")).collect();
-        persist_history_to(&path, &many).unwrap();
-        let loaded = load_history_from(&path);
-        assert_eq!(loaded.len(), HISTORY_CAP);
-        // Persist keeps the NEWEST cap entries — symmetric with
-        // load_history_from which also drops from the head.
-        // For 200 entries, the kept window is [150..199].
-        assert_eq!(loaded[0], format!("query {}", 200 - HISTORY_CAP));
-        assert_eq!(loaded[HISTORY_CAP - 1], "query 199");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn history_load_from_missing_file_returns_empty() {
-        let path = std::env::temp_dir().join("definitely-not-a-real-file-xyz");
-        let _ = std::fs::remove_file(&path);
-        assert!(load_history_from(&path).is_empty());
-    }
-
-    #[test]
-    fn filter_schema_browser_rows_matches_self() {
-        let rows = vec![
-            SchemaBrowserRow::Schema {
-                name: "public".into(),
-                expanded: false,
-                table_count: 1,
-            },
-            SchemaBrowserRow::Schema {
-                name: "audit".into(),
-                expanded: false,
-                table_count: 1,
-            },
-        ];
-        let out = filter_schema_browser_rows(rows, "aud");
-        assert_eq!(out.len(), 1);
-        assert!(matches!(
-            &out[0],
-            SchemaBrowserRow::Schema { name, .. } if name == "audit"
-        ));
-    }
-
-    #[test]
-    fn filter_schema_browser_rows_keeps_ancestor_of_match() {
-        let rows = vec![
-            SchemaBrowserRow::Schema {
-                name: "public".into(),
-                expanded: true,
-                table_count: 2,
-            },
-            SchemaBrowserRow::Table {
-                schema: "public".into(),
-                name: "orders".into(),
-                expanded: false,
-                column_count: 0,
-                constraint_count: 0,
-            },
-            SchemaBrowserRow::Table {
-                schema: "public".into(),
-                name: "users".into(),
-                expanded: false,
-                column_count: 0,
-                constraint_count: 0,
-            },
-        ];
-        let out = filter_schema_browser_rows(rows, "users");
-        // public schema (ancestor) + users table.
-        assert_eq!(out.len(), 2);
-        assert!(matches!(&out[0], SchemaBrowserRow::Schema { name, .. } if name == "public"));
-        assert!(matches!(&out[1], SchemaBrowserRow::Table { name, .. } if name == "users"));
-    }
-
-    #[test]
-    fn filter_schema_browser_rows_keeps_path_to_deep_match() {
-        let rows = vec![
-            SchemaBrowserRow::Schema {
-                name: "public".into(),
-                expanded: true,
-                table_count: 1,
-            },
-            SchemaBrowserRow::Table {
-                schema: "public".into(),
-                name: "users".into(),
-                expanded: true,
-                column_count: 2,
-                constraint_count: 0,
-            },
-            SchemaBrowserRow::Column {
-                schema: "public".into(),
-                table: "users".into(),
-                name: "email".into(),
-            },
-            SchemaBrowserRow::Column {
-                schema: "public".into(),
-                table: "users".into(),
-                name: "id".into(),
-            },
-        ];
-        let out = filter_schema_browser_rows(rows, "email");
-        // schema + table + email column.
-        assert_eq!(out.len(), 3);
-        assert!(matches!(&out[2], SchemaBrowserRow::Column { name, .. } if name == "email"));
-    }
-
-    #[test]
-    fn filter_schema_browser_rows_is_case_insensitive() {
-        let rows = vec![SchemaBrowserRow::Schema {
-            name: "PUBLIC".into(),
-            expanded: false,
-            table_count: 0,
-        }];
-        assert_eq!(filter_schema_browser_rows(rows, "pub").len(), 1);
-    }
-
-    #[test]
-    fn schema_browser_slash_starts_filter_mode_with_empty_pattern() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        assert_eq!(a.mode, Mode::SchemaBrowserFilter);
-        assert_eq!(a.schema_browser.filter.as_deref(), Some(""));
-    }
-
-    #[test]
-    fn schema_browser_filter_typing_narrows_tree_live() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        a.on_key(KeyEvent::from(KeyCode::Char('u')));
-        // Filter is "au"; only the `audit` schema matches.
-        let rows = a.flattened_schema_browser();
-        assert_eq!(rows.len(), 1);
-        assert!(matches!(&rows[0], SchemaBrowserRow::Schema { name, .. } if name == "audit"));
-    }
-
-    #[test]
-    fn schema_browser_filter_enter_accepts_keeps_filter_applied() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        a.on_key(KeyEvent::from(KeyCode::Char('u')));
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert_eq!(a.schema_browser.filter.as_deref(), Some("au"));
-    }
-
-    #[test]
-    fn schema_browser_filter_esc_clears() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert!(a.schema_browser.filter.is_none());
-    }
-
-    fn synthetic_browser_rows() -> Vec<SchemaBrowserRow> {
-        // schema A (expanded) → tA1 (expanded) → col1, col2 → schema B
-        vec![
-            SchemaBrowserRow::Schema {
-                name: "a".into(),
-                expanded: true,
-                table_count: 1,
-            },
-            SchemaBrowserRow::Table {
-                schema: "a".into(),
-                name: "tA1".into(),
-                expanded: true,
-                column_count: 2,
-                constraint_count: 0,
-            },
-            SchemaBrowserRow::Column {
-                schema: "a".into(),
-                table: "tA1".into(),
-                name: "col1".into(),
-            },
-            SchemaBrowserRow::Column {
-                schema: "a".into(),
-                table: "tA1".into(),
-                name: "col2".into(),
-            },
-            SchemaBrowserRow::Schema {
-                name: "b".into(),
-                expanded: false,
-                table_count: 0,
-            },
-        ]
-    }
-
-    #[test]
-    fn next_schema_row_idx_skips_past_table_internals_forward() {
-        let rows = synthetic_browser_rows();
-        // From schema "a" at index 0 → next schema is "b" at 4,
-        // jumping over its table + columns in one move.
-        assert_eq!(next_schema_row_idx(&rows, 0, Direction::Forward), Some(4));
-        // From a column row (depth 2) the next schema is still "b".
-        assert_eq!(next_schema_row_idx(&rows, 3, Direction::Forward), Some(4));
-        // From the last schema → no next.
-        assert_eq!(next_schema_row_idx(&rows, 4, Direction::Forward), None);
-    }
-
-    #[test]
-    fn next_schema_row_idx_walks_back_skipping_internals() {
-        let rows = synthetic_browser_rows();
-        // From schema "b" at 4 → previous schema is "a" at 0.
-        assert_eq!(next_schema_row_idx(&rows, 4, Direction::Backward), Some(0));
-        // From a column (index 2) → previous schema is "a".
-        assert_eq!(next_schema_row_idx(&rows, 2, Direction::Backward), Some(0));
-        // From the first schema → no previous.
-        assert_eq!(next_schema_row_idx(&rows, 0, Direction::Backward), None);
-    }
-
-    #[test]
-    fn schema_browser_bracket_keys_jump_by_schema() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // Expand "public" so we have schema + tables + (collapsed)
-        // schema below for an interesting jump.
-        a.schema_browser.expanded.insert("public".into());
-        // Cursor at row 0 (audit schema, first).
-        a.schema_browser.cursor = 0;
-        // `]` jumps to the next schema row.
-        a.on_key(KeyEvent::from(KeyCode::Char(']')));
-        let rows = a.flattened_schema_browser();
-        assert!(matches!(
-            rows.get(a.schema_browser.cursor),
-            Some(SchemaBrowserRow::Schema { name, .. }) if name == "public"
-        ));
-        // `[` goes back.
-        a.on_key(KeyEvent::from(KeyCode::Char('[')));
-        let rows = a.flattened_schema_browser();
-        assert!(matches!(
-            rows.get(a.schema_browser.cursor),
-            Some(SchemaBrowserRow::Schema { name, .. }) if name == "audit"
-        ));
-    }
-
-    #[test]
-    fn schema_browser_plus_expands_everything() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        assert_eq!(a.flattened_schema_browser().len(), 2); // only schemas
-        a.on_key(KeyEvent::from(KeyCode::Char('+')));
-        let rows = a.flattened_schema_browser();
-        // Both schemas expanded → schemas + tables visible.
-        // audit(1 table) + public(2 tables): 2 + 1 + 2 = 5 rows
-        // minimum (tables aren't expanded — they have no columns
-        // in the test fixture for `audit.events` / `public.orders`,
-        // so toggling them doesn't add rows). public.users has 2
-        // columns → +2 rows when its table-key is expanded. Total = 7.
-        assert!(
-            rows.len() >= 5,
-            "expected expansion; got {} rows",
-            rows.len()
-        );
-        // Every schema is marked expanded.
-        for row in &rows {
-            if let SchemaBrowserRow::Schema { expanded, .. } = row {
-                assert!(*expanded, "schema not expanded: {row:?}");
-            }
-        }
-    }
-
-    #[test]
-    fn schema_browser_minus_collapses_everything() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // First expand, then collapse, verify back to just schemas.
-        a.on_key(KeyEvent::from(KeyCode::Char('+')));
-        assert!(a.flattened_schema_browser().len() > 2);
-        a.on_key(KeyEvent::from(KeyCode::Char('-')));
-        // Back to one row per schema.
-        assert_eq!(a.flattened_schema_browser().len(), 2);
-        assert!(a.schema_browser.expanded.is_empty());
-    }
-
-    #[test]
-    fn schema_browser_pagedown_jumps_ten_rows() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // Synthetic: drive enough rows by expanding everything.
-        a.on_key(KeyEvent::from(KeyCode::Char('+')));
-        a.schema_browser.cursor = 0;
-        a.on_key(KeyEvent::from(KeyCode::PageDown));
-        let rows_len = a.flattened_schema_browser().len();
-        let expected = 10usize.min(rows_len.saturating_sub(1));
-        assert_eq!(a.schema_browser.cursor, expected);
-    }
-
-    #[test]
-    fn start_schema_lint_with_empty_cache_surfaces_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_schema_lint();
-        assert_ne!(a.mode, Mode::SchemaLint);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("schema cache empty"));
-    }
-
-    #[test]
-    fn start_schema_lint_with_findings_opens_panel_and_summarises() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let mut cache = crate::query::schema::SchemaCache::default();
-        cache.schemas = vec!["public".into()];
-        // Two LINT001s (no constraints), one LINT002 (mixed-case).
-        cache.tables = vec![
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "events".into(),
-            },
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "OrderItems".into(),
-            },
-        ];
-        a.schema_cache = cache;
-        a.start_schema_lint();
-        assert_eq!(a.mode, Mode::SchemaLint);
-        assert!(!a.schema_lint_findings.is_empty());
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("finding(s)") && status.contains("high"),
-            "status should summarise count + severity; got: {status}"
-        );
-    }
-
-    #[test]
-    fn m_then_letter_sets_grid_bookmark_at_focus() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["a".into(), "b".into()],
-            rows: vec![vec!["1".into(), "2".into()], vec!["3".into(), "4".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0, 1];
-        a.grid_state.select(Some(1));
-        a.grid_col_cursor = 1;
-        // m, then 'q'.
-        a.on_key(KeyEvent::from(KeyCode::Char('m')));
-        assert!(a.pending_mark_set);
-        a.on_key(KeyEvent::from(KeyCode::Char('q')));
-        assert!(!a.pending_mark_set);
-        let bm = a.bookmarks.get(&'q').copied().expect("bookmark set");
-        assert_eq!(bm.row, 1);
-        assert_eq!(bm.col, 1);
-    }
-
-    #[test]
-    fn jump_to_bookmark_moves_selection_and_col_cursor() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["a".into(), "b".into()],
-            rows: vec![vec!["1".into(), "2".into()], vec!["3".into(), "4".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0, 1];
-        a.bookmarks.insert('a', GridBookmark { row: 1, col: 1 });
-        // 'a → jumps.
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        assert_eq!(a.grid_state.selected(), Some(1));
-        assert_eq!(a.grid_col_cursor, 1);
-    }
-
-    #[test]
-    fn jump_to_unset_bookmark_surfaces_status_no_op() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["a".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.on_key(KeyEvent::from(KeyCode::Char('\'')));
-        a.on_key(KeyEvent::from(KeyCode::Char('z')));
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("no bookmark"));
-    }
-
-    #[test]
-    fn m_followed_by_non_letter_clears_pending_silently() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.on_key(KeyEvent::from(KeyCode::Char('m')));
-        assert!(a.pending_mark_set);
-        a.on_key(KeyEvent::from(KeyCode::Char('1')));
-        // Pending cleared, no bookmark set.
-        assert!(!a.pending_mark_set);
-        assert!(a.bookmarks.is_empty());
-    }
-
-    #[test]
-    fn fk_navigate_with_no_grid_source_surfaces_actionable_error() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid_source = None;
-        a.grid = Grid {
-            columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.navigate_fk_from_focused_cell();
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(err.contains("single-table SELECT"));
-    }
-
-    #[test]
-    fn fk_navigate_with_non_fk_column_surfaces_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid_source = Some(("public".into(), "orders".into()));
-        a.grid = Grid {
-            columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.grid_col_cursor = 0;
-        a.navigate_fk_from_focused_cell();
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(err.contains("isn't a foreign key"));
-    }
-
-    #[test]
-    fn fk_navigate_opens_new_tab_with_parent_select() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid_source = Some(("public".into(), "orders".into()));
-        a.grid = Grid {
-            columns: vec!["id".into(), "user_id".into()],
-            rows: vec![vec!["1".into(), "42".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0];
-        a.grid_state.select(Some(0));
-        a.grid_col_cursor = 1; // user_id
-        a.schema_cache.fk_edges.push(crate::query::schema::FkEdge {
-            child_schema: "public".into(),
-            child_table: "orders".into(),
-            child_column: "user_id".into(),
-            parent_schema: "public".into(),
-            parent_table: "users".into(),
-            parent_column: "id".into(),
-        });
-        a.navigate_fk_from_focused_cell();
-        // New tab opened.
-        assert_eq!(a.tabs.len(), 2);
-        assert_eq!(a.active_tab, 1);
-        // Editor in the new tab holds the parent SELECT.
-        assert!(
-            a.editor_buffer
-                .contains("SELECT * FROM public.users WHERE id = 42"),
-            "expected parent select; got: {}",
-            a.editor_buffer
-        );
-        // We're in the editor ready to F5.
-        assert_eq!(a.mode, Mode::Editor);
-    }
-
-    #[test]
-    fn new_tab_pushes_a_fresh_state_and_switches() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "tab one".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
-        assert_eq!(a.tabs.len(), 2);
-        assert_eq!(a.active_tab, 1);
-        // New tab's editor is empty.
-        assert_eq!(a.editor_buffer, "");
-    }
-
-    #[test]
-    fn cycle_tab_round_trips_state_per_tab() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "one".into();
-        a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
-        a.editor_buffer = "two".into();
-        // Cycle back to first tab.
-        a.cycle_tab(false);
-        assert_eq!(a.editor_buffer, "one");
-        assert_eq!(a.active_tab, 0);
-        // Forward to second.
-        a.cycle_tab(true);
-        assert_eq!(a.editor_buffer, "two");
-        assert_eq!(a.active_tab, 1);
-    }
-
-    #[test]
-    fn all_prompt_modes_count_as_text_input() {
-        // Every text-entry mode must opt into is_text_input so the
-        // global Ctrl-W (close-tab) chord stays inert while typing.
-        for m in [
-            Mode::Editor,
-            Mode::ParamPrompt,
-            Mode::SavedQueriesFilter,
-            Mode::RenameQueryPrompt,
-            Mode::SaveQueryPrompt,
-            Mode::GridFilter,
-            Mode::GridFind,
-            Mode::HistorySearch,
-            Mode::SchemaBrowserFilter,
-        ] {
-            assert!(m.is_text_input(), "{m:?} should be a text-input mode");
-        }
-        assert!(!Mode::Normal.is_text_input());
-        assert!(!Mode::ResultDiff.is_text_input());
-        assert!(!Mode::TapMonitor.is_text_input());
-    }
-
-    #[test]
-    fn ctrl_w_in_a_prompt_does_not_close_the_tab() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.new_tab(); // two tabs, so close_active_tab would otherwise fire
-        assert_eq!(a.tabs.len(), 2);
-        a.mode = Mode::ParamPrompt;
-        a.saved_ui.param_prompt = Some(ParamPrompt {
-            query_name: "q".into(),
-            template: "SELECT :x".into(),
-            params: vec!["x".into()],
-            idx: 0,
-            values: Vec::new(),
-            input: TextInput::new(),
-        });
-        a.on_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
-        assert_eq!(
-            a.tabs.len(),
-            2,
-            "Ctrl-W must not close a tab while typing in a prompt"
-        );
-        assert_eq!(a.mode, Mode::ParamPrompt);
-    }
-
-    #[test]
-    fn result_diff_pin_is_per_tab_and_does_not_leak() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        // Pin A on tab 1.
-        a.pin_or_diff_result();
-        assert!(a.pinned_result.is_some(), "tab 1 should have a pinned A");
-        // A fresh tab must NOT inherit the pin — otherwise the first D
-        // there diffs against an unrelated baseline.
-        a.new_tab();
-        assert!(
-            a.pinned_result.is_none(),
-            "a fresh tab must start with no pinned baseline"
-        );
-        // Returning to tab 1 restores its pin.
-        a.cycle_tab(false);
-        assert!(
-            a.pinned_result.is_some(),
-            "returning to tab 1 should restore its pinned baseline"
-        );
-    }
-
-    #[test]
-    fn tab_switch_dismisses_an_open_result_diff_overlay() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
-            truncated: false,
-        };
-        a.pin_or_diff_result(); // pin A
-        a.grid.rows = vec![vec!["2".into()]];
-        a.pin_or_diff_result(); // diff → opens the overlay
-        assert_eq!(a.mode, Mode::ResultDiff);
-        a.new_tab();
-        // The transient overlay must not survive onto the new tab.
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a.result_diff.is_none());
-    }
-
-    #[test]
-    fn close_tab_drops_current_and_loads_neighbour() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.editor_buffer = "first".into();
-        a.new_tab(); // → tab 2
-        a.editor_buffer = "second".into();
-        // Close the active (2nd) tab → load first.
-        a.close_active_tab();
-        assert_eq!(a.tabs.len(), 1);
-        assert_eq!(a.active_tab, 0);
-        assert_eq!(a.editor_buffer, "first");
-    }
-
-    #[test]
-    fn close_tab_on_only_tab_is_a_noop_with_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.editor_buffer = "lonely".into();
-        a.close_active_tab();
-        assert_eq!(a.tabs.len(), 1);
-        assert_eq!(a.editor_buffer, "lonely");
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("only one tab"));
-    }
-
-    #[test]
-    fn new_tab_refuses_past_cap() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        // Drive up to the cap.
-        for _ in 1..TAB_CAP {
-            a.new_tab();
-        }
-        assert_eq!(a.tabs.len(), TAB_CAP);
-        a.new_tab(); // refuse
-        assert_eq!(a.tabs.len(), TAB_CAP);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("max tabs"));
-    }
-
-    #[test]
-    fn alt_digit_jumps_directly_to_tab() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.editor_buffer = "t1".into();
-        a.new_tab();
-        a.editor_buffer = "t2".into();
-        a.new_tab();
-        a.editor_buffer = "t3".into();
-        // Alt-1 → jump to the first tab.
-        a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
-        assert_eq!(a.active_tab, 0);
-        assert_eq!(a.editor_buffer, "t1");
-    }
-
-    #[test]
-    fn tab_switch_blocked_during_query_running() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "one".into();
-        a.new_tab();
-        a.editor_buffer = "two".into();
-        a.query_running = true;
-        // Try to switch back — should be blocked.
-        let before = a.active_tab;
-        a.switch_to_tab(0);
-        assert_eq!(a.active_tab, before);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("query is running"));
-    }
-
-    #[test]
-    fn default_query_name_sanitises_to_kebab() {
-        assert_eq!(
-            default_query_name("SELECT * FROM users"),
-            "select-from-users"
-        );
-        // 40-char take from the line, sanitised + trimmed.
-        assert_eq!(
-            default_query_name("WITH active AS (SELECT 1) SELECT * FROM active"),
-            "with-active-as-select-1-select-from"
-        );
-        // Leading whitespace skipped.
-        assert_eq!(default_query_name("  \n\n select 1"), "select-1");
-        // Symbols collapse to nothing; runs of space collapse.
-        assert_eq!(default_query_name("a    b"), "a-b");
-    }
-
-    #[test]
-    fn save_query_prompt_persists_buffer_under_name() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.editor_cursor = a.editor_buffer.len();
-        // Ctrl-S — open the prompt.
-        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-        assert_eq!(a.mode, Mode::SaveQueryPrompt);
-        // Type a name (the default is pre-filled but we overwrite).
-        a.saved_ui.save_name.clear();
-        for c in "mine".chars() {
-            a.on_key(KeyEvent::from(KeyCode::Char(c)));
-        }
-        // Enter persists.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::Editor);
-        let q = a.saved_queries.get("mine").expect("entry saved");
-        assert_eq!(q.body, "select 1");
-    }
-
-    #[test]
-    fn save_query_prompt_esc_cancels_without_persist() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.editor_buffer = "select 1".into();
-        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::Editor);
-        assert!(a.saved_queries.entries.is_empty());
-    }
-
-    #[test]
-    fn saved_queries_panel_enter_loads_into_editor() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.saved_queries.upsert(crate::saved::SavedQuery {
-            name: "ru".into(),
-            body: "SELECT now();".into(),
-        });
-        a.mode = Mode::Normal;
-        a.editor_buffer = "draft".into();
-        // Q opens.
-        a.on_key(KeyEvent::new(KeyCode::Char('Q'), KeyModifiers::SHIFT));
-        assert_eq!(a.mode, Mode::SavedQueries);
-        // Enter loads into editor.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.editor_buffer, "SELECT now();");
-    }
-
-    #[test]
-    fn saved_queries_panel_d_deletes_focused_entry() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.saved_queries.upsert(crate::saved::SavedQuery {
-            name: "a".into(),
-            body: "select 1".into(),
-        });
-        a.saved_queries.upsert(crate::saved::SavedQuery {
-            name: "b".into(),
-            body: "select 2".into(),
-        });
-        a.mode = Mode::SavedQueries;
-        a.saved_ui.cursor = 0;
-        a.on_key(KeyEvent::from(KeyCode::Char('d')));
-        assert_eq!(a.saved_queries.entries.len(), 1);
-        assert_eq!(a.saved_queries.entries[0].name, "b");
-    }
-
-    #[test]
-    fn open_saved_queries_with_empty_list_surfaces_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.open_saved_queries();
-        assert_ne!(a.mode, Mode::SavedQueries);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("Ctrl-S"));
-    }
-
-    #[test]
-    fn notification_message_appends_to_ring_and_caps() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Drive past the cap.
-        for i in 0..(NOTIFICATION_CAP + 50) {
-            a.on_msg(AppMsg::Notification {
-                generation: a.generation,
-                notification: crate::conn::NotificationMsg {
-                    channel: "users".into(),
-                    pid: 1234,
-                    payload: format!("event-{i}"),
-                },
-            });
-        }
-        assert_eq!(a.notifications.len(), NOTIFICATION_CAP);
-        // Newest at the end.
-        let last = a.notifications.last().unwrap();
-        assert_eq!(last.payload, format!("event-{}", NOTIFICATION_CAP + 49));
-    }
-
-    // --- tap-event ring tests ------------------------
-
-    fn tap_query(sql: &str, received_at: u64) -> crate::tap::TapEvent {
-        crate::tap::TapEvent {
-            v: 1,
-            kind: crate::tap::TapKind::Query,
-            ts_unix_micros: received_at,
-            received_at_unix_micros: received_at,
-            app: Some("billing-service".into()),
-            pool: None,
-            conn: Some("primary-7".into()),
-            txn: None,
-            sql: Some(sql.into()),
-            params: None,
-            params_redacted: false,
-            duration_micros: Some(100),
-            rows: Some(1),
-            error: None,
-            caller: None,
-            dropped_events_total: None,
-            txn_outcome: None,
-        }
-    }
-
-    fn tap_heartbeat(dropped: u64, received_at: u64) -> crate::tap::TapEvent {
-        crate::tap::TapEvent {
-            v: 1,
-            kind: crate::tap::TapKind::Heartbeat,
-            ts_unix_micros: received_at,
-            received_at_unix_micros: received_at,
-            app: Some("billing-service".into()),
-            pool: None,
-            conn: None,
-            txn: None,
-            sql: None,
-            params: None,
-            params_redacted: false,
-            duration_micros: None,
-            rows: None,
-            error: None,
-            caller: None,
-            dropped_events_total: Some(dropped),
-            txn_outcome: None,
-        }
-    }
-
-    #[test]
-    fn tap_query_event_lands_in_ring_and_bumps_count() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1_000_000),
-        });
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 2", 2_000_000),
-        });
-        assert_eq!(a.tap_events.len(), 2);
-        assert_eq!(a.tap_health.query_count, 2);
-        // Newest at the back.
-        assert_eq!(
-            a.tap_events.back().and_then(|e| e.sql.as_deref()),
-            Some("SELECT 2")
-        );
-        assert_eq!(a.tap_health.last_event_at_unix_micros, 2_000_000);
-    }
-
-    #[test]
-    fn tap_heartbeat_does_not_pollute_ring_but_updates_health() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1_000_000),
-        });
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_heartbeat(17, 1_500_000),
-        });
-        // Ring only carries the query — heartbeat stays out.
-        assert_eq!(a.tap_events.len(), 1);
-        assert_eq!(a.tap_health.heartbeat_count, 1);
-        assert_eq!(a.tap_health.dropped_events_total, 17);
-        // Heartbeat still counts as a "we heard from the JAR" signal.
-        assert_eq!(a.tap_health.last_event_at_unix_micros, 1_500_000);
-    }
-
-    #[test]
-    fn tap_ring_evicts_oldest_past_cap() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..(TAP_CAP + 50) {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("q{i}"), i as u64),
-            });
-        }
-        assert_eq!(a.tap_events.len(), TAP_CAP);
-        // First event surviving the eviction is q50 (the first 50 were dropped).
-        assert_eq!(
-            a.tap_events.front().and_then(|e| e.sql.as_deref()),
-            Some("q50")
-        );
-        // Newest at the back.
-        assert_eq!(
-            a.tap_events.back().and_then(|e| e.sql.as_deref()),
-            Some(format!("q{}", TAP_CAP + 49).as_str())
-        );
-        assert_eq!(a.tap_health.query_count, (TAP_CAP + 50) as u64);
-    }
-
-    #[test]
-    fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Fill exactly to cap.
-        for i in 0..TAP_CAP {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("q{i}"), i as u64),
-            });
-        }
-        // Cursor parked on the oldest row.
-        a.tap_nav.events_cursor = 0;
-        let oldest_sql = a.tap_events.front().and_then(|e| e.sql.clone());
-        assert_eq!(oldest_sql.as_deref(), Some("q0"));
-        // One more event evicts q0; cursor stays in-bounds and
-        // points at "what used to be the second row".
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("new", 9_999),
-        });
-        assert_eq!(a.tap_events.len(), TAP_CAP);
-        assert_eq!(
-            a.tap_events.front().and_then(|e| e.sql.as_deref()),
-            Some("q1")
-        );
-        // Cursor decremented to follow the eviction.
-        assert_eq!(a.tap_nav.events_cursor, 0);
-    }
-
-    #[test]
-    fn f4_opens_tap_monitor_from_any_mode() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::TapMonitor);
-    }
-
-    #[test]
-    fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
-        // Empty case.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_tap_monitor();
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("no events yet"),
-            "expected no-events hint; got {status}"
-        );
-        // After traffic.
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        // Pretend the JAR also sent a heartbeat.
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_heartbeat(0, 2),
-        });
-        a.mode = Mode::Normal;
-        a.start_tap_monitor();
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("1 queries") && status.contains("1 heartbeats"),
-            "expected counters in status; got {status}"
-        );
-    }
-
-    #[test]
-    fn tap_monitor_q_closes_to_normal_and_clears_status() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::from(KeyCode::Char('q')));
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a.last_status.is_none());
-    }
-
-    #[test]
-    fn tap_monitor_c_clears_the_ring_and_resets_cursor() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..3 {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("q{i}"), i),
-            });
-        }
-        a.start_tap_monitor();
-        a.tap_nav.events_cursor = 2;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_nav.events_cursor, 0);
-        assert_eq!(a.last_status.as_deref(), Some("cleared 3 tap event(s)"));
-    }
-
-    #[test]
-    fn tap_monitor_v_cycles_through_seven_views() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        a.start_tap_monitor();
-        assert_eq!(a.tap_nav.view, TapView::List);
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::Hotspots);
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::Callers);
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::Transactions);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("transactions"),
-            "expected transactions in status: {status}"
-        );
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::Pools);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("pools"),
-            "expected pools in status: {status}"
-        );
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::NplusOne);
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::Baseline);
-        a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_nav.view, TapView::List);
-    }
-
-    #[test]
-    fn tap_monitor_pools_view_navigates_and_clears() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Two pools: primary (two conns) and replica (one conn).
-        for (pool, conn, i) in [
-            ("primary", "p-1", 0u64),
-            ("primary", "p-2", 1),
-            ("replica", "r-1", 2),
-        ] {
-            let mut e = tap_query("SELECT 1", i);
-            e.pool = Some(pool.into());
-            e.conn = Some(conn.into());
-            e.ts_unix_micros = i;
-            e.received_at_unix_micros = i;
-            a.on_msg(AppMsg::TapEvent { event: e });
-        }
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::Pools;
-        let pools = a.current_pools();
-        assert_eq!(pools.len(), 2);
-        // Navigation clamps to the last row.
-        a.on_key(KeyEvent::from(KeyCode::Char('G')));
-        assert_eq!(a.tap_nav.pools_cursor, 1);
-        a.on_key(KeyEvent::from(KeyCode::Char('k')));
-        assert_eq!(a.tap_nav.pools_cursor, 0);
-        // `c` clears the ring from the pools view too.
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_nav.pools_cursor, 0);
-        assert!(a.current_pools().is_empty());
-    }
-
-    #[test]
-    fn tap_monitor_txns_view_navigates_and_clears() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Two transactions: c-1#a (3 stmts, open), c-1#b (1 stmt, open).
-        for i in 0..3u64 {
-            let mut e = tap_query("SELECT a", i);
-            e.txn = Some("c-1#a".into());
-            e.ts_unix_micros = i;
-            e.received_at_unix_micros = i;
-            a.on_msg(AppMsg::TapEvent { event: e });
-        }
-        let mut e = tap_query("SELECT b", 100);
-        e.txn = Some("c-1#b".into());
-        e.ts_unix_micros = 100;
-        e.received_at_unix_micros = 100;
-        a.on_msg(AppMsg::TapEvent { event: e });
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::Transactions;
-        let txns = a.current_txns();
-        assert_eq!(txns.len(), 2);
-        assert!(txns.iter().all(|t| t.is_open()));
-        // c-1#a has the bigger span (0..2 = 2µs) so sorts first.
-        assert_eq!(txns[0].txn.as_deref(), Some("c-1#a"));
-        // c clears the ring → 0 transactions.
-        a.tap_nav.txns_cursor = 1;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.current_txns().is_empty());
-        assert_eq!(a.tap_nav.txns_cursor, 0);
-    }
-
-    #[test]
-    fn tap_monitor_callers_view_navigates_sorts_and_clears() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Three events from two different callers.
-        for (i, caller) in [
-            ("OrderService.findById:42", 100),
-            ("OrderService.findById:42", 200),
-            ("UserService.lookup:7", 50),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let (frame, dur) = caller;
-            let mut e = tap_query(&format!("SELECT {i}"), i as u64);
-            e.caller = Some(vec![frame.into()]);
-            e.duration_micros = Some(dur);
-            a.on_msg(AppMsg::TapEvent { event: e });
-        }
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::Callers;
-        let groups = a.current_callers();
-        assert_eq!(groups.len(), 2);
-        // TotalTime sort default — OrderService bucket wins (100+200=300 > 50).
-        assert_eq!(groups[0].caller, "OrderService.findById:42");
-        // `s` cycles to CallCount; OrderService also wins (2 > 1).
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::CallCount);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("callers · sort"), "got: {status}");
-        // `c` clears; cursors reset.
-        a.tap_nav.callers_cursor = 1;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.current_callers().is_empty());
-        assert_eq!(a.tap_nav.callers_cursor, 0);
-    }
-
-    #[test]
-    fn shift_b_captures_baseline_from_any_tap_view() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Seed two distinct fingerprints so the hotspots
-        // bucket count is meaningful.
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT a FROM t1", 1),
-        });
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT b FROM t2", 2),
-        });
-        a.start_tap_monitor();
-        assert!(a.tap_baseline.is_none());
-        // Shift-B from the default List view captures.
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        let baseline = a.tap_baseline.as_ref().expect("baseline captured");
-        assert_eq!(baseline.hotspots.len(), 2);
-        assert_eq!(baseline.captured_event_count, 2);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("baseline captured"),
-            "expected confirmation status: {status}"
-        );
-    }
-
-    #[test]
-    fn baseline_diff_flags_new_fingerprint_after_capture() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT a FROM t1", 1),
-        });
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        // New fingerprint arrives post-baseline.
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT b FROM t2", 2),
-        });
-        let diff = a.current_baseline_diff();
-        // Old "select a from t?" is unchanged (filtered);
-        // new "select b from t?" surfaces.
-        assert_eq!(diff.len(), 1);
-        assert_eq!(diff[0].kind, crate::tap::DiffKind::New);
-    }
-
-    #[test]
-    fn baseline_clear_keeps_snapshot_clears_ring() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        a.tap_nav.view = TapView::Baseline;
-        // c clears the ring; the captured snapshot survives
-        // (operator might want to re-fill the ring against
-        // the same baseline post-deploy).
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.tap_events.is_empty());
-        assert!(a.tap_baseline.is_some(), "baseline must persist across `c`");
-    }
-
-    #[test]
-    fn baseline_records_listener_drop_watermark_at_capture() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        // Snapshot the global atomic before capture so the
-        // assertion is robust to whatever other tests
-        // contributed (cumulative-counter semantics).
-        let baseline_drops = crate::tap::dropped_at_listener();
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        let captured = a.tap_baseline.as_ref().unwrap().captured_listener_dropped;
-        assert!(
-            captured >= baseline_drops,
-            "captured_listener_dropped must reflect a counter snapshot at-or-after baseline read"
-        );
-        // delta-since-capture starts at zero (or whatever
-        // concurrent tests added between capture and this read).
-        let delta = a.baseline_listener_drops_since_capture().unwrap();
-        assert_eq!(delta, crate::tap::dropped_at_listener() - captured);
-    }
-
-    #[test]
-    fn baseline_recapture_overwrites_previous_snapshot() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        let first_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
-        assert_eq!(first_count, 1);
-        // Two more events arrive; recapture.
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 2", 2),
-        });
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 3", 3),
-        });
-        a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        let second_count = a.tap_baseline.as_ref().unwrap().captured_event_count;
-        assert_eq!(second_count, 3, "recapture must reflect the larger ring");
-    }
-
-    #[test]
-    fn tap_monitor_v_cycle_includes_baseline_as_last_view() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_tap_monitor();
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Hotspots
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Callers
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Transactions
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Pools
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → NplusOne
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Baseline
-        assert_eq!(a.tap_nav.view, TapView::Baseline);
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("baseline diff"),
-            "expected baseline-diff status: {status}"
-        );
-        a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → back to List
-        assert_eq!(a.tap_nav.view, TapView::List);
-    }
-
-    #[test]
-    fn tap_monitor_nplus1_view_navigates_and_clears() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // 6 same-shape events in one txn within 200ms → 1
-        // finding fires.
-        for i in 0..6 {
-            let mut e = tap_query("SELECT * FROM users WHERE id = ?", i * 20_000);
-            e.txn = Some("c-1#1".into());
-            e.ts_unix_micros = i * 20_000;
-            e.received_at_unix_micros = i * 20_000;
-            a.on_msg(AppMsg::TapEvent { event: e });
-        }
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::NplusOne;
-        let findings = a.current_nplus1();
-        assert_eq!(findings.len(), 1);
-        // Down past the end clamps.
-        for _ in 0..5 {
-            a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        }
-        assert_eq!(a.tap_nav.nplus1_cursor, 0);
-        // c clears the ring → no findings.
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.current_nplus1().is_empty());
-        assert_eq!(a.tap_nav.nplus1_cursor, 0);
-    }
-
-    #[test]
-    fn tap_monitor_g_capital_jumps_to_end_in_both_views() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..5 {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("SELECT * FROM t{i}"), i),
-            });
-        }
-        a.start_tap_monitor();
-        // List view: `G` jumps to last row.
-        a.on_key(KeyEvent::from(KeyCode::Char('G')));
-        assert_eq!(a.tap_nav.events_cursor, 4);
-        // Toggle to hotspots; `G` jumps within the hotspot list.
-        a.tap_nav.view = TapView::Hotspots;
-        a.on_key(KeyEvent::from(KeyCode::Char('G')));
-        let hotspots = a.current_hotspots();
-        assert_eq!(a.tap_nav.hotspots_cursor, hotspots.len().saturating_sub(1));
-    }
-
-    #[test]
-    fn tap_monitor_s_cycles_sort_in_hotspots_view() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1),
-        });
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::Hotspots;
-        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::CallCount);
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::P95Latency);
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
-    }
-
-    #[test]
-    fn tap_monitor_s_in_list_view_is_a_noop() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.start_tap_monitor();
-        let sort_before = a.tap_nav.sort;
-        a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_nav.sort, sort_before, "list view ignores `s`");
-        assert_eq!(a.tap_nav.view, TapView::List);
-    }
-
-    #[test]
-    fn tap_monitor_hotspots_clear_resets_both_cursors() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..3 {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("q{i}"), i),
-            });
-        }
-        a.start_tap_monitor();
-        a.tap_nav.view = TapView::Hotspots;
-        a.tap_nav.hotspots_cursor = 2;
-        a.tap_nav.events_cursor = 2;
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_nav.hotspots_cursor, 0);
-        assert_eq!(a.tap_nav.events_cursor, 0);
-    }
-
-    #[test]
-    fn current_hotspots_reflects_current_sort() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Bucket A: many cheap calls.
-        for _ in 0..50 {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query("SELECT a FROM t_a", 1),
-            });
-        }
-        // Bucket B: one expensive call.
-        let mut spike = tap_query("SELECT b FROM t_b", 1_000_000);
-        spike.duration_micros = Some(1_000_000);
-        a.on_msg(AppMsg::TapEvent { event: spike });
-        a.tap_nav.sort = crate::tap::HotspotSort::TotalTime;
-        let by_total = a.current_hotspots();
-        assert_eq!(by_total[0].count, 1, "expensive spike wins on total time");
-        a.tap_nav.sort = crate::tap::HotspotSort::CallCount;
-        let by_count = a.current_hotspots();
-        assert_eq!(by_count[0].count, 50, "cheap bucket wins on call count");
-    }
-
-    #[test]
-    fn tap_monitor_jk_navigation_clamps_at_ends() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..3 {
-            a.on_msg(AppMsg::TapEvent {
-                event: tap_query(&format!("q{i}"), i),
-            });
-        }
-        a.start_tap_monitor();
-        // Down past the end clamps to last.
-        for _ in 0..10 {
-            a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        }
-        assert_eq!(a.tap_nav.events_cursor, 2);
-        // Up past the start clamps to 0.
-        for _ in 0..10 {
-            a.on_key(KeyEvent::from(KeyCode::Char('k')));
-        }
-        assert_eq!(a.tap_nav.events_cursor, 0);
-    }
-
-    #[test]
-    fn tap_message_is_not_generation_gated() {
-        // Tap listener is independent of the DB connection; a
-        // reconnect (which bumps generation) shouldn't drop tap
-        // events that arrived after.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.generation = 42;
-        let msg = AppMsg::TapEvent {
-            event: tap_query("SELECT 1", 1_000),
-        };
-        // Generation accessor returns 0 (not 42) — the dispatcher
-        // doesn't filter this.
-        assert_eq!(msg.generation(), 0);
-        a.on_msg(msg);
-        assert_eq!(a.tap_events.len(), 1);
-    }
-
-    #[test]
-    fn f3_opens_notifications_from_any_mode() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Notifications);
-    }
-
-    #[test]
-    fn notifications_c_clears_the_ring() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Notifications;
-        a.notifications = vec![crate::conn::NotificationMsg {
-            channel: "x".into(),
-            pid: 1,
-            payload: "p".into(),
-        }];
-        a.on_key(KeyEvent::from(KeyCode::Char('c')));
-        assert!(a.notifications.is_empty());
-        assert_eq!(a.notifications_cursor, 0);
-    }
-
-    #[test]
-    fn capital_r_in_sessions_toggles_auto_refresh() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode_seen.insert(Mode::Sessions);
-        a.mode = Mode::Sessions;
-        assert!(!a.auto_refresh);
-        a.on_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT));
-        assert!(a.auto_refresh);
-        // Status reflects the toggle.
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(status.contains("auto-refresh on"));
-        // Toggle off.
-        a.on_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT));
-        assert!(!a.auto_refresh);
-    }
-
-    #[test]
-    fn tick_auto_refresh_noop_when_disabled() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Sessions;
-        a.auto_refresh = false;
-        a.auto_refresh_last = Some(std::time::Instant::now() - std::time::Duration::from_secs(60));
-        a.tick_auto_refresh();
-        // No refresh fired (client is None → refresh_sessions would
-        // surface an error; we just check no panic / status change).
-        assert!(a.last_error.is_none());
-    }
-
-    #[test]
-    fn tick_auto_refresh_noop_when_query_running() {
-        // The tick must not stack a refresh on top of an in-flight
-        // query — would surface stale-generation noise.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Sessions;
-        a.auto_refresh = true;
-        a.query_running = true;
-        a.auto_refresh_last = Some(std::time::Instant::now() - std::time::Duration::from_secs(60));
-        a.tick_auto_refresh();
-        // last unchanged because we bailed.
-        let elapsed = a.auto_refresh_last.unwrap().elapsed();
-        assert!(elapsed >= std::time::Duration::from_secs(60));
-    }
-
-    #[test]
-    fn capital_k_in_sessions_opens_confirm_terminate_with_pid() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Sessions;
-        a.sessions = vec![crate::query::sessions::SessionRow {
-            pid: 12345,
-            user: "app".into(),
-            application: "service-x".into(),
-            state: "active".into(),
-            age_secs: 42.0,
-            blocked_by: String::new(),
-            query: "SELECT * FROM events".into(),
-            wait_event: None,
-        }];
-        a.sessions_cursor = 0;
-        a.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
-        assert_eq!(a.mode, Mode::ConfirmTerminate);
-        assert_eq!(a.pending_terminate, Some(12345));
-        // Status should mention the pid.
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("12345"),
-            "expected pid in status; got: {status}"
-        );
-    }
-
-    #[test]
-    fn confirm_terminate_n_cancels_and_clears_pending() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        // Seed `mode_seen` for Sessions so the cancel path's
-        // status isn't overwritten by the first-entry tip.
-        // Production flow always enters Sessions before opening
-        // ConfirmTerminate.
-        a.mode_seen.insert(Mode::Sessions);
-        a.mode = Mode::ConfirmTerminate;
-        a.pending_terminate = Some(999);
-        a.on_key(KeyEvent::from(KeyCode::Char('n')));
-        assert_eq!(a.mode, Mode::Sessions);
-        assert!(a.pending_terminate.is_none());
-        assert_eq!(a.last_status.as_deref(), Some("terminate cancelled"));
-    }
-
-    #[test]
-    fn confirm_terminate_esc_cancels() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode_seen.insert(Mode::Sessions);
-        a.mode = Mode::ConfirmTerminate;
-        a.pending_terminate = Some(123);
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::Sessions);
-        assert!(a.pending_terminate.is_none());
-    }
-
-    #[test]
-    fn capital_k_with_empty_session_list_does_not_open_confirm() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Sessions;
-        a.sessions.clear();
-        a.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT));
-        // No session to terminate → stay in Sessions, no pending.
-        assert_eq!(a.mode, Mode::Sessions);
-        assert!(a.pending_terminate.is_none());
-    }
-
-    #[test]
-    fn compute_grid_find_matches_finds_all_hits_in_row_major_order() {
-        let grid = Grid {
-            columns: vec!["name".into(), "city".into()],
-            rows: vec![
-                vec!["alice".into(), "London".into()],
-                vec!["bob".into(), "Berlin".into()],
-                vec!["carol".into(), "London".into()],
-            ],
-            truncated: false,
-        };
-        let visible: Vec<usize> = (0..grid.rows.len()).collect();
-        let matches = compute_grid_find_matches(&grid, &visible, "lon");
-        // Cells "London" in rows 0 and 2 at col 1.
-        assert_eq!(matches, vec![(0, 1), (2, 1)]);
-    }
-
-    #[test]
-    fn compute_grid_find_matches_honours_visible_subset() {
-        let grid = Grid {
-            columns: vec!["name".into()],
-            rows: vec![
-                vec!["alice".into()],
-                vec!["bob".into()],
-                vec!["alex".into()],
-            ],
-            truncated: false,
-        };
-        // Filter has hidden row 1 ("bob"). visible_rows is the
-        // post-filter index list.
-        let visible = vec![0, 2];
-        let matches = compute_grid_find_matches(&grid, &visible, "al");
-        // Visible-row indices: 0 → grid row 0 (alice), 1 → grid row 2 (alex).
-        assert_eq!(matches, vec![(0, 0), (1, 0)]);
-    }
-
-    #[test]
-    fn compute_grid_find_matches_empty_needle_returns_empty() {
-        let grid = Grid {
-            columns: vec!["x".into()],
-            rows: vec![vec!["any".into()]],
-            truncated: false,
-        };
-        assert!(compute_grid_find_matches(&grid, &[0], "").is_empty());
-    }
-
-    #[test]
-    fn grid_find_f_key_opens_mode_and_jumps_on_match() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["name".into(), "city".into()],
-            rows: vec![
-                vec!["a".into(), "London".into()],
-                vec!["b".into(), "Berlin".into()],
-            ],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0, 1];
-        a.grid_state.select(Some(0));
-        a.on_key(KeyEvent::from(KeyCode::Char('f')));
-        assert_eq!(a.mode, Mode::GridFind);
-        // Type "ber" — should jump to row 1 col 1.
-        a.on_key(KeyEvent::from(KeyCode::Char('b')));
-        a.on_key(KeyEvent::from(KeyCode::Char('e')));
-        a.on_key(KeyEvent::from(KeyCode::Char('r')));
-        assert_eq!(a.grid_state.selected(), Some(1));
-        assert_eq!(a.grid_col_cursor, 1);
-        // Enter accepts.
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn grid_find_n_and_capital_n_step_through_matches() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.grid = Grid {
-            columns: vec!["c".into()],
-            rows: vec![vec!["aa".into()], vec!["bb".into()], vec!["aa".into()]],
-            truncated: false,
-        };
-        a.grid_visible_rows = vec![0, 1, 2];
-        a.grid_state.select(Some(0));
-        a.on_key(KeyEvent::from(KeyCode::Char('f')));
-        // Type "a" — two matches (rows 0 and 2). Cursor jumps to first.
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        assert_eq!(a.grid_state.selected(), Some(0));
-        // `n` cycles to second match.
-        a.on_key(KeyEvent::from(KeyCode::Char('n')));
-        assert_eq!(a.grid_state.selected(), Some(2));
-        // `n` again wraps to first.
-        a.on_key(KeyEvent::from(KeyCode::Char('n')));
-        assert_eq!(a.grid_state.selected(), Some(0));
-        // `N` (capital) walks back.
-        a.on_key(KeyEvent::from(KeyCode::Char('N')));
-        assert_eq!(a.grid_state.selected(), Some(2));
-    }
-
-    #[test]
-    fn f2_after_failure_opens_error_detail_with_rich_fields() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        a.last_error = Some("duplicate key value violates unique constraint".into());
-        a.last_error_detail = Some(crate::conn::QueryErrDetail {
-            code: Some("23505".into()),
-            severity: Some("ERROR".into()),
-            constraint: Some("users_email_key".into()),
-            table: Some("users".into()),
-            schema: Some("public".into()),
-            ..Default::default()
-        });
-        a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::ErrorDetail);
-        // Close → back to Normal.
-        a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn f2_with_no_error_surfaces_status_not_overlay() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        // No last_error / last_error_detail.
-        a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Editor);
-        assert_eq!(a.last_status.as_deref(), Some("no error to expand"));
-    }
-
-    #[test]
-    fn query_ok_clears_last_error_detail() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.last_error_detail = Some(crate::conn::QueryErrDetail {
-            code: Some("23505".into()),
-            ..Default::default()
-        });
-        a.on_msg(AppMsg::QueryOk {
-            generation: a.generation,
-            grid: crate::grid::Grid {
-                columns: vec!["x".into()],
-                rows: vec![],
-                truncated: false,
-            },
-            kind_label: "SELECT".into(),
-            tx_open_after: false,
-        });
-        assert!(a.last_error_detail.is_none());
-    }
-
-    #[test]
-    fn query_ok_status_flags_truncated_grids() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let rows: Vec<Vec<String>> = (0..crate::grid::MAX_ROWS)
-            .map(|i| vec![i.to_string()])
-            .collect();
-        a.on_msg(AppMsg::QueryOk {
-            generation: a.generation,
-            grid: crate::grid::Grid {
-                columns: vec!["id".into()],
-                rows,
-                truncated: true,
-            },
-            kind_label: "SELECT".into(),
-            tx_open_after: false,
-        });
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains(&format!("capped at {}", crate::grid::MAX_ROWS)),
-            "expected truncation hint in status, got: {status}"
-        );
-        assert!(a.grid.truncated);
-    }
-
-    #[test]
-    fn query_ok_status_omits_cap_when_not_truncated() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.on_msg(AppMsg::QueryOk {
-            generation: a.generation,
-            grid: crate::grid::Grid {
-                columns: vec!["id".into()],
-                rows: vec![vec!["1".into()]],
-                truncated: false,
-            },
-            kind_label: "SELECT".into(),
-            tx_open_after: false,
-        });
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(!status.contains("capped"), "unexpected cap hint: {status}");
-    }
-
-    #[test]
-    fn backslash_d_with_target_opens_browser_with_filter() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\d users".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert_eq!(a.schema_browser.filter.as_deref(), Some("users"));
-        // Buffer cleared so a second F5 doesn't re-fire.
-        assert!(a.editor_buffer.is_empty());
-    }
-
-    #[test]
-    fn backslash_d_without_target_just_opens_browser() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\d".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert_eq!(a.mode, Mode::SchemaBrowser);
-        assert!(a.schema_browser.filter.is_none());
-    }
-
-    #[test]
-    fn backslash_help_routes_to_help_overlay() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\?".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert_eq!(a.mode, Mode::Help);
-        // The Editor section is the active anchor since we came
-        // from Editor.
-        assert_eq!(a.help_origin, Some(Mode::Editor));
-    }
-
-    #[test]
-    fn backslash_quit_sets_should_quit() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\q".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert!(a.should_quit);
-    }
-
-    #[test]
-    fn backslash_timing_toggles_state() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\timing".into();
-        a.editor_cursor = a.editor_buffer.len();
-        assert!(!a.timing_on);
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert!(a.timing_on);
-        // Buffer preserved (operator commonly toggles back).
-        assert_eq!(a.editor_buffer, "\\timing");
-        // Toggle again → off.
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        assert!(!a.timing_on);
-    }
-
-    #[test]
-    fn backslash_unknown_surfaces_actionable_error() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::Editor;
-        a.editor_buffer = "\\xyz".into();
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        let err = a.last_error.as_deref().unwrap_or("");
-        assert!(err.contains("unknown backslash command"));
-        // Stay in Editor — no useful destination to route to.
-        assert_eq!(a.mode, Mode::Editor);
-    }
-
-    #[test]
-    fn backslash_report_writes_markdown_to_explicit_path() {
-        let mut a = app_with_schemas();
-        let tmp = std::env::temp_dir().join(format!("pgman-report-test-{}.md", std::process::id()));
-        a.mode = Mode::Editor;
-        a.editor_buffer = format!("\\report {}", tmp.display());
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        let contents = std::fs::read_to_string(&tmp).expect("report written");
-        assert!(
-            contents.starts_with("# pgman report"),
-            "got: {contents:.120}"
-        );
-        assert!(contents.contains("## Schema lint findings"));
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("wrote report to"),
-            "expected status flash; got: {status}"
-        );
-        let _ = std::fs::remove_file(&tmp);
-    }
-
-    #[test]
-    fn backslash_report_writes_html_when_extension_matches() {
-        let mut a = app_with_schemas();
-        let tmp =
-            std::env::temp_dir().join(format!("pgman-report-test-{}.html", std::process::id()));
-        a.mode = Mode::Editor;
-        a.editor_buffer = format!("\\report {}", tmp.display());
-        a.editor_cursor = a.editor_buffer.len();
-        a.on_key(KeyEvent::from(KeyCode::F(5)));
-        let contents = std::fs::read_to_string(&tmp).expect("html report written");
-        assert!(contents.starts_with("<!doctype html>"));
-        let _ = std::fs::remove_file(&tmp);
-    }
-
-    #[test]
-    fn format_unix_secs_utc_pins_the_epoch_anchor() {
-        // 1970-01-01T00:00:00Z
-        assert_eq!(format_unix_secs_utc(0), "1970-01-01T00:00:00Z");
-        // 2000-01-01T00:00:00Z = 946684800
-        assert_eq!(format_unix_secs_utc(946_684_800), "2000-01-01T00:00:00Z");
-        // 2023-11-14T22:13:20Z = 1700000000 (a common
-        // fixture timestamp).
-        assert_eq!(format_unix_secs_utc(1_700_000_000), "2023-11-14T22:13:20Z");
-    }
-
-    #[test]
-    fn format_unix_secs_utc_handles_leap_year() {
-        // 2024-02-29T00:00:00Z = 1709164800
-        assert_eq!(format_unix_secs_utc(1_709_164_800), "2024-02-29T00:00:00Z");
-    }
-
-    #[test]
-    fn live_lint_loaded_merges_into_findings_and_resorts() {
-        // Open the lint panel with a pre-populated (Medium)
-        // finding, then deliver a successful LiveLintLoaded with
-        // a High LINT101. The merged list must sort with the new
-        // High entry first.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::SchemaLint;
-        a.schema_lint_findings = vec![crate::query::lint::Finding {
-            severity: crate::query::lint::Severity::Medium,
-            code: "LINT002",
-            title: "mixed-case".into(),
-            object: "public.Foo".into(),
-            detail: "…".into(),
-            suggestion: None,
-        }];
-        a.on_msg(AppMsg::LiveLintLoaded {
-            generation: a.generation,
-            result: Ok(vec![crate::query::lint::fk_without_index_finding(
-                "public",
-                "orders",
-                "orders_user_id_fkey",
-                "user_id",
-            )]),
-        });
-        assert_eq!(a.schema_lint_findings.len(), 2);
-        // High entry now first.
-        assert_eq!(a.schema_lint_findings[0].code, "LINT101");
-        // Status reflects the count + live delta.
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("live: +1"),
-            "expected live-merge status; got: {status}"
-        );
-    }
-
-    #[test]
-    fn live_lint_loaded_after_panel_closed_is_dropped_silently() {
-        // The operator opens the panel, then immediately closes
-        // it. The async live-fetch completes after the close —
-        // we must not mutate findings or status in that case.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal; // not on the lint panel
-        a.schema_lint_findings.clear();
-        a.on_msg(AppMsg::LiveLintLoaded {
-            generation: a.generation,
-            result: Ok(vec![crate::query::lint::fk_without_index_finding(
-                "public", "t", "fk", "user_id",
-            )]),
-        });
-        // Findings untouched.
-        assert!(a.schema_lint_findings.is_empty());
-    }
-
-    #[test]
-    fn live_lint_failure_surfaces_status_keeps_pure_findings() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::SchemaLint;
-        let pure = crate::query::lint::Finding {
-            severity: crate::query::lint::Severity::High,
-            code: "LINT001",
-            title: "missing PK".into(),
-            object: "public.events".into(),
-            detail: "…".into(),
-            suggestion: None,
-        };
-        a.schema_lint_findings = vec![pure.clone()];
-        a.on_msg(AppMsg::LiveLintLoaded {
-            generation: a.generation,
-            result: Err("LINT101: permission denied for pg_constraint".into()),
-        });
-        // Pure findings still there.
-        assert_eq!(a.schema_lint_findings.len(), 1);
-        assert_eq!(a.schema_lint_findings[0].code, pure.code);
-        // Status surfaces the failure.
-        let status = a.last_status.as_deref().unwrap_or("");
-        assert!(
-            status.contains("live check failed"),
-            "expected failure status; got: {status}"
-        );
-    }
-
-    #[test]
-    fn schema_lint_jk_navigation_clamps_to_findings() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let mut cache = crate::query::schema::SchemaCache::default();
-        cache.schemas = vec!["public".into()];
-        cache.tables = vec![
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "a".into(),
-            },
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "b".into(),
-            },
-        ];
-        a.schema_cache = cache;
-        a.start_schema_lint();
-        let n = a.schema_lint_findings.len();
-        assert!(n >= 2);
-        for _ in 0..(n * 2) {
-            a.on_key(KeyEvent::from(KeyCode::Char('j')));
-        }
-        assert_eq!(a.schema_lint_cursor, n - 1);
-    }
-
-    #[test]
-    fn schema_browser_close_with_accepted_filter_clears_for_next_open() {
-        // Accept a filter via Enter, then close the browser. The
-        // filter must NOT survive across opens — the next `S` should
-        // show the full tree again.
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        a.on_key(KeyEvent::from(KeyCode::Char('/')));
-        a.on_key(KeyEvent::from(KeyCode::Char('a')));
-        a.on_key(KeyEvent::from(KeyCode::Char('u')));
-        a.on_key(KeyEvent::from(KeyCode::Enter)); // accept filter
-        assert_eq!(a.schema_browser.filter.as_deref(), Some("au"));
-        // Now close the browser via Esc from SchemaBrowser mode.
-        a.on_key(KeyEvent::from(KeyCode::Esc));
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(
-            a.schema_browser.filter.is_none(),
-            "filter should be cleared on browser close"
-        );
-    }
-
-    #[test]
-    fn schema_browser_collapse_clamps_cursor_inside_visible() {
-        let mut a = app_with_schemas();
-        a.mode = Mode::SchemaBrowser;
-        // Expand public so we have 4 visible rows; focus the last one.
-        a.schema_browser.expanded.insert("public".into());
-        a.schema_browser.cursor = 3;
-        // Collapse public (focused on "public" row at index 1 won't
-        // collapse if we're focused on a Table — move focus first).
-        a.schema_browser.cursor = 1;
-        a.on_key(KeyEvent::from(KeyCode::Enter));
-        // After collapse, only the 2 schema rows remain. Cursor must
-        // be inside [0, 1], not the stale 3.
-        let rows = a.flattened_schema_browser();
-        assert!(a.schema_browser.cursor < rows.len());
-    }
-
-    #[test]
-    fn schema_browser_table_row_carries_column_and_constraint_counts() {
-        let mut a = app_with_schemas();
-        a.schema_cache.constraints = vec![
-            crate::query::schema::ConstraintMeta {
-                schema: "public".into(),
-                table: "users".into(),
-                name: "users_pkey".into(),
-            },
-            crate::query::schema::ConstraintMeta {
-                schema: "public".into(),
-                table: "users".into(),
-                name: "users_email_uk".into(),
-            },
-        ];
-        a.schema_browser.expanded.insert("public".into());
-        let rows = a.flattened_schema_browser();
-        let users = rows
-            .iter()
-            .find(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "users"))
-            .expect("users row");
-        match users {
-            SchemaBrowserRow::Table {
-                column_count,
-                constraint_count,
-                ..
-            } => {
-                assert_eq!(*column_count, 2);
-                assert_eq!(*constraint_count, 2);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    fn start_schema_browser_with_empty_cache_surfaces_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.start_schema_browser();
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("schema cache empty"));
-    }
-
-    fn explain_app_with_plan() -> App {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let json = r#"[{
-          "Plan": {
-            "Node Type": "Hash Join",
-            "Total Cost": 200.0,
-            "Actual Total Time": 50.0,
-            "Plans": [
-              { "Node Type": "Seq Scan", "Relation Name": "a",
-                "Total Cost": 100.0, "Actual Total Time": 30.0 },
-              { "Node Type": "Hash", "Total Cost": 22.5,
-                "Actual Total Time": 5.0,
-                "Plans": [
-                  { "Node Type": "Seq Scan", "Relation Name": "b",
-                    "Total Cost": 22.5, "Actual Total Time": 4.0 }
-                ]
-              }
-            ]
-          }
-        }]"#;
-        let plan = crate::query::explain::parse(json).unwrap();
-        a.explain_plan = Some(plan);
-        a.mode = Mode::ExplainTree;
-        a
-    }
-
-    #[test]
-    fn flattened_explain_lists_each_node_once() {
-        let a = explain_app_with_plan();
-        let rows = a.flattened_explain_rows();
-        assert_eq!(rows.len(), 4); // root + 3 descendants
-        assert_eq!(rows[0].node_type, "Hash Join");
-        assert_eq!(rows[1].node_type, "Seq Scan");
-        assert_eq!(rows[2].node_type, "Hash");
-        assert_eq!(rows[3].node_type, "Seq Scan");
-        // Depths.
-        assert_eq!(rows[0].depth, 0);
-        assert_eq!(rows[1].depth, 1);
-        assert_eq!(rows[2].depth, 1);
-        assert_eq!(rows[3].depth, 2);
-    }
-
-    #[test]
-    fn explain_enter_collapses_focused_node_and_hides_children() {
-        let mut a = explain_app_with_plan();
-        // Focus row 2 (the "Hash" node, which has children).
-        a.explain_cursor = 2;
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        let rows = a.flattened_explain_rows();
-        // Hash's child Seq Scan is hidden now.
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[2].node_type, "Hash");
-        assert!(rows[2].collapsed);
-        // Toggle back.
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        let rows = a.flattened_explain_rows();
-        assert_eq!(rows.len(), 4);
-    }
-
-    #[test]
-    fn explain_jk_moves_cursor_g_jumps_to_ends() {
-        let mut a = explain_app_with_plan();
-        // j down to last row.
-        for _ in 0..10 {
-            a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
-        }
-        assert_eq!(a.explain_cursor, 3); // clamped to last
-        a.on_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
-        assert_eq!(a.explain_cursor, 0);
-        a.on_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
-        assert_eq!(a.explain_cursor, 3);
-    }
-
-    #[test]
-    fn explain_esc_returns_to_normal() {
-        let mut a = explain_app_with_plan();
-        a.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(a.mode, Mode::Normal);
-    }
-
-    #[test]
-    fn explain_enter_on_leaf_node_is_a_noop() {
-        let mut a = explain_app_with_plan();
-        a.explain_cursor = 1; // leaf Seq Scan on `a`
-        let before = a.flattened_explain_rows().len();
-        a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        let after = a.flattened_explain_rows().len();
-        assert_eq!(before, after);
-        assert!(a.explain_collapsed.is_empty());
-    }
-
-    #[test]
-    fn start_connection_change_with_picks_opens_picker() {
-        let pick = DataSourcePick {
-            name: "primary".into(),
-            origin: "test",
-            dsn: Dsn::parse("postgres://app@db/x").unwrap(),
-        };
-        let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.start_connection_change();
-        assert_eq!(a.mode, Mode::ConnPick);
-        assert_eq!(a.data_source_pick_index, 0);
-    }
-
-    #[test]
-    fn start_connection_change_with_no_picks_surfaces_hint() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Normal;
-        a.start_connection_change();
-        assert_eq!(a.mode, Mode::Normal);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("no data sources"));
-    }
-
-    // Draft persistence is exercised end-to-end via util::write_atomic
-    // (which has its own roundtrip test) + the trivial wrapper here.
-    // A test that touches the real `draft_path` races against parallel
-    // tests since they all share the same HOME-derived location;
-    // skipping in favour of the util-level coverage.
-
-    /// Recording fake cancel-dispatcher. The actual `dispatch`
-    /// closure is fire-and-forget in production; in tests we just
-    /// count calls.
-    #[derive(Debug, Default)]
-    struct RecordingDispatcher {
-        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    }
-    impl CancelDispatcher for RecordingDispatcher {
-        fn dispatch(&self) {
-            self.calls
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-
-    #[test]
-    fn cancel_running_query_dispatches_through_injected_handler() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
-            calls: calls.clone(),
-        }));
-        a.query_running = true;
-        a.mode = Mode::Editor;
-
-        // Ctrl-C with a running query routes through the dispatcher.
-        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(a.last_status.as_deref(), Some("cancelling query…"));
-    }
-
-    #[test]
-    fn cancel_running_query_no_dispatcher_no_op() {
-        // Without a dispatcher (e.g. not connected) Ctrl-C is a
-        // silent no-op rather than a panic.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.cancel_dispatcher = None;
-        a.query_running = true;
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        // No panic, status not flipped (function returned at the
-        // `None` guard before setting it).
-        assert!(a.last_status.is_none());
-    }
-
-    #[test]
-    fn cancel_running_query_idle_skips_dispatcher() {
-        // Ctrl-C only fires the cancel when `query_running` — gated
-        // at the keybinding level. With no running query, the
-        // dispatcher should not be called.
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
-            calls: calls.clone(),
-        }));
-        a.query_running = false;
-        a.mode = Mode::Editor;
-        a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn pg_notice_lands_in_status_and_history() {
-        use crate::conn::NoticeMsg;
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        let n = NoticeMsg {
-            severity: "NOTICE".into(),
-            message: "function returned: 42".into(),
-            detail: None,
-            hint: None,
-        };
-        // Tag with the App's current generation so on_msg accepts it.
-        let _ = a.msg_tx.send(AppMsg::Notice {
-            generation: a.generation,
-            notice: n,
-        });
-        if let Some(rx) = a.msg_rx.as_mut() {
-            if let Ok(msg) = rx.try_recv() {
-                a.on_msg(msg);
-            }
-        }
-        assert_eq!(a.notices.len(), 1);
-        assert!(a
-            .last_status
-            .as_deref()
-            .unwrap_or("")
-            .contains("function returned: 42"));
-    }
-
-    #[test]
-    fn notice_buffer_caps_at_50() {
-        use crate::conn::NoticeMsg;
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        for i in 0..60 {
-            a.on_msg(AppMsg::Notice {
-                generation: a.generation,
-                notice: NoticeMsg {
-                    severity: "NOTICE".into(),
-                    message: format!("msg #{i}"),
-                    detail: None,
-                    hint: None,
-                },
-            });
-        }
-        assert_eq!(a.notices.len(), 50);
-        // Oldest dropped — first kept is msg #10.
-        assert_eq!(a.notices.first().unwrap().message, "msg #10");
-        assert_eq!(a.notices.last().unwrap().message, "msg #59");
-    }
-
-    #[test]
-    fn ctrl_r_on_empty_history_no_ops_with_status() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.mode = Mode::Editor;
-        // No history.
-        a.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
-        assert_eq!(a.mode, Mode::Editor);
-        assert!(a.history_search.is_none());
-        assert_eq!(a.last_status.as_deref(), Some("history is empty"));
-    }
-
-    #[test]
-    fn query_failed_with_position_past_buffer_clamps_to_end() {
-        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-        a.editor_buffer = "SELECT 1".into();
-        a.editor_cursor = 0;
-        a.generation = 1;
-        let _ = a.msg_tx.send(AppMsg::QueryFailed {
-            generation: 1,
-            error: "boom".into(),
-            position: Some(999),
-            detail: None,
-        });
-        if let Some(rx) = a.msg_rx.as_mut() {
-            if let Ok(msg) = rx.try_recv() {
-                a.on_msg(msg);
-            }
-        }
-        assert_eq!(a.editor_cursor, a.editor_buffer.len());
-    }
-}
+mod tests;

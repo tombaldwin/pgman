@@ -149,7 +149,7 @@ impl App {
     /// `None` when nothing is selected or the visible set is empty.
     pub(crate) fn selected_grid_row_idx(&self) -> Option<usize> {
         let visible_idx = self.grid_state.selected()?;
-        self.grid_visible_rows.get(visible_idx).copied()
+        self.grid_view.visible_rows.get(visible_idx).copied()
     }
 
     /// Open the data-source picker mid-session so the operator can
@@ -160,7 +160,7 @@ impl App {
     /// about to abandon. The picker's existing Enter handler does
     /// the actual reconnect.
     pub(super) fn start_connection_change(&mut self) {
-        if self.data_source_picks.is_empty() {
+        if self.conn_pick.picks.is_empty() {
             self.last_status = Some(
                 "no data sources to pick — pass --dsn or add `[[connections]]` to pgman.toml"
                     .into(),
@@ -170,7 +170,7 @@ impl App {
         if self.query_running {
             self.cancel_running_query();
         }
-        self.data_source_pick_index = 0;
+        self.conn_pick.index = 0;
         self.mode = Mode::ConnPick;
     }
 
@@ -274,10 +274,10 @@ impl App {
     /// — so a fresh result set starts clean. Called whenever a new
     /// `Grid` lands on the App via `QueryOk` or `Booted`.
     pub(crate) fn reset_grid_view(&mut self) {
-        self.grid_col_cursor = 0;
-        self.grid_sort = None;
-        self.grid_raw_rows = None;
-        self.grid_filter = None;
+        self.grid_view.col_cursor = 0;
+        self.grid_view.sort = None;
+        self.grid_view.raw_rows = None;
+        self.grid_view.filter = None;
         self.rebuild_visible_rows();
     }
 

@@ -80,8 +80,8 @@ fn settle_app() -> App {
 fn editor_renders_keyword_in_title_colour() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT * FROM users".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT * FROM users".into();
+    a.editor.cursor = 0;
     let theme = a.theme.clone();
     // Seed schema cache so `users` resolves as a known identifier.
     a.schema_cache.tables.push(TableMeta {
@@ -104,8 +104,8 @@ fn editor_renders_keyword_in_title_colour() {
 fn editor_flags_unknown_identifier_in_syn_unknown() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT * FROM zzz_definitely_not_a_table".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT * FROM zzz_definitely_not_a_table".into();
+    a.editor.cursor = 0;
     // Non-empty cache so the classifier runs (without a cache the
     // renderer skips classify and falls back to default colours).
     a.schema_cache.tables.push(TableMeta {
@@ -138,9 +138,9 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     };
     // Initialise the view state the way the run-loop would after a
     // QueryOk lands (visible rows + sort state).
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
-    a.grid_col_cursor = 0;
-    a.grid_sort = Some((0, true));
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.col_cursor = 0;
+    a.grid_view.sort = Some((0, true));
     a.grid.rows.sort_by(|x, y| cmp_cells(&x[0], &y[0]));
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
@@ -295,7 +295,7 @@ fn result_diff_view_renders_added_removed_changed() {
         rows: a_rows,
         label: "A-query".into(),
     };
-    a.result_diff = Some(pgman::app::ResultDiffState {
+    a.diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
@@ -303,7 +303,7 @@ fn result_diff_view_renders_added_removed_changed() {
         key,
         diff,
     });
-    a.pinned_result = Some(pinned);
+    a.diff.pinned = Some(pinned);
     a.mode = Mode::ResultDiff;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
@@ -572,7 +572,7 @@ fn grid_render_shows_capped_hint_when_truncated() {
         rows: vec![vec!["1".into()], vec!["2".into()]],
         truncated: true,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
@@ -595,9 +595,9 @@ fn grid_render_shows_filtered_count_in_title() {
         ],
         truncated: false,
     };
-    a.grid_filter = Some("a".into());
-    a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
-    a.grid_state.select(if a.grid_visible_rows.is_empty() {
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_state.select(if a.grid_view.visible_rows.is_empty() {
         None
     } else {
         Some(0)
@@ -640,8 +640,8 @@ fn history_search_status_renders_bash_style_prompt() {
         saved_cursor: 0,
     });
     a.last_status = Some("(reverse-i-search) 'sel'".into());
-    a.editor_buffer = "SELECT * FROM users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT * FROM users".into();
+    a.editor.cursor = a.editor.buffer.len();
     let buf = render(&mut a, 80, 16);
     let rendered = dump(&buf);
     assert!(
