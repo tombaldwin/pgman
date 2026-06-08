@@ -531,6 +531,10 @@ impl App {
         }
     }
 
+    /// Row-detail modal: j/k navigate fields (renderer auto-scrolls so the
+    /// focused field stays visible); g/G first/last field; PageUp/Down
+    /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
+    /// the focused field (`Mode::CellDetail`); Esc/q close.
     pub(super) fn on_row_detail_key(&mut self, key: KeyEvent) {
         let last = self.row_detail_field_count.saturating_sub(1);
         match key.code {
@@ -558,6 +562,14 @@ impl App {
         }
     }
 
+    /// Cell-detail modal. Two key maps depending on whether the cell
+    /// parses as a JSON container:
+    ///   - JSON view: j/k move the tree cursor, Enter / Space / h / l
+    ///     toggle collapse on the focused container, `y` yanks the
+    ///     jq-style path of the focused node.
+    ///   - Text view: j/k scroll the wrapped value, `y` yanks the
+    ///     whole value. Same shortcut, different semantics.
+    /// Esc/q always pops back to the row view.
     pub(super) fn on_cell_detail_key(&mut self, key: KeyEvent) {
         if !self.json_cell_rows.is_empty() {
             self.on_cell_detail_json_key(key);
@@ -628,6 +640,8 @@ impl App {
         }
     }
 
+    /// Connection picker (startup): j/k navigate, Enter selects + connects,
+    /// Esc/q quits since there's nothing else to do without a connection.
     pub(super) fn on_conn_pick_key(&mut self, key: KeyEvent) {
         let last = self.data_source_picks.len().saturating_sub(1);
         match key.code {
@@ -850,6 +864,10 @@ impl App {
         }
     }
 
+    /// Handle a key while in Mode::HistorySearch. Char/Backspace edit
+    /// the query and re-search from the latest match. Ctrl-R jumps to
+    /// the next-older match. Enter accepts (stays in Editor with the
+    /// matched buffer). Esc cancels (restores the snapshot).
     pub(super) fn on_history_search_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -941,6 +959,7 @@ impl App {
         }
     }
 
+    /// Tx-open prompt: `y` commits, `n` / `esc` rolls back.
     pub(super) fn on_tx_decision_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => self.close_tx(true),
@@ -949,6 +968,8 @@ impl App {
         }
     }
 
+    /// Log-pick browser: j/k navigate, Enter loads the selection into the
+    /// editor, Esc cancels, `c` toggles cluster view.
     pub(super) fn on_log_pick_key(&mut self, key: KeyEvent) {
         let last = self.log_pick_visible_len().saturating_sub(1);
         match key.code {
