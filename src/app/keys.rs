@@ -238,30 +238,30 @@ impl App {
     }
 
     pub(super) fn on_notifications_key(&mut self, key: KeyEvent) {
-        let last = self.notifications.len().saturating_sub(1);
+        let last = self.notifications.items.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.notifications_cursor = (self.notifications_cursor + 1).min(last);
+                self.notifications.cursor = (self.notifications.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.notifications_cursor = self.notifications_cursor.saturating_sub(1);
+                self.notifications.cursor = self.notifications.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.notifications_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.notifications_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.notifications.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.notifications.cursor = last,
             KeyCode::PageDown => {
-                self.notifications_cursor = (self.notifications_cursor + 10).min(last);
+                self.notifications.cursor = (self.notifications.cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.notifications_cursor = self.notifications_cursor.saturating_sub(10);
+                self.notifications.cursor = self.notifications.cursor.saturating_sub(10);
             }
             KeyCode::Char('c') => {
-                let n = self.notifications.len();
-                self.notifications.clear();
-                self.notifications_cursor = 0;
+                let n = self.notifications.items.len();
+                self.notifications.items.clear();
+                self.notifications.cursor = 0;
                 self.last_status = Some(format!("cleared {n} notification(s)"));
             }
             KeyCode::Char('y') => self.yank_focused_notification(),
@@ -974,19 +974,19 @@ impl App {
         let last = self.log_pick_visible_len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                self.log_picks.clear();
-                self.log_pick_clusters.clear();
+                self.log_pick.picks.clear();
+                self.log_pick.clusters.clear();
                 self.mode = Mode::Editor;
             }
             KeyCode::Char('c') => self.toggle_log_pick_view(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.log_pick_index = (self.log_pick_index + 1).min(last);
+                self.log_pick.index = (self.log_pick.index + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.log_pick_index = self.log_pick_index.saturating_sub(1);
+                self.log_pick.index = self.log_pick.index.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.log_pick_index = 0,
-            KeyCode::Char('G') | KeyCode::End => self.log_pick_index = last,
+            KeyCode::Char('g') | KeyCode::Home => self.log_pick.index = 0,
+            KeyCode::Char('G') | KeyCode::End => self.log_pick.index = last,
             KeyCode::Enter => {
                 if let Some(sql) = self.focused_log_pick_sql() {
                     self.editor_buffer = sql;
@@ -998,8 +998,8 @@ impl App {
                         self.editor_buffer.len()
                     ));
                 }
-                self.log_picks.clear();
-                self.log_pick_clusters.clear();
+                self.log_pick.picks.clear();
+                self.log_pick.clusters.clear();
                 self.mode = Mode::Editor;
             }
             _ => {}
@@ -1057,25 +1057,25 @@ impl App {
     }
 
     pub(super) fn on_schema_lint_key(&mut self, key: KeyEvent) {
-        let last = self.schema_lint_findings.len().saturating_sub(1);
+        let last = self.schema_lint.findings.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.schema_lint_cursor = (self.schema_lint_cursor + 1).min(last);
+                self.schema_lint.cursor = (self.schema_lint.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.schema_lint_cursor = self.schema_lint_cursor.saturating_sub(1);
+                self.schema_lint.cursor = self.schema_lint.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.schema_lint_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.schema_lint_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.schema_lint.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.schema_lint.cursor = last,
             KeyCode::PageDown => {
-                self.schema_lint_cursor = (self.schema_lint_cursor + 10).min(last);
+                self.schema_lint.cursor = (self.schema_lint.cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.schema_lint_cursor = self.schema_lint_cursor.saturating_sub(10);
+                self.schema_lint.cursor = self.schema_lint.cursor.saturating_sub(10);
             }
             KeyCode::Char('y') => self.yank_schema_lint_suggestion(),
             KeyCode::Char('r') => self.start_schema_lint(),
@@ -1228,27 +1228,27 @@ impl App {
     }
 
     pub(super) fn on_slow_queries_key(&mut self, key: KeyEvent) {
-        let last = self.slow_queries.len().saturating_sub(1);
+        let last = self.slow_queries.rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.slow_queries_cursor = (self.slow_queries_cursor + 1).min(last);
+                self.slow_queries.cursor = (self.slow_queries.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.slow_queries_cursor = self.slow_queries_cursor.saturating_sub(1);
+                self.slow_queries.cursor = self.slow_queries.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.slow_queries_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.slow_queries_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.slow_queries.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.slow_queries.cursor = last,
             KeyCode::Char('r') => self.refresh_slow_queries(),
             KeyCode::Char('R') => self.toggle_auto_refresh(),
             KeyCode::Enter => {
                 // Copy the focused query into the editor for tuning,
                 // then exit back to the editor. Empty when the
                 // panel is empty.
-                if let Some(row) = self.slow_queries.get(self.slow_queries_cursor) {
+                if let Some(row) = self.slow_queries.rows.get(self.slow_queries.cursor) {
                     self.editor_buffer = row.query.clone();
                     self.editor_cursor = self.editor_buffer.len();
                     self.editor_preferred_col = None;
@@ -1265,20 +1265,20 @@ impl App {
     }
 
     pub(super) fn on_sessions_key(&mut self, key: KeyEvent) {
-        let last = self.sessions.len().saturating_sub(1);
+        let last = self.sessions.rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.sessions_cursor = (self.sessions_cursor + 1).min(last);
+                self.sessions.cursor = (self.sessions.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.sessions_cursor = self.sessions_cursor.saturating_sub(1);
+                self.sessions.cursor = self.sessions.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.sessions_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.sessions_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.sessions.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.sessions.cursor = last,
             KeyCode::Char('r') => self.refresh_sessions(),
             KeyCode::Char('R') => self.toggle_auto_refresh(),
             KeyCode::Char('K') => self.start_terminate_focused_session(),
@@ -1295,20 +1295,20 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.explain_cursor = (self.explain_cursor + 1).min(last);
+                self.explain.cursor = (self.explain.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.explain_cursor = self.explain_cursor.saturating_sub(1);
+                self.explain.cursor = self.explain.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.explain_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.explain_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.explain.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.explain.cursor = last,
             KeyCode::Enter | KeyCode::Char(' ') => {
                 // Toggle collapse on the focused node, IF it has
                 // children. Leaf nodes stay open (collapsing them
                 // would just hide the line they're on).
-                if let Some(row) = rows.get(self.explain_cursor) {
-                    if row.has_children && !self.explain_collapsed.remove(&row.path) {
-                        self.explain_collapsed.insert(row.path.clone());
+                if let Some(row) = rows.get(self.explain.cursor) {
+                    if row.has_children && !self.explain.collapsed.remove(&row.path) {
+                        self.explain.collapsed.insert(row.path.clone());
                     }
                 }
             }

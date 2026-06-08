@@ -99,9 +99,9 @@ impl App {
                     if let Some(text) = self.grid.rows.first().and_then(|r| r.first()).cloned() {
                         match crate::query::explain::parse(&text) {
                             Ok(plan) => {
-                                self.explain_plan = Some(plan);
-                                self.explain_cursor = 0;
-                                self.explain_collapsed.clear();
+                                self.explain.plan = Some(plan);
+                                self.explain.cursor = 0;
+                                self.explain.collapsed.clear();
                                 self.mode = Mode::ExplainTree;
                             }
                             Err(e) => {
@@ -184,10 +184,12 @@ impl App {
             }
             AppMsg::SlowQueriesLoaded { result, .. } => match result {
                 Ok(rows) => {
-                    self.slow_queries = rows;
-                    self.slow_queries_cursor = 0;
-                    self.last_status =
-                        Some(format!("slow queries · {} row(s)", self.slow_queries.len()));
+                    self.slow_queries.rows = rows;
+                    self.slow_queries.cursor = 0;
+                    self.last_status = Some(format!(
+                        "slow queries · {} row(s)",
+                        self.slow_queries.rows.len()
+                    ));
                 }
                 Err(e) => {
                     // pg_stat_statements not installed is the most
@@ -205,11 +207,11 @@ impl App {
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
                     let blocked = rows.iter().filter(|r| r.is_blocked()).count();
-                    self.sessions = rows;
-                    self.sessions_cursor = 0;
+                    self.sessions.rows = rows;
+                    self.sessions.cursor = 0;
                     self.last_status = Some(format!(
                         "sessions · {} total · {} blocked",
-                        self.sessions.len(),
+                        self.sessions.rows.len(),
                         blocked
                     ));
                 }
@@ -228,10 +230,10 @@ impl App {
                 match result {
                     Ok(live) => {
                         let added = live.len();
-                        self.schema_lint_findings.extend(live);
+                        self.schema_lint.findings.extend(live);
                         // Re-sort to keep severity ordering after
                         // merge. Same sort as `lint::run_all`.
-                        self.schema_lint_findings.sort_by(|a, b| {
+                        self.schema_lint.findings.sort_by(|a, b| {
                             a.severity
                                 .cmp(&b.severity)
                                 .then_with(|| a.code.cmp(b.code))
@@ -239,13 +241,14 @@ impl App {
                         });
                         // Clamp the cursor — re-sort may have moved
                         // the focused row's index.
-                        let last = self.schema_lint_findings.len().saturating_sub(1);
-                        if self.schema_lint_cursor > last {
-                            self.schema_lint_cursor = last;
+                        let last = self.schema_lint.findings.len().saturating_sub(1);
+                        if self.schema_lint.cursor > last {
+                            self.schema_lint.cursor = last;
                         }
-                        let total = self.schema_lint_findings.len();
+                        let total = self.schema_lint.findings.len();
                         let high = self
-                            .schema_lint_findings
+                            .schema_lint
+                            .findings
                             .iter()
                             .filter(|f| f.severity == crate::query::lint::Severity::High)
                             .count();
@@ -354,10 +357,10 @@ impl App {
                     notification.pid,
                     notification.payload,
                 );
-                self.notifications.push(notification);
-                if self.notifications.len() > NOTIFICATION_CAP {
-                    let drop = self.notifications.len() - NOTIFICATION_CAP;
-                    self.notifications.drain(..drop);
+                self.notifications.items.push(notification);
+                if self.notifications.items.len() > NOTIFICATION_CAP {
+                    let drop = self.notifications.items.len() - NOTIFICATION_CAP;
+                    self.notifications.items.drain(..drop);
                 }
             }
             AppMsg::TapEvent { event } => self.on_tap_event(event),
