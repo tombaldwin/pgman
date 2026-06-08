@@ -1324,7 +1324,7 @@ fn result_diff_d_with_empty_grid_errors() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = grid_of(&["id"], &[]);
     a.pin_or_diff_result();
-    assert!(a.diff.pinned.is_none());
+    assert!(a.result_diff.pinned.is_none());
     assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
 }
 
@@ -1333,12 +1333,12 @@ fn result_diff_first_d_pins_baseline() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = sample_grid();
     a.pin_or_diff_result();
-    let p = a.diff.pinned.as_ref().expect("baseline pinned");
+    let p = a.result_diff.pinned.as_ref().expect("baseline pinned");
     assert_eq!(p.rows.len(), 4);
     assert_eq!(p.columns, vec!["id".to_string(), "name".to_string()]);
     // Pinning alone doesn't open the diff view.
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.diff.active.is_none());
+    assert!(a.result_diff.active.is_none());
     assert!(a
         .last_status
         .as_deref()
@@ -1363,7 +1363,7 @@ fn result_diff_second_d_opens_diff_with_inferred_key() {
     );
     a.pin_or_diff_result(); // diffs
     assert_eq!(a.mode, Mode::ResultDiff);
-    let d = a.diff.active.as_ref().expect("diff computed");
+    let d = a.result_diff.active.as_ref().expect("diff computed");
     // id column (0) is unique on both sides → strong key.
     assert!(matches!(
         &d.key,
@@ -1374,7 +1374,7 @@ fn result_diff_second_d_opens_diff_with_inferred_key() {
     assert_eq!(d.diff.added.len(), 1, "id 99 new");
     assert_eq!(d.diff.unchanged, 2, "ids 1 and 10");
     // Baseline persists for iterative diffing.
-    assert!(a.diff.pinned.is_some());
+    assert!(a.result_diff.pinned.is_some());
 }
 
 #[test]
@@ -1385,7 +1385,7 @@ fn result_diff_falls_back_to_full_row_when_columns_differ() {
     // B has a different column layout — cell-level keying is unsafe.
     a.grid = grid_of(&["id", "name", "extra"], &[&["1", "x", "y"]]);
     a.pin_or_diff_result();
-    let d = a.diff.active.as_ref().expect("diff computed");
+    let d = a.result_diff.active.as_ref().expect("diff computed");
     assert!(matches!(d.key, crate::query::row_diff::RowKey::FullRow));
 }
 
@@ -1399,9 +1399,9 @@ fn result_diff_r_repins_b_as_new_baseline() {
     assert_eq!(a.mode, Mode::ResultDiff);
     a.on_key(KeyEvent::from(KeyCode::Char('r')));
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.diff.active.is_none());
+    assert!(a.result_diff.active.is_none());
     // New baseline = the B side (two rows).
-    assert_eq!(a.diff.pinned.as_ref().unwrap().rows.len(), 2);
+    assert_eq!(a.result_diff.pinned.as_ref().unwrap().rows.len(), 2);
 }
 
 #[test]
@@ -1412,8 +1412,8 @@ fn result_diff_c_clears_pin() {
     a.grid = grid_of(&["id"], &[&["2"]]);
     a.pin_or_diff_result();
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
-    assert!(a.diff.pinned.is_none());
-    assert!(a.diff.active.is_none());
+    assert!(a.result_diff.pinned.is_none());
+    assert!(a.result_diff.active.is_none());
     assert_eq!(a.mode, Mode::Normal);
 }
 
@@ -1423,7 +1423,7 @@ fn result_diff_d_keybinding_pins_from_normal_mode() {
     a.mode = Mode::Normal;
     a.grid = sample_grid();
     a.on_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
-    assert!(a.diff.pinned.is_some());
+    assert!(a.result_diff.pinned.is_some());
 }
 
 fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
@@ -3100,18 +3100,21 @@ fn result_diff_pin_is_per_tab_and_does_not_leak() {
     };
     // Pin A on tab 1.
     a.pin_or_diff_result();
-    assert!(a.diff.pinned.is_some(), "tab 1 should have a pinned A");
+    assert!(
+        a.result_diff.pinned.is_some(),
+        "tab 1 should have a pinned A"
+    );
     // A fresh tab must NOT inherit the pin — otherwise the first D
     // there diffs against an unrelated baseline.
     a.new_tab();
     assert!(
-        a.diff.pinned.is_none(),
+        a.result_diff.pinned.is_none(),
         "a fresh tab must start with no pinned baseline"
     );
     // Returning to tab 1 restores its pin.
     a.cycle_tab(false);
     assert!(
-        a.diff.pinned.is_some(),
+        a.result_diff.pinned.is_some(),
         "returning to tab 1 should restore its pinned baseline"
     );
 }
@@ -3132,7 +3135,7 @@ fn tab_switch_dismisses_an_open_result_diff_overlay() {
     a.new_tab();
     // The transient overlay must not survive onto the new tab.
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.diff.active.is_none());
+    assert!(a.result_diff.active.is_none());
 }
 
 #[test]
