@@ -1,17 +1,5 @@
 use super::*;
 
-/// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
-/// buffer; the cursor renders as a reverse-video character on its line.
-/// Given the current scroll offset, the cursor's line index, the total line
-/// count, and the visible-row budget, return the scroll offset that keeps
-/// the cursor visible while clamping to the valid range. Pure / testable.
-///
-/// Rules:
-/// - cursor above viewport → scroll up to the cursor line
-/// - cursor at-or-below the bottom of the viewport → scroll just enough
-///   so the cursor sits on the last visible row
-/// - otherwise hold; clamp to `total.saturating_sub(visible)` so we
-///   don't reveal blank rows past the buffer's end
 /// Walk the highlighter spans that overlap `[line_start, line_end)`,
 /// emitting one styled ratatui `Span` per highlight segment. When
 /// `cursor_byte_in_line` is `Some`, that single char inside the line
@@ -150,6 +138,8 @@ fn push_with_cursor<'a>(
     }
 }
 
+/// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
+/// buffer; the cursor renders as a reverse-video character on its line.
 pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
     let focused = app.mode == Mode::Editor;

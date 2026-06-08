@@ -3060,10 +3060,6 @@ impl App {
         self.mode = Mode::RowDetail;
     }
 
-    /// Row-detail modal: j/k navigate fields (renderer auto-scrolls so the
-    /// focused field stays visible); g/G first/last field; PageUp/Down
-    /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
-    /// the focused field (`Mode::CellDetail`); Esc/q close.
     /// Zoom into the currently-focused field. No-op when the row or
     /// field cursor is out of bounds. When the cell parses as a JSON
     /// object or array, also primes the tree-navigator state; scalars
@@ -3093,14 +3089,6 @@ impl App {
         self.mode = Mode::CellDetail;
     }
 
-    /// Cell-detail modal. Two key maps depending on whether the cell
-    /// parses as a JSON container:
-    ///   - JSON view: j/k move the tree cursor, Enter / Space / h / l
-    ///     toggle collapse on the focused container, `y` yanks the
-    ///     jq-style path of the focused node.
-    ///   - Text view: j/k scroll the wrapped value, `y` yanks the
-    ///     whole value. Same shortcut, different semantics.
-    /// Esc/q always pops back to the row view.
     /// Toggle expand/collapse of the focused JSON node. Scalars are
     /// a no-op. Re-flattens the row list and clamps the cursor to
     /// remain on the same path (or, if the path vanished because a
@@ -3185,8 +3173,6 @@ impl App {
         }
     }
 
-    /// Connection picker (startup): j/k navigate, Enter selects + connects,
-    /// Esc/q quits since there's nothing else to do without a connection.
     /// Open the help overlay from `from`. Captures `from` so the
     /// close path restores that mode (instead of always going to
     /// Normal), and pre-scrolls the help body to the section that
@@ -3430,11 +3416,6 @@ impl App {
         // match on screen.
     }
 
-    /// Handle a key while in Mode::HistorySearch. Char/Backspace edit
-    /// the query and re-search from the latest match. Ctrl-R jumps to
-    /// the next-older match. Enter accepts (stays in Editor with the
-    /// matched buffer). Esc cancels (restores the snapshot).
-    /// Tx-open prompt: `y` commits, `n` / `esc` rolls back.
     /// Spawn a `COMMIT` or `ROLLBACK` of the open transaction.
     fn close_tx(&mut self, commit: bool) {
         let Some(client) = self.client.clone() else {
@@ -3530,8 +3511,6 @@ impl App {
         }
     }
 
-    /// Log-pick browser: j/k navigate, Enter loads the selection into the
-    /// editor, Esc cancels, `c` toggles cluster view.
     // -- run dispatch --
 
     /// Ctrl-C while a query is in flight. Sends a PostgreSQL

@@ -690,6 +690,16 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+/// Given the current scroll offset, the cursor's line index, the total line
+/// count, and the visible-row budget, return the scroll offset that keeps
+/// the cursor visible while clamping to the valid range. Pure / testable.
+///
+/// Rules:
+/// - cursor above viewport → scroll up to the cursor line
+/// - cursor at-or-below the bottom of the viewport → scroll just enough
+///   so the cursor sits on the last visible row
+/// - otherwise hold; clamp to `total.saturating_sub(visible)` so we
+///   don't reveal blank rows past the buffer's end
 pub(crate) fn clamp_editor_scroll(scroll: u16, cur_line: u16, total: u16, visible: u16) -> u16 {
     if visible == 0 {
         return 0;
