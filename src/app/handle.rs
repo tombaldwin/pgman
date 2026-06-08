@@ -66,7 +66,7 @@ impl App {
                 // UPDATE / FK nav). Single-table SELECT only; anything
                 // else clears the source so the feature gates self-
                 // disable.
-                self.grid_source = self
+                self.grid_view.source = self
                     .last_run_sql
                     .as_deref()
                     .and_then(infer_single_source_table);

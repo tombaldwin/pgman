@@ -9,13 +9,8 @@ impl App {
             editor: self.editor.clone(),
             grid: self.grid.clone(),
             grid_selected: self.grid_state.selected(),
-            grid_col_cursor: self.grid_col_cursor,
-            grid_sort: self.grid_sort,
-            grid_raw_rows: self.grid_raw_rows.clone(),
-            grid_filter: self.grid_filter.clone(),
-            grid_visible_rows: self.grid_visible_rows.clone(),
+            grid_view: self.grid_view.clone(),
             last_run_sql: self.last_run_sql.clone(),
-            grid_source: self.grid_source.clone(),
             pinned_result: self.diff.pinned.clone(),
         };
         if let Some(slot) = self.tabs.get_mut(self.active_tab) {
@@ -33,13 +28,8 @@ impl App {
         self.editor = snap.editor;
         self.grid = snap.grid;
         self.grid_state.select(snap.grid_selected);
-        self.grid_col_cursor = snap.grid_col_cursor;
-        self.grid_sort = snap.grid_sort;
-        self.grid_raw_rows = snap.grid_raw_rows;
-        self.grid_filter = snap.grid_filter;
-        self.grid_visible_rows = snap.grid_visible_rows;
+        self.grid_view = snap.grid_view;
         self.last_run_sql = snap.last_run_sql;
-        self.grid_source = snap.grid_source;
         self.diff.pinned = snap.pinned_result;
     }
 

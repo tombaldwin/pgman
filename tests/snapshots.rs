@@ -95,9 +95,9 @@ fn grid_with_data_and_sort() {
         ],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
-    a.grid_col_cursor = 0;
-    a.grid_sort = Some((0, true));
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.col_cursor = 0;
+    a.grid_view.sort = Some((0, true));
     a.grid_state.select(Some(0));
     let buf = render(&mut a, 60, 14);
     insta::assert_snapshot!(dump(&buf));
@@ -116,8 +116,8 @@ fn grid_with_filter_active() {
         ],
         truncated: false,
     };
-    a.grid_filter = Some("a".into());
-    a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
     a.grid_state.select(Some(0));
     let buf = render(&mut a, 60, 14);
     insta::assert_snapshot!(dump(&buf));
@@ -345,7 +345,7 @@ fn cell_detail_json_tree_renders_object_with_cursor_on_root() {
         rows: vec![vec![r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into()]],
         truncated: false,
     };
-    a.grid_visible_rows = vec![0];
+    a.grid_view.visible_rows = vec![0];
     a.grid_state.select(Some(0));
     a.row_detail.field = 0;
     a.row_detail.field_count = 1;

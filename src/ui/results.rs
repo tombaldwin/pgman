@@ -9,7 +9,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     // two extra chars of room. Without this the marker would be
     // truncated off and the operator would think nothing happened
     // when they pressed `s`.
-    if let Some((col, _)) = app.grid_sort {
+    if let Some((col, _)) = app.grid_view.sort {
         if let Some(w) = widths.get_mut(col) {
             *w = (*w + 2).min(48);
         }
@@ -22,7 +22,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let sort_marker = match app.grid_sort {
+            let sort_marker = match app.grid_view.sort {
                 Some((col, true)) if col == i => " ▲",
                 Some((col, false)) if col == i => " ▼",
                 _ => "",
@@ -35,7 +35,7 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
             // a glance. App mode doesn't matter — h/l is only useful
             // in Normal mode but the indicator persists so the
             // operator knows "the sort key will target this column".
-            if i == app.grid_col_cursor {
+            if i == app.grid_view.col_cursor {
                 style = style.add_modifier(Modifier::REVERSED);
             }
             Cell::from(text).style(style)
@@ -44,11 +44,12 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let header = Row::new(header_cells);
 
     // Walk only the visible rows (post-filter, post-sort). When no
-    // filter has ever been applied, `grid_visible_rows` was
+    // filter has ever been applied, `grid_view.visible_rows` was
     // initialised to `0..rows.len()` so this branch handles the
     // unfiltered path too.
     let rows: Vec<Row> = app
-        .grid_visible_rows
+        .grid_view
+        .visible_rows
         .iter()
         .filter_map(|&i| grid.rows.get(i))
         .map(|r| {
@@ -78,14 +79,14 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .map(|w| Constraint::Length(*w as u16))
         .collect();
-    let visible = app.grid_visible_rows.len();
+    let visible = app.grid_view.visible_rows.len();
     let total = grid.row_count();
     let cap = if grid.truncated {
         format!(" · capped at {}", crate::grid::MAX_ROWS)
     } else {
         String::new()
     };
-    let title = if app.grid_filter.is_some() && visible != total {
+    let title = if app.grid_view.filter.is_some() && visible != total {
         format!(" result · {visible}/{total} row(s) (filtered){cap} ")
     } else {
         format!(" result · {total} row(s){cap} ")

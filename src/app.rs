@@ -81,7 +81,7 @@ pub enum Mode {
     /// older match.
     HistorySearch,
     /// Interactive row filter on the results grid (`/` from Normal).
-    /// Each char updates `grid_filter` and re-filters live so the
+    /// Each char updates `grid_view.filter` and re-filters live so the
     /// operator sees results as they type. Enter accepts; Esc
     /// clears the filter.
     GridFilter,
@@ -425,6 +425,54 @@ pub struct EditorState {
     pub redo: Vec<UndoEntry>,
 }
 
+/// Grid view-metadata: the derived/display state that travels with a
+/// result grid (cursor column, sort, filter, row-source). Shared by
+/// `App` (the live grid) and `TabSnapshot` (per-tab persistence). The
+/// `Grid` data itself and the `TableState` are NOT here — they stay as
+/// flat fields because they are the hot read path.
+#[derive(Debug, Clone, Default)]
+pub struct GridView {
+    /// Column under the cursor in the results grid. h/l move it; sort
+    /// + future column-aware actions operate on this column.
+    pub col_cursor: usize,
+    /// Sort state for the grid: `None` = display order from the
+    /// query; `Some((col, asc))` = sorted by that column. Cycled by
+    /// `s` in Normal mode: off → ASC → DESC → off.
+    pub sort: Option<(usize, bool)>,
+    /// The grid as it landed from the query — preserved so a "clear
+    /// sort" can restore the original row order without re-running.
+    pub raw_rows: Option<Vec<Vec<String>>>,
+    /// Active row-filter pattern (case-insensitive substring across
+    /// all columns). `None` = no filter; rendered rows are
+    /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
+    pub filter: Option<String>,
+    /// Indices into `grid.rows` for the currently-visible rows under
+    /// the active filter. Equal to `0..rows.len()` when no filter is
+    /// set. Rebuilt whenever filter / sort / grid changes.
+    pub visible_rows: Vec<usize>,
+    /// `Some((schema, table))` when the current grid is the result
+    /// of a single-FROM-table SELECT, `None` otherwise. Drives the
+    /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
+    /// FK navigation.
+    pub source: Option<(String, String)>,
+}
+
+/// Grid find ("/" search) state. Lives on `App` only — find is a
+/// transient navigation aid and is NOT persisted per-tab.
+#[derive(Debug, Default)]
+pub struct GridFind {
+    /// Pattern being typed / accepted in `Mode::GridFind`. `Some`
+    /// means find is active; the matches list below is rebuilt
+    /// from this on every change.
+    pub needle: Option<String>,
+    /// Match cursor positions for the find, in row-major
+    /// order: each pair is `(visible_row_index, col_index)`.
+    pub matches: Vec<(usize, usize)>,
+    /// Current position in `matches` — `n` advances, `N`
+    /// retreats; both wrap.
+    pub pos: usize,
+}
+
 /// Per-tab snapshot of the editor + result-grid state. The
 /// connection, schema cache, history, saved queries, theme,
 /// notifications, and safety profile are SHARED across tabs and
@@ -441,13 +489,8 @@ pub struct TabSnapshot {
     pub editor: EditorState,
     pub grid: crate::grid::Grid,
     pub grid_selected: Option<usize>,
-    pub grid_col_cursor: usize,
-    pub grid_sort: Option<(usize, bool)>,
-    pub grid_raw_rows: Option<Vec<Vec<String>>>,
-    pub grid_filter: Option<String>,
-    pub grid_visible_rows: Vec<usize>,
+    pub grid_view: GridView,
     pub last_run_sql: Option<String>,
-    pub grid_source: Option<(String, String)>,
     /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
     /// tab can't leak into another (a fresh tab starts unpinned). The
     /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
@@ -1672,34 +1715,13 @@ pub struct App {
     /// Set whenever the buffer is mutated; cleared on save. Avoids
     /// `write_atomic`-ing a buffer that hasn't changed.
     pub draft_dirty: bool,
-    /// Column under the cursor in the results grid. h/l move it; sort
-    /// + future column-aware actions operate on this column.
-    pub grid_col_cursor: usize,
-    /// Sort state for the grid: `None` = display order from the
-    /// query; `Some((col, asc))` = sorted by that column. Cycled by
-    /// `s` in Normal mode: off → ASC → DESC → off.
-    pub grid_sort: Option<(usize, bool)>,
-    /// The grid as it landed from the query — preserved so a "clear
-    /// sort" can restore the original row order without re-running.
-    pub grid_raw_rows: Option<Vec<Vec<String>>>,
-    /// Active row-filter pattern (case-insensitive substring across
-    /// all columns). `None` = no filter; rendered rows are
-    /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
-    pub grid_filter: Option<String>,
-    /// Pattern being typed / accepted in `Mode::GridFind`. `Some`
-    /// means find is active; the matches list below is rebuilt
-    /// from this on every change.
-    pub grid_find: Option<String>,
-    /// Match cursor positions for `grid_find`, in row-major
-    /// order: each pair is `(visible_row_index, col_index)`.
-    pub grid_find_matches: Vec<(usize, usize)>,
-    /// Current position in `grid_find_matches` — `n` advances, `N`
-    /// retreats; both wrap.
-    pub grid_find_pos: usize,
-    /// Indices into `grid.rows` for the currently-visible rows under
-    /// the active filter. Equal to `0..rows.len()` when no filter is
-    /// set. Rebuilt whenever filter / sort / grid changes.
-    pub grid_visible_rows: Vec<usize>,
+    /// Grid view-metadata for the live result grid: cursor column,
+    /// sort, raw rows, filter, visible-row indices, and row source.
+    /// Shared shape with `TabSnapshot` (snapshotted per tab).
+    pub grid_view: GridView,
+    /// Grid find ("/" search) state: needle, match positions, and the
+    /// current match cursor. Live-only — not persisted per tab.
+    pub grid_find: GridFind,
     /// EXPLAIN-tree state (plan, cursor, collapsed node paths).
     pub explain: ExplainUi,
     /// Schema-browser navigation/modal state (cursor, filter, expanded set).
@@ -1715,11 +1737,6 @@ pub struct App {
     /// source table (when there is one). Not set for batch /
     /// EXPLAIN / EXPLAIN ANALYZE runs.
     pub last_run_sql: Option<String>,
-    /// `Some((schema, table))` when the current grid is the result
-    /// of a single-FROM-table SELECT, `None` otherwise. Drives the
-    /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
-    /// FK navigation.
-    pub grid_source: Option<(String, String)>,
     /// Result-diff state (pinned baseline, active diff, cursor).
     pub diff: ResultDiffUi,
 
@@ -1830,21 +1847,14 @@ impl App {
             external_edit_pending: false,
             draft_last_save: None,
             draft_dirty: false,
-            grid_col_cursor: 0,
-            grid_sort: None,
-            grid_raw_rows: None,
-            grid_filter: None,
-            grid_find: None,
-            grid_find_matches: Vec::new(),
-            grid_find_pos: 0,
-            grid_visible_rows: Vec::new(),
+            grid_view: GridView::default(),
+            grid_find: GridFind::default(),
             explain: ExplainUi::default(),
             schema_browser: SchemaBrowserUi::default(),
             schema_lint: SchemaLintUi::default(),
             slow_queries: SlowQueriesUi::default(),
             sessions: SessionsUi::default(),
             last_run_sql: None,
-            grid_source: None,
             diff: ResultDiffUi::default(),
             conn_pick: ConnPickUi {
                 picks: data_source_picks,
@@ -3448,15 +3458,16 @@ impl App {
         ));
     }
 
-    /// Recompute `grid_visible_rows` against the current `grid.rows`
-    /// and `grid_filter`. Filter is a case-insensitive substring
+    /// Recompute `grid_view.visible_rows` against the current `grid.rows`
+    /// and `grid_view.filter`. Filter is a case-insensitive substring
     /// match across every column of each row. With no filter the
     /// visible set is just `0..rows.len()` (kept materialised so the
     /// render path has one code path).
     fn rebuild_visible_rows(&mut self) {
-        self.grid_visible_rows = compute_visible_rows(&self.grid.rows, self.grid_filter.as_deref());
+        self.grid_view.visible_rows =
+            compute_visible_rows(&self.grid.rows, self.grid_view.filter.as_deref());
         // Keep the selection in range.
-        let visible = self.grid_visible_rows.len();
+        let visible = self.grid_view.visible_rows.len();
         if visible == 0 {
             self.grid_state.select(None);
         } else {
@@ -3473,12 +3484,12 @@ impl App {
         if self.grid.columns.is_empty() {
             return;
         }
-        let col = self.grid_col_cursor.min(self.grid.columns.len() - 1);
-        let next = next_sort_state(self.grid_sort, col);
+        let col = self.grid_view.col_cursor.min(self.grid.columns.len() - 1);
+        let next = next_sort_state(self.grid_view.sort, col);
         match next {
             Some((col, asc)) => {
-                if self.grid_raw_rows.is_none() {
-                    self.grid_raw_rows = Some(self.grid.rows.clone());
+                if self.grid_view.raw_rows.is_none() {
+                    self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
                 self.grid.rows.sort_by(|a, b| {
                     let av = a.get(col).map(String::as_str).unwrap_or("");
@@ -3490,15 +3501,15 @@ impl App {
                         ord.reverse()
                     }
                 });
-                self.grid_sort = Some((col, asc));
+                self.grid_view.sort = Some((col, asc));
                 let dir = if asc { "ASC" } else { "DESC" };
                 self.last_status = Some(format!("sorted by {} {dir}", self.grid.columns[col]));
             }
             None => {
-                if let Some(raw) = self.grid_raw_rows.take() {
+                if let Some(raw) = self.grid_view.raw_rows.take() {
                     self.grid.rows = raw;
                 }
-                self.grid_sort = None;
+                self.grid_view.sort = None;
                 self.last_status = Some("sort cleared".into());
             }
         }
@@ -3512,9 +3523,9 @@ impl App {
         if n == 0 {
             return;
         }
-        let cur = self.grid_col_cursor as isize;
+        let cur = self.grid_view.col_cursor as isize;
         let next = (cur + delta).clamp(0, n as isize - 1);
-        self.grid_col_cursor = next as usize;
+        self.grid_view.col_cursor = next as usize;
     }
 
     /// `I` in Normal — copy the focused row to the clipboard as
@@ -3529,12 +3540,12 @@ impl App {
     /// to run. Multi-tab keeps the originating result behind for
     /// "go back" (close the new tab).
     fn navigate_fk_from_focused_cell(&mut self) {
-        let Some((schema, table)) = self.grid_source.clone() else {
+        let Some((schema, table)) = self.grid_view.source.clone() else {
             self.last_error =
                 Some("FK navigation needs a single-table SELECT for source inference".into());
             return;
         };
-        let Some(col_name) = self.grid.columns.get(self.grid_col_cursor).cloned() else {
+        let Some(col_name) = self.grid.columns.get(self.grid_view.col_cursor).cloned() else {
             self.last_error = Some("no focused column".into());
             return;
         };
@@ -3544,7 +3555,7 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.grid_col_cursor).cloned() else {
+        let Some(value) = row.get(self.grid_view.col_cursor).cloned() else {
             return;
         };
         let edge = match self
@@ -3608,7 +3619,7 @@ impl App {
                 return crate::grid::truncate_cell(&one, 60);
             }
         }
-        match &self.grid_source {
+        match &self.grid_view.source {
             Some((schema, table)) => format!("{schema}.{table}"),
             None => format!("{} row(s)", self.grid.rows.len()),
         }
@@ -3685,7 +3696,7 @@ impl App {
     }
 
     fn yank_row_as_insert(&mut self) {
-        let Some((schema, table)) = self.grid_source.clone() else {
+        let Some((schema, table)) = self.grid_view.source.clone() else {
             self.last_error = Some(
                 "can't infer source table — row-as-INSERT only works for single-table SELECTs"
                     .into(),
@@ -3737,10 +3748,10 @@ impl App {
         // format here; format chooser is a follow-up.
         let mut export = crate::grid::Grid {
             columns: self.grid.columns.clone(),
-            rows: Vec::with_capacity(self.grid_visible_rows.len()),
+            rows: Vec::with_capacity(self.grid_view.visible_rows.len()),
             truncated: false,
         };
-        for &i in &self.grid_visible_rows {
+        for &i in &self.grid_view.visible_rows {
             if let Some(row) = self.grid.rows.get(i) {
                 export.rows.push(row.clone());
             }
@@ -3769,7 +3780,7 @@ impl App {
         // Start from an empty pattern; whatever was previously set is
         // discarded so each `/` is a fresh search. The footer's
         // status reflects the live pattern.
-        self.grid_filter = Some(String::new());
+        self.grid_view.filter = Some(String::new());
         self.rebuild_visible_rows();
         self.mode = Mode::GridFilter;
         self.refresh_filter_status();
@@ -3778,7 +3789,7 @@ impl App {
     /// `n` / `N` in Normal — step the row cursor to the next / prev
     /// matching row (only meaningful while a filter is active).
     fn filter_step(&mut self, forward: bool) {
-        if self.grid_filter.is_none() {
+        if self.grid_view.filter.is_none() {
             // Make the no-op visible — vim muscle memory expects
             // `n` to do something useful, and silent failure feels
             // like the terminal is stuck.
@@ -3787,7 +3798,7 @@ impl App {
         }
         // visible_rows is already the filtered set in display order;
         // step the existing cursor through it.
-        let visible = self.grid_visible_rows.len();
+        let visible = self.grid_view.visible_rows.len();
         if visible == 0 {
             return;
         }
@@ -3802,8 +3813,8 @@ impl App {
 
     /// Update the footer to reflect the live filter state, bash-style.
     fn refresh_filter_status(&mut self) {
-        let pat = self.grid_filter.as_deref().unwrap_or("");
-        let n = self.grid_visible_rows.len();
+        let pat = self.grid_view.filter.as_deref().unwrap_or("");
+        let n = self.grid_view.visible_rows.len();
         let total = self.grid.rows.len();
         self.last_status = Some(format!(
             "filter: /{pat}  · {n}/{total} row(s) · enter accept · esc clear"
@@ -4079,7 +4090,11 @@ impl App {
         // The bookmark's `row` was the underlying grid index at
         // the time of set. Find its position in the current
         // visible-rows list (filter may have moved / dropped it).
-        let target_visible = self.grid_visible_rows.iter().position(|&i| i == bm.row);
+        let target_visible = self
+            .grid_view
+            .visible_rows
+            .iter()
+            .position(|&i| i == bm.row);
         let visible_idx = match target_visible {
             Some(i) => i,
             None => {
@@ -4089,7 +4104,7 @@ impl App {
         };
         self.grid_state.select(Some(visible_idx));
         let last_col = self.grid.columns.len().saturating_sub(1);
-        self.grid_col_cursor = bm.col.min(last_col);
+        self.grid_view.col_cursor = bm.col.min(last_col);
     }
 
     /// `f` from Normal — open the grid-find input. Re-uses the
@@ -4100,22 +4115,22 @@ impl App {
             self.last_status = Some("nothing to find · grid is empty".into());
             return;
         }
-        self.grid_find = Some(String::new());
-        self.grid_find_matches.clear();
-        self.grid_find_pos = 0;
+        self.grid_find.needle = Some(String::new());
+        self.grid_find.matches.clear();
+        self.grid_find.pos = 0;
         self.last_status =
             Some("find:    · type to search · n/N jump · enter accept · esc cancel".into());
         self.mode = Mode::GridFind;
     }
 
     fn refresh_grid_find_status(&mut self) {
-        let pat = self.grid_find.as_deref().unwrap_or("");
-        let n = self.grid_find_matches.len();
+        let pat = self.grid_find.needle.as_deref().unwrap_or("");
+        let n = self.grid_find.matches.len();
         if pat.is_empty() {
             self.last_status = Some("find:    · type to search · enter accept · esc cancel".into());
             return;
         }
-        let pos = if n == 0 { 0 } else { self.grid_find_pos + 1 };
+        let pos = if n == 0 { 0 } else { self.grid_find.pos + 1 };
         self.last_status = Some(format!(
             "find: {pat}  · {pos}/{n} match · n/N jump · enter accept · esc cancel"
         ));
@@ -4125,31 +4140,31 @@ impl App {
     /// match. Called on every keystroke while the find input is
     /// live.
     fn rebuild_grid_find(&mut self) {
-        let pat = self.grid_find.clone().unwrap_or_default();
-        self.grid_find_matches =
-            compute_grid_find_matches(&self.grid, &self.grid_visible_rows, &pat);
-        self.grid_find_pos = 0;
-        if let Some(&(vi, ci)) = self.grid_find_matches.first() {
+        let pat = self.grid_find.needle.clone().unwrap_or_default();
+        self.grid_find.matches =
+            compute_grid_find_matches(&self.grid, &self.grid_view.visible_rows, &pat);
+        self.grid_find.pos = 0;
+        if let Some(&(vi, ci)) = self.grid_find.matches.first() {
             self.grid_state.select(Some(vi));
-            self.grid_col_cursor = ci;
+            self.grid_view.col_cursor = ci;
         }
     }
 
     /// Step to the next / previous match (wrapping). No-op when
     /// no matches.
     fn step_grid_find(&mut self, forward: bool) {
-        if self.grid_find_matches.is_empty() {
+        if self.grid_find.matches.is_empty() {
             return;
         }
-        let n = self.grid_find_matches.len();
-        self.grid_find_pos = if forward {
-            (self.grid_find_pos + 1) % n
+        let n = self.grid_find.matches.len();
+        self.grid_find.pos = if forward {
+            (self.grid_find.pos + 1) % n
         } else {
-            (self.grid_find_pos + n - 1) % n
+            (self.grid_find.pos + n - 1) % n
         };
-        let (vi, ci) = self.grid_find_matches[self.grid_find_pos];
+        let (vi, ci) = self.grid_find.matches[self.grid_find.pos];
         self.grid_state.select(Some(vi));
-        self.grid_col_cursor = ci;
+        self.grid_view.col_cursor = ci;
         self.refresh_grid_find_status();
     }
 
