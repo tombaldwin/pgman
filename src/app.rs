@@ -1407,6 +1407,88 @@ pub struct SchemaLintUi {
     pub cursor: usize,
 }
 
+/// Help-overlay state — vertical scroll, the mode to restore on close,
+/// and the last-rendered max scroll used to clamp incremental scrolls.
+#[derive(Debug, Default)]
+pub struct HelpUi {
+    /// Vertical scroll offset for the help overlay (number of leading lines
+    /// hidden above the viewport).
+    pub scroll: u16,
+    /// Mode the operator came from when opening help. Used to
+    /// restore that mode on close, so F1 from inside Editor /
+    /// SchemaBrowser / etc. doesn't dump them back to Normal.
+    /// `None` for the legacy `?`-from-Normal path.
+    pub origin: Option<Mode>,
+    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
+    /// each frame and read by the j/k handler so an incremental scroll past
+    /// the bottom doesn't accumulate phantom offsets.
+    pub max_scroll: u16,
+}
+
+/// Connection-picker state — the candidate data sources surfaced at
+/// startup and the selected entry. Drives `Mode::ConnPick`.
+#[derive(Debug, Default)]
+pub struct ConnPickUi {
+    /// Candidate data sources surfaced at startup. Populated when the operator
+    /// didn't pass `--dsn` and we found multiple sources via discovery (e.g.
+    /// IntelliJ). Drives `Mode::ConnPick`.
+    pub picks: Vec<DataSourcePick>,
+    /// Selected entry in `picks`.
+    pub index: usize,
+}
+
+/// Result-diff state — the pinned baseline ("A"), the computed diff
+/// currently shown in `Mode::ResultDiff`, and the cursor into it.
+#[derive(Debug, Default)]
+pub struct ResultDiffUi {
+    /// Result pinned as the diff baseline ("A") by `D` in Normal
+    /// mode. The next `D` diffs the current grid against this.
+    /// Persists across diffs so the operator can iterate
+    /// (tweak → run → D) against a fixed baseline.
+    pub pinned: Option<PinnedResult>,
+    /// The computed diff currently shown in `Mode::ResultDiff`.
+    /// Snapshots both sides so the view is stable while open.
+    pub active: Option<ResultDiffState>,
+    /// Cursor into the rendered diff row list.
+    pub cursor: usize,
+}
+
+/// Row-detail modal state — scroll / clamp and the focused field.
+#[derive(Debug, Default)]
+pub struct RowDetailUi {
+    /// Scroll / clamp state for the row-detail modal — same shape as
+    /// `HelpUi::scroll` / `HelpUi::max_scroll`. `scroll` is normally
+    /// driven by the renderer's auto-scroll (so the focused field stays in
+    /// view); the key handler only nudges it as a side-effect of moving
+    /// `field`.
+    pub scroll: u16,
+    pub max_scroll: u16,
+    /// Currently-focused field (column index) inside the row-detail modal.
+    /// Bounded by `field_count` which the renderer writes each
+    /// frame (it's just `grid.columns.len()` today, but kept as a separate
+    /// field so the clamp matches what's actually rendered).
+    pub field: usize,
+    pub field_count: usize,
+}
+
+/// Per-cell zoom (`Mode::CellDetail`) state — scroll / clamp plus the
+/// flattened JSON tree, its cursor, the collapsed-path set, and the
+/// parsed value when the cell is a JSON object / array.
+#[derive(Debug, Default)]
+pub struct CellDetailUi {
+    /// Scroll / clamp state for the per-cell zoom view (`Mode::CellDetail`).
+    pub scroll: u16,
+    pub max_scroll: u16,
+    /// Parsed JSON value of the focused cell, when CellDetail is
+    /// active AND the cell parses as a JSON object or array. `None`
+    /// triggers the existing wrapped-text renderer (scalar /
+    /// not-JSON cells).
+    pub json_rows: Vec<crate::query::json_cell::JsonRow>,
+    pub json_cursor: usize,
+    pub json_collapsed: std::collections::HashSet<String>,
+    pub json_value: Option<serde_json::Value>,
+}
+
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
@@ -1473,21 +1555,11 @@ pub struct App {
     pub last_error: Option<String>,
     /// True while a query is in flight (drives the spinner).
     pub query_running: bool,
-    /// Candidate data sources surfaced at startup. Populated when the operator
-    /// didn't pass `--dsn` and we found multiple sources via discovery (e.g.
-    /// IntelliJ). Drives `Mode::ConnPick`.
-    pub data_source_picks: Vec<DataSourcePick>,
-    /// Selected entry in `data_source_picks`.
-    pub data_source_pick_index: usize,
+    /// Connection-picker state (candidate data sources + selected index).
+    pub conn_pick: ConnPickUi,
 
-    /// Vertical scroll offset for the help overlay (number of leading lines
-    /// hidden above the viewport).
-    pub help_scroll: u16,
-    /// Mode the operator came from when opening help. Used to
-    /// restore that mode on close, so F1 from inside Editor /
-    /// SchemaBrowser / etc. doesn't dump them back to Normal.
-    /// `None` for the legacy `?`-from-Normal path.
-    pub help_origin: Option<Mode>,
+    /// Help-overlay state (scroll, origin mode, max scroll).
+    pub help: HelpUi,
     /// Modes the operator has already entered this session. Used by
     /// `note_mode_entry` to flash a one-time "key hint" status the
     /// first time each mode opens — discoverability nudge without
@@ -1557,26 +1629,10 @@ pub struct App {
     /// and read in `QueryOk` / `QueryFailed` to surface elapsed
     /// time when `\timing` is on.
     pub query_started: Option<Instant>,
-    /// Last-rendered max scroll for the help overlay. Written by `draw_help`
-    /// each frame and read by the j/k handler so an incremental scroll past
-    /// the bottom doesn't accumulate phantom offsets.
-    pub help_max_scroll: u16,
-    /// Scroll / clamp state for the row-detail modal — same shape as
-    /// `help_scroll` / `help_max_scroll`. `row_detail_scroll` is normally
-    /// driven by the renderer's auto-scroll (so the focused field stays in
-    /// view); the key handler only nudges it as a side-effect of moving
-    /// `row_detail_field`.
-    pub row_detail_scroll: u16,
-    pub row_detail_max_scroll: u16,
-    /// Scroll / clamp state for the per-cell zoom view (`Mode::CellDetail`).
-    pub cell_detail_scroll: u16,
-    pub cell_detail_max_scroll: u16,
-    /// Currently-focused field (column index) inside the row-detail modal.
-    /// Bounded by `row_detail_field_count` which the renderer writes each
-    /// frame (it's just `grid.columns.len()` today, but kept as a separate
-    /// field so the clamp matches what's actually rendered).
-    pub row_detail_field: usize,
-    pub row_detail_field_count: usize,
+    /// Row-detail modal state (scroll / clamp + focused field).
+    pub row_detail: RowDetailUi,
+    /// Per-cell zoom (`Mode::CellDetail`) state (scroll / clamp + JSON tree).
+    pub cell_detail: CellDetailUi,
 
     /// Snapshot of the database catalog used by Tab-completion in the
     /// editor. Refilled on every successful `Booted`. Empty before
@@ -1654,29 +1710,13 @@ pub struct App {
     /// source table (when there is one). Not set for batch /
     /// EXPLAIN / EXPLAIN ANALYZE runs.
     pub last_run_sql: Option<String>,
-    /// Parsed JSON value of the focused cell, when CellDetail is
-    /// active AND the cell parses as a JSON object or array. `None`
-    /// triggers the existing wrapped-text renderer (scalar /
-    /// not-JSON cells).
-    pub json_cell_rows: Vec<crate::query::json_cell::JsonRow>,
-    pub json_cell_cursor: usize,
-    pub json_cell_collapsed: std::collections::HashSet<String>,
-    pub json_cell_value: Option<serde_json::Value>,
     /// `Some((schema, table))` when the current grid is the result
     /// of a single-FROM-table SELECT, `None` otherwise. Drives the
     /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
     /// FK navigation.
     pub grid_source: Option<(String, String)>,
-    /// Result pinned as the diff baseline ("A") by `D` in Normal
-    /// mode. The next `D` diffs the current grid against this.
-    /// Persists across diffs so the operator can iterate
-    /// (tweak → run → D) against a fixed baseline.
-    pub pinned_result: Option<PinnedResult>,
-    /// The computed diff currently shown in `Mode::ResultDiff`.
-    /// Snapshots both sides so the view is stable while open.
-    pub result_diff: Option<ResultDiffState>,
-    /// Cursor into the rendered diff row list.
-    pub result_diff_cursor: usize,
+    /// Result-diff state (pinned baseline, active diff, cursor).
+    pub diff: ResultDiffUi,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -1757,9 +1797,7 @@ impl App {
             last_status: None,
             last_error: None,
             query_running: false,
-            help_scroll: 0,
-            help_max_scroll: 0,
-            help_origin: None,
+            help: HelpUi::default(),
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
             last_error_detail: None,
@@ -1782,12 +1820,8 @@ impl App {
             pending_mark_set: false,
             pending_mark_jump: false,
             query_started: None,
-            row_detail_scroll: 0,
-            row_detail_max_scroll: 0,
-            row_detail_field: 0,
-            row_detail_field_count: 0,
-            cell_detail_scroll: 0,
-            cell_detail_max_scroll: 0,
+            row_detail: RowDetailUi::default(),
+            cell_detail: CellDetailUi::default(),
             schema_cache: SchemaCache::default(),
             completion: None,
             history_search: None,
@@ -1810,16 +1844,12 @@ impl App {
             slow_queries: SlowQueriesUi::default(),
             sessions: SessionsUi::default(),
             last_run_sql: None,
-            json_cell_rows: Vec::new(),
-            json_cell_cursor: 0,
-            json_cell_collapsed: std::collections::HashSet::new(),
-            json_cell_value: None,
             grid_source: None,
-            pinned_result: None,
-            result_diff: None,
-            result_diff_cursor: 0,
-            data_source_picks,
-            data_source_pick_index: 0,
+            diff: ResultDiffUi::default(),
+            conn_pick: ConnPickUi {
+                picks: data_source_picks,
+                index: 0,
+            },
             client: None,
             cancel_dispatcher: None,
             tunnel: None,
@@ -2576,8 +2606,8 @@ impl App {
         if self.grid.rows.get(idx).is_none() {
             return;
         }
-        self.row_detail_scroll = 0;
-        self.row_detail_field = 0;
+        self.row_detail.scroll = 0;
+        self.row_detail.field = 0;
         self.mode = Mode::RowDetail;
     }
 
@@ -2592,20 +2622,20 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.row_detail_field) else {
+        let Some(value) = row.get(self.row_detail.field) else {
             return;
         };
-        self.cell_detail_scroll = 0;
-        self.json_cell_rows.clear();
-        self.json_cell_cursor = 0;
-        self.json_cell_collapsed.clear();
+        self.cell_detail.scroll = 0;
+        self.cell_detail.json_rows.clear();
+        self.cell_detail.json_cursor = 0;
+        self.cell_detail.json_collapsed.clear();
         if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(value) {
-            self.json_cell_rows =
-                crate::query::json_cell::flatten(&parsed, &self.json_cell_collapsed);
+            self.cell_detail.json_rows =
+                crate::query::json_cell::flatten(&parsed, &self.cell_detail.json_collapsed);
             // Stash the parsed value so collapse/expand can re-flatten.
-            self.json_cell_value = Some(parsed);
+            self.cell_detail.json_value = Some(parsed);
         } else {
-            self.json_cell_value = None;
+            self.cell_detail.json_value = None;
         }
         self.mode = Mode::CellDetail;
     }
@@ -2615,7 +2645,12 @@ impl App {
     /// remain on the same path (or, if the path vanished because a
     /// parent collapsed, on its parent's row).
     fn toggle_json_cell_node(&mut self) {
-        let Some(row) = self.json_cell_rows.get(self.json_cell_cursor).cloned() else {
+        let Some(row) = self
+            .cell_detail
+            .json_rows
+            .get(self.cell_detail.json_cursor)
+            .cloned()
+        else {
             return;
         };
         if !matches!(
@@ -2624,28 +2659,30 @@ impl App {
         ) {
             return;
         }
-        if self.json_cell_collapsed.contains(&row.path) {
-            self.json_cell_collapsed.remove(&row.path);
+        if self.cell_detail.json_collapsed.contains(&row.path) {
+            self.cell_detail.json_collapsed.remove(&row.path);
         } else {
-            self.json_cell_collapsed.insert(row.path.clone());
+            self.cell_detail.json_collapsed.insert(row.path.clone());
         }
-        if let Some(v) = &self.json_cell_value {
-            self.json_cell_rows = crate::query::json_cell::flatten(v, &self.json_cell_collapsed);
+        if let Some(v) = &self.cell_detail.json_value {
+            self.cell_detail.json_rows =
+                crate::query::json_cell::flatten(v, &self.cell_detail.json_collapsed);
         }
         // Try to keep the cursor on the same path; fall back to the
         // tail if the row list shrank past it.
         let new_idx = self
-            .json_cell_rows
+            .cell_detail
+            .json_rows
             .iter()
             .position(|r| r.path == row.path)
-            .unwrap_or_else(|| self.json_cell_rows.len().saturating_sub(1));
-        self.json_cell_cursor = new_idx;
+            .unwrap_or_else(|| self.cell_detail.json_rows.len().saturating_sub(1));
+        self.cell_detail.json_cursor = new_idx;
     }
 
     /// Yank the focused JSON node's jq-style path (`.foo[0].bar`) to
     /// the clipboard. The root node yanks `.` for convenience.
     fn yank_json_cell_path(&mut self) {
-        let Some(row) = self.json_cell_rows.get(self.json_cell_cursor) else {
+        let Some(row) = self.cell_detail.json_rows.get(self.cell_detail.json_cursor) else {
             return;
         };
         let path = if row.path.is_empty() {
@@ -2673,13 +2710,13 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.row_detail_field) else {
+        let Some(value) = row.get(self.row_detail.field) else {
             return;
         };
         let column = self
             .grid
             .columns
-            .get(self.row_detail_field)
+            .get(self.row_detail.field)
             .cloned()
             .unwrap_or_default();
         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
@@ -2700,8 +2737,8 @@ impl App {
     /// matches `from` — operators see the relevant keys without
     /// hunting for them.
     pub fn open_help_from(&mut self, from: Mode) {
-        self.help_origin = Some(from);
-        self.help_scroll = 0; // Renderer-side anchor pass will adjust.
+        self.help.origin = Some(from);
+        self.help.scroll = 0; // Renderer-side anchor pass will adjust.
         self.mode = Mode::Help;
     }
 
@@ -3585,10 +3622,10 @@ impl App {
             self.last_error = Some("no result to diff — run a query first".into());
             return;
         }
-        match self.pinned_result.take() {
+        match self.diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
-                self.pinned_result = Some(PinnedResult {
+                self.diff.pinned = Some(PinnedResult {
                     columns: self.grid.columns.clone(),
                     rows: self.grid.rows.clone(),
                     label: self.current_result_label(),
@@ -3612,7 +3649,7 @@ impl App {
                     diff.changed.len(),
                     diff.unchanged
                 );
-                self.result_diff = Some(ResultDiffState {
+                self.diff.active = Some(ResultDiffState {
                     a: a.clone(),
                     b_columns,
                     b_rows,
@@ -3620,8 +3657,8 @@ impl App {
                     key,
                     diff,
                 });
-                self.pinned_result = Some(a);
-                self.result_diff_cursor = 0;
+                self.diff.pinned = Some(a);
+                self.diff.cursor = 0;
                 self.mode = Mode::ResultDiff;
                 self.last_status = Some(summary);
             }

@@ -356,7 +356,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
 
     lines.push(Line::from(""));
     let mut actions = String::from("  r retry");
-    if app.data_source_picks.len() >= 2 {
+    if app.conn_pick.picks.len() >= 2 {
         actions.push_str(" · p change connection");
     }
     actions.push_str(" · q quit · logs in ~/.cache/pgman/pgman.log");
@@ -525,7 +525,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let connecting_normal =
             app.mode == Mode::Normal && matches!(app.conn_state, ConnState::Connecting);
         let hints: &str = if failed_normal {
-            if app.data_source_picks.len() >= 2 {
+            if app.conn_pick.picks.len() >= 2 {
                 "r retry · p change connection · q quit · ? help"
             } else {
                 "r retry · q quit · ? help"
@@ -557,7 +557,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
             Mode::RowDetail => "↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close",
             Mode::CellDetail => {
-                if app.json_cell_rows.is_empty() {
+                if app.cell_detail.json_rows.is_empty() {
                     "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back"
                 } else {
                     "j/k navigate · enter / space expand/collapse · y yank path · g/G top/bottom · esc back"
@@ -728,11 +728,11 @@ pub(crate) fn clamp_editor_scroll(scroll: u16, cur_line: u16, total: u16, visibl
 pub(crate) fn render_json_tree(app: &App, width: usize) -> Vec<Line<'static>> {
     use crate::query::json_cell::{ContainerKind, JsonDisplay};
     let theme = &app.theme;
-    let mut out = Vec::with_capacity(app.json_cell_rows.len());
-    for (i, row) in app.json_cell_rows.iter().enumerate() {
+    let mut out = Vec::with_capacity(app.cell_detail.json_rows.len());
+    for (i, row) in app.cell_detail.json_rows.iter().enumerate() {
         let indent = "  ".repeat(row.depth);
         let mut spans: Vec<Span<'static>> = Vec::new();
-        let base_style = if i == app.json_cell_cursor {
+        let base_style = if i == app.cell_detail.json_cursor {
             Style::default()
                 .bg(theme.row_selected_bg)
                 .fg(theme.text)

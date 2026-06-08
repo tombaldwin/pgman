@@ -21,7 +21,7 @@ impl App {
             grid_visible_rows: self.grid_visible_rows.clone(),
             last_run_sql: self.last_run_sql.clone(),
             grid_source: self.grid_source.clone(),
-            pinned_result: self.pinned_result.clone(),
+            pinned_result: self.diff.pinned.clone(),
         };
         if let Some(slot) = self.tabs.get_mut(self.active_tab) {
             *slot = snap;
@@ -50,7 +50,7 @@ impl App {
         self.grid_visible_rows = snap.grid_visible_rows;
         self.last_run_sql = snap.last_run_sql;
         self.grid_source = snap.grid_source;
-        self.pinned_result = snap.pinned_result;
+        self.diff.pinned = snap.pinned_result;
     }
 
     /// Close the transient result-diff overlay if one is open. Called
@@ -62,8 +62,8 @@ impl App {
         if self.mode == Mode::ResultDiff {
             self.mode = Mode::Normal;
         }
-        self.result_diff = None;
-        self.result_diff_cursor = 0;
+        self.diff.active = None;
+        self.diff.cursor = 0;
     }
 
     /// `Ctrl-T` — push a fresh tab and switch to it. Refuses

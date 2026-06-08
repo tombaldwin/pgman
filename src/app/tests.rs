@@ -58,7 +58,7 @@ fn f1_from_editor_opens_help() {
     a.editor_buffer = "select 1".into();
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::Help);
-    assert_eq!(a.help_origin, Some(Mode::Editor));
+    assert_eq!(a.help.origin, Some(Mode::Editor));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn f1_from_help_closes_back_to_origin_mode() {
     a.on_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
     // Restored to the source mode, not Normal.
     assert_eq!(a.mode, Mode::Editor);
-    assert!(a.help_origin.is_none());
+    assert!(a.help.origin.is_none());
 }
 
 #[test]
@@ -1324,7 +1324,7 @@ fn result_diff_d_with_empty_grid_errors() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = grid_of(&["id"], &[]);
     a.pin_or_diff_result();
-    assert!(a.pinned_result.is_none());
+    assert!(a.diff.pinned.is_none());
     assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
 }
 
@@ -1333,12 +1333,12 @@ fn result_diff_first_d_pins_baseline() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = sample_grid();
     a.pin_or_diff_result();
-    let p = a.pinned_result.as_ref().expect("baseline pinned");
+    let p = a.diff.pinned.as_ref().expect("baseline pinned");
     assert_eq!(p.rows.len(), 4);
     assert_eq!(p.columns, vec!["id".to_string(), "name".to_string()]);
     // Pinning alone doesn't open the diff view.
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.result_diff.is_none());
+    assert!(a.diff.active.is_none());
     assert!(a
         .last_status
         .as_deref()
@@ -1363,7 +1363,7 @@ fn result_diff_second_d_opens_diff_with_inferred_key() {
     );
     a.pin_or_diff_result(); // diffs
     assert_eq!(a.mode, Mode::ResultDiff);
-    let d = a.result_diff.as_ref().expect("diff computed");
+    let d = a.diff.active.as_ref().expect("diff computed");
     // id column (0) is unique on both sides → strong key.
     assert!(matches!(
         &d.key,
@@ -1374,7 +1374,7 @@ fn result_diff_second_d_opens_diff_with_inferred_key() {
     assert_eq!(d.diff.added.len(), 1, "id 99 new");
     assert_eq!(d.diff.unchanged, 2, "ids 1 and 10");
     // Baseline persists for iterative diffing.
-    assert!(a.pinned_result.is_some());
+    assert!(a.diff.pinned.is_some());
 }
 
 #[test]
@@ -1385,7 +1385,7 @@ fn result_diff_falls_back_to_full_row_when_columns_differ() {
     // B has a different column layout — cell-level keying is unsafe.
     a.grid = grid_of(&["id", "name", "extra"], &[&["1", "x", "y"]]);
     a.pin_or_diff_result();
-    let d = a.result_diff.as_ref().expect("diff computed");
+    let d = a.diff.active.as_ref().expect("diff computed");
     assert!(matches!(d.key, crate::query::row_diff::RowKey::FullRow));
 }
 
@@ -1399,9 +1399,9 @@ fn result_diff_r_repins_b_as_new_baseline() {
     assert_eq!(a.mode, Mode::ResultDiff);
     a.on_key(KeyEvent::from(KeyCode::Char('r')));
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.result_diff.is_none());
+    assert!(a.diff.active.is_none());
     // New baseline = the B side (two rows).
-    assert_eq!(a.pinned_result.as_ref().unwrap().rows.len(), 2);
+    assert_eq!(a.diff.pinned.as_ref().unwrap().rows.len(), 2);
 }
 
 #[test]
@@ -1412,8 +1412,8 @@ fn result_diff_c_clears_pin() {
     a.grid = grid_of(&["id"], &[&["2"]]);
     a.pin_or_diff_result();
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
-    assert!(a.pinned_result.is_none());
-    assert!(a.result_diff.is_none());
+    assert!(a.diff.pinned.is_none());
+    assert!(a.diff.active.is_none());
     assert_eq!(a.mode, Mode::Normal);
 }
 
@@ -1423,7 +1423,7 @@ fn result_diff_d_keybinding_pins_from_normal_mode() {
     a.mode = Mode::Normal;
     a.grid = sample_grid();
     a.on_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
-    assert!(a.pinned_result.is_some());
+    assert!(a.diff.pinned.is_some());
 }
 
 fn saved(name: &str, body: &str) -> crate::saved::SavedQuery {
@@ -1922,12 +1922,12 @@ fn open_cell_detail_parses_json_object_and_primes_tree() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
+    a.row_detail.field = 0;
     a.open_cell_detail();
     assert_eq!(a.mode, Mode::CellDetail);
     // Root + 2 members.
-    assert_eq!(a.json_cell_rows.len(), 3);
-    assert!(a.json_cell_value.is_some());
+    assert_eq!(a.cell_detail.json_rows.len(), 3);
+    assert!(a.cell_detail.json_value.is_some());
 }
 
 #[test]
@@ -1940,11 +1940,11 @@ fn open_cell_detail_leaves_tree_empty_for_non_json_cells() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
+    a.row_detail.field = 0;
     a.open_cell_detail();
     assert_eq!(a.mode, Mode::CellDetail);
-    assert!(a.json_cell_rows.is_empty());
-    assert!(a.json_cell_value.is_none());
+    assert!(a.cell_detail.json_rows.is_empty());
+    assert!(a.cell_detail.json_value.is_none());
 }
 
 #[test]
@@ -1957,20 +1957,20 @@ fn cell_detail_json_jk_moves_cursor_within_bounds() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
+    a.row_detail.field = 0;
     a.open_cell_detail();
     // 3 rows: root, .a, .b. Start at 0.
-    assert_eq!(a.json_cell_cursor, 0);
+    assert_eq!(a.cell_detail.json_cursor, 0);
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
-    assert_eq!(a.json_cell_cursor, 1);
+    assert_eq!(a.cell_detail.json_cursor, 1);
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
-    assert_eq!(a.json_cell_cursor, 2);
+    assert_eq!(a.cell_detail.json_cursor, 2);
     // Clamp at last row.
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
-    assert_eq!(a.json_cell_cursor, 2);
+    assert_eq!(a.cell_detail.json_cursor, 2);
     // k walks back.
     a.on_key(KeyEvent::from(KeyCode::Char('k')));
-    assert_eq!(a.json_cell_cursor, 1);
+    assert_eq!(a.cell_detail.json_cursor, 1);
 }
 
 #[test]
@@ -1983,23 +1983,28 @@ fn cell_detail_json_enter_collapses_focused_container() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
+    a.row_detail.field = 0;
     a.open_cell_detail();
     // Walk to .a (the nested object).
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
-    let path_at_cursor = a.json_cell_rows[a.json_cell_cursor].path.clone();
+    let path_at_cursor = a.cell_detail.json_rows[a.cell_detail.json_cursor]
+        .path
+        .clone();
     assert_eq!(path_at_cursor, ".a");
     // Expanded → collapsed reduces row count.
-    let expanded_count = a.json_cell_rows.len();
+    let expanded_count = a.cell_detail.json_rows.len();
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    assert!(a.json_cell_rows.len() < expanded_count);
-    assert!(a.json_cell_collapsed.contains(".a"));
+    assert!(a.cell_detail.json_rows.len() < expanded_count);
+    assert!(a.cell_detail.json_collapsed.contains(".a"));
     // Cursor stayed on .a (didn't drift to a sibling).
-    assert_eq!(a.json_cell_rows[a.json_cell_cursor].path, ".a");
+    assert_eq!(
+        a.cell_detail.json_rows[a.cell_detail.json_cursor].path,
+        ".a"
+    );
     // Toggle back: row count restored.
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    assert_eq!(a.json_cell_rows.len(), expanded_count);
-    assert!(!a.json_cell_collapsed.contains(".a"));
+    assert_eq!(a.cell_detail.json_rows.len(), expanded_count);
+    assert!(!a.cell_detail.json_collapsed.contains(".a"));
 }
 
 #[test]
@@ -2012,7 +2017,7 @@ fn cell_detail_json_esc_returns_to_row_detail() {
     };
     a.grid_visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
+    a.row_detail.field = 0;
     a.open_cell_detail();
     assert_eq!(a.mode, Mode::CellDetail);
     a.on_key(KeyEvent::from(KeyCode::Esc));
@@ -3094,18 +3099,18 @@ fn result_diff_pin_is_per_tab_and_does_not_leak() {
     };
     // Pin A on tab 1.
     a.pin_or_diff_result();
-    assert!(a.pinned_result.is_some(), "tab 1 should have a pinned A");
+    assert!(a.diff.pinned.is_some(), "tab 1 should have a pinned A");
     // A fresh tab must NOT inherit the pin — otherwise the first D
     // there diffs against an unrelated baseline.
     a.new_tab();
     assert!(
-        a.pinned_result.is_none(),
+        a.diff.pinned.is_none(),
         "a fresh tab must start with no pinned baseline"
     );
     // Returning to tab 1 restores its pin.
     a.cycle_tab(false);
     assert!(
-        a.pinned_result.is_some(),
+        a.diff.pinned.is_some(),
         "returning to tab 1 should restore its pinned baseline"
     );
 }
@@ -3126,7 +3131,7 @@ fn tab_switch_dismisses_an_open_result_diff_overlay() {
     a.new_tab();
     // The transient overlay must not survive onto the new tab.
     assert_eq!(a.mode, Mode::Normal);
-    assert!(a.result_diff.is_none());
+    assert!(a.diff.active.is_none());
 }
 
 #[test]
@@ -4267,7 +4272,7 @@ fn backslash_help_routes_to_help_overlay() {
     assert_eq!(a.mode, Mode::Help);
     // The Editor section is the active anchor since we came
     // from Editor.
-    assert_eq!(a.help_origin, Some(Mode::Editor));
+    assert_eq!(a.help.origin, Some(Mode::Editor));
 }
 
 #[test]
@@ -4655,7 +4660,7 @@ fn start_connection_change_with_picks_opens_picker() {
     a.mode = Mode::Normal;
     a.start_connection_change();
     assert_eq!(a.mode, Mode::ConnPick);
-    assert_eq!(a.data_source_pick_index, 0);
+    assert_eq!(a.conn_pick.index, 0);
 }
 
 #[test]
