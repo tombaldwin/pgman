@@ -154,7 +154,7 @@ fn grid_render_shows_sort_marker_on_focused_column() {
 fn tap_monitor_baseline_empty_prompts_for_shift_b() {
     let mut a = settle_app();
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Baseline;
+    a.tap_nav.view = pgman::app::TapView::Baseline;
     let buf = render(&mut a, 120, 30);
     let rendered = dump(&buf);
     assert!(
@@ -212,7 +212,7 @@ fn tap_monitor_baseline_view_after_capture_shows_diff_columns() {
         txn_outcome: None,
     });
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Baseline;
+    a.tap_nav.view = pgman::app::TapView::Baseline;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
     assert!(
@@ -259,7 +259,7 @@ fn tap_monitor_pools_view_renders_pool_rows() {
         });
     }
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Pools;
+    a.tap_nav.view = pgman::app::TapView::Pools;
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
     assert!(
@@ -534,8 +534,8 @@ fn tap_monitor_hotspots_view_groups_and_shows_sort() {
         });
     }
     a.mode = Mode::TapMonitor;
-    a.tap_view = pgman::app::TapView::Hotspots;
-    a.tap_sort = pgman::tap::HotspotSort::CallCount;
+    a.tap_nav.view = pgman::app::TapView::Hotspots;
+    a.tap_nav.sort = pgman::tap::HotspotSort::CallCount;
     let buf = render(&mut a, 140, 24);
     let rendered = dump(&buf);
     assert!(

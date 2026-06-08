@@ -3886,7 +3886,7 @@ fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
 
 /// JDBC-tap event monitor (`F4` from anywhere). Dispatches
 /// to the recency list (L1) or the hotspots grouped view
-/// (L2) depending on `app.tap_view`. Shift-G toggles between
+/// (L2) depending on `app.tap_nav.view`. Shift-G toggles between
 /// them; `c` clears the ring; `q`/esc close.
 fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
@@ -3898,7 +3898,7 @@ fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     } else {
         String::new()
     };
-    let view_label = match app.tap_view {
+    let view_label = match app.tap_nav.view {
         crate::app::TapView::List => "list",
         crate::app::TapView::Hotspots => "hotspots",
         crate::app::TapView::Callers => "callers",
@@ -3908,10 +3908,10 @@ fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         crate::app::TapView::Baseline => "baseline",
     };
     let sort_suffix = if matches!(
-        app.tap_view,
+        app.tap_nav.view,
         crate::app::TapView::Hotspots | crate::app::TapView::Callers
     ) {
-        format!(" · sort: {}", app.tap_sort.label())
+        format!(" · sort: {}", app.tap_nav.sort.label())
     } else {
         String::new()
     };
@@ -3926,7 +3926,7 @@ fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    match app.tap_view {
+    match app.tap_nav.view {
         crate::app::TapView::Hotspots => draw_tap_monitor_hotspots(f, inner, app),
         crate::app::TapView::Callers => draw_tap_monitor_callers(f, inner, app),
         crate::app::TapView::Transactions => draw_tap_monitor_txns(f, inner, app),
@@ -3969,7 +3969,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
     let visible_h = inner.height as usize;
     // Cap cursor against the list len so a recent eviction
     // doesn't park us past the end.
-    let cursor = app.tap_events_cursor.min(app.tap_events.len() - 1);
+    let cursor = app.tap_nav.events_cursor.min(app.tap_events.len() - 1);
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {
@@ -4054,7 +4054,7 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
         return;
     }
     let visible_h = inner.height as usize;
-    let cursor = app.tap_hotspots_cursor.min(hotspots.len() - 1);
+    let cursor = app.tap_nav.hotspots_cursor.min(hotspots.len() - 1);
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {
@@ -4138,7 +4138,7 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
         return;
     }
     let visible_h = inner.height as usize;
-    let cursor = app.tap_callers_cursor.min(groups.len() - 1);
+    let cursor = app.tap_nav.callers_cursor.min(groups.len() - 1);
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {
@@ -4285,7 +4285,7 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
     let visible_h = inner.height as usize;
     let header_h = header_lines.len();
     let table_h = visible_h.saturating_sub(header_h + 1);
-    let cursor = app.tap_baseline_cursor.min(diffs.len() - 1);
+    let cursor = app.tap_nav.baseline_cursor.min(diffs.len() - 1);
     let scroll = if cursor >= table_h {
         cursor + 1 - table_h
     } else {
@@ -4409,7 +4409,7 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
         return;
     }
     let visible_h = inner.height as usize;
-    let cursor = app.tap_txns_cursor.min(txns.len() - 1);
+    let cursor = app.tap_nav.txns_cursor.min(txns.len() - 1);
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {
@@ -4510,7 +4510,7 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
     // `inner.height - 1` rows. Anchor the scroll on that height, else
     // the focused last pool lands one row past the visible window.
     let body_h = (inner.height as usize).saturating_sub(1);
-    let cursor = app.tap_pools_cursor.min(pools.len() - 1);
+    let cursor = app.tap_nav.pools_cursor.min(pools.len() - 1);
     let scroll = if cursor >= body_h {
         cursor + 1 - body_h
     } else {
@@ -4586,7 +4586,7 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
         return;
     }
     let visible_h = inner.height as usize;
-    let cursor = app.tap_nplus1_cursor.min(findings.len() - 1);
+    let cursor = app.tap_nav.nplus1_cursor.min(findings.len() - 1);
     let scroll = if cursor >= visible_h {
         cursor + 1 - visible_h
     } else {

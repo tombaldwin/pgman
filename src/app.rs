@@ -1259,6 +1259,34 @@ pub struct PendingRun {
     pub summary: Option<String>,
 }
 
+/// Tap-monitor navigation state — the active sub-view, sort, and the
+/// per-view cursors. Grouped so the cursors reset together (see
+/// `reset_cursors`) instead of being hand-listed at each call site.
+#[derive(Debug, Default)]
+pub struct TapNavState {
+    pub view: TapView,                 // was tap_view
+    pub sort: crate::tap::HotspotSort, // was tap_sort
+    pub events_cursor: usize,          // was tap_events_cursor
+    pub hotspots_cursor: usize,
+    pub callers_cursor: usize,
+    pub txns_cursor: usize,
+    pub pools_cursor: usize,
+    pub baseline_cursor: usize,
+    pub nplus1_cursor: usize,
+}
+impl TapNavState {
+    /// Reset every per-view cursor to the top (the ring backs all views).
+    pub fn reset_cursors(&mut self) {
+        self.events_cursor = 0;
+        self.hotspots_cursor = 0;
+        self.callers_cursor = 0;
+        self.txns_cursor = 0;
+        self.pools_cursor = 0;
+        self.baseline_cursor = 0;
+        self.nplus1_cursor = 0;
+    }
+}
+
 pub struct App {
     pub theme: Theme,
     pub mode: Mode,
@@ -1389,33 +1417,16 @@ pub struct App {
     /// end. Heartbeat events don't land here — they update
     /// `tap_health` instead. Capped at `TAP_CAP`.
     pub tap_events: std::collections::VecDeque<crate::tap::TapEvent>,
-    /// Cursor into `tap_events` for the `Mode::TapMonitor` panel.
-    pub tap_events_cursor: usize,
+    /// Tap-monitor navigation state — active sub-view, sort, and the
+    /// per-view cursors (including the cursor into `tap_events`).
+    pub tap_nav: TapNavState,
     /// Liveness + backpressure-loss tracker fed by tap
     /// heartbeats. Lets the chrome badge distinguish "JAR
     /// connected, no traffic" from "JAR gone."
     pub tap_health: TapHealth,
-    /// Which TapMonitor view the operator is on — list of recent
-    /// events (default) or grouped hotspots. Toggled with `G`.
-    pub tap_view: TapView,
-    /// Sort mode for the hotspots view. Cycles via `s`.
-    pub tap_sort: crate::tap::HotspotSort,
-    /// Cursor into the rendered hotspots list (not the raw ring).
-    /// Re-clamped each frame against the current grouping.
-    pub tap_hotspots_cursor: usize,
-    /// Cursor into the rendered N+1 findings list.
-    pub tap_nplus1_cursor: usize,
-    /// Cursor into the rendered per-caller rollup list.
-    pub tap_callers_cursor: usize,
-    /// Cursor into the rendered transaction-stats list.
-    pub tap_txns_cursor: usize,
-    /// Cursor into the rendered per-pool stats list.
-    pub tap_pools_cursor: usize,
     /// Captured hotspots snapshot for the baseline-diff view.
     /// `None` until the operator presses `B`.
     pub tap_baseline: Option<TapBaseline>,
-    /// Cursor into the rendered baseline-diff list.
-    pub tap_baseline_cursor: usize,
     /// Persisted saved queries — loaded at startup, written back
     /// on quit (and on save / delete during the session).
     pub saved_queries: crate::saved::SavedQueries,
@@ -1694,17 +1705,9 @@ impl App {
             notifications: Vec::new(),
             notifications_cursor: 0,
             tap_events: std::collections::VecDeque::new(),
-            tap_events_cursor: 0,
+            tap_nav: TapNavState::default(),
             tap_health: TapHealth::default(),
-            tap_view: TapView::default(),
-            tap_sort: crate::tap::HotspotSort::default(),
-            tap_hotspots_cursor: 0,
-            tap_nplus1_cursor: 0,
-            tap_callers_cursor: 0,
-            tap_txns_cursor: 0,
-            tap_pools_cursor: 0,
             tap_baseline: None,
-            tap_baseline_cursor: 0,
             saved_queries: crate::saved::SavedQueries::default(),
             saved_queries_cursor: 0,
             save_query_name: String::new(),
@@ -2364,7 +2367,7 @@ impl App {
                     // Cursor follows the eviction so a viewer
                     // parked on the oldest row doesn't suddenly
                     // jump forward in content.
-                    self.tap_events_cursor = self.tap_events_cursor.saturating_sub(1);
+                    self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(1);
                 }
             }
         }
@@ -2601,13 +2604,7 @@ impl App {
     fn clear_tap_ring(&mut self) {
         let n = self.tap_events.len();
         self.tap_events.clear();
-        self.tap_events_cursor = 0;
-        self.tap_hotspots_cursor = 0;
-        self.tap_callers_cursor = 0;
-        self.tap_txns_cursor = 0;
-        self.tap_pools_cursor = 0;
-        self.tap_nplus1_cursor = 0;
-        self.tap_baseline_cursor = 0;
+        self.tap_nav.reset_cursors();
         self.last_status = Some(format!("cleared {n} tap event(s)"));
     }
 
@@ -2644,7 +2641,7 @@ impl App {
             captured_listener_dropped: crate::tap::dropped_at_listener(),
             hotspots,
         });
-        self.tap_baseline_cursor = 0;
+        self.tap_nav.baseline_cursor = 0;
         self.last_status = Some(summary);
     }
 
@@ -2676,8 +2673,8 @@ impl App {
     /// line so the operator confirms the switch happened.
     /// Each view re-clamps its own cursor.
     fn cycle_tap_view(&mut self) {
-        self.tap_view = self.tap_view.next();
-        match self.tap_view {
+        self.tap_nav.view = self.tap_nav.view.next();
+        match self.tap_nav.view {
             TapView::List => {
                 self.last_status = Some(format!(
                     "tap view · list ({} event(s))",
@@ -2685,21 +2682,21 @@ impl App {
                 ));
             }
             TapView::Hotspots => {
-                self.tap_hotspots_cursor = 0;
+                self.tap_nav.hotspots_cursor = 0;
                 self.last_status = Some(format!(
                     "tap view · hotspots · sort: {}",
-                    self.tap_sort.label()
+                    self.tap_nav.sort.label()
                 ));
             }
             TapView::Callers => {
-                self.tap_callers_cursor = 0;
+                self.tap_nav.callers_cursor = 0;
                 self.last_status = Some(format!(
                     "tap view · callers · sort: {}",
-                    self.tap_sort.label()
+                    self.tap_nav.sort.label()
                 ));
             }
             TapView::Transactions => {
-                self.tap_txns_cursor = 0;
+                self.tap_nav.txns_cursor = 0;
                 let txns = self.current_txns();
                 let open = txns.iter().filter(|t| t.is_open()).count();
                 self.last_status = Some(format!(
@@ -2709,17 +2706,17 @@ impl App {
                 ));
             }
             TapView::Pools => {
-                self.tap_pools_cursor = 0;
+                self.tap_nav.pools_cursor = 0;
                 let pools = self.current_pools();
                 self.last_status = Some(format!("tap view · pools · {} pool(s)", pools.len()));
             }
             TapView::NplusOne => {
-                self.tap_nplus1_cursor = 0;
+                self.tap_nav.nplus1_cursor = 0;
                 let findings = self.current_nplus1();
                 self.last_status = Some(format!("tap view · N+1 · {} finding(s)", findings.len()));
             }
             TapView::Baseline => {
-                self.tap_baseline_cursor = 0;
+                self.tap_nav.baseline_cursor = 0;
                 let summary = match self.tap_baseline.as_ref() {
                     Some(b) => format!(
                         "tap view · baseline diff · {} fingerprint(s) captured · {} changed",
@@ -2738,7 +2735,7 @@ impl App {
     /// Cheap relative to the rest of the frame budget — ~2k
     /// events × one fingerprint each is sub-millisecond.
     pub fn current_hotspots(&self) -> Vec<crate::tap::Hotspot> {
-        crate::tap::group_hotspots(self.tap_events.iter(), self.tap_sort)
+        crate::tap::group_hotspots(self.tap_events.iter(), self.tap_nav.sort)
     }
 
     /// Compute the current N+1 findings — called by the panel
@@ -2758,7 +2755,7 @@ impl App {
     /// is the innermost caller frame instead of the SQL
     /// fingerprint.
     pub fn current_callers(&self) -> Vec<crate::tap::CallerStats> {
-        crate::tap::group_by_caller(self.tap_events.iter(), self.tap_sort)
+        crate::tap::group_by_caller(self.tap_events.iter(), self.tap_nav.sort)
     }
 
     /// Copy the focused notification's payload to the clipboard.
@@ -8701,7 +8698,7 @@ mod tests {
             });
         }
         // Cursor parked on the oldest row.
-        a.tap_events_cursor = 0;
+        a.tap_nav.events_cursor = 0;
         let oldest_sql = a.tap_events.front().and_then(|e| e.sql.clone());
         assert_eq!(oldest_sql.as_deref(), Some("q0"));
         // One more event evicts q0; cursor stays in-bounds and
@@ -8715,7 +8712,7 @@ mod tests {
             Some("q1")
         );
         // Cursor decremented to follow the eviction.
-        assert_eq!(a.tap_events_cursor, 0);
+        assert_eq!(a.tap_nav.events_cursor, 0);
     }
 
     #[test]
@@ -8771,10 +8768,10 @@ mod tests {
             });
         }
         a.start_tap_monitor();
-        a.tap_events_cursor = 2;
+        a.tap_nav.events_cursor = 2;
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_events_cursor, 0);
+        assert_eq!(a.tap_nav.events_cursor, 0);
         assert_eq!(a.last_status.as_deref(), Some("cleared 3 tap event(s)"));
     }
 
@@ -8785,31 +8782,31 @@ mod tests {
             event: tap_query("SELECT 1", 1),
         });
         a.start_tap_monitor();
-        assert_eq!(a.tap_view, TapView::List);
+        assert_eq!(a.tap_nav.view, TapView::List);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::Hotspots);
+        assert_eq!(a.tap_nav.view, TapView::Hotspots);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::Callers);
+        assert_eq!(a.tap_nav.view, TapView::Callers);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::Transactions);
+        assert_eq!(a.tap_nav.view, TapView::Transactions);
         let status = a.last_status.as_deref().unwrap_or("");
         assert!(
             status.contains("transactions"),
             "expected transactions in status: {status}"
         );
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::Pools);
+        assert_eq!(a.tap_nav.view, TapView::Pools);
         let status = a.last_status.as_deref().unwrap_or("");
         assert!(
             status.contains("pools"),
             "expected pools in status: {status}"
         );
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::NplusOne);
+        assert_eq!(a.tap_nav.view, TapView::NplusOne);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::Baseline);
+        assert_eq!(a.tap_nav.view, TapView::Baseline);
         a.on_key(KeyEvent::from(KeyCode::Char('v')));
-        assert_eq!(a.tap_view, TapView::List);
+        assert_eq!(a.tap_nav.view, TapView::List);
     }
 
     #[test]
@@ -8829,18 +8826,18 @@ mod tests {
             a.on_msg(AppMsg::TapEvent { event: e });
         }
         a.start_tap_monitor();
-        a.tap_view = TapView::Pools;
+        a.tap_nav.view = TapView::Pools;
         let pools = a.current_pools();
         assert_eq!(pools.len(), 2);
         // Navigation clamps to the last row.
         a.on_key(KeyEvent::from(KeyCode::Char('G')));
-        assert_eq!(a.tap_pools_cursor, 1);
+        assert_eq!(a.tap_nav.pools_cursor, 1);
         a.on_key(KeyEvent::from(KeyCode::Char('k')));
-        assert_eq!(a.tap_pools_cursor, 0);
+        assert_eq!(a.tap_nav.pools_cursor, 0);
         // `c` clears the ring from the pools view too.
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_pools_cursor, 0);
+        assert_eq!(a.tap_nav.pools_cursor, 0);
         assert!(a.current_pools().is_empty());
     }
 
@@ -8861,17 +8858,17 @@ mod tests {
         e.received_at_unix_micros = 100;
         a.on_msg(AppMsg::TapEvent { event: e });
         a.start_tap_monitor();
-        a.tap_view = TapView::Transactions;
+        a.tap_nav.view = TapView::Transactions;
         let txns = a.current_txns();
         assert_eq!(txns.len(), 2);
         assert!(txns.iter().all(|t| t.is_open()));
         // c-1#a has the bigger span (0..2 = 2µs) so sorts first.
         assert_eq!(txns[0].txn.as_deref(), Some("c-1#a"));
         // c clears the ring → 0 transactions.
-        a.tap_txns_cursor = 1;
+        a.tap_nav.txns_cursor = 1;
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.current_txns().is_empty());
-        assert_eq!(a.tap_txns_cursor, 0);
+        assert_eq!(a.tap_nav.txns_cursor, 0);
     }
 
     #[test]
@@ -8893,21 +8890,21 @@ mod tests {
             a.on_msg(AppMsg::TapEvent { event: e });
         }
         a.start_tap_monitor();
-        a.tap_view = TapView::Callers;
+        a.tap_nav.view = TapView::Callers;
         let groups = a.current_callers();
         assert_eq!(groups.len(), 2);
         // TotalTime sort default — OrderService bucket wins (100+200=300 > 50).
         assert_eq!(groups[0].caller, "OrderService.findById:42");
         // `s` cycles to CallCount; OrderService also wins (2 > 1).
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_sort, crate::tap::HotspotSort::CallCount);
+        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::CallCount);
         let status = a.last_status.as_deref().unwrap_or("");
         assert!(status.contains("callers · sort"), "got: {status}");
         // `c` clears; cursors reset.
-        a.tap_callers_cursor = 1;
+        a.tap_nav.callers_cursor = 1;
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.current_callers().is_empty());
-        assert_eq!(a.tap_callers_cursor, 0);
+        assert_eq!(a.tap_nav.callers_cursor, 0);
     }
 
     #[test]
@@ -8962,7 +8959,7 @@ mod tests {
         });
         a.start_tap_monitor();
         a.on_key(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
-        a.tap_view = TapView::Baseline;
+        a.tap_nav.view = TapView::Baseline;
         // c clears the ring; the captured snapshot survives
         // (operator might want to re-fill the ring against
         // the same baseline post-deploy).
@@ -9026,14 +9023,14 @@ mod tests {
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Pools
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → NplusOne
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → Baseline
-        assert_eq!(a.tap_view, TapView::Baseline);
+        assert_eq!(a.tap_nav.view, TapView::Baseline);
         let status = a.last_status.as_deref().unwrap_or("");
         assert!(
             status.contains("baseline diff"),
             "expected baseline-diff status: {status}"
         );
         a.on_key(KeyEvent::from(KeyCode::Char('v'))); // → back to List
-        assert_eq!(a.tap_view, TapView::List);
+        assert_eq!(a.tap_nav.view, TapView::List);
     }
 
     #[test]
@@ -9049,18 +9046,18 @@ mod tests {
             a.on_msg(AppMsg::TapEvent { event: e });
         }
         a.start_tap_monitor();
-        a.tap_view = TapView::NplusOne;
+        a.tap_nav.view = TapView::NplusOne;
         let findings = a.current_nplus1();
         assert_eq!(findings.len(), 1);
         // Down past the end clamps.
         for _ in 0..5 {
             a.on_key(KeyEvent::from(KeyCode::Char('j')));
         }
-        assert_eq!(a.tap_nplus1_cursor, 0);
+        assert_eq!(a.tap_nav.nplus1_cursor, 0);
         // c clears the ring → no findings.
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.current_nplus1().is_empty());
-        assert_eq!(a.tap_nplus1_cursor, 0);
+        assert_eq!(a.tap_nav.nplus1_cursor, 0);
     }
 
     #[test]
@@ -9074,12 +9071,12 @@ mod tests {
         a.start_tap_monitor();
         // List view: `G` jumps to last row.
         a.on_key(KeyEvent::from(KeyCode::Char('G')));
-        assert_eq!(a.tap_events_cursor, 4);
+        assert_eq!(a.tap_nav.events_cursor, 4);
         // Toggle to hotspots; `G` jumps within the hotspot list.
-        a.tap_view = TapView::Hotspots;
+        a.tap_nav.view = TapView::Hotspots;
         a.on_key(KeyEvent::from(KeyCode::Char('G')));
         let hotspots = a.current_hotspots();
-        assert_eq!(a.tap_hotspots_cursor, hotspots.len().saturating_sub(1));
+        assert_eq!(a.tap_nav.hotspots_cursor, hotspots.len().saturating_sub(1));
     }
 
     #[test]
@@ -9089,24 +9086,24 @@ mod tests {
             event: tap_query("SELECT 1", 1),
         });
         a.start_tap_monitor();
-        a.tap_view = TapView::Hotspots;
-        assert_eq!(a.tap_sort, crate::tap::HotspotSort::TotalTime);
+        a.tap_nav.view = TapView::Hotspots;
+        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_sort, crate::tap::HotspotSort::CallCount);
+        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::CallCount);
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_sort, crate::tap::HotspotSort::P95Latency);
+        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::P95Latency);
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_sort, crate::tap::HotspotSort::TotalTime);
+        assert_eq!(a.tap_nav.sort, crate::tap::HotspotSort::TotalTime);
     }
 
     #[test]
     fn tap_monitor_s_in_list_view_is_a_noop() {
         let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
         a.start_tap_monitor();
-        let sort_before = a.tap_sort;
+        let sort_before = a.tap_nav.sort;
         a.on_key(KeyEvent::from(KeyCode::Char('s')));
-        assert_eq!(a.tap_sort, sort_before, "list view ignores `s`");
-        assert_eq!(a.tap_view, TapView::List);
+        assert_eq!(a.tap_nav.sort, sort_before, "list view ignores `s`");
+        assert_eq!(a.tap_nav.view, TapView::List);
     }
 
     #[test]
@@ -9118,13 +9115,13 @@ mod tests {
             });
         }
         a.start_tap_monitor();
-        a.tap_view = TapView::Hotspots;
-        a.tap_hotspots_cursor = 2;
-        a.tap_events_cursor = 2;
+        a.tap_nav.view = TapView::Hotspots;
+        a.tap_nav.hotspots_cursor = 2;
+        a.tap_nav.events_cursor = 2;
         a.on_key(KeyEvent::from(KeyCode::Char('c')));
         assert!(a.tap_events.is_empty());
-        assert_eq!(a.tap_hotspots_cursor, 0);
-        assert_eq!(a.tap_events_cursor, 0);
+        assert_eq!(a.tap_nav.hotspots_cursor, 0);
+        assert_eq!(a.tap_nav.events_cursor, 0);
     }
 
     #[test]
@@ -9140,10 +9137,10 @@ mod tests {
         let mut spike = tap_query("SELECT b FROM t_b", 1_000_000);
         spike.duration_micros = Some(1_000_000);
         a.on_msg(AppMsg::TapEvent { event: spike });
-        a.tap_sort = crate::tap::HotspotSort::TotalTime;
+        a.tap_nav.sort = crate::tap::HotspotSort::TotalTime;
         let by_total = a.current_hotspots();
         assert_eq!(by_total[0].count, 1, "expensive spike wins on total time");
-        a.tap_sort = crate::tap::HotspotSort::CallCount;
+        a.tap_nav.sort = crate::tap::HotspotSort::CallCount;
         let by_count = a.current_hotspots();
         assert_eq!(by_count[0].count, 50, "cheap bucket wins on call count");
     }
@@ -9161,12 +9158,12 @@ mod tests {
         for _ in 0..10 {
             a.on_key(KeyEvent::from(KeyCode::Char('j')));
         }
-        assert_eq!(a.tap_events_cursor, 2);
+        assert_eq!(a.tap_nav.events_cursor, 2);
         // Up past the start clamps to 0.
         for _ in 0..10 {
             a.on_key(KeyEvent::from(KeyCode::Char('k')));
         }
-        assert_eq!(a.tap_events_cursor, 0);
+        assert_eq!(a.tap_nav.events_cursor, 0);
     }
 
     #[test]
