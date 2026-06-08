@@ -309,22 +309,24 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // Find the widest origin tag so the DSN column lines up.
     let origin_width = app
-        .data_source_picks
+        .conn_pick
+        .picks
         .iter()
         .map(|p| p.origin.len())
         .max()
         .unwrap_or(0);
     let lines: Vec<Line> = app
-        .data_source_picks
+        .conn_pick
+        .picks
         .iter()
         .enumerate()
         .map(|(i, pick)| {
-            let prefix = if i == app.data_source_pick_index {
+            let prefix = if i == app.conn_pick.index {
                 "▶ "
             } else {
                 "  "
             };
-            let style = if i == app.data_source_pick_index {
+            let style = if i == app.conn_pick.index {
                 Style::default()
                     .bg(theme.row_selected_bg)
                     .fg(theme.text)
@@ -347,8 +349,8 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
 
     let title = format!(
         " pick a connection · {}/{} ",
-        app.data_source_pick_index + 1,
-        app.data_source_picks.len()
+        app.conn_pick.index + 1,
+        app.conn_pick.picks.len()
     );
     let h = (lines.len() as u16 + 2)
         .min(area.height.saturating_sub(2))
@@ -375,18 +377,18 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     // section the first time draw runs (`help_scroll` is reset to 0
     // by `open_help_from`; we detect that as "anchor not applied
     // yet" and set it once, then clear the origin).
-    if let Some(origin) = app.help_origin {
-        if app.help_scroll == 0 {
+    if let Some(origin) = app.help.origin {
+        if app.help.scroll == 0 {
             if let Some(anchor) = App::help_anchor_for(origin) {
                 if let Some(&row) = anchors.get(anchor) {
-                    app.help_scroll = row;
+                    app.help.scroll = row;
                 }
             }
         }
         // Consume the origin AFTER we've used it to position the
         // scroll. Subsequent draws (j/k navigation) shouldn't snap
         // back to the anchor.
-        app.help_origin = None;
+        app.help.origin = None;
     }
     let popup = centered_pct(area, 70, 70);
     f.render_widget(Clear, popup);
@@ -396,8 +398,8 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let total_lines = lines.len() as u16;
     let inner_height = popup.height.saturating_sub(4);
     let max_scroll = total_lines.saturating_sub(inner_height);
-    app.help_max_scroll = max_scroll;
-    let effective_scroll = app.help_scroll.min(max_scroll);
+    app.help.max_scroll = max_scroll;
+    let effective_scroll = app.help.scroll.min(max_scroll);
 
     let help = Paragraph::new(lines)
         .wrap(Wrap { trim: false })

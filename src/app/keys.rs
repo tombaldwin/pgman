@@ -536,26 +536,26 @@ impl App {
     /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
     /// the focused field (`Mode::CellDetail`); Esc/q close.
     pub(super) fn on_row_detail_key(&mut self, key: KeyEvent) {
-        let last = self.row_detail_field_count.saturating_sub(1);
+        let last = self.row_detail.field_count.saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
-                self.row_detail_scroll = 0;
+                self.row_detail.scroll = 0;
             }
             KeyCode::Enter => self.open_cell_detail(),
             KeyCode::Char('j') | KeyCode::Down => {
-                self.row_detail_field = (self.row_detail_field + 1).min(last);
+                self.row_detail.field = (self.row_detail.field + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.row_detail_field = self.row_detail_field.saturating_sub(1);
+                self.row_detail.field = self.row_detail.field.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.row_detail_field = 0,
-            KeyCode::Char('G') | KeyCode::End => self.row_detail_field = last,
+            KeyCode::Char('g') | KeyCode::Home => self.row_detail.field = 0,
+            KeyCode::Char('G') | KeyCode::End => self.row_detail.field = last,
             KeyCode::PageDown => {
-                self.row_detail_field = (self.row_detail_field + 10).min(last);
+                self.row_detail.field = (self.row_detail.field + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.row_detail_field = self.row_detail_field.saturating_sub(10);
+                self.row_detail.field = self.row_detail.field.saturating_sub(10);
             }
             KeyCode::Char('y') => self.yank_focused_field(),
             _ => {}
@@ -571,7 +571,7 @@ impl App {
     ///     whole value. Same shortcut, different semantics.
     /// Esc/q always pops back to the row view.
     pub(super) fn on_cell_detail_key(&mut self, key: KeyEvent) {
-        if !self.json_cell_rows.is_empty() {
+        if !self.cell_detail.json_rows.is_empty() {
             self.on_cell_detail_json_key(key);
         } else {
             self.on_cell_detail_text_key(key);
@@ -582,29 +582,31 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
                 self.mode = Mode::RowDetail;
-                self.cell_detail_scroll = 0;
+                self.cell_detail.scroll = 0;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.cell_detail_scroll = self
-                    .cell_detail_scroll
+                self.cell_detail.scroll = self
+                    .cell_detail
+                    .scroll
                     .saturating_add(1)
-                    .min(self.cell_detail_max_scroll);
+                    .min(self.cell_detail.max_scroll);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.cell_detail_scroll = self.cell_detail_scroll.saturating_sub(1);
+                self.cell_detail.scroll = self.cell_detail.scroll.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.cell_detail_scroll = 0,
+            KeyCode::Char('g') | KeyCode::Home => self.cell_detail.scroll = 0,
             KeyCode::Char('G') | KeyCode::End => {
-                self.cell_detail_scroll = self.cell_detail_max_scroll;
+                self.cell_detail.scroll = self.cell_detail.max_scroll;
             }
             KeyCode::PageDown => {
-                self.cell_detail_scroll = self
-                    .cell_detail_scroll
+                self.cell_detail.scroll = self
+                    .cell_detail
+                    .scroll
                     .saturating_add(10)
-                    .min(self.cell_detail_max_scroll);
+                    .min(self.cell_detail.max_scroll);
             }
             KeyCode::PageUp => {
-                self.cell_detail_scroll = self.cell_detail_scroll.saturating_sub(10);
+                self.cell_detail.scroll = self.cell_detail.scroll.saturating_sub(10);
             }
             KeyCode::Char('y') => self.yank_focused_field(),
             _ => {}
@@ -612,25 +614,25 @@ impl App {
     }
 
     pub(super) fn on_cell_detail_json_key(&mut self, key: KeyEvent) {
-        let last = self.json_cell_rows.len().saturating_sub(1);
+        let last = self.cell_detail.json_rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::RowDetail;
-                self.cell_detail_scroll = 0;
+                self.cell_detail.scroll = 0;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.json_cell_cursor = (self.json_cell_cursor + 1).min(last);
+                self.cell_detail.json_cursor = (self.cell_detail.json_cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.json_cell_cursor = self.json_cell_cursor.saturating_sub(1);
+                self.cell_detail.json_cursor = self.cell_detail.json_cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.json_cell_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.json_cell_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.cell_detail.json_cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.cell_detail.json_cursor = last,
             KeyCode::PageDown => {
-                self.json_cell_cursor = (self.json_cell_cursor + 10).min(last);
+                self.cell_detail.json_cursor = (self.cell_detail.json_cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.json_cell_cursor = self.json_cell_cursor.saturating_sub(10);
+                self.cell_detail.json_cursor = self.cell_detail.json_cursor.saturating_sub(10);
             }
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('h') | KeyCode::Char('l') => {
                 self.toggle_json_cell_node()
@@ -643,21 +645,21 @@ impl App {
     /// Connection picker (startup): j/k navigate, Enter selects + connects,
     /// Esc/q quits since there's nothing else to do without a connection.
     pub(super) fn on_conn_pick_key(&mut self, key: KeyEvent) {
-        let last = self.data_source_picks.len().saturating_sub(1);
+        let last = self.conn_pick.picks.len().saturating_sub(1);
         match key.code {
             // q (and Ctrl-C) quit; Esc is a no-op so a reflex press
             // can't abandon the picker by accident.
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
-                self.data_source_pick_index = (self.data_source_pick_index + 1).min(last);
+                self.conn_pick.index = (self.conn_pick.index + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.data_source_pick_index = self.data_source_pick_index.saturating_sub(1);
+                self.conn_pick.index = self.conn_pick.index.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.data_source_pick_index = 0,
-            KeyCode::Char('G') | KeyCode::End => self.data_source_pick_index = last,
+            KeyCode::Char('g') | KeyCode::Home => self.conn_pick.index = 0,
+            KeyCode::Char('G') | KeyCode::End => self.conn_pick.index = last,
             KeyCode::Enter => {
-                if let Some(pick) = self.data_source_picks.get(self.data_source_pick_index) {
+                if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index) {
                     let dsn = pick.dsn.clone();
                     // Re-resolve safety profile against the *picked* db name
                     // — the placeholder in App::new used the empty default.
@@ -683,29 +685,30 @@ impl App {
                 // Restore the mode the operator was in when they
                 // opened help. Legacy `?`-from-Normal (no origin
                 // captured) falls back to Normal.
-                self.mode = self.help_origin.take().unwrap_or(Mode::Normal);
-                self.help_scroll = 0;
+                self.mode = self.help.origin.take().unwrap_or(Mode::Normal);
+                self.help.scroll = 0;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.help_scroll = self.help_scroll.saturating_add(1).min(self.help_max_scroll);
+                self.help.scroll = self.help.scroll.saturating_add(1).min(self.help.max_scroll);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.help_scroll = self.help_scroll.saturating_sub(1);
+                self.help.scroll = self.help.scroll.saturating_sub(1);
             }
             KeyCode::Char('g') | KeyCode::Home => {
-                self.help_scroll = 0;
+                self.help.scroll = 0;
             }
             KeyCode::Char('G') | KeyCode::End => {
-                self.help_scroll = self.help_max_scroll;
+                self.help.scroll = self.help.max_scroll;
             }
             KeyCode::PageDown => {
-                self.help_scroll = self
-                    .help_scroll
+                self.help.scroll = self
+                    .help
+                    .scroll
                     .saturating_add(10)
-                    .min(self.help_max_scroll);
+                    .min(self.help.max_scroll);
             }
             KeyCode::PageUp => {
-                self.help_scroll = self.help_scroll.saturating_sub(10);
+                self.help.scroll = self.help.scroll.saturating_sub(10);
             }
             _ => {}
         }
@@ -765,9 +768,9 @@ impl App {
                 // two candidates — otherwise the picker would just show
                 // the same DSN that just failed, and Enter would retry it
                 // (already on `r`).
-                KeyCode::Char('p') if self.data_source_picks.len() >= 2 => {
+                KeyCode::Char('p') if self.conn_pick.picks.len() >= 2 => {
                     self.mode = Mode::ConnPick;
-                    self.data_source_pick_index = 0;
+                    self.conn_pick.index = 0;
                     return;
                 }
                 _ => {}
@@ -1008,7 +1011,8 @@ impl App {
 
     pub(super) fn on_result_diff_key(&mut self, key: KeyEvent) {
         let last = self
-            .result_diff
+            .diff
+            .active
             .as_ref()
             .map(|d| diff_row_count(&d.diff).saturating_sub(1))
             .unwrap_or(0);
@@ -1018,37 +1022,37 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.result_diff_cursor = (self.result_diff_cursor + 1).min(last);
+                self.diff.cursor = (self.diff.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.result_diff_cursor = self.result_diff_cursor.saturating_sub(1);
+                self.diff.cursor = self.diff.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.result_diff_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.result_diff_cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.diff.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.diff.cursor = last,
             KeyCode::PageDown => {
-                self.result_diff_cursor = (self.result_diff_cursor + 10).min(last);
+                self.diff.cursor = (self.diff.cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.result_diff_cursor = self.result_diff_cursor.saturating_sub(10);
+                self.diff.cursor = self.diff.cursor.saturating_sub(10);
             }
             // `r` re-pins the B side as the new baseline A, so the
             // operator can iterate: tweak → run → D → r → repeat.
             KeyCode::Char('r') => {
-                if let Some(d) = self.result_diff.as_ref() {
-                    self.pinned_result = Some(PinnedResult {
+                if let Some(d) = self.diff.active.as_ref() {
+                    self.diff.pinned = Some(PinnedResult {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
                         label: d.b_label.clone(),
                     });
                     self.mode = Mode::Normal;
-                    self.result_diff = None;
+                    self.diff.active = None;
                     self.last_status = Some("re-pinned current result as A".into());
                 }
             }
             // `c` clears the pinned baseline entirely.
             KeyCode::Char('c') => {
-                self.pinned_result = None;
-                self.result_diff = None;
+                self.diff.pinned = None;
+                self.diff.active = None;
                 self.mode = Mode::Normal;
                 self.last_status = Some("cleared pinned result".into());
             }

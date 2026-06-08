@@ -160,7 +160,7 @@ impl App {
     /// about to abandon. The picker's existing Enter handler does
     /// the actual reconnect.
     pub(super) fn start_connection_change(&mut self) {
-        if self.data_source_picks.is_empty() {
+        if self.conn_pick.picks.is_empty() {
             self.last_status = Some(
                 "no data sources to pick — pass --dsn or add `[[connections]]` to pgman.toml"
                     .into(),
@@ -170,7 +170,7 @@ impl App {
         if self.query_running {
             self.cancel_running_query();
         }
-        self.data_source_pick_index = 0;
+        self.conn_pick.index = 0;
         self.mode = Mode::ConnPick;
     }
 
