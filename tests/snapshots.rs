@@ -297,9 +297,9 @@ fn schema_browser_renders_focused_table_details() {
     });
     a.schema_cache = cache;
     a.mode = Mode::SchemaBrowser;
-    a.schema_browser_expanded.insert("public".into());
+    a.schema_browser.expanded.insert("public".into());
     // Focus the `users` table — row order: audit, public, orders, users.
-    a.schema_browser_cursor = 3;
+    a.schema_browser.cursor = 3;
     let buf = render(&mut a, 100, 24);
     insta::assert_snapshot!(dump(&buf));
 }

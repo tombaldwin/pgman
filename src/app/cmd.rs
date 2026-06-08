@@ -31,8 +31,8 @@ impl App {
                 // filter; the schema/table/column whose name
                 // matches surfaces with its ancestors visible.
                 // `\d` alone → open with no filter (default view).
-                self.schema_browser_filter = target.clone();
-                self.schema_browser_cursor = 0;
+                self.schema_browser.filter = target.clone();
+                self.schema_browser.cursor = 0;
                 self.mode = Mode::SchemaBrowser;
                 self.last_status = Some(match target {
                     Some(t) => format!("\\d {t} → schema browser filtered to '{t}'"),
@@ -45,8 +45,8 @@ impl App {
                         Some("schema cache empty — connect to a database first".into());
                     return;
                 }
-                self.schema_browser_filter = None;
-                self.schema_browser_cursor = 0;
+                self.schema_browser.filter = None;
+                self.schema_browser.cursor = 0;
                 self.mode = Mode::SchemaBrowser;
                 self.last_status = Some("schema browser".into());
             }
