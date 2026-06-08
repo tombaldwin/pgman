@@ -6,12 +6,7 @@ impl App {
     /// every tab-close. Pure mechanical copy — no side effects.
     pub(super) fn snapshot_active_tab(&mut self) {
         let snap = TabSnapshot {
-            editor_buffer: self.editor_buffer.clone(),
-            editor_cursor: self.editor_cursor,
-            editor_scroll: self.editor_scroll,
-            editor_preferred_col: self.editor_preferred_col,
-            editor_undo: self.editor_undo.clone(),
-            editor_redo: self.editor_redo.clone(),
+            editor: self.editor.clone(),
             grid: self.grid.clone(),
             grid_selected: self.grid_state.selected(),
             grid_col_cursor: self.grid_col_cursor,
@@ -35,12 +30,7 @@ impl App {
             Some(s) => s.clone(),
             None => return,
         };
-        self.editor_buffer = snap.editor_buffer;
-        self.editor_cursor = snap.editor_cursor;
-        self.editor_scroll = snap.editor_scroll;
-        self.editor_preferred_col = snap.editor_preferred_col;
-        self.editor_undo = snap.editor_undo;
-        self.editor_redo = snap.editor_redo;
+        self.editor = snap.editor;
         self.grid = snap.grid;
         self.grid_state.select(snap.grid_selected);
         self.grid_col_cursor = snap.grid_col_cursor;

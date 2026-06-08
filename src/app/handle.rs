@@ -132,7 +132,7 @@ impl App {
                 // character — move the editor cursor there so the
                 // operator sees the offending token. The position is
                 // 1-indexed CHARS into the SQL we submitted; convert
-                // to a 0-indexed BYTE offset into `editor_buffer`.
+                // to a 0-indexed BYTE offset into `editor.buffer`.
                 // Out-of-range positions are ignored (could happen
                 // for batches where we sent a transformed string).
                 if let Some(p) = position {
@@ -146,17 +146,17 @@ impl App {
                     // off because the leading `\n\n` is in the
                     // buffer but not in the submitted SQL.
                     let trimmed_prefix_bytes =
-                        self.editor_buffer.len() - self.editor_buffer.trim_start().len();
+                        self.editor.buffer.len() - self.editor.buffer.trim_start().len();
                     let target_chars = (p.saturating_sub(1)) as usize;
-                    let after_trim = &self.editor_buffer[trimmed_prefix_bytes..];
+                    let after_trim = &self.editor.buffer[trimmed_prefix_bytes..];
                     let inner_byte = after_trim
                         .char_indices()
                         .nth(target_chars)
                         .map(|(b, _)| b)
                         .unwrap_or(after_trim.len());
                     let byte_offset = trimmed_prefix_bytes + inner_byte;
-                    self.editor_cursor = byte_offset.min(self.editor_buffer.len());
-                    self.editor_preferred_col = None;
+                    self.editor.cursor = byte_offset.min(self.editor.buffer.len());
+                    self.editor.preferred_col = None;
                     if self.mode == Mode::Normal {
                         self.mode = Mode::Editor;
                     }

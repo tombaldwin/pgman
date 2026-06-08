@@ -46,12 +46,12 @@ pub fn app(theme: Theme) -> App {
     // drift from the live renderer.
     a.reset_grid_view();
     a.grid_source = Some(("public".into(), "users".into()));
-    a.editor_buffer = "SELECT id, email, plan, created_at\n\
+    a.editor.buffer = "SELECT id, email, plan, created_at\n\
                        FROM users\n\
                        WHERE plan = 'pro'\n\
                        ORDER BY created_at DESC;"
         .into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.cursor = a.editor.buffer.len();
     for q in saved_queries() {
         a.saved_queries.upsert(q);
     }

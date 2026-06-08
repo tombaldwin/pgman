@@ -38,7 +38,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     // Dynamic editor height: grow with the buffer up to a cap, with a min so
     // the focused empty editor still has a visible content line.
-    let editor_lines = app.editor_buffer.matches('\n').count() + 1;
+    let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let editor_height: u16 = (editor_lines as u16 + 2).clamp(3, 12);
     // Tab bar: one extra line iff we have more than one tab.
     // Keeps the single-tab default UX byte-identical to the
@@ -1430,11 +1430,11 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
 /// addressable.
 fn tab_label(app: &App, idx: usize) -> String {
     let body: &str = if idx == app.active_tab {
-        &app.editor_buffer
+        &app.editor.buffer
     } else {
         app.tabs
             .get(idx)
-            .map(|t| t.editor_buffer.as_str())
+            .map(|t| t.editor.buffer.as_str())
             .unwrap_or("")
     };
     let first: String = body

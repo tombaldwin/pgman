@@ -398,25 +398,47 @@ pub fn default_query_name(buf: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Grouped SQL-editor state. Shared by `App` (the live editor) and
+/// `TabSnapshot` (per-tab saved editor state), so tab snapshot /
+/// restore is a single struct clone.
+#[derive(Debug, Clone, Default)]
+pub struct EditorState {
+    /// SQL editor buffer; `\n` separates lines.
+    pub buffer: String,
+    /// Byte offset of the cursor within `buffer`.
+    pub cursor: usize,
+    /// Remembered char-column for vertical motion (Up/Down). `None` outside a
+    /// vertical-motion run; cleared by any other edit or horizontal move.
+    pub preferred_col: Option<usize>,
+    /// Vertical scroll offset (lines hidden above the viewport) for the
+    /// editor pane. The renderer auto-adjusts this each frame to keep
+    /// the cursor's line visible; the field is plain state (not derived)
+    /// so the renderer doesn't have to recompute from scratch when the
+    /// buffer changes between frames.
+    pub scroll: u16,
+    /// Undo ring of pre-mutation `(buffer, cursor)` snapshots. Ctrl-Z
+    /// pops; Ctrl-Y / Ctrl-Shift-Z redoes. Capped at `UNDO_CAP`.
+    pub undo: Vec<UndoEntry>,
+    /// Redo ring — filled by `editor_undo` and drained by `editor_redo`.
+    /// Any new editor mutation invalidates redo (standard editor
+    /// behaviour: divergent edit = new history branch).
+    pub redo: Vec<UndoEntry>,
+}
+
 /// Per-tab snapshot of the editor + result-grid state. The
 /// connection, schema cache, history, saved queries, theme,
 /// notifications, and safety profile are SHARED across tabs and
 /// live directly on App.
 ///
 /// Invariant: the active tab's state lives in App's existing
-/// per-session fields (`editor_buffer`, `grid`, `grid_state`,
+/// per-session fields (`editor`, `grid`, `grid_state`,
 /// …). When the operator switches, the live fields are
 /// snapshot-copied into `tabs[old_active]` and `tabs[new_active]`
 /// is loaded back in. Existing read sites keep using App's
 /// fields unchanged — multi-tab is invisible to them.
 #[derive(Debug, Clone, Default)]
 pub struct TabSnapshot {
-    pub editor_buffer: String,
-    pub editor_cursor: usize,
-    pub editor_scroll: u16,
-    pub editor_preferred_col: Option<usize>,
-    pub editor_undo: Vec<UndoEntry>,
-    pub editor_redo: Vec<UndoEntry>,
+    pub editor: EditorState,
     pub grid: crate::grid::Grid,
     pub grid_selected: Option<usize>,
     pub grid_col_cursor: usize,
@@ -1517,26 +1539,9 @@ pub struct App {
     pub generation: u64,
     pub should_quit: bool,
 
-    /// SQL editor buffer; `\n` separates lines.
-    pub editor_buffer: String,
-    /// Byte offset of the cursor within `editor_buffer`.
-    pub editor_cursor: usize,
-    /// Remembered char-column for vertical motion (Up/Down). `None` outside a
-    /// vertical-motion run; cleared by any other edit or horizontal move.
-    pub editor_preferred_col: Option<usize>,
-    /// Vertical scroll offset (lines hidden above the viewport) for the
-    /// editor pane. The renderer auto-adjusts this each frame to keep
-    /// the cursor's line visible; the field is plain state (not derived)
-    /// so the renderer doesn't have to recompute from scratch when the
-    /// buffer changes between frames.
-    pub editor_scroll: u16,
-    /// Undo ring of pre-mutation `(buffer, cursor)` snapshots. Ctrl-Z
-    /// pops; Ctrl-Y / Ctrl-Shift-Z redoes. Capped at `UNDO_CAP`.
-    pub editor_undo: Vec<UndoEntry>,
-    /// Redo ring — filled by `editor_undo` and drained by `editor_redo`.
-    /// Any new editor mutation invalidates redo (standard editor
-    /// behaviour: divergent edit = new history branch).
-    pub editor_redo: Vec<UndoEntry>,
+    /// SQL editor state (buffer, cursor, scroll, undo/redo). Grouped so
+    /// tab snapshot / restore is a single struct clone.
+    pub editor: EditorState,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -1782,12 +1787,7 @@ impl App {
             anim_tick: 0,
             generation: 0,
             should_quit: false,
-            editor_buffer: String::new(),
-            editor_cursor: 0,
-            editor_preferred_col: None,
-            editor_scroll: 0,
-            editor_undo: Vec::new(),
-            editor_redo: Vec::new(),
+            editor: EditorState::default(),
             history: Vec::new(),
             history_pos: None,
             history_draft: String::new(),
@@ -1954,7 +1954,7 @@ impl App {
                     Duration::from_millis(500),
                 )
             {
-                let _ = persist_draft(&self.editor_buffer);
+                let _ = persist_draft(&self.editor.buffer);
                 self.draft_last_save = Some(Instant::now());
                 self.draft_dirty = false;
             }
@@ -1966,7 +1966,7 @@ impl App {
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
             // logs and moves on — the loop is already finishing.
-            if let Err(e) = persist_draft(&self.editor_buffer) {
+            if let Err(e) = persist_draft(&self.editor.buffer) {
                 tracing::warn!("could not save editor draft: {e}");
             }
             // Persist the query history ring too. Same best-effort
@@ -1995,21 +1995,21 @@ impl App {
             self.last_error = Some(format!("could not suspend TUI: {e}"));
             return;
         }
-        let result = external_edit_via(&self.editor_buffer, &editor_cmd);
+        let result = external_edit_via(&self.editor.buffer, &editor_cmd);
         // Resume the TUI even if the editor errored — leaving the
         // operator stuck in a half-suspended terminal would be much
         // worse than a slightly delayed error message.
         let resume_err = tui.resume().err();
         match result {
             Ok(text) => {
-                self.editor_buffer = text;
-                self.editor_cursor = self.editor_buffer.len();
-                self.editor_preferred_col = None;
+                self.editor.buffer = text;
+                self.editor.cursor = self.editor.buffer.len();
+                self.editor.preferred_col = None;
                 self.history_pos = None;
                 self.draft_dirty = true;
                 self.last_status = Some(format!(
                     "loaded {} char(s) from $EDITOR",
-                    self.editor_buffer.len()
+                    self.editor.buffer.len()
                 ));
             }
             Err(e) => {
@@ -2490,7 +2490,7 @@ impl App {
     /// saved entry's name pre-filled if the buffer matches one
     /// — otherwise empty). Enter persists; Esc cancels.
     fn start_save_query_prompt(&mut self) {
-        if self.editor_buffer.trim().is_empty() {
+        if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("editor empty — nothing to save".into());
             return;
         }
@@ -2498,7 +2498,7 @@ impl App {
         // buffer with a non-identifier sanitisation, so the
         // operator has a starting point. They can backspace and
         // type their own.
-        self.saved_ui.save_name = default_query_name(&self.editor_buffer);
+        self.saved_ui.save_name = default_query_name(&self.editor.buffer);
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }
@@ -2550,9 +2550,9 @@ impl App {
     /// Drop `sql` into the editor buffer and switch to the editor.
     /// Shared by the direct and post-`:param`-prompt load paths.
     fn load_sql_into_editor(&mut self, sql: String, status: String) {
-        self.editor_buffer = sql;
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.buffer = sql;
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.last_status = Some(status);
         self.mode = Mode::Editor;
@@ -2788,7 +2788,7 @@ impl App {
             Some(c) => c,
             None => return,
         };
-        let Some(id) = complete_q::extract_identifier(&self.editor_buffer, self.editor_cursor)
+        let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             return;
         };
@@ -2797,7 +2797,7 @@ impl App {
         // (matches the Tab-on-whitespace UX). The cycle drops naturally
         // when those produce no matches.
         let cands =
-            complete_q::candidates_for(&self.editor_buffer, self.editor_cursor, &self.schema_cache);
+            complete_q::candidates_for(&self.editor.buffer, self.editor.cursor, &self.schema_cache);
         if cands.is_empty() {
             // Mirror the tailored messaging from editor_complete so the
             // status footer doesn't show `no matches for ""` when the
@@ -2814,11 +2814,11 @@ impl App {
             self.last_status = Some(msg);
             return;
         }
-        let prefix_start = self.editor_cursor.saturating_sub(id.prefix.len());
+        let prefix_start = self.editor.cursor.saturating_sub(id.prefix.len());
         let cand_count = cands.len();
         self.completion = Some(CompletionCycle {
             start: prefix_start,
-            end: self.editor_cursor,
+            end: self.editor.cursor,
             // Original cycle's origin is preserved so Esc-restore
             // returns to the pre-Tab state, not the mid-narrow state.
             origin: existing.origin,
@@ -2840,7 +2840,7 @@ impl App {
     /// the redo ring (divergent edit = new history branch).
     fn push_undo(&mut self, buffer: String, cursor: usize, kind: EditorActionKind) {
         let now = std::time::Instant::now();
-        if let Some(last) = self.editor_undo.last_mut() {
+        if let Some(last) = self.editor.undo.last_mut() {
             if should_coalesce_undo(
                 last.kind,
                 last.merge_window_end,
@@ -2853,21 +2853,21 @@ impl App {
                 // undo is the one already on the stack, NOT this
                 // intermediate one.
                 last.merge_window_end = now;
-                self.editor_redo.clear();
+                self.editor.redo.clear();
                 return;
             }
         }
-        self.editor_redo.clear();
-        self.editor_undo.push(UndoEntry {
+        self.editor.redo.clear();
+        self.editor.undo.push(UndoEntry {
             buffer,
             cursor,
             kind,
             merge_window_end: now,
         });
-        if self.editor_undo.len() > UNDO_CAP {
+        if self.editor.undo.len() > UNDO_CAP {
             // Drop the oldest. `Vec::remove(0)` is O(N) but N is
             // small (UNDO_CAP) and undos are rare keys.
-            self.editor_undo.remove(0);
+            self.editor.undo.remove(0);
         }
     }
 
@@ -2879,16 +2879,16 @@ impl App {
         }
         let new_pos = match self.history_pos {
             None => {
-                self.history_draft = self.editor_buffer.clone();
+                self.history_draft = self.editor.buffer.clone();
                 self.history.len() - 1
             }
             Some(i) if i > 0 => i - 1,
             Some(_) => return,
         };
         self.history_pos = Some(new_pos);
-        self.editor_buffer = self.history[new_pos].clone();
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.buffer = self.history[new_pos].clone();
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
     }
 
     /// Step forward into newer history (Ctrl-N). Past the newest entry,
@@ -2899,13 +2899,13 @@ impl App {
         };
         if pos + 1 < self.history.len() {
             self.history_pos = Some(pos + 1);
-            self.editor_buffer = self.history[pos + 1].clone();
+            self.editor.buffer = self.history[pos + 1].clone();
         } else {
-            self.editor_buffer = std::mem::take(&mut self.history_draft);
+            self.editor.buffer = std::mem::take(&mut self.history_draft);
             self.history_pos = None;
         }
-        self.editor_cursor = self.editor_buffer.len();
-        self.editor_preferred_col = None;
+        self.editor.cursor = self.editor.buffer.len();
+        self.editor.preferred_col = None;
     }
 
     /// Ctrl-R from the editor — enter reverse-incremental history
@@ -2920,8 +2920,8 @@ impl App {
             self.last_status = Some("history is empty".to_string());
             return;
         }
-        let saved_buffer = self.editor_buffer.clone();
-        let saved_cursor = self.editor_cursor;
+        let saved_buffer = self.editor.buffer.clone();
+        let saved_cursor = self.editor.cursor;
         let initial = self.history.len() - 1;
         self.history_search = Some(HistorySearchState {
             query: String::new(),
@@ -2931,8 +2931,8 @@ impl App {
         });
         // Mirror the most-recent entry into the buffer so the
         // operator can see what they'd commit to with Enter.
-        self.editor_buffer = self.history[initial].clone();
-        self.editor_cursor = self.editor_buffer.len();
+        self.editor.buffer = self.history[initial].clone();
+        self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::HistorySearch;
         self.refresh_history_search_status();
     }
@@ -2965,8 +2965,8 @@ impl App {
             s.matched = found;
         }
         if let Some(i) = found {
-            self.editor_buffer = self.history[i].clone();
-            self.editor_cursor = self.editor_buffer.len();
+            self.editor.buffer = self.history[i].clone();
+            self.editor.cursor = self.editor.buffer.len();
         }
         // If `found` is None we leave the buffer alone (showing the
         // last good match) — same UX as bash, where a failed search
@@ -3006,7 +3006,7 @@ impl App {
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
     fn start_log_import(&mut self) {
-        let log = &self.editor_buffer;
+        let log = &self.editor.buffer;
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
         picks.extend(query::hibernate::parse(log));
         picks.extend(query::pglog::parse(log));
@@ -3101,16 +3101,16 @@ impl App {
     /// buffer; the alternative (`spawn_blocking` + message round-
     /// trip) adds more plumbing than the operation deserves.
     fn reformat_buffer(&mut self) {
-        if self.editor_buffer.trim().is_empty() {
+        if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("nothing to format".into());
             return;
         }
-        match pg_format_via(&self.editor_buffer, "pg_format") {
+        match pg_format_via(&self.editor.buffer, "pg_format") {
             Ok(formatted) => {
                 let chars = formatted.len();
-                self.editor_buffer = formatted;
-                self.editor_cursor = self.editor_buffer.len();
-                self.editor_preferred_col = None;
+                self.editor.buffer = formatted;
+                self.editor.cursor = self.editor.buffer.len();
+                self.editor.preferred_col = None;
                 self.history_pos = None;
                 self.last_status = Some(format!("formatted via pg_format · {chars} char(s)"));
             }
@@ -3124,7 +3124,7 @@ impl App {
                 Some("can't \\watch while a query is running or a tx is open".to_string());
             return;
         }
-        let sql = self.editor_buffer.trim().to_string();
+        let sql = self.editor.buffer.trim().to_string();
         let sql = if sql.is_empty() {
             match self.history.last() {
                 Some(s) => s.clone(),
@@ -3224,12 +3224,12 @@ impl App {
         // Stash the watch state — `request_run` reads the editor
         // buffer, so we briefly swap it in, run, and then restore.
         // (Routes through the safety pipeline like a normal run.)
-        let saved_buffer = std::mem::replace(&mut self.editor_buffer, sql);
-        let saved_cursor = self.editor_cursor;
-        self.editor_cursor = self.editor_buffer.len();
+        let saved_buffer = std::mem::replace(&mut self.editor.buffer, sql);
+        let saved_cursor = self.editor.cursor;
+        self.editor.cursor = self.editor.buffer.len();
         self.request_run(RunKind::Run);
-        self.editor_buffer = saved_buffer;
-        self.editor_cursor = saved_cursor.min(self.editor_buffer.len());
+        self.editor.buffer = saved_buffer;
+        self.editor.cursor = saved_cursor.min(self.editor.buffer.len());
     }
 
     fn cancel_running_query(&mut self) {
@@ -3265,7 +3265,7 @@ impl App {
     }
 
     fn request_run(&mut self, kind: RunKind) {
-        let sql = self.editor_buffer.trim().to_string();
+        let sql = self.editor.buffer.trim().to_string();
         if sql.is_empty() {
             self.last_error = Some("editor is empty".to_string());
             return;
@@ -3402,7 +3402,7 @@ impl App {
     /// then runs via Ctrl-R (which takes the multi-statement batch path).
     fn load_dbunit_fixture(&mut self) {
         use crate::dbunit;
-        let path_str = self.editor_buffer.trim().to_string();
+        let path_str = self.editor.buffer.trim().to_string();
         if path_str.is_empty() {
             self.last_error =
                 Some("editor is empty — type a fixture file path then ctrl-d".to_string());
@@ -3438,9 +3438,9 @@ impl App {
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
         let clean_mode = self.safety_config.profile_for(db).clean_mode;
-        self.editor_buffer = dbunit::generate_apply_script(&fixture, clean_mode);
-        self.editor_cursor = 0;
-        self.editor_preferred_col = None;
+        self.editor.buffer = dbunit::generate_apply_script(&fixture, clean_mode);
+        self.editor.cursor = 0;
+        self.editor.preferred_col = None;
         self.history_pos = None;
         self.last_error = None;
         self.last_status = Some(format!(
@@ -3588,8 +3588,8 @@ impl App {
         self.load_active_tab();
         self.completion = None;
         self.history_pos = None;
-        self.editor_buffer = sql;
-        self.editor_cursor = self.editor_buffer.len();
+        self.editor.buffer = sql;
+        self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::Editor;
         self.last_status = Some(format!(
             "→ {}.{} (F5 to run)",

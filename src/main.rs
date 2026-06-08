@@ -225,8 +225,8 @@ async fn main() -> anyhow::Result<()> {
     // Restore the editor draft from the last session (best-effort).
     // Cursor lands at the end so the operator can keep typing.
     if let Some(draft) = app::load_draft() {
-        application.editor_cursor = draft.len();
-        application.editor_buffer = draft;
+        application.editor.cursor = draft.len();
+        application.editor.buffer = draft;
     }
     // Restore query history (Ctrl-R, Ctrl-P/N) from the last session.
     // Best-effort: a missing or unreadable file means we start with
