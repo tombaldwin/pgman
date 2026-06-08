@@ -257,7 +257,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    if app.schema_lint_findings.is_empty() {
+    if app.schema_lint.findings.is_empty() {
         let msg = app
             .last_status
             .clone()
@@ -277,7 +277,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     let detail = split[1];
 
     let visible_h = top.height as usize;
-    let scroll = scroll_offset(app.schema_lint_cursor, visible_h);
+    let scroll = scroll_offset(app.schema_lint.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
@@ -289,13 +289,14 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )));
     for (i, finding) in app
-        .schema_lint_findings
+        .schema_lint
+        .findings
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_h.saturating_sub(1))
     {
-        let is_focus = i == app.schema_lint_cursor;
+        let is_focus = i == app.schema_lint.cursor;
         let sev_color = match finding.severity {
             Severity::High => theme.health_red,
             Severity::Medium => theme.health_yellow,
@@ -331,9 +332,10 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)), top);
 
     // Detail strip for the focused finding.
-    let focused = &app.schema_lint_findings[app
-        .schema_lint_cursor
-        .min(app.schema_lint_findings.len() - 1)];
+    let focused = &app.schema_lint.findings[app
+        .schema_lint
+        .cursor
+        .min(app.schema_lint.findings.len() - 1)];
     let mut detail_lines: Vec<Line> = Vec::new();
     detail_lines.push(Line::from(Span::styled(
         format!("  {} · {}", focused.code, focused.title),

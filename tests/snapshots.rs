@@ -72,8 +72,8 @@ fn empty_normal_mode() {
 fn editor_with_sql_buffer() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT id, email\nFROM users\nWHERE active = true".into();
-    a.editor_cursor = 0;
+    a.editor.buffer = "SELECT id, email\nFROM users\nWHERE active = true".into();
+    a.editor.cursor = 0;
     a.schema_cache.tables.push(TableMeta {
         schema: "public".into(),
         name: "users".into(),
@@ -95,9 +95,9 @@ fn grid_with_data_and_sort() {
         ],
         truncated: false,
     };
-    a.grid_visible_rows = (0..a.grid.rows.len()).collect();
-    a.grid_col_cursor = 0;
-    a.grid_sort = Some((0, true));
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.col_cursor = 0;
+    a.grid_view.sort = Some((0, true));
     a.grid_state.select(Some(0));
     let buf = render(&mut a, 60, 14);
     insta::assert_snapshot!(dump(&buf));
@@ -116,8 +116,8 @@ fn grid_with_filter_active() {
         ],
         truncated: false,
     };
-    a.grid_filter = Some("a".into());
-    a.grid_visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
+    a.grid_view.filter = Some("a".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("a"));
     a.grid_state.select(Some(0));
     let buf = render(&mut a, 60, 14);
     insta::assert_snapshot!(dump(&buf));
@@ -154,8 +154,8 @@ fn history_search_in_progress() {
         saved_cursor: 0,
     });
     a.last_status = Some("(reverse-i-search) 'sel'".into());
-    a.editor_buffer = "SELECT * FROM users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT * FROM users".into();
+    a.editor.cursor = a.editor.buffer.len();
     let buf = render(&mut a, 80, 16);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -164,8 +164,8 @@ fn history_search_in_progress() {
 fn watch_mode_status_visible() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT count(*) FROM users".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT count(*) FROM users".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.watch = Some(WatchState {
         sql: "SELECT count(*) FROM users".into(),
         interval: std::time::Duration::from_secs(2),
@@ -180,14 +180,14 @@ fn watch_mode_status_visible() {
 fn completion_popup_with_candidates() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
-    a.editor_buffer = "SELECT * FROM us".into();
-    a.editor_cursor = a.editor_buffer.len();
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
     a.completion = Some(CompletionCycle {
-        start: a.editor_cursor - 2,
-        end: a.editor_cursor,
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
         origin: "us".into(),
         origin_prefix: "us".into(),
-        origin_cursor: a.editor_cursor,
+        origin_cursor: a.editor.cursor,
         candidates: vec![
             Candidate {
                 display: "users".into(),
@@ -213,7 +213,7 @@ fn slow_queries_renders_top_n_panel() {
     use pgman::query::slow_queries::SlowQueryRow;
     let mut a = settle_app();
     a.mode = Mode::SlowQueries;
-    a.slow_queries = vec![
+    a.slow_queries.rows = vec![
         SlowQueryRow {
             query: "SELECT * FROM users WHERE active = true".into(),
             calls: 1_000_000,
@@ -229,7 +229,7 @@ fn slow_queries_renders_top_n_panel() {
             rows: 250,
         },
     ];
-    a.slow_queries_cursor = 0;
+    a.slow_queries.cursor = 0;
     let buf = render(&mut a, 110, 26);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -239,7 +239,7 @@ fn sessions_renders_blocked_then_idle() {
     use pgman::query::sessions::SessionRow;
     let mut a = settle_app();
     a.mode = Mode::Sessions;
-    a.sessions = vec![
+    a.sessions.rows = vec![
         SessionRow {
             pid: 1234,
             user: "alice".into(),
@@ -261,7 +261,7 @@ fn sessions_renders_blocked_then_idle() {
             age_secs: 300.0,
         },
     ];
-    a.sessions_cursor = 0;
+    a.sessions.cursor = 0;
     let buf = render(&mut a, 110, 18);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -330,9 +330,9 @@ fn explain_tree_renders_hash_join_plan() {
         ]
       }
     }]"#;
-    a.explain_plan = Some(pgman::query::explain::parse(json).unwrap());
+    a.explain.plan = Some(pgman::query::explain::parse(json).unwrap());
     a.mode = Mode::ExplainTree;
-    a.explain_cursor = 0; // root highlighted
+    a.explain.cursor = 0; // root highlighted
     let buf = render(&mut a, 100, 24);
     insta::assert_snapshot!(dump(&buf));
 }
@@ -345,10 +345,10 @@ fn cell_detail_json_tree_renders_object_with_cursor_on_root() {
         rows: vec![vec![r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into()]],
         truncated: false,
     };
-    a.grid_visible_rows = vec![0];
+    a.grid_view.visible_rows = vec![0];
     a.grid_state.select(Some(0));
-    a.row_detail_field = 0;
-    a.row_detail_field_count = 1;
+    a.row_detail.field = 0;
+    a.row_detail.field_count = 1;
     a.mode = Mode::RowDetail;
     // Drive the open path so json_cell_rows / value get populated.
     a.on_key(crossterm::event::KeyEvent::from(
@@ -406,8 +406,8 @@ fn schema_wizard_renders_findings_sorted_by_severity() {
         },
     ];
     a.schema_cache = cache;
-    a.schema_lint_findings = pgman::query::lint::run_all(&a.schema_cache);
-    a.schema_lint_cursor = 0;
+    a.schema_lint.findings = pgman::query::lint::run_all(&a.schema_cache);
+    a.schema_lint.cursor = 0;
     a.mode = Mode::SchemaLint;
     let buf = render(&mut a, 110, 24);
     insta::assert_snapshot!(dump(&buf));

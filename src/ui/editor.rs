@@ -148,8 +148,8 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         theme.border_idle
     };
-    let total_lines = app.editor_buffer.matches('\n').count() + 1;
-    let (cur_line_check, _) = crate::app::cursor_position(&app.editor_buffer, app.editor_cursor);
+    let total_lines = app.editor.buffer.matches('\n').count() + 1;
+    let (cur_line_check, _) = crate::app::cursor_position(&app.editor.buffer, app.editor.cursor);
     let title_text = if focused {
         let base = match app.history_pos {
             None => "editor".to_string(),
@@ -175,8 +175,8 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let buf = &app.editor_buffer;
-    let (cur_line, cur_col) = crate::app::cursor_position(buf, app.editor_cursor);
+    let buf = &app.editor.buffer;
+    let (cur_line, cur_col) = crate::app::cursor_position(buf, app.editor.cursor);
     let text_color = if focused { theme.text } else { theme.muted };
 
     // Unfocused, empty buffer — show a hint instead of an empty pane.
@@ -262,15 +262,15 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Vertical scroll: keep the cursor's line visible inside the pane's
     // limited height (3-12 rows incl. borders). For short buffers
-    // editor_scroll stays 0; long buffers scroll to follow the cursor.
+    // editor.scroll stays 0; long buffers scroll to follow the cursor.
     let total_rendered = lines.len() as u16;
     let scroll = clamp_editor_scroll(
-        app.editor_scroll,
+        app.editor.scroll,
         cur_line as u16,
         total_rendered,
         inner.height,
     );
-    app.editor_scroll = scroll;
+    app.editor.scroll = scroll;
     f.render_widget(Paragraph::new(Text::from(lines)).scroll((scroll, 0)), inner);
 
     // Real terminal cursor — the blinking one most operators expect.
@@ -387,7 +387,7 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
 
     // The bolded "head" portion must visually match what's already in
     // the buffer — i.e. the operator's typed/expanded case — so slice
-    // directly from `editor_buffer[cycle.start..cycle.end)` rather than
+    // directly from `editor.buffer[cycle.start..cycle.end)` rather than
     // taking the first N chars of the candidate's `display` (which is
     // always in the cache's case). Avoids the surprise where the
     // operator typed `T_` and Tab-expanded to `T_USER_`, but the popup
@@ -399,7 +399,8 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
     // on a char boundary (shouldn't happen in practice, but defensive
     // here), .get returns None and we fall back to no highlighting.
     let typed_head: String = app
-        .editor_buffer
+        .editor
+        .buffer
         .get(cycle.start..cycle.end)
         .unwrap_or("")
         .to_string();

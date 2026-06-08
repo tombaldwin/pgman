@@ -163,9 +163,9 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     let max_preview = 80usize;
     // One-line triage summary above the picker rows. Surfaces N+1
     // hotspots that the per-row list buries.
-    let summary = crate::query::nplus1::summarize(&app.log_picks);
+    let summary = crate::query::nplus1::summarize(&app.log_pick.picks);
     let mut lines: Vec<Line> = Vec::new();
-    let view_label = match app.log_pick_view {
+    let view_label = match app.log_pick.view {
         LogPickView::AllQueries => "all queries",
         LogPickView::Clusters => "N+1 clusters",
     };
@@ -179,7 +179,7 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )));
-    if let (LogPickView::AllQueries, Some(top)) = (app.log_pick_view, summary.top_cluster.as_ref())
+    if let (LogPickView::AllQueries, Some(top)) = (app.log_pick.view, summary.top_cluster.as_ref())
     {
         // In the all-queries view, surface the top cluster's leader
         // SQL up top. The clusters view shows the same info as a
@@ -200,9 +200,10 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
     lines.push(Line::from(""));
-    let row_lines: Vec<Line> = match app.log_pick_view {
+    let row_lines: Vec<Line> = match app.log_pick.view {
         LogPickView::AllQueries => app
-            .log_picks
+            .log_pick
+            .picks
             .iter()
             .enumerate()
             .map(|(i, q)| {
@@ -220,12 +221,12 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 if q.runnable_sql.chars().count() > max_preview {
                     preview.push('…');
                 }
-                let prefix = if i == app.log_pick_index {
+                let prefix = if i == app.log_pick.index {
                     "▶ "
                 } else {
                     "  "
                 };
-                let style = if i == app.log_pick_index {
+                let style = if i == app.log_pick.index {
                     Style::default()
                         .bg(theme.row_selected_bg)
                         .fg(theme.text)
@@ -240,7 +241,8 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             })
             .collect(),
         LogPickView::Clusters => app
-            .log_pick_clusters
+            .log_pick
+            .clusters
             .iter()
             .enumerate()
             .map(|(i, c)| {
@@ -253,12 +255,12 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 if c.example.chars().count() > max_preview {
                     preview.push('…');
                 }
-                let prefix = if i == app.log_pick_index {
+                let prefix = if i == app.log_pick.index {
                     "▶ "
                 } else {
                     "  "
                 };
-                let style = if i == app.log_pick_index {
+                let style = if i == app.log_pick.index {
                     Style::default()
                         .bg(theme.row_selected_bg)
                         .fg(theme.text)
@@ -281,7 +283,7 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
         if total == 0 {
             0
         } else {
-            app.log_pick_index + 1
+            app.log_pick.index + 1
         },
         total,
     );
@@ -307,22 +309,24 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // Find the widest origin tag so the DSN column lines up.
     let origin_width = app
-        .data_source_picks
+        .conn_pick
+        .picks
         .iter()
         .map(|p| p.origin.len())
         .max()
         .unwrap_or(0);
     let lines: Vec<Line> = app
-        .data_source_picks
+        .conn_pick
+        .picks
         .iter()
         .enumerate()
         .map(|(i, pick)| {
-            let prefix = if i == app.data_source_pick_index {
+            let prefix = if i == app.conn_pick.index {
                 "▶ "
             } else {
                 "  "
             };
-            let style = if i == app.data_source_pick_index {
+            let style = if i == app.conn_pick.index {
                 Style::default()
                     .bg(theme.row_selected_bg)
                     .fg(theme.text)
@@ -345,8 +349,8 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
 
     let title = format!(
         " pick a connection · {}/{} ",
-        app.data_source_pick_index + 1,
-        app.data_source_picks.len()
+        app.conn_pick.index + 1,
+        app.conn_pick.picks.len()
     );
     let h = (lines.len() as u16 + 2)
         .min(area.height.saturating_sub(2))
@@ -373,18 +377,18 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     // section the first time draw runs (`help_scroll` is reset to 0
     // by `open_help_from`; we detect that as "anchor not applied
     // yet" and set it once, then clear the origin).
-    if let Some(origin) = app.help_origin {
-        if app.help_scroll == 0 {
+    if let Some(origin) = app.help.origin {
+        if app.help.scroll == 0 {
             if let Some(anchor) = App::help_anchor_for(origin) {
                 if let Some(&row) = anchors.get(anchor) {
-                    app.help_scroll = row;
+                    app.help.scroll = row;
                 }
             }
         }
         // Consume the origin AFTER we've used it to position the
         // scroll. Subsequent draws (j/k navigation) shouldn't snap
         // back to the anchor.
-        app.help_origin = None;
+        app.help.origin = None;
     }
     let popup = centered_pct(area, 70, 70);
     f.render_widget(Clear, popup);
@@ -394,8 +398,8 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let total_lines = lines.len() as u16;
     let inner_height = popup.height.saturating_sub(4);
     let max_scroll = total_lines.saturating_sub(inner_height);
-    app.help_max_scroll = max_scroll;
-    let effective_scroll = app.help_scroll.min(max_scroll);
+    app.help.max_scroll = max_scroll;
+    let effective_scroll = app.help.scroll.min(max_scroll);
 
     let help = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
@@ -485,11 +489,11 @@ pub(super) fn draw_explain_tree(f: &mut Frame, area: Rect, app: &App) {
 
     // Scroll so the cursor row stays in view.
     let visible_h = inner.height as usize;
-    let scroll = scroll_offset(app.explain_cursor, visible_h);
+    let scroll = scroll_offset(app.explain.cursor, visible_h);
 
     let mut lines: Vec<Line> = Vec::with_capacity(rows.len().saturating_sub(scroll).min(visible_h));
     for (i, row) in rows.iter().enumerate().skip(scroll).take(visible_h) {
-        let is_focus = i == app.explain_cursor;
+        let is_focus = i == app.explain.cursor;
         let is_hottest = hottest_path
             .as_ref()
             .map(|p| p == &row.path)
@@ -581,7 +585,7 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    if app.slow_queries.is_empty() {
+    if app.slow_queries.rows.is_empty() {
         // Either still loading, or genuinely no rows. last_status
         // carries the right phrasing either way; render it inside
         // the popup so the operator doesn't have to look down at
@@ -603,7 +607,7 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
 
     // Top: rows as `total_ms  mean_ms  calls  rows  query`.
     let visible_h = list_area.height as usize;
-    let scroll = scroll_offset(app.slow_queries_cursor, visible_h);
+    let scroll = scroll_offset(app.slow_queries.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     // Header row.
     lines.push(Line::from(Span::styled(
@@ -617,12 +621,13 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     )));
     for (i, row) in app
         .slow_queries
+        .rows
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_h.saturating_sub(1))
     {
-        let is_focus = i == app.slow_queries_cursor;
+        let is_focus = i == app.slow_queries.cursor;
         let style = if is_focus {
             Style::default()
                 .fg(theme.text)
@@ -649,7 +654,8 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     // Bottom: full SQL for the focused row.
     let focused_sql = app
         .slow_queries
-        .get(app.slow_queries_cursor)
+        .rows
+        .get(app.slow_queries.cursor)
         .map(|r| r.query.clone())
         .unwrap_or_default();
     f.render_widget(
@@ -684,7 +690,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    if app.sessions.is_empty() {
+    if app.sessions.rows.is_empty() {
         let msg = app.last_status.clone().unwrap_or_else(|| "no rows".into());
         f.render_widget(
             Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
@@ -694,7 +700,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let visible_h = inner.height as usize;
-    let scroll = scroll_offset(app.sessions_cursor, visible_h);
+    let scroll = scroll_offset(app.sessions.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
@@ -707,12 +713,13 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     )));
     for (i, row) in app
         .sessions
+        .rows
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_h.saturating_sub(1))
     {
-        let is_focus = i == app.sessions_cursor;
+        let is_focus = i == app.sessions.cursor;
         let is_blocked = row.is_blocked();
         let style = if is_focus {
             Style::default()
@@ -1003,7 +1010,7 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    if app.notifications.is_empty() {
+    if app.notifications.items.is_empty() {
         let lines = vec![
             Line::from(Span::styled(
                 "no NOTIFY arrivals yet",
@@ -1020,7 +1027,7 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let visible_h = inner.height as usize;
-    let scroll = scroll_offset(app.notifications_cursor, visible_h);
+    let scroll = scroll_offset(app.notifications.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!("  {:<20}  {:>6}  {}", "channel", "pid", "payload"),
@@ -1030,12 +1037,13 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     )));
     for (i, n) in app
         .notifications
+        .items
         .iter()
         .enumerate()
         .skip(scroll)
         .take(visible_h.saturating_sub(1))
     {
-        let is_focus = i == app.notifications_cursor;
+        let is_focus = i == app.notifications.cursor;
         let style = if is_focus {
             Style::default()
                 .fg(theme.text)
