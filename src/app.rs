@@ -9,7 +9,6 @@ pub mod msg;
 mod spawn;
 mod tabs;
 mod types;
-mod views;
 mod yank;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
@@ -878,7 +877,7 @@ pub struct App {
     pub tap_events: std::collections::VecDeque<crate::tap::TapEvent>,
     /// Tap-monitor navigation state — active sub-view, sort, and the
     /// per-view cursors (including the cursor into `tap_events`).
-    pub tap_nav: TapNavState,
+    pub tap_nav: TapNavUi,
     /// Liveness + backpressure-loss tracker fed by tap
     /// heartbeats. Lets the chrome badge distinguish "JAR
     /// connected, no traffic" from "JAR gone."
@@ -970,7 +969,7 @@ pub struct App {
     /// EXPLAIN / EXPLAIN ANALYZE runs.
     pub last_run_sql: Option<String>,
     /// Result-diff state (pinned baseline, active diff, cursor).
-    pub diff: ResultDiffUi,
+    pub result_diff: ResultDiffUi,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -1056,7 +1055,7 @@ impl App {
             bookmarks: std::collections::HashMap::new(),
             notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
-            tap_nav: TapNavState::default(),
+            tap_nav: TapNavUi::default(),
             tap_health: TapHealth::default(),
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
@@ -1087,7 +1086,7 @@ impl App {
             slow_queries: SlowQueriesUi::default(),
             sessions: SessionsUi::default(),
             last_run_sql: None,
-            diff: ResultDiffUi::default(),
+            result_diff: ResultDiffUi::default(),
             conn_pick: ConnPickUi {
                 picks: data_source_picks,
                 index: 0,
@@ -2641,10 +2640,10 @@ impl App {
             self.last_error = Some("no result to diff — run a query first".into());
             return;
         }
-        match self.diff.pinned.take() {
+        match self.result_diff.pinned.take() {
             None => {
                 let n = self.grid.rows.len();
-                self.diff.pinned = Some(PinnedResult {
+                self.result_diff.pinned = Some(PinnedResult {
                     columns: self.grid.columns.clone(),
                     rows: self.grid.rows.clone(),
                     label: self.current_result_label(),
@@ -2668,7 +2667,7 @@ impl App {
                     diff.changed.len(),
                     diff.unchanged
                 );
-                self.diff.active = Some(ResultDiffState {
+                self.result_diff.active = Some(ResultDiffState {
                     a: a.clone(),
                     b_columns,
                     b_rows,
@@ -2676,8 +2675,8 @@ impl App {
                     key,
                     diff,
                 });
-                self.diff.pinned = Some(a);
-                self.diff.cursor = 0;
+                self.result_diff.pinned = Some(a);
+                self.result_diff.cursor = 0;
                 self.mode = Mode::ResultDiff;
                 self.last_status = Some(summary);
             }
@@ -3590,6 +3589,61 @@ async fn execute(
                 e
             })
         }
+    }
+}
+
+impl App {
+    /// Compute the current per-transaction stats. Cheap —
+    /// one pass over the ring.
+    pub fn current_txns(&self) -> Vec<crate::tap::TxnStats> {
+        crate::tap::group_by_txn(self.tap_events.iter())
+    }
+
+    /// Compute the current per-pool saturation stats. Cheap —
+    /// one pass over the ring (plus a per-pool endpoint sweep
+    /// for peak concurrency).
+    pub fn current_pools(&self) -> Vec<crate::tap::PoolStats> {
+        crate::tap::group_by_pool(self.tap_events.iter())
+    }
+
+    /// Compute the current baseline diff. Returns an empty
+    /// vec when no baseline has been captured — the renderer
+    /// detects that case and prompts the operator to press
+    /// `Shift-B`.
+    pub fn current_baseline_diff(&self) -> Vec<crate::tap::HotspotDiff> {
+        let Some(baseline) = self.tap_baseline.as_ref() else {
+            return Vec::new();
+        };
+        let current = self.current_hotspots();
+        crate::tap::diff_hotspots(&baseline.hotspots, &current, false)
+    }
+
+    /// Compute the current hotspot list per `tap_sort`. Called
+    /// each frame from the renderer and from the key handler.
+    /// Cheap relative to the rest of the frame budget — ~2k
+    /// events × one fingerprint each is sub-millisecond.
+    pub fn current_hotspots(&self) -> Vec<crate::tap::Hotspot> {
+        crate::tap::group_hotspots(self.tap_events.iter(), self.tap_nav.sort)
+    }
+
+    /// Compute the current N+1 findings — called by the panel
+    /// renderer on demand. Uses the defaults
+    /// (`NPLUS1_WINDOW_MICROS`, `NPLUS1_MIN_REPEATS`) which
+    /// match the offline classifier's operating point.
+    pub fn current_nplus1(&self) -> Vec<crate::tap::NplusOneFinding> {
+        crate::tap::detect_nplus1(
+            self.tap_events.iter(),
+            crate::tap::NPLUS1_WINDOW_MICROS,
+            crate::tap::NPLUS1_MIN_REPEATS,
+        )
+    }
+
+    /// Compute the current per-caller rollup per `tap_sort`.
+    /// Same shape as `current_hotspots` but the grouping key
+    /// is the innermost caller frame instead of the SQL
+    /// fingerprint.
+    pub fn current_callers(&self) -> Vec<crate::tap::CallerStats> {
+        crate::tap::group_by_caller(self.tap_events.iter(), self.tap_nav.sort)
     }
 }
 

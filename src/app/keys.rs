@@ -1011,7 +1011,7 @@ impl App {
 
     pub(super) fn on_result_diff_key(&mut self, key: KeyEvent) {
         let last = self
-            .diff
+            .result_diff
             .active
             .as_ref()
             .map(|d| diff_row_count(&d.diff).saturating_sub(1))
@@ -1022,37 +1022,37 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                self.diff.cursor = (self.diff.cursor + 1).min(last);
+                self.result_diff.cursor = (self.result_diff.cursor + 1).min(last);
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.diff.cursor = self.diff.cursor.saturating_sub(1);
+                self.result_diff.cursor = self.result_diff.cursor.saturating_sub(1);
             }
-            KeyCode::Char('g') | KeyCode::Home => self.diff.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.diff.cursor = last,
+            KeyCode::Char('g') | KeyCode::Home => self.result_diff.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.result_diff.cursor = last,
             KeyCode::PageDown => {
-                self.diff.cursor = (self.diff.cursor + 10).min(last);
+                self.result_diff.cursor = (self.result_diff.cursor + 10).min(last);
             }
             KeyCode::PageUp => {
-                self.diff.cursor = self.diff.cursor.saturating_sub(10);
+                self.result_diff.cursor = self.result_diff.cursor.saturating_sub(10);
             }
             // `r` re-pins the B side as the new baseline A, so the
             // operator can iterate: tweak → run → D → r → repeat.
             KeyCode::Char('r') => {
-                if let Some(d) = self.diff.active.as_ref() {
-                    self.diff.pinned = Some(PinnedResult {
+                if let Some(d) = self.result_diff.active.as_ref() {
+                    self.result_diff.pinned = Some(PinnedResult {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
                         label: d.b_label.clone(),
                     });
                     self.mode = Mode::Normal;
-                    self.diff.active = None;
+                    self.result_diff.active = None;
                     self.last_status = Some("re-pinned current result as A".into());
                 }
             }
             // `c` clears the pinned baseline entirely.
             KeyCode::Char('c') => {
-                self.diff.pinned = None;
-                self.diff.active = None;
+                self.result_diff.pinned = None;
+                self.result_diff.active = None;
                 self.mode = Mode::Normal;
                 self.last_status = Some("cleared pinned result".into());
             }
