@@ -648,7 +648,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // top.
     const LEADING_SPACE: u16 = 1;
     let cursor_offset: Option<u16> = match app.mode {
-        Mode::GridFilter => app.grid_filter.as_ref().map(|f| {
+        Mode::GridFilter => app.grid_view.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …"; cursor sits just
             // after the typed pattern.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
@@ -671,7 +671,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
             PREFIX_CHARS + f.chars().count() as u16
         }),
-        Mode::GridFind => app.grid_find.as_ref().map(|f| {
+        Mode::GridFind => app.grid_find.needle.as_ref().map(|f| {
             // Status reads "find: <pat>  · …".
             const PREFIX_CHARS: u16 = "find: ".len() as u16;
             PREFIX_CHARS + f.chars().count() as u16

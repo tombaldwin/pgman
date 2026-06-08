@@ -302,19 +302,19 @@ proptest! {
             // Cursor is in range.
             prop_assert!(a.editor.cursor <= a.editor.buffer.len());
 
-            // grid_visible_rows is a subset of 0..rows.len() (the
+            // grid_view.visible_rows is a subset of 0..rows.len() (the
             // filter helper guarantees this, but the random key
             // sequence has typed `/` and `n`/`N` etc. — make sure
             // it's still respected).
-            for &i in &a.grid_visible_rows {
+            for &i in &a.grid_view.visible_rows {
                 prop_assert!(i < a.grid.rows.len().max(1));
             }
             // Selected row (if any) points into the visible set.
             if let Some(sel) = a.grid_state.selected() {
                 prop_assert!(
-                    sel < a.grid_visible_rows.len().max(1),
+                    sel < a.grid_view.visible_rows.len().max(1),
                     "selected {sel} out of visible_rows len {}",
-                    a.grid_visible_rows.len()
+                    a.grid_view.visible_rows.len()
                 );
             }
             // Mode is one of the legal variants (this would panic
