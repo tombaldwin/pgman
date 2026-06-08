@@ -14,8 +14,7 @@
 # nightly toolchain. The nightly candor lint's `cargo candor policy` expresses the same intent as
 # `deny Db` scoped to the app layer (AS-EFF-006).
 #
-# Known exception (documented in ci/candor-check.sh): `app::run_cost_explain` — a self-contained
-# EXPLAIN-cost helper still living in app.rs. Its natural home is src/query/explain.rs; moving it there
-# drops the exception and tightens the boundary.
+# No exceptions: every direct Db call lives in src/conn.rs or src/query/. (The former `run_cost_explain`
+# exception was retired by moving that EXPLAIN-cost helper into src/query/explain.rs.)
 
 deny Db   # outside the data layer (src/conn.rs, src/query/) — see ci/candor-check.sh for the scoped check

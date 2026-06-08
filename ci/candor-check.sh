@@ -15,9 +15,8 @@ set -uo pipefail
 
 DIR="${1:-.}"
 # Functions allowed to perform a DIRECT Db call OUTSIDE the data layer (documented exceptions, by leaf
-# name). run_cost_explain: a self-contained EXPLAIN-cost helper currently in app.rs — its natural home is
-# src/query/explain.rs; move it there to drop this exception and tighten the boundary.
-ALLOW_FNS="run_cost_explain"
+# name). Empty — the boundary is fully enforced: every direct Db call lives in src/conn.rs or src/query/.
+ALLOW_FNS=""
 
 command -v candor-scan >/dev/null 2>&1 || {
   echo "candor: candor-scan not found — install it: cargo install candor-scan" >&2

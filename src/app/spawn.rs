@@ -119,9 +119,8 @@ impl App {
         let generation = self.generation;
         self.last_status = Some(format!("terminating pid {pid}…"));
         tokio::spawn(async move {
-            let sql = "SELECT pg_terminate_backend($1)";
-            match client.query_opt(sql, &[&pid]).await {
-                Ok(_) => {
+            match conn::terminate_backend(&client, pid).await {
+                Ok(()) => {
                     // Re-fetch sessions so the panel reflects the
                     // termination. Same panel SQL the `r` refresh
                     // uses.
@@ -195,7 +194,7 @@ impl App {
         // or opening the Confirm modal.
         self.query_running = true;
         tokio::spawn(async move {
-            let estimated = run_cost_explain(&client, &explain_sql).await;
+            let estimated = crate::query::explain::run_cost_explain(&client, &explain_sql).await;
             let _ = tx.send(AppMsg::CostPreviewLoaded {
                 sql,
                 decision,
