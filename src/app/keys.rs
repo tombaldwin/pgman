@@ -23,218 +23,136 @@ impl App {
         }
     }
 
-    pub(super) fn on_tap_monitor_txns_key(&mut self, key: KeyEvent) {
-        let last = self.current_txns().len().saturating_sub(1);
+    /// Chrome keys shared by every TapMonitor view: Esc/q leaves, `v`
+    /// cycles the view, `c` clears the ring. Returns true if consumed.
+    fn tap_monitor_common_key(&mut self, key: &KeyEvent) -> bool {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
             }
             KeyCode::Char('v') => self.cycle_tap_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.txns_cursor = (self.tap_nav.txns_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.txns_cursor = self.tap_nav.txns_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.txns_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.txns_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.txns_cursor = (self.tap_nav.txns_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.txns_cursor = self.tap_nav.txns_cursor.saturating_sub(10);
-            }
             KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+            _ => return false,
         }
+        true
+    }
+
+    pub(super) fn on_tap_monitor_txns_key(&mut self, key: KeyEvent) {
+        if self.tap_monitor_common_key(&key) {
+            return;
+        }
+        let len = self.current_txns().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.txns_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_pools_key(&mut self, key: KeyEvent) {
-        let last = self.current_pools().len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.pools_cursor = (self.tap_nav.pools_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.pools_cursor = self.tap_nav.pools_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.pools_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.pools_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.pools_cursor = (self.tap_nav.pools_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.pools_cursor = self.tap_nav.pools_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        let len = self.current_pools().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.pools_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_baseline_key(&mut self, key: KeyEvent) {
-        let last = self.current_baseline_diff().len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.baseline_cursor = (self.tap_nav.baseline_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.baseline_cursor = self.tap_nav.baseline_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.baseline_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.baseline_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.baseline_cursor = (self.tap_nav.baseline_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.baseline_cursor = self.tap_nav.baseline_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        let len = self.current_baseline_diff().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.baseline_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_callers_key(&mut self, key: KeyEvent) {
-        let last = self.current_callers().len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            // `s` cycles the sort (shared HotspotSort with the
-            // hotspots view — TotalTime / CallCount / P95Latency).
-            KeyCode::Char('s') => {
-                self.tap_nav.sort = self.tap_nav.sort.next();
-                self.last_status =
-                    Some(format!("tap callers · sort: {}", self.tap_nav.sort.label()));
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.callers_cursor = (self.tap_nav.callers_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.callers_cursor = self.tap_nav.callers_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.callers_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.callers_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.callers_cursor = (self.tap_nav.callers_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.callers_cursor = self.tap_nav.callers_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        // `s` cycles the sort (shared HotspotSort with the hotspots view —
+        // TotalTime / CallCount / P95Latency).
+        if matches!(key.code, KeyCode::Char('s')) {
+            self.tap_nav.sort = self.tap_nav.sort.next();
+            self.last_status = Some(format!("tap callers · sort: {}", self.tap_nav.sort.label()));
+            return;
+        }
+        let len = self.current_callers().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.callers_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_nplus1_key(&mut self, key: KeyEvent) {
-        let last = self.current_nplus1().len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.nplus1_cursor = (self.tap_nav.nplus1_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.nplus1_cursor = self.tap_nav.nplus1_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.nplus1_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.nplus1_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.nplus1_cursor = (self.tap_nav.nplus1_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.nplus1_cursor = self.tap_nav.nplus1_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        let len = self.current_nplus1().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.nplus1_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_list_key(&mut self, key: KeyEvent) {
-        let last = self.tap_events.len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            // `v` toggles to the hotspots (grouped) view. We
-            // keep vim-style g/G for top/bottom within the
-            // current view; `v` is the cross-view mnemonic
-            // ("view").
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.events_cursor = (self.tap_nav.events_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.events_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.events_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.events_cursor = (self.tap_nav.events_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        let len = self.tap_events.len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.events_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_tap_monitor_hotspots_key(&mut self, key: KeyEvent) {
-        let last = self.current_hotspots().len().saturating_sub(1);
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
-                self.last_status = None;
-            }
-            // `v` toggles back to the list view (mirror of the
-            // list-side binding).
-            KeyCode::Char('v') => self.cycle_tap_view(),
-            // 's' cycles the sort mode and flashes the new mode
-            // so the operator sees what they just selected.
-            KeyCode::Char('s') => {
-                self.tap_nav.sort = self.tap_nav.sort.next();
-                self.last_status = Some(format!(
-                    "tap hotspots · sort: {}",
-                    self.tap_nav.sort.label()
-                ));
-                // Resort uses the same grouping; cursor stays at
-                // its index (callers parking on a row see the row
-                // move under them — acceptable for a sort cycle).
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.tap_nav.hotspots_cursor = (self.tap_nav.hotspots_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.tap_nav.hotspots_cursor = self.tap_nav.hotspots_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.tap_nav.hotspots_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.tap_nav.hotspots_cursor = last,
-            KeyCode::PageDown => {
-                self.tap_nav.hotspots_cursor = (self.tap_nav.hotspots_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.tap_nav.hotspots_cursor = self.tap_nav.hotspots_cursor.saturating_sub(10);
-            }
-            KeyCode::Char('c') => self.clear_tap_ring(),
-            _ => {}
+        if self.tap_monitor_common_key(&key) {
+            return;
         }
+        // `s` cycles the sort mode and flashes the new mode so the operator
+        // sees what they just selected. Resort uses the same grouping; the
+        // cursor stays at its index (a parked row moves under them — fine
+        // for a sort cycle).
+        if matches!(key.code, KeyCode::Char('s')) {
+            self.tap_nav.sort = self.tap_nav.sort.next();
+            self.last_status = Some(format!(
+                "tap hotspots · sort: {}",
+                self.tap_nav.sort.label()
+            ));
+            return;
+        }
+        let len = self.current_hotspots().len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.tap_nav.hotspots_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_notifications_key(&mut self, key: KeyEvent) {
@@ -527,30 +445,30 @@ impl App {
     /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
     /// the focused field (`Mode::CellDetail`); Esc/q close.
     pub(super) fn on_row_detail_key(&mut self, key: KeyEvent) {
-        let last = self.row_detail.field_count.saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.row_detail.scroll = 0;
+                return;
             }
-            KeyCode::Enter => self.open_cell_detail(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.row_detail.field = (self.row_detail.field + 1).min(last);
+            KeyCode::Enter => {
+                self.open_cell_detail();
+                return;
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.row_detail.field = self.row_detail.field.saturating_sub(1);
+            KeyCode::Char('y') => {
+                self.yank_focused_field();
+                return;
             }
-            KeyCode::Char('g') | KeyCode::Home => self.row_detail.field = 0,
-            KeyCode::Char('G') | KeyCode::End => self.row_detail.field = last,
-            KeyCode::PageDown => {
-                self.row_detail.field = (self.row_detail.field + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.row_detail.field = self.row_detail.field.saturating_sub(10);
-            }
-            KeyCode::Char('y') => self.yank_focused_field(),
             _ => {}
         }
+        let len = self.row_detail.field_count;
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.row_detail.field,
+                len,
+            },
+            key.code,
+        );
     }
 
     /// Cell-detail modal. Two key maps depending on whether the cell
@@ -605,32 +523,30 @@ impl App {
     }
 
     pub(super) fn on_cell_detail_json_key(&mut self, key: KeyEvent) {
-        let last = self.cell_detail.json_rows.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::RowDetail;
                 self.cell_detail.scroll = 0;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.cell_detail.json_cursor = (self.cell_detail.json_cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.cell_detail.json_cursor = self.cell_detail.json_cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.cell_detail.json_cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.cell_detail.json_cursor = last,
-            KeyCode::PageDown => {
-                self.cell_detail.json_cursor = (self.cell_detail.json_cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.cell_detail.json_cursor = self.cell_detail.json_cursor.saturating_sub(10);
+                return;
             }
             KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('h') | KeyCode::Char('l') => {
-                self.toggle_json_cell_node()
+                self.toggle_json_cell_node();
+                return;
             }
-            KeyCode::Char('y') => self.yank_json_cell_path(),
+            KeyCode::Char('y') => {
+                self.yank_json_cell_path();
+                return;
+            }
             _ => {}
         }
+        let len = self.cell_detail.json_rows.len();
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.cell_detail.json_cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     /// Connection picker (startup): j/k navigate, Enter selects + connects,
@@ -991,30 +907,11 @@ impl App {
     }
 
     pub(super) fn on_result_diff_key(&mut self, key: KeyEvent) {
-        let last = self
-            .result_diff
-            .active
-            .as_ref()
-            .map(|d| diff_row_count(&d.diff).saturating_sub(1))
-            .unwrap_or(0);
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 self.last_status = None;
-            }
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.result_diff.cursor = (self.result_diff.cursor + 1).min(last);
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.result_diff.cursor = self.result_diff.cursor.saturating_sub(1);
-            }
-            KeyCode::Char('g') | KeyCode::Home => self.result_diff.cursor = 0,
-            KeyCode::Char('G') | KeyCode::End => self.result_diff.cursor = last,
-            KeyCode::PageDown => {
-                self.result_diff.cursor = (self.result_diff.cursor + 10).min(last);
-            }
-            KeyCode::PageUp => {
-                self.result_diff.cursor = self.result_diff.cursor.saturating_sub(10);
+                return;
             }
             // `r` re-pins the B side as the new baseline A, so the
             // operator can iterate: tweak → run → D → r → repeat.
@@ -1029,6 +926,7 @@ impl App {
                     self.result_diff.active = None;
                     self.last_status = Some("re-pinned current result as A".into());
                 }
+                return;
             }
             // `c` clears the pinned baseline entirely.
             KeyCode::Char('c') => {
@@ -1036,9 +934,23 @@ impl App {
                 self.result_diff.active = None;
                 self.mode = Mode::Normal;
                 self.last_status = Some("cleared pinned result".into());
+                return;
             }
             _ => {}
         }
+        let len = self
+            .result_diff
+            .active
+            .as_ref()
+            .map(|d| diff_row_count(&d.diff))
+            .unwrap_or(0);
+        apply_list_nav_key(
+            &mut CursorAt {
+                cursor: &mut self.result_diff.cursor,
+                len,
+            },
+            key.code,
+        );
     }
 
     pub(super) fn on_schema_lint_key(&mut self, key: KeyEvent) {
@@ -1358,4 +1270,22 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// Apply the shared vim-style list-navigation keys to `nav` and report
+/// whether the key was a navigation key. Centralises the j/k/g/G/PageUp/
+/// PageDown (+ arrow / Home / End) → cursor-clamp mapping that every list
+/// panel used to hand-roll. The clamp formulas live once, in
+/// [`ListCursorNav`].
+fn apply_list_nav_key(nav: &mut impl ListCursorNav, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('j') | KeyCode::Down => nav.select_next(),
+        KeyCode::Char('k') | KeyCode::Up => nav.select_prev(),
+        KeyCode::Char('g') | KeyCode::Home => nav.select_first(),
+        KeyCode::Char('G') | KeyCode::End => nav.select_last(),
+        KeyCode::PageDown => nav.page_down(),
+        KeyCode::PageUp => nav.page_up(),
+        _ => return false,
+    }
+    true
 }

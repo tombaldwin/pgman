@@ -224,6 +224,17 @@ pub fn guard_for(profile: &SafetyProfile, kind: StatementKind) -> Guard {
     }
 }
 
+/// `true` if running `sql` could change the schema cache (tables, columns,
+/// indexes, sequences, FK edges) — i.e. any statement in the script is DDL
+/// (`CREATE`/`ALTER`/`DROP`/`GRANT`/…). Used to trigger a background schema
+/// re-fetch after an editor run so completion / browser / lint / FK-nav stay
+/// current. DML and `TRUNCATE` don't change structure, so they don't count.
+pub fn changes_schema(sql: &str) -> bool {
+    split_statements(sql)
+        .iter()
+        .any(|s| matches!(classify(s), StatementKind::AlterDdl | StatementKind::Drop))
+}
+
 /// Check a statement against the profile for `db`.
 pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     let profile = config.profile_for(db);
@@ -236,31 +247,48 @@ pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     }
 }
 
-/// Split a SQL script on `;` outside string literals and SQL comments. Returns
-/// the trimmed, non-empty statements in order. Used by the editor's
-/// multi-statement run path (DBUnit scripts, hand-written batches).
+/// Split a SQL script on `;` outside string literals, dollar-quoted bodies, and
+/// SQL comments. Returns the trimmed, non-empty statements in order. Used by the
+/// editor's multi-statement run path (DBUnit scripts, hand-written batches).
+///
+/// Dollar-quoting (`$$ … $$` / `$tag$ … $tag$`) is tracked so a `;` inside a
+/// `CREATE FUNCTION` body doesn't shatter the statement into mis-classified
+/// fragments.
 pub fn split_statements(sql: &str) -> Vec<String> {
     let stripped = strip_sql_comments(sql);
+    let chars: Vec<char> = stripped.chars().collect();
     let mut result = Vec::new();
     let mut current = String::new();
     let mut in_string = false;
-    let mut chars = stripped.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         if in_string {
             current.push(c);
             if c == '\'' {
-                if chars.peek() == Some(&'\'') {
-                    current.push(chars.next().unwrap()); // '' escape — still in string
-                } else {
-                    in_string = false;
+                if chars.get(i + 1) == Some(&'\'') {
+                    current.push('\''); // '' escape — still in string
+                    i += 2;
+                    continue;
                 }
+                in_string = false;
             }
+            i += 1;
             continue;
+        }
+        // Dollar-quoted body — copy it verbatim, `;` and all, through the
+        // matching close tag.
+        if c == '$' {
+            if let Some(tag) = dollar_tag_at(&chars, i) {
+                i = copy_dollar_body(&chars, i, &tag, &mut current);
+                continue;
+            }
         }
         match c {
             '\'' => {
                 in_string = true;
                 current.push(c);
+                i += 1;
             }
             ';' => {
                 let trimmed = current.trim().to_string();
@@ -268,8 +296,12 @@ pub fn split_statements(sql: &str) -> Vec<String> {
                     result.push(trimmed);
                 }
                 current.clear();
+                i += 1;
             }
-            _ => current.push(c),
+            _ => {
+                current.push(c);
+                i += 1;
+            }
         }
     }
     let trimmed = current.trim().to_string();
@@ -279,49 +311,66 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     result
 }
 
-/// Remove `-- line` and `/* block */` comments, leaving string literals intact.
+/// Remove `-- line` and `/* block */` comments, leaving string literals and
+/// dollar-quoted bodies intact (a `--` inside a `$$ … $$` function body is data,
+/// not a comment).
 pub(crate) fn strip_sql_comments(sql: &str) -> String {
+    let chars: Vec<char> = sql.chars().collect();
     let mut out = String::with_capacity(sql.len());
-    let mut chars = sql.chars().peekable();
     let mut in_string = false;
-    while let Some(c) = chars.next() {
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         if in_string {
             out.push(c);
             if c == '\'' {
-                if chars.peek() == Some(&'\'') {
-                    out.push(chars.next().unwrap()); // '' escape — still in string
-                } else {
-                    in_string = false;
+                if chars.get(i + 1) == Some(&'\'') {
+                    out.push('\''); // '' escape — still in string
+                    i += 2;
+                    continue;
                 }
+                in_string = false;
             }
+            i += 1;
             continue;
+        }
+        // Preserve dollar-quoted bodies verbatim — comment markers inside them
+        // are literal text.
+        if c == '$' {
+            if let Some(tag) = dollar_tag_at(&chars, i) {
+                i = copy_dollar_body(&chars, i, &tag, &mut out);
+                continue;
+            }
         }
         match c {
             '\'' => {
                 in_string = true;
                 out.push(c);
+                i += 1;
             }
-            '-' if chars.peek() == Some(&'-') => {
-                chars.next();
-                for cc in chars.by_ref() {
+            '-' if chars.get(i + 1) == Some(&'-') => {
+                i += 2;
+                while i < chars.len() {
+                    let cc = chars[i];
+                    i += 1;
                     if cc == '\n' {
                         out.push('\n');
                         break;
                     }
                 }
             }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut prev = '\0';
+            '/' if chars.get(i + 1) == Some(&'*') => {
+                i += 2;
                 let mut closed = false;
                 let mut body = String::new();
-                for cc in chars.by_ref() {
-                    if prev == '*' && cc == '/' {
+                while i < chars.len() {
+                    if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
                         closed = true;
+                        i += 2;
                         break;
                     }
-                    body.push(cc);
-                    prev = cc;
+                    body.push(chars[i]);
+                    i += 1;
                 }
                 out.push(' ');
                 // Unterminated `/*` — don't swallow the rest of the buffer.
@@ -335,10 +384,56 @@ pub(crate) fn strip_sql_comments(sql: &str) -> String {
                     out.push_str(&body);
                 }
             }
-            _ => out.push(c),
+            _ => {
+                out.push(c);
+                i += 1;
+            }
         }
     }
     out
+}
+
+/// If `chars[i..]` opens a PostgreSQL dollar-quote tag (`$$` or `$tag$`, where
+/// `tag` follows identifier rules — letter/underscore start, no digit lead),
+/// return the full tag (including both `$`). Returns `None` for a `$` that is a
+/// positional parameter (`$1`) or anything else.
+fn dollar_tag_at(chars: &[char], i: usize) -> Option<Vec<char>> {
+    if chars.get(i) != Some(&'$') {
+        return None;
+    }
+    let mut j = i + 1;
+    while let Some(&c) = chars.get(j) {
+        if c == '$' {
+            return Some(chars[i..=j].to_vec());
+        }
+        let first = j == i + 1;
+        // Identifier rules: first char letter/`_`; later chars may add digits.
+        let ok = c == '_' || c.is_ascii_alphabetic() || (!first && c.is_ascii_digit());
+        if !ok {
+            return None;
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Copy a dollar-quoted body (opening tag already at `start`) verbatim into
+/// `out` through the matching close tag, and return the index just past it. An
+/// unterminated body copies to end-of-input (Postgres rejects it as a syntax
+/// error anyway).
+fn copy_dollar_body(chars: &[char], start: usize, tag: &[char], out: &mut String) -> usize {
+    let n = tag.len();
+    out.extend(tag.iter());
+    let mut i = start + n;
+    while i < chars.len() {
+        if chars[i] == '$' && i + n <= chars.len() && chars[i..i + n] == *tag {
+            out.extend(tag.iter());
+            return i + n;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    i
 }
 
 /// `true` if `word` appears in `haystack` as a whole token (case-insensitive).
@@ -506,6 +601,41 @@ mod tests {
     }
 
     #[test]
+    fn split_statements_keeps_dollar_quoted_body_intact() {
+        // The `;` inside the plpgsql body must NOT split the statement —
+        // otherwise the body fragments get mis-classified (e.g. a bare
+        // `DELETE FROM t` → Block) and a valid CREATE FUNCTION is refused.
+        let sql = "CREATE FUNCTION f() RETURNS void AS $$ BEGIN DELETE FROM t; END; $$ LANGUAGE plpgsql; SELECT 1";
+        let parts = split_statements(sql);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(
+            parts[0],
+            "CREATE FUNCTION f() RETURNS void AS $$ BEGIN DELETE FROM t; END; $$ LANGUAGE plpgsql"
+        );
+        assert_eq!(parts[1], "SELECT 1");
+        // And the whole thing classifies as DDL, not a delete.
+        assert_eq!(classify(&parts[0]), StatementKind::AlterDdl);
+    }
+
+    #[test]
+    fn split_statements_handles_tagged_dollar_quotes() {
+        // `$func$` tag, and a `$1` positional param that must NOT be
+        // mistaken for a dollar-quote opener.
+        let sql = "CREATE FUNCTION g(int) RETURNS int AS $func$ SELECT $1; $func$ LANGUAGE sql; DROP TABLE t";
+        let parts = split_statements(sql);
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("SELECT $1;"));
+        assert_eq!(parts[1], "DROP TABLE t");
+    }
+
+    #[test]
+    fn strip_comments_leaves_dashes_inside_dollar_body_alone() {
+        // A `--` inside a dollar-quoted body is data, not a comment.
+        let out = strip_sql_comments("SELECT $$ a -- b\n c $$");
+        assert!(out.contains("a -- b"), "got: {out:?}");
+    }
+
+    #[test]
     fn split_statements_skips_comments_and_empty_segments() {
         let sql = "-- header\nselect 1;\n\n/* block */\nselect 2;;;";
         let parts = split_statements(sql);
@@ -552,6 +682,22 @@ mod tests {
             cfg.profile_for("prod").clean_mode,
             crate::dbunit::CleanMode::Truncate
         );
+    }
+
+    #[test]
+    fn changes_schema_detects_ddl_only() {
+        assert!(changes_schema("CREATE TABLE foo (id int)"));
+        assert!(changes_schema("ALTER TABLE bar ADD COLUMN baz text"));
+        assert!(changes_schema("DROP TABLE qux"));
+        // DML and TRUNCATE don't change structure.
+        assert!(!changes_schema("INSERT INTO t VALUES (1)"));
+        assert!(!changes_schema("DELETE FROM t WHERE id = 1"));
+        assert!(!changes_schema("TRUNCATE t"));
+        assert!(!changes_schema("SELECT * FROM t"));
+        // A mixed batch where ANY statement is DDL counts.
+        assert!(changes_schema(
+            "INSERT INTO t VALUES (1); ALTER TABLE t ADD c int"
+        ));
     }
 
     #[test]

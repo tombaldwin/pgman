@@ -46,6 +46,9 @@ impl App {
                     .select(if self.grid.is_empty() { None } else { Some(0) });
                 self.reset_grid_view();
                 self.schema_cache = schema_cache;
+                // Schema changed → editor highlight (keyed on buffer only)
+                // must be recomputed against the new cache.
+                self.editor_highlight_cache = None;
                 // Splash stays up — `tick_splash` honours the 3s minimum.
             }
             AppMsg::BootFailed { error, .. } => {
@@ -61,6 +64,15 @@ impl App {
                 self.grid_state
                     .select(if self.grid.is_empty() { None } else { Some(0) });
                 self.reset_grid_view();
+                // If the run was DDL, re-fetch the schema so completion /
+                // browser / lint / FK-nav reflect it. When the DDL is wrapped
+                // in an open transaction (auto_tx), DEFER the refetch to
+                // TxClosed — refreshing now would show objects a subsequent
+                // rollback discards. Non-tx DDL refreshes immediately.
+                if self.schema_dirty_after_run && !tx_open_after {
+                    self.schema_dirty_after_run = false;
+                    self.spawn_schema_refresh();
+                }
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
                 // UPDATE / FK nav). Single-table SELECT only; anything
@@ -125,6 +137,9 @@ impl App {
             } => {
                 self.query_running = false;
                 self.query_started = None;
+                // The run failed — it didn't change the schema, so drop the
+                // pending refresh flag.
+                self.schema_dirty_after_run = false;
                 self.last_status = None;
                 self.last_error = Some(error);
                 self.last_error_detail = detail;
@@ -168,6 +183,13 @@ impl App {
                 self.tx_open = false;
                 self.query_running = false;
                 self.mode = Mode::Editor;
+                // A DDL run wrapped in this transaction is only durable once
+                // committed — refresh the schema cache then. On rollback (or a
+                // failed close) just drop the pending flag without refetching.
+                if std::mem::take(&mut self.schema_dirty_after_run) && committed && error.is_none()
+                {
+                    self.spawn_schema_refresh();
+                }
                 match error {
                     Some(e) => self.last_error = Some(format!("tx close failed: {e}")),
                     None => {
@@ -185,7 +207,14 @@ impl App {
             AppMsg::SlowQueriesLoaded { result, .. } => match result {
                 Ok(rows) => {
                     self.slow_queries.rows = rows;
-                    self.slow_queries.cursor = 0;
+                    // Preserve the operator's selection across an auto-refresh
+                    // tick (R) — clamp to the new length rather than zeroing,
+                    // which would yank the cursor to the top every 5s. Fresh
+                    // opens reset to 0 separately in start_slow_queries.
+                    self.slow_queries.cursor = self
+                        .slow_queries
+                        .cursor
+                        .min(self.slow_queries.rows.len().saturating_sub(1));
                     self.last_status = Some(format!(
                         "slow queries · {} row(s)",
                         self.slow_queries.rows.len()
@@ -208,7 +237,13 @@ impl App {
                 Ok(rows) => {
                     let blocked = rows.iter().filter(|r| r.is_blocked()).count();
                     self.sessions.rows = rows;
-                    self.sessions.cursor = 0;
+                    // Preserve selection across auto-refresh (R) — clamp, don't
+                    // zero (see SlowQueriesLoaded). Fresh opens reset in
+                    // start_sessions.
+                    self.sessions.cursor = self
+                        .sessions
+                        .cursor
+                        .min(self.sessions.rows.len().saturating_sub(1));
                     self.last_status = Some(format!(
                         "sessions · {} total · {} blocked",
                         self.sessions.rows.len(),
@@ -266,6 +301,14 @@ impl App {
                         ));
                     }
                 }
+            }
+            AppMsg::SchemaRefreshed { schema_cache, .. } => {
+                // Post-DDL re-fetch landed (generation already checked above) —
+                // swap in the fresh cache so completion / browser / lint /
+                // FK-nav see the new shape.
+                self.schema_cache = schema_cache;
+                // Recompute editor highlighting against the new schema.
+                self.editor_highlight_cache = None;
             }
             AppMsg::CostPreviewLoaded {
                 sql,

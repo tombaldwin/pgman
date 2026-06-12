@@ -134,7 +134,11 @@ pub fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -
     } else {
         raw_micros
     };
-    let ts_unix_micros = end_ns / 1_000;
+    // Derive the absolute end timestamp from start + the CAPPED duration, not
+    // the raw `end_ns`. A hostile/clock-skewed `endTimeUnixNano` near u64::MAX
+    // would otherwise store a year-584942 timestamp that poisons the N+1
+    // panel's span window (last.ts - first.ts) and any absolute-time render.
+    let ts_unix_micros = (start_ns / 1_000).saturating_add(duration_micros);
     // Status: 2 == ERROR per OTel protocol. Code 1 == OK,
     // 0 == UNSET. Treat 2 as a query error.
     let status_code = span
