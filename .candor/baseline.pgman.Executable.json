@@ -1,12 +1,13 @@
 {
   "candor": {
-    "version": "fce3119",
-    "toolchain": "nightly-2026-04-16"
+    "version": "b823ae9",
+    "toolchain": "nightly-2026-04-16",
+    "spec": "0.4"
   },
   "functions": [
     {
       "fn": "discover_intellij_datasources",
-      "loc": "src/main.rs:680:1: 680:89",
+      "loc": "src/main.rs:696:1: 696:89",
       "inferred": [
         "Env",
         "Fs",
@@ -24,14 +25,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "960b8f46d05ffd66d64bf8fc6f1e11dc",
+      "hash": "dae650670f5917d0e3ed9811709ca0be",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "discover_spring_datasources",
-      "loc": "src/main.rs:736:1: 736:87",
+      "loc": "src/main.rs:752:1: 752:87",
       "inferred": [
         "Fs",
         "Log"
@@ -47,14 +48,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "960b8f46d05ffd66e49c50aaceed690c",
+      "hash": "dae650670f5917d0fc8a7f54f8be215c",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "init_logging",
-      "loc": "src/main.rs:661:1: 661:18",
+      "loc": "src/main.rs:677:1: 677:18",
       "inferred": [
         "Env",
         "Fs"
@@ -69,14 +70,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "960b8f46d05ffd665786562cfcdee787",
+      "hash": "dae650670f5917d05d393710f4c871d8",
       "fs": [
         "write"
       ]
     },
     {
       "fn": "load_safety_config",
-      "loc": "src/main.rs:869:1: 869:48",
+      "loc": "src/main.rs:885:1: 885:48",
       "inferred": [
         "Env",
         "Fs",
@@ -94,14 +95,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "960b8f46d05ffd66941fde0b151533de",
+      "hash": "dae650670f5917d0700d3f81532ca281",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "main",
-      "loc": "src/main.rs:95:7: 95:38",
+      "loc": "src/main.rs:104:7: 104:38",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -110,7 +111,8 @@
         "Exec",
         "Fs",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [
         "Env",
@@ -129,8 +131,26 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "960b8f46d05ffd66c287d36d01931f91",
+      "unresolved": true,
+      "entryPoint": true,
+      "hash": "dae650670f5917d01428b3683d9bc8e3",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "cargo",
+        "git",
+        "ssh"
+      ],
       "calls": [
         "discover_intellij_datasources",
         "discover_spring_datasources",
@@ -141,7 +161,7 @@
     },
     {
       "fn": "resolve_batch_dsn",
-      "loc": "src/main.rs:576:1: 576:61",
+      "loc": "src/main.rs:585:1: 585:61",
       "inferred": [
         "Env",
         "Fs",
@@ -158,7 +178,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "960b8f46d05ffd6667dd3ed7a77a6bd3",
+      "hash": "dae650670f5917d0d81aa64b09caee36",
       "calls": [
         "discover_intellij_datasources",
         "discover_spring_datasources"
@@ -166,7 +186,7 @@
     },
     {
       "fn": "run_batch",
-      "loc": "src/main.rs:612:1: 612:37",
+      "loc": "src/main.rs:621:1: 621:37",
       "inferred": [
         "Clock",
         "Db",
@@ -174,9 +194,12 @@
         "Exec",
         "Fs",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
-      "direct": [],
+      "direct": [
+        "Unknown"
+      ],
       "declared": [],
       "undeclared": [
         "Clock",
@@ -188,11 +211,29 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "960b8f46d05ffd667516a160bd7d4499",
+      "unresolved": true,
+      "hash": "dae650670f5917d06936179b7e07e919",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
         "load_safety_config",
         "resolve_batch_dsn"
+      ],
+      "unknownWhy": [
+        "dispatch:std::io::Read"
       ]
     }
   ]
