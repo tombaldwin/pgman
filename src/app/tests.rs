@@ -726,6 +726,50 @@ fn dot_after_lcp_expansion_narrows_via_refresh_not_auto_trigger() {
 }
 
 #[test]
+fn undo_after_tab_completion_does_not_panic_on_next_tab() {
+    // Regression: Tab arms a completion cycle whose byte offsets index the
+    // GROWN buffer; Ctrl-Z restored the shorter pre-Tab buffer but left the
+    // cycle populated, so the next Tab's `replace_range(start..end)` ran past
+    // the buffer end and panicked, killing the TUI. Undo must drop the cycle.
+    let mut a = test_app_with_cache(&[("t_user_logs", &["id"]), ("t_user_roles", &["id"])]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM t_");
+    // Tab: LCP-expands `t_` → `t_user_` and arms a cycle.
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert!(a.completion.is_some(), "Tab should arm a completion cycle");
+    assert_eq!(a.editor.buffer, "SELECT * FROM t_user_");
+    // Ctrl-Z: restores the shorter buffer — and must clear the cycle.
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    assert_eq!(a.editor.buffer, "SELECT * FROM t_");
+    assert!(
+        a.completion.is_none(),
+        "undo must clear the stale completion cycle"
+    );
+    // The previously-panicking second Tab now just re-arms a fresh cycle.
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(a.editor.buffer, "SELECT * FROM t_user_");
+}
+
+#[test]
+fn reset_grid_view_clears_source_and_bookmarks() {
+    // Regression: a stale grid_view.source survived a reconnect, so `I`
+    // (row→INSERT) built SQL against the PREVIOUS database's table; and
+    // bookmarks keyed by row index resolved against an unrelated grid.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid_view.source = Some(("public".into(), "orders".into()));
+    a.bookmarks.insert('a', GridBookmark { row: 3, col: 1 });
+    a.reset_grid_view();
+    assert!(
+        a.grid_view.source.is_none(),
+        "source must clear when a new grid lands"
+    );
+    assert!(
+        a.bookmarks.is_empty(),
+        "bookmarks must clear when a new grid lands"
+    );
+}
+
+#[test]
 fn auto_trigger_no_matches_preserves_status() {
     // `nonsense.` — no such identifier; auto-trigger fires but
     // finds nothing and silently restores the prior status.

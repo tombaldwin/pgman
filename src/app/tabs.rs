@@ -12,6 +12,7 @@ impl App {
             grid_view: self.grid_view.clone(),
             last_run_sql: self.last_run_sql.clone(),
             pinned_result: self.result_diff.pinned.clone(),
+            bookmarks: self.bookmarks.clone(),
         };
         if let Some(slot) = self.tabs.get_mut(self.active_tab) {
             *slot = snap;
@@ -31,6 +32,7 @@ impl App {
         self.grid_view = snap.grid_view;
         self.last_run_sql = snap.last_run_sql;
         self.result_diff.pinned = snap.pinned_result;
+        self.bookmarks = snap.bookmarks;
     }
 
     /// Close the transient result-diff overlay if one is open. Called

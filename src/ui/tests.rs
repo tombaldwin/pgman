@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn centered_pct_does_not_overflow_on_a_wide_terminal() {
+    use ratatui::layout::Rect;
+    // Regression: `area.width * w` was a u16 multiply that overflowed once a
+    // terminal hit ~713+ columns (1000 × 92 = 92000 > 65535) — panic in
+    // debug/test, garbage rect in release. The u32 path stays correct.
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 1000,
+        height: 800,
+    };
+    let r = centered_pct(area, 92, 90);
+    assert_eq!(r.width, 920);
+    assert_eq!(r.height, 720);
+    // Stays inside the parent area (no underflow in the centring math either).
+    assert!(r.x + r.width <= area.width);
+    assert!(r.y + r.height <= area.height);
+}
+
+#[test]
 fn format_duration_picks_unit_by_magnitude() {
     assert_eq!(format_duration(0), "0µs");
     assert_eq!(format_duration(999), "999µs");

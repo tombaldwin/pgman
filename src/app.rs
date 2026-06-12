@@ -843,6 +843,19 @@ pub struct App {
     /// would do, but `HashMap` keeps the slot key open for any
     /// printable char operators might want later.
     pub bookmarks: std::collections::HashMap<char, GridBookmark>,
+    /// Set by `spawn_run` when the statement(s) about to run change the
+    /// schema (CREATE / ALTER / DROP). On a successful `QueryOk` this
+    /// triggers a background `schema::fetch` so completion / browser /
+    /// lint / FK-nav don't go stale until the next reconnect. Taken
+    /// (reset) when consumed.
+    pub schema_dirty_after_run: bool,
+    /// Memoised editor syntax-highlight spans, keyed on the buffer text they
+    /// were computed for. The lex + schema-resolving classify is otherwise
+    /// re-run every frame (≈9fps during any animation) for an unchanged
+    /// buffer; this caches it across frames. Invalidated by a buffer edit
+    /// (key mismatch) or a schema-cache change (cleared on Booted /
+    /// SchemaRefreshed).
+    pub editor_highlight_cache: Option<(String, Vec<crate::query::highlight::Span>)>,
     /// Notifications panel state (ring buffer + cursor).
     pub notifications: NotificationsUi,
     /// Ring buffer of recent JDBC-tap events (queries +
@@ -1028,6 +1041,8 @@ impl App {
             auto_refresh: false,
             auto_refresh_last: None,
             bookmarks: std::collections::HashMap::new(),
+            schema_dirty_after_run: false,
+            editor_highlight_cache: None,
             notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
             tap_nav: TapNavUi::default(),
@@ -3543,10 +3558,10 @@ async fn execute(
                 .map_err(|mut e| {
                     // Position came back relative to the wrapped string;
                     // shift it back into the user's buffer. The wrapper
-                    // is `EXPLAIN (FORMAT JSON) ` = 23 chars; positions
+                    // `EXPLAIN (FORMAT JSON) ` is 22 chars; positions
                     // ≤ that point inside the wrapper itself, so drop
                     // them.
-                    e.position = e.position.and_then(|p| p.checked_sub(23));
+                    e.position = e.position.and_then(|p| p.checked_sub(22));
                     e
                 })
         }

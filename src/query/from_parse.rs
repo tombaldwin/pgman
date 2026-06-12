@@ -49,11 +49,6 @@ pub fn parse_from_tables_resolved(
     schema: &crate::query::schema::SchemaCache,
 ) -> Vec<TableRefInQuery> {
     let mut out = parse_from_tables(sql);
-    for t in &mut out {
-        if t.virtual_columns.is_none() {
-            continue;
-        }
-    }
     // Re-walk the buffer for any subquery synthetic entries whose
     // virtual_columns came back empty / star-only; re-extract using
     // resolve_select_columns. Cheapest correct approach without

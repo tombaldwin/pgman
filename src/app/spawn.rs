@@ -12,6 +12,14 @@ impl App {
         // already drops messages whose generation doesn't match; we just
         // need to make the field actually move.
         self.generation = self.generation.wrapping_add(1);
+        // Abandon any in-flight query state from the prior generation. The
+        // query's QueryOk/QueryFailed (which would normally clear these) is
+        // tagged with the OLD generation and will be dropped by the on_msg
+        // stale-generation filter, so without this the flag would stay stuck
+        // true — a permanent spinner that blocks every new run on the new
+        // connection. This is the single choke point for all reconnects.
+        self.query_running = false;
+        self.query_started = None;
         self.conn_state = ConnState::Connecting;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
@@ -236,6 +244,12 @@ impl App {
         } else {
             None
         };
+        // If this run changes the schema (DDL), mark the cache dirty so a
+        // successful QueryOk triggers a background re-fetch — otherwise
+        // completion / browser / lint / FK-nav stay stale until reconnect.
+        // EXPLAIN kinds don't execute the wrapped DDL, so only plain Run counts.
+        self.schema_dirty_after_run =
+            matches!(kind, RunKind::Run) && crate::safety::changes_schema(&sql);
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         let wrap_in_tx = decision.wrap_in_tx;
@@ -277,7 +291,36 @@ impl App {
         self.grid_view.sort = None;
         self.grid_view.raw_rows = None;
         self.grid_view.filter = None;
+        // Clear the inferred source table too. Otherwise a reconnect (Booted
+        // calls reset_grid_view but never sets source) leaves the PREVIOUS
+        // connection's `(schema, table)` in place, so `I` (row→INSERT) on the
+        // new connection's bootstrap grid yanks an INSERT against a table from
+        // the old database. QueryOk re-infers source immediately after this on
+        // the query path, so behaviour there is unchanged.
+        self.grid_view.source = None;
+        // A new grid landed — bookmarks keyed by the old grid's row indices
+        // would resolve against unrelated rows, so drop them. (Per-tab
+        // bookmarks are snapshotted/restored separately on tab switch.)
+        self.bookmarks.clear();
         self.rebuild_visible_rows();
+    }
+
+    /// Re-fetch the schema cache in the background after a DDL run and
+    /// deliver it as `AppMsg::SchemaRefreshed`. Keeps completion, the schema
+    /// browser, lint, and FK-nav current without forcing a full reconnect.
+    pub(super) fn spawn_schema_refresh(&self) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            let schema_cache = crate::query::schema::fetch(&client).await;
+            let _ = tx.send(AppMsg::SchemaRefreshed {
+                generation,
+                schema_cache,
+            });
+        });
     }
 
     pub(super) fn spawn_slow_queries_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {

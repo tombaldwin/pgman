@@ -41,12 +41,81 @@ pub struct Opts {
     pub format: Format,
     pub read_only: bool,
     pub statement_timeout_ms: u64,
+    /// The full safety config + the target database name, so the batch
+    /// path enforces the SAME per-statement guard rails as the editor
+    /// (not just `read_only` + `statement_timeout`).
+    pub safety: crate::safety::SafetyConfig,
+    pub db: String,
+    /// Downgrade `Guard::Confirm` to "proceed" non-interactively (the
+    /// `--yes` flag). `Guard::Block` stays blocked regardless.
+    pub assume_yes: bool,
+}
+
+/// First line of a statement, trimmed and length-capped, for safety
+/// messages — keeps a multi-line body from flooding the terminal.
+fn stmt_summary(stmt: &str) -> String {
+    let line = stmt.lines().next().unwrap_or("").trim();
+    let mut s: String = line.chars().take(60).collect();
+    if line.chars().count() > 60 {
+        s.push('…');
+    }
+    s
+}
+
+/// Check every statement in `sql` against the guard rails for `db`. Returns
+/// `Err(message)` for the first statement a guard refuses: `Block` always
+/// refuses; `Confirm` refuses unless `assume_yes` (the `--yes` flag). This is
+/// the non-interactive analogue of the editor's classify→guard step, so a
+/// `safety.toml` rule holds in CI exactly as it does in the TUI. Pure (no I/O)
+/// so it's unit-tested.
+pub fn check_batch_safety(
+    config: &crate::safety::SafetyConfig,
+    db: &str,
+    sql: &str,
+    assume_yes: bool,
+) -> Result<(), String> {
+    use crate::safety::Guard;
+    for stmt in crate::safety::split_statements(sql) {
+        let decision = crate::safety::evaluate(config, db, &stmt);
+        match decision.guard {
+            Guard::Allow => {}
+            Guard::Confirm if assume_yes => {}
+            Guard::Confirm => {
+                return Err(format!(
+                    "blocked by safety: {:?} on '{}' would need confirmation \
+                     — re-run with --yes to allow guarded writes in batch mode (statement: {})",
+                    decision.kind,
+                    db,
+                    stmt_summary(&stmt),
+                ));
+            }
+            Guard::Block => {
+                return Err(format!(
+                    "blocked by safety: {:?} on '{}' is set to block \
+                     — change this guard to \"confirm\" in safety.toml to permit it (statement: {})",
+                    decision.kind,
+                    db,
+                    stmt_summary(&stmt),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Connect, run `opts.sql`, write the formatted result to `stdout`.
 /// Returns `Ok(0)` on success and the formatted error / `Ok(1)` on
 /// failure so `main` can map it to a process exit code.
 pub async fn run(opts: Opts) -> Result<i32, String> {
+    // Enforce the per-statement guard rails BEFORE connecting — a blocked
+    // statement should never reach the server. `read_only` and
+    // `statement_timeout` are applied server-side at connect; this adds the
+    // category guards (drop / unqualified delete / …) the editor enforces.
+    if let Err(msg) = check_batch_safety(&opts.safety, &opts.db, &opts.sql, opts.assume_yes) {
+        eprintln!("error: {msg}");
+        return Ok(1);
+    }
+
     // Discard notices + notifications in batch mode — they'd
     // interleave with the result on stdout. Surface notices on
     // stderr; LISTEN/NOTIFY arrivals are silently dropped (a
@@ -363,6 +432,54 @@ mod tests {
     fn format_parse_accepts_aliases() {
         assert_eq!(Format::parse("X").unwrap(), Format::Expanded);
         assert_eq!(Format::parse("Json").unwrap(), Format::Json);
+    }
+
+    #[test]
+    fn batch_safety_allows_selects() {
+        let cfg = crate::safety::SafetyConfig::default();
+        assert!(check_batch_safety(&cfg, "db", "SELECT * FROM t", false).is_ok());
+        // Multi-statement all-SELECT batch is fine too.
+        assert!(check_batch_safety(&cfg, "db", "SELECT 1; SELECT 2", false).is_ok());
+    }
+
+    #[test]
+    fn batch_safety_blocks_drop_even_with_yes() {
+        // DROP defaults to Guard::Block — --yes must NOT override a block.
+        let cfg = crate::safety::SafetyConfig::default();
+        let err = check_batch_safety(&cfg, "db", "DROP TABLE legacy", true).unwrap_err();
+        assert!(err.contains("block"), "got: {err}");
+        assert!(err.contains("Drop"), "got: {err}");
+    }
+
+    #[test]
+    fn batch_safety_confirm_requires_yes() {
+        // INSERT defaults to Guard::Confirm: refused without --yes, allowed with.
+        let cfg = crate::safety::SafetyConfig::default();
+        let err = check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", false).unwrap_err();
+        assert!(err.contains("--yes"), "got: {err}");
+        assert!(check_batch_safety(&cfg, "db", "INSERT INTO t VALUES (1)", true).is_ok());
+    }
+
+    #[test]
+    fn batch_safety_blocks_when_any_statement_is_blocked() {
+        // A safe leading SELECT does not excuse a later DROP.
+        let cfg = crate::safety::SafetyConfig::default();
+        let err = check_batch_safety(&cfg, "db", "SELECT 1; DROP TABLE t", true).unwrap_err();
+        assert!(err.contains("Drop"), "got: {err}");
+    }
+
+    #[test]
+    fn batch_safety_dollar_quoted_function_is_one_statement() {
+        // Regression for the split_statements dollar-quote fix: a CREATE
+        // FUNCTION with a `;`-bearing body classifies as one DDL statement
+        // (Confirm under default `ddl` guard), not a blocked DELETE fragment.
+        let cfg = crate::safety::SafetyConfig::default();
+        let sql =
+            "CREATE FUNCTION f() RETURNS void AS $$ BEGIN DELETE FROM t; END; $$ LANGUAGE plpgsql";
+        // Default ddl guard is Confirm → needs --yes, but is NOT a hard block.
+        let err = check_batch_safety(&cfg, "db", sql, false).unwrap_err();
+        assert!(err.contains("--yes"), "got: {err}");
+        assert!(check_batch_safety(&cfg, "db", sql, true).is_ok());
     }
 
     #[test]

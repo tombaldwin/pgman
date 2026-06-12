@@ -266,7 +266,17 @@ ORDER BY n.nspname, t.relname, c.conname";
 /// Returns an empty cache (and logs a warning) if the query fails — the
 /// rest of pgman keeps working without completion.
 pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
-    let rows = match client.query(SCHEMA_SQL, &[]).await {
+    // Issue the four independent catalog queries concurrently — tokio_postgres
+    // pipelines them on the single connection, collapsing four serial round
+    // trips into roughly one. Each stays best-effort: a permission gap on one
+    // (e.g. pg_constraint) degrades that feature without killing the cache.
+    let (schema_res, constraint_res, size_res, fk_res) = tokio::join!(
+        client.query(SCHEMA_SQL, &[]),
+        client.query(CONSTRAINTS_SQL, &[]),
+        client.query(TABLE_SIZES_SQL, &[]),
+        client.query(FK_EDGES_SQL, &[]),
+    );
+    let rows = match schema_res {
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!("schema cache fetch failed: {e}; completion disabled");
@@ -337,7 +347,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     cache.schemas = seen_schemas.into_iter().collect();
     // Second-pass: constraint names (separate query so a
     // pg_constraint permission gap doesn't kill the main cache).
-    match client.query(CONSTRAINTS_SQL, &[]).await {
+    match constraint_res {
         Ok(rows) => {
             for row in &rows {
                 let s: Result<String, _> = row.try_get(0);
@@ -360,7 +370,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // `pg_relation_size` returns 0 for views / matviews / foreign
     // tables; we still try `relkind='r'` only so the SUM is
     // meaningful.
-    match client.query(TABLE_SIZES_SQL, &[]).await {
+    match size_res {
         Ok(rows) => {
             for row in &rows {
                 let s: Result<String, _> = row.try_get(0);
@@ -385,7 +395,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // Fourth-pass: FK edges (one row per column pair). Same
     // best-effort stance — a permission gap on pg_constraint
     // is rare but recoverable.
-    match client.query(FK_EDGES_SQL, &[]).await {
+    match fk_res {
         Ok(rows) => {
             for row in &rows {
                 let cs: Result<String, _> = row.try_get(0);

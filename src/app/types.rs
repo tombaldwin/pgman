@@ -33,6 +33,27 @@ pub trait ListCursorNav {
     }
 }
 
+/// A borrowed `(cursor, len)` pair adapting the shared [`ListCursorNav`]
+/// clamp logic to a panel that keeps its cursor on its own state struct but
+/// computes its row count elsewhere (an `App` method over the schema cache or
+/// the tap ring), so the length isn't a field the struct can return itself.
+pub struct CursorAt<'a> {
+    pub cursor: &'a mut usize,
+    pub len: usize,
+}
+
+impl ListCursorNav for CursorAt<'_> {
+    fn nav_len(&self) -> usize {
+        self.len
+    }
+    fn nav_cursor(&self) -> usize {
+        *self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        *self.cursor = i;
+    }
+}
+
 /// Which view the LogPick popup is rendering. Toggle with `c`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogPickView {
@@ -370,6 +391,11 @@ pub struct TabSnapshot {
     /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
     /// dismissed on any tab change (see `dismiss_result_diff`).
     pub pinned_result: Option<PinnedResult>,
+    /// Grid bookmarks (`m<x>` / `'<x>`). Per-tab and keyed by row index
+    /// into this tab's grid, so a bookmark set in one tab can't resolve
+    /// against another tab's result (different grid at the same index).
+    /// Cleared when the tab's grid is replaced (see QueryOk / Booted).
+    pub bookmarks: std::collections::HashMap<char, GridBookmark>,
 }
 /// A vim-style bookmark on the result grid — snapshot of the
 /// `(visible row index, column cursor)` at the time `m<x>` was

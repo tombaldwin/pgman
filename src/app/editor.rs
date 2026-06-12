@@ -348,6 +348,11 @@ impl App {
         self.editor.cursor = prev.cursor.min(self.editor.buffer.len());
         self.editor.preferred_col = None;
         self.history_pos = None;
+        // Undo replaced the buffer wholesale; any active completion cycle's
+        // byte offsets now point past the restored (shorter) buffer. Drop it
+        // so the next Tab starts fresh rather than `replace_range`-ing out of
+        // bounds and panicking.
+        self.completion = None;
         self.draft_dirty = true;
     }
 
@@ -370,6 +375,9 @@ impl App {
         self.editor.cursor = next.cursor.min(self.editor.buffer.len());
         self.editor.preferred_col = None;
         self.history_pos = None;
+        // See editor_undo: a buffer swap invalidates the completion cycle's
+        // stored offsets.
+        self.completion = None;
         self.draft_dirty = true;
     }
 
