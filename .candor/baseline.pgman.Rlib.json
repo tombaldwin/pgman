@@ -1,12 +1,13 @@
 {
   "candor": {
-    "version": "fce3119",
-    "toolchain": "nightly-2026-04-16"
+    "version": "b823ae9",
+    "toolchain": "nightly-2026-04-16",
+    "spec": "0.4"
   },
   "functions": [
     {
-      "fn": "<app::PgCancelDispatcher as app::CancelDispatcher>::dispatch",
-      "loc": "src/app.rs:865:5: 865:23",
+      "fn": "<app::types::PgCancelDispatcher as app::CancelDispatcher>::dispatch",
+      "loc": "src/app/types.rs:541:5: 541:23",
       "inferred": [
         "Log"
       ],
@@ -19,7 +20,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba08492952baff418ca"
+      "hash": "50f90ebcae654d892b03a914d61e2a3b"
     },
     {
       "fn": "<tui::Tui as tui::TuiHost>::draw",
@@ -34,7 +35,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f1aa458bf10de89c",
+      "hash": "50f90ebcae654d89785ad0c422f233c3",
       "calls": [
         "tui::Tui::draw"
       ]
@@ -54,11 +55,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0dfb916f585841d22"
+      "hash": "50f90ebcae654d89bda5578664e36f30"
     },
     {
       "fn": "app::App::cancel_running_query",
-      "loc": "src/app.rs:5427:5: 5427:39",
+      "loc": "src/app.rs:2242:5: 2242:39",
       "inferred": [
         "Log"
       ],
@@ -69,14 +70,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a597082ae5cc8b43",
+      "hash": "50f90ebcae654d898bf41e0cc7f5aa68",
       "calls": [
-        "<app::PgCancelDispatcher as app::CancelDispatcher>::dispatch"
+        "<app::types::PgCancelDispatcher as app::CancelDispatcher>::dispatch"
       ]
     },
     {
       "fn": "app::App::capture_tap_baseline",
-      "loc": "src/app.rs:2833:5: 2833:39",
+      "loc": "src/app.rs:1558:5: 1558:39",
       "inferred": [
         "Clock"
       ],
@@ -89,11 +90,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba050057533bc8206bd"
+      "hash": "50f90ebcae654d89702367a74f81fdf5"
     },
     {
       "fn": "app::App::close_tx",
-      "loc": "src/app.rs:5112:5: 5112:41",
+      "loc": "src/app.rs:1985:5: 1985:41",
       "inferred": [
         "Db"
       ],
@@ -104,128 +105,15 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ddd5fb844c8758ab",
+      "hash": "50f90ebcae654d89cceeeeeb3ab90cb1",
       "calls": [
         "conn::tx_commit",
         "conn::tx_rollback"
       ]
     },
     {
-      "fn": "app::App::dispatch_backslash",
-      "loc": "src/app.rs:5443:5: 5443:81",
-      "inferred": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba003075267f73524fb",
-      "fs": [
-        "write"
-      ],
-      "calls": [
-        "app::App::dispatch_fixture",
-        "app::App::dispatch_report"
-      ]
-    },
-    {
-      "fn": "app::App::dispatch_fixture",
-      "loc": "src/app.rs:5542:5: 5542:59",
-      "inferred": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c1b3f6d4091f3294",
-      "fs": [
-        "write"
-      ],
-      "calls": [
-        "app::App::write_export",
-        "app::default_fixture_path"
-      ]
-    },
-    {
-      "fn": "app::App::dispatch_report",
-      "loc": "src/app.rs:5504:5: 5504:58",
-      "inferred": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0372606c4656a58e1",
-      "fs": [
-        "write"
-      ],
-      "calls": [
-        "app::App::report_snapshot",
-        "app::App::write_export",
-        "app::default_report_path"
-      ]
-    },
-    {
-      "fn": "app::App::editor_redo",
-      "loc": "src/app.rs:4663:5: 4663:34",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0b04e1d84cf06f7cf"
-    },
-    {
-      "fn": "app::App::editor_undo",
-      "loc": "src/app.rs:4641:5: 4641:34",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0257d5a35eb7bbeb0"
-    },
-    {
       "fn": "app::App::export_grid_to_clipboard",
-      "loc": "src/app.rs:6201:5: 6201:43",
+      "loc": "src/app.rs:2697:5: 2697:43",
       "inferred": [
         "Clipboard"
       ],
@@ -238,11 +126,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba07e8f687f15bd3938"
+      "hash": "50f90ebcae654d8916e00878b544d764"
     },
     {
       "fn": "app::App::load_dbunit_fixture",
-      "loc": "src/app.rs:5755:5: 5755:38",
+      "loc": "src/app.rs:2410:5: 2410:38",
       "inferred": [
         "Fs"
       ],
@@ -255,14 +143,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba065a64161fa70a5ef",
+      "hash": "50f90ebcae654d89582f4d510e438e96",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "app::App::new",
-      "loc": "src/app.rs:1624:5: 1629:14",
+      "loc": "src/app.rs:990:5: 995:14",
       "inferred": [
         "Clock"
       ],
@@ -275,137 +163,174 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba00541be38495806df"
+      "hash": "50f90ebcae654d890faa7f361a400a2d"
     },
     {
-      "fn": "app::App::on_cell_detail_json_key",
-      "loc": "src/app.rs:3862:5: 3862:57",
+      "fn": "app::App::on_key",
+      "loc": "src/app.rs:1326:5: 1326:44",
       "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ca45bd4026a14221",
-      "calls": [
-        "app::App::yank_json_cell_path"
-      ]
-    },
-    {
-      "fn": "app::App::on_cell_detail_key",
-      "loc": "src/app.rs:3821:5: 3821:52",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba02fd1f3af6f372945",
-      "calls": [
-        "app::App::on_cell_detail_json_key",
-        "app::App::on_cell_detail_text_key"
-      ]
-    },
-    {
-      "fn": "app::App::on_cell_detail_text_key",
-      "loc": "src/app.rs:3829:5: 3829:57",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0860e7d56d49d3ff8",
-      "calls": [
-        "app::App::yank_focused_field"
-      ]
-    },
-    {
-      "fn": "app::App::on_confirm_key",
-      "loc": "src/app.rs:5080:5: 5080:48",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c64e157ce3944acd",
-      "calls": [
-        "app::App::spawn_run"
-      ]
-    },
-    {
-      "fn": "app::App::on_confirm_terminate_key",
-      "loc": "src/app.rs:3660:5: 3660:58",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0903217d9361acda8",
-      "calls": [
-        "app::App::spawn_terminate_session"
-      ]
-    },
-    {
-      "fn": "app::App::on_conn_pick_key",
-      "loc": "src/app.rs:3977:5: 3977:50",
-      "inferred": [
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba02ce35cc181802fe8",
-      "calls": [
-        "app::App::start_connect"
-      ]
-    },
-    {
-      "fn": "app::App::on_editor_key",
-      "loc": "src/app.rs:4207:5: 4207:47",
-      "inferred": [
+        "Clipboard",
         "Clock",
         "Db",
         "Env",
         "Exec",
         "Fs",
-        "Log"
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89476f955e325c3940",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "app::keys::<impl app::App>::on_cell_detail_key",
+        "app::keys::<impl app::App>::on_confirm_key",
+        "app::keys::<impl app::App>::on_confirm_terminate_key",
+        "app::keys::<impl app::App>::on_conn_pick_key",
+        "app::keys::<impl app::App>::on_editor_key",
+        "app::keys::<impl app::App>::on_normal_key",
+        "app::keys::<impl app::App>::on_notifications_key",
+        "app::keys::<impl app::App>::on_rename_query_key",
+        "app::keys::<impl app::App>::on_row_detail_key",
+        "app::keys::<impl app::App>::on_save_query_prompt_key",
+        "app::keys::<impl app::App>::on_saved_queries_key",
+        "app::keys::<impl app::App>::on_schema_browser_key",
+        "app::keys::<impl app::App>::on_schema_lint_key",
+        "app::keys::<impl app::App>::on_sessions_key",
+        "app::keys::<impl app::App>::on_slow_queries_key",
+        "app::keys::<impl app::App>::on_tap_monitor_key",
+        "app::keys::<impl app::App>::on_tx_decision_key"
+      ]
+    },
+    {
+      "fn": "app::App::push_undo",
+      "loc": "src/app.rs:1951:5: 1951:83",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8959f0c0d2b66f79c5"
+    },
+    {
+      "fn": "app::App::reformat_buffer",
+      "loc": "src/app.rs:2110:5: 2110:34",
+      "inferred": [
+        "Exec",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Exec"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d8920df8834fa3061e1",
+      "calls": [
+        "app::pg_format_via"
+      ]
+    },
+    {
+      "fn": "app::App::refresh_sessions",
+      "loc": "src/app.rs:2922:5: 2922:35",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89b2a6c1a7fc6795d4",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_sessions_load"
+      ]
+    },
+    {
+      "fn": "app::App::refresh_slow_queries",
+      "loc": "src/app.rs:2902:5: 2902:39",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d892e633e7094567ec6",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_slow_queries_load"
+      ]
+    },
+    {
+      "fn": "app::App::report_snapshot",
+      "loc": "src/app.rs:2253:5: 2253:67",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89be25881f74f4f489",
+      "calls": [
+        "app::chrono_like_now_utc"
+      ]
+    },
+    {
+      "fn": "app::App::request_run",
+      "loc": "src/app.rs:2274:5: 2274:45",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Fs"
       ],
       "direct": [],
       "declared": [],
@@ -413,34 +338,586 @@
         "Clock",
         "Db",
         "Env",
-        "Exec",
-        "Fs",
-        "Log"
+        "Fs"
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a70d9d2e164acb73",
+      "hash": "50f90ebcae654d89f421acb941af69ef",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "app::App::request_run_batch",
+        "app::cmd::<impl app::App>::dispatch_backslash",
+        "app::spawn::<impl app::App>::spawn_cost_preview",
+        "app::spawn::<impl app::App>::spawn_run"
+      ]
+    },
+    {
+      "fn": "app::App::request_run_batch",
+      "loc": "src/app.rs:2354:5: 2360:6",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89a1ba465aa440aad1",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_run"
+      ]
+    },
+    {
+      "fn": "app::App::run",
+      "loc": "src/app.rs:1099:5: 1099:69",
+      "inferred": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89bdeab01e68cf41b6",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "app::App::run_with"
+      ]
+    },
+    {
+      "fn": "app::App::run_external_editor",
+      "loc": "src/app.rs:1219:5: 1219:63",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs"
+      ],
+      "direct": [
+        "Env"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89b4d098e73c3f5cfa",
       "fs": [
         "read",
         "write"
       ],
       "calls": [
-        "app::App::editor_redo",
-        "app::App::editor_undo",
-        "app::App::on_editor_key_inner",
-        "app::App::push_undo"
+        "app::external_edit_via"
       ]
     },
     {
-      "fn": "app::App::on_editor_key_inner",
-      "loc": "src/app.rs:4249:5: 4249:53",
+      "fn": "app::App::run_with",
+      "loc": "src/app.rs:1119:5: 1123:28",
+      "inferred": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Clock",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89e5101a8613ccb343",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "<tui::Tui as tui::TuiHost>::draw",
+        "app::App::run_external_editor",
+        "app::App::tick_auto_refresh",
+        "app::App::tick_splash",
+        "app::App::tick_watch",
+        "app::handle::<impl app::App>::on_event",
+        "app::handle::<impl app::App>::on_msg",
+        "app::persist_draft",
+        "app::persist_history",
+        "app::saved_queries_path",
+        "app::spawn::<impl app::App>::start_connect"
+      ]
+    },
+    {
+      "fn": "app::App::start_schema_lint",
+      "loc": "src/app.rs:2842:5: 2842:36",
+      "inferred": [
+        "Db",
+        "Log"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89b12d65ea486877d7",
+      "calls": [
+        "query::lint::fetch_live"
+      ]
+    },
+    {
+      "fn": "app::App::start_sessions",
+      "loc": "src/app.rs:2911:5: 2911:33",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89d9bca138dc414403",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_sessions_load"
+      ]
+    },
+    {
+      "fn": "app::App::start_slow_queries",
+      "loc": "src/app.rs:2890:5: 2890:37",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d897529b0f5c1a6c878",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_slow_queries_load"
+      ]
+    },
+    {
+      "fn": "app::App::start_watch",
+      "loc": "src/app.rs:2128:5: 2128:30",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d890c6e561b607676f4"
+    },
+    {
+      "fn": "app::App::tick_auto_refresh",
+      "loc": "src/app.rs:2189:5: 2189:36",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8928c856106983e1e3",
+      "calls": [
+        "app::App::refresh_sessions",
+        "app::App::refresh_slow_queries"
+      ]
+    },
+    {
+      "fn": "app::App::tick_splash",
+      "loc": "src/app.rs:1262:5: 1262:30",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89b9b5bdba4e87c8a2"
+    },
+    {
+      "fn": "app::App::tick_watch",
+      "loc": "src/app.rs:2209:5: 2209:29",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Fs"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8920d5f6ad189c68a5",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "app::App::request_run"
+      ]
+    },
+    {
+      "fn": "app::App::toggle_auto_refresh",
+      "loc": "src/app.rs:2175:5: 2175:38",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d895ca2aca008569d30"
+    },
+    {
+      "fn": "app::cache_stamped_path",
+      "loc": "src/app.rs:3290:1: 3290:67",
+      "inferred": [
+        "Clock",
+        "Env"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8939c2de6746502748",
+      "calls": [
+        "util::cache_dir"
+      ]
+    },
+    {
+      "fn": "app::chrono_like_now_utc",
+      "loc": "src/app.rs:3323:1: 3323:39",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89c3b09aebce100bfc"
+    },
+    {
+      "fn": "app::cmd::<impl app::App>::dispatch_backslash",
+      "loc": "src/app/cmd.rs:12:5: 12:92",
+      "inferred": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89dd9310c31d4d505e",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "app::cmd::<impl app::App>::dispatch_fixture",
+        "app::cmd::<impl app::App>::dispatch_report"
+      ]
+    },
+    {
+      "fn": "app::cmd::<impl app::App>::dispatch_fixture",
+      "loc": "src/app/cmd.rs:111:5: 111:70",
+      "inferred": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89dee900b5a0676992",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "app::cmd::<impl app::App>::write_export",
+        "app::default_fixture_path"
+      ]
+    },
+    {
+      "fn": "app::cmd::<impl app::App>::dispatch_report",
+      "loc": "src/app/cmd.rs:73:5: 73:58",
+      "inferred": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89cd4323cfabc0016d",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "app::App::report_snapshot",
+        "app::cmd::<impl app::App>::write_export",
+        "app::default_report_path"
+      ]
+    },
+    {
+      "fn": "app::cmd::<impl app::App>::write_export",
+      "loc": "src/app/cmd.rs:91:5: 91:97",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89ec264dae7ba1a626",
+      "fs": [
+        "write"
+      ]
+    },
+    {
+      "fn": "app::default_fixture_path",
+      "loc": "src/app.rs:3304:1: 3304:63",
+      "inferred": [
+        "Clock",
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89753bb3c5dca3b99b",
+      "calls": [
+        "app::cache_stamped_path"
+      ]
+    },
+    {
+      "fn": "app::default_report_path",
+      "loc": "src/app.rs:3282:1: 3282:51",
+      "inferred": [
+        "Clock",
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8930ec0f7d3bd704b7",
+      "calls": [
+        "app::cache_stamped_path"
+      ]
+    },
+    {
+      "fn": "app::draft_path",
+      "loc": "src/app.rs:3257:1: 3257:38",
+      "inferred": [
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89697908604f8008f1",
+      "calls": [
+        "util::data_dir"
+      ]
+    },
+    {
+      "fn": "app::editor::<impl app::App>::editor_redo",
+      "loc": "src/app/editor.rs:362:5: 362:34",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89be0fbbbf776642e7"
+    },
+    {
+      "fn": "app::editor::<impl app::App>::editor_undo",
+      "loc": "src/app/editor.rs:335:5: 335:34",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89f5fd7e5ae82a70b3"
+    },
+    {
+      "fn": "app::editor::<impl app::App>::on_editor_key_inner",
+      "loc": "src/app/editor.rs:36:5: 36:64",
       "inferred": [
         "Clock",
         "Db",
         "Env",
         "Exec",
         "Fs",
-        "Log"
+        "Log",
+        "Unknown"
       ],
       "direct": [],
       "declared": [],
@@ -453,8 +930,8 @@
         "Log"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba00cab91dae7e05778",
+      "unresolved": true,
+      "hash": "50f90ebcae654d896540e0f8d268d3e7",
       "fs": [
         "read",
         "write"
@@ -468,1151 +945,8 @@
       ]
     },
     {
-      "fn": "app::App::on_event",
-      "loc": "src/app.rs:2445:5: 2445:38",
-      "inferred": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba077fb0e99c87f178c",
-      "fs": [
-        "read",
-        "write"
-      ],
-      "calls": [
-        "app::App::on_key"
-      ]
-    },
-    {
-      "fn": "app::App::on_key",
-      "loc": "src/app.rs:2482:5: 2482:44",
-      "inferred": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a328fe45379cd8b3",
-      "fs": [
-        "read",
-        "write"
-      ],
-      "calls": [
-        "app::App::on_cell_detail_key",
-        "app::App::on_confirm_key",
-        "app::App::on_confirm_terminate_key",
-        "app::App::on_conn_pick_key",
-        "app::App::on_editor_key",
-        "app::App::on_normal_key",
-        "app::App::on_notifications_key",
-        "app::App::on_rename_query_key",
-        "app::App::on_row_detail_key",
-        "app::App::on_save_query_prompt_key",
-        "app::App::on_saved_queries_key",
-        "app::App::on_schema_browser_key",
-        "app::App::on_schema_lint_key",
-        "app::App::on_sessions_key",
-        "app::App::on_slow_queries_key",
-        "app::App::on_tap_monitor_key",
-        "app::App::on_tx_decision_key"
-      ]
-    },
-    {
-      "fn": "app::App::on_msg",
-      "loc": "src/app.rs:2053:5: 2053:38",
-      "inferred": [
-        "Clock",
-        "Db",
-        "Log"
-      ],
-      "direct": [
-        "Log"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db",
-        "Log"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0932b69748f0b8b78",
-      "calls": [
-        "app::App::spawn_run"
-      ]
-    },
-    {
-      "fn": "app::App::on_normal_key",
-      "loc": "src/app.rs:4093:5: 4093:47",
-      "inferred": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0bc10c83de87000af",
-      "calls": [
-        "app::App::export_grid_to_clipboard",
-        "app::App::start_connect",
-        "app::App::start_connection_change",
-        "app::App::start_schema_lint",
-        "app::App::start_sessions",
-        "app::App::start_slow_queries",
-        "app::App::yank_row_as_insert"
-      ]
-    },
-    {
-      "fn": "app::App::on_notifications_key",
-      "loc": "src/app.rs:3122:5: 3122:54",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0341552e89b353aff",
-      "calls": [
-        "app::App::yank_focused_notification"
-      ]
-    },
-    {
-      "fn": "app::App::on_rename_query_key",
-      "loc": "src/app.rs:3615:5: 3615:53",
-      "inferred": [
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0fd6cf2c801529ea7",
-      "calls": [
-        "app::saved_queries_path"
-      ]
-    },
-    {
-      "fn": "app::App::on_row_detail_key",
-      "loc": "src/app.rs:3757:5: 3757:51",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba03571a3697966d869",
-      "calls": [
-        "app::App::yank_focused_field"
-      ]
-    },
-    {
-      "fn": "app::App::on_save_query_prompt_key",
-      "loc": "src/app.rs:3337:5: 3337:58",
-      "inferred": [
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba084a74be177891768",
-      "calls": [
-        "app::saved_queries_path"
-      ]
-    },
-    {
-      "fn": "app::App::on_saved_queries_key",
-      "loc": "src/app.rs:3499:5: 3499:54",
-      "inferred": [
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f7f88f185fc62f41",
-      "calls": [
-        "app::saved_queries_path"
-      ]
-    },
-    {
-      "fn": "app::App::on_schema_browser_key",
-      "loc": "src/app.rs:6429:5: 6429:55",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0eebfec8a98e02b65",
-      "calls": [
-        "app::App::yank_schema_browser_insert",
-        "app::App::yank_schema_browser_select"
-      ]
-    },
-    {
-      "fn": "app::App::on_schema_lint_key",
-      "loc": "src/app.rs:6378:5: 6378:52",
-      "inferred": [
-        "Clipboard",
-        "Db",
-        "Log"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Db",
-        "Log"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba05e15efe52459f6a3",
-      "calls": [
-        "app::App::start_schema_lint",
-        "app::App::yank_schema_lint_suggestion"
-      ]
-    },
-    {
-      "fn": "app::App::on_sessions_key",
-      "loc": "src/app.rs:6749:5: 6749:49",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba064dcac8b0ee86846",
-      "calls": [
-        "app::App::refresh_sessions",
-        "app::App::toggle_auto_refresh"
-      ]
-    },
-    {
-      "fn": "app::App::on_slow_queries_key",
-      "loc": "src/app.rs:6680:5: 6680:53",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0655b4877dd77fa26",
-      "calls": [
-        "app::App::refresh_slow_queries",
-        "app::App::toggle_auto_refresh"
-      ]
-    },
-    {
-      "fn": "app::App::on_tap_monitor_key",
-      "loc": "src/app.rs:2722:5: 2722:52",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0cf61b465654b9dfa",
-      "calls": [
-        "app::App::capture_tap_baseline"
-      ]
-    },
-    {
-      "fn": "app::App::on_tx_decision_key",
-      "loc": "src/app.rs:5103:5: 5103:52",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c3bee44ff5c5f257",
-      "calls": [
-        "app::App::close_tx"
-      ]
-    },
-    {
-      "fn": "app::App::push_undo",
-      "loc": "src/app.rs:4606:5: 4606:83",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba06ba2fe2a10aed45c"
-    },
-    {
-      "fn": "app::App::reformat_buffer",
-      "loc": "src/app.rs:5273:5: 5273:34",
-      "inferred": [
-        "Exec"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Exec"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a953ca3343476fbe",
-      "calls": [
-        "app::pg_format_via"
-      ]
-    },
-    {
-      "fn": "app::App::refresh_sessions",
-      "loc": "src/app.rs:6729:5: 6729:35",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba06b9a477f71d10b93",
-      "calls": [
-        "app::App::spawn_sessions_load"
-      ]
-    },
-    {
-      "fn": "app::App::refresh_slow_queries",
-      "loc": "src/app.rs:6659:5: 6659:39",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba045bfe36eb176017a",
-      "calls": [
-        "app::App::spawn_slow_queries_load"
-      ]
-    },
-    {
-      "fn": "app::App::report_snapshot",
-      "loc": "src/app.rs:5566:5: 5566:67",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d045afed63bef384",
-      "calls": [
-        "app::chrono_like_now_utc"
-      ]
-    },
-    {
-      "fn": "app::App::request_run",
-      "loc": "src/app.rs:5587:5: 5587:45",
-      "inferred": [
-        "Clock",
-        "Db",
-        "Env",
-        "Fs"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db",
-        "Env",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c21f2682f10ea30b",
-      "fs": [
-        "write"
-      ],
-      "calls": [
-        "app::App::dispatch_backslash",
-        "app::App::request_run_batch",
-        "app::App::spawn_cost_preview",
-        "app::App::spawn_run"
-      ]
-    },
-    {
-      "fn": "app::App::request_run_batch",
-      "loc": "src/app.rs:5699:5: 5705:6",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba060597098d314bb8f",
-      "calls": [
-        "app::App::spawn_run"
-      ]
-    },
-    {
-      "fn": "app::App::run",
-      "loc": "src/app.rs:1777:5: 1777:69",
-      "inferred": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f94cc8e6d95aa29f",
-      "fs": [
-        "read",
-        "write"
-      ],
-      "calls": [
-        "app::App::run_with"
-      ]
-    },
-    {
-      "fn": "app::App::run_external_editor",
-      "loc": "src/app.rs:1897:5: 1897:63",
-      "inferred": [
-        "Env",
-        "Exec",
-        "Fs"
-      ],
-      "direct": [
-        "Env"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Env",
-        "Exec",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba01f78f1a3f1845797",
-      "fs": [
-        "read",
-        "write"
-      ],
-      "calls": [
-        "app::external_edit_via"
-      ]
-    },
-    {
-      "fn": "app::App::run_with",
-      "loc": "src/app.rs:1797:5: 1801:28",
-      "inferred": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "direct": [
-        "Clock",
-        "Log"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard",
-        "Clock",
-        "Db",
-        "Env",
-        "Exec",
-        "Fs",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba086db7987c8c9d956",
-      "fs": [
-        "read",
-        "write"
-      ],
-      "calls": [
-        "<tui::Tui as tui::TuiHost>::draw",
-        "app::App::on_event",
-        "app::App::on_msg",
-        "app::App::run_external_editor",
-        "app::App::start_connect",
-        "app::App::tick_auto_refresh",
-        "app::App::tick_splash",
-        "app::App::tick_watch",
-        "app::persist_draft",
-        "app::persist_history",
-        "app::saved_queries_path"
-      ]
-    },
-    {
-      "fn": "app::App::spawn_cost_preview",
-      "loc": "src/app.rs:5668:5: 5668:86",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba07fee781124fb0024",
-      "calls": [
-        "app::run_cost_explain"
-      ]
-    },
-    {
-      "fn": "app::App::spawn_run",
-      "loc": "src/app.rs:5803:5: 5803:92",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c6498e5fa6ec1ef0",
-      "calls": [
-        "app::execute"
-      ]
-    },
-    {
-      "fn": "app::App::spawn_sessions_load",
-      "loc": "src/app.rs:6737:5: 6737:82",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ffcca8a79a2cdb0c",
-      "calls": [
-        "conn::run_query"
-      ]
-    },
-    {
-      "fn": "app::App::spawn_slow_queries_load",
-      "loc": "src/app.rs:6667:5: 6667:86",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba041532cb69976a0b5",
-      "calls": [
-        "conn::run_query"
-      ]
-    },
-    {
-      "fn": "app::App::spawn_terminate_session",
-      "loc": "src/app.rs:3682:5: 3682:52",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [
-        "Db"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba012bfb4647ac8dd96",
-      "calls": [
-        "conn::run_query"
-      ]
-    },
-    {
-      "fn": "app::App::start_connect",
-      "loc": "src/app.rs:1973:5: 1973:32",
-      "inferred": [
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db",
-        "Exec",
-        "Log",
-        "Net"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0acba3b9f8cd1751e",
-      "calls": [
-        "conn::connect_and_bootstrap"
-      ]
-    },
-    {
-      "fn": "app::App::start_connection_change",
-      "loc": "src/app.rs:5412:5: 5412:42",
-      "inferred": [
-        "Log"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Log"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f11bfc240048d4ea",
-      "calls": [
-        "app::App::cancel_running_query"
-      ]
-    },
-    {
-      "fn": "app::App::start_schema_lint",
-      "loc": "src/app.rs:6346:5: 6346:36",
-      "inferred": [
-        "Db",
-        "Log"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db",
-        "Log"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0079ee81f68f849d6",
-      "calls": [
-        "query::lint::fetch_live"
-      ]
-    },
-    {
-      "fn": "app::App::start_sessions",
-      "loc": "src/app.rs:6718:5: 6718:33",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba01364adda6aeca992",
-      "calls": [
-        "app::App::spawn_sessions_load"
-      ]
-    },
-    {
-      "fn": "app::App::start_slow_queries",
-      "loc": "src/app.rs:6647:5: 6647:37",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ab72bfd4e1096cce",
-      "calls": [
-        "app::App::spawn_slow_queries_load"
-      ]
-    },
-    {
-      "fn": "app::App::start_watch",
-      "loc": "src/app.rs:5291:5: 5291:30",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba044be4a421a528fff"
-    },
-    {
-      "fn": "app::App::tick_auto_refresh",
-      "loc": "src/app.rs:5352:5: 5352:36",
-      "inferred": [
-        "Clock",
-        "Db"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0b2b60247cc69ba60",
-      "calls": [
-        "app::App::refresh_sessions",
-        "app::App::refresh_slow_queries"
-      ]
-    },
-    {
-      "fn": "app::App::tick_splash",
-      "loc": "src/app.rs:1940:5: 1940:30",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba000a3a689fa7d2240"
-    },
-    {
-      "fn": "app::App::tick_watch",
-      "loc": "src/app.rs:5372:5: 5372:29",
-      "inferred": [
-        "Clock",
-        "Db",
-        "Env",
-        "Fs"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Db",
-        "Env",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0e2bb42d400969a58",
-      "fs": [
-        "write"
-      ],
-      "calls": [
-        "app::App::request_run"
-      ]
-    },
-    {
-      "fn": "app::App::toggle_auto_refresh",
-      "loc": "src/app.rs:5338:5: 5338:38",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a288f41823bf5cb4"
-    },
-    {
-      "fn": "app::App::write_export",
-      "loc": "src/app.rs:5522:5: 5522:97",
-      "inferred": [
-        "Fs"
-      ],
-      "direct": [
-        "Fs"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0808143972a301467",
-      "fs": [
-        "write"
-      ]
-    },
-    {
-      "fn": "app::App::yank_focused_field",
-      "loc": "src/app.rs:3947:5: 3947:37",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba033db06eec9d04ba3"
-    },
-    {
-      "fn": "app::App::yank_focused_notification",
-      "loc": "src/app.rs:3155:5: 3155:44",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba069f7c5a6c968cbf2"
-    },
-    {
-      "fn": "app::App::yank_json_cell_path",
-      "loc": "src/app.rs:3925:5: 3925:38",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0df5fb27263f86c4e"
-    },
-    {
-      "fn": "app::App::yank_row_as_insert",
-      "loc": "src/app.rs:6158:5: 6158:37",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba056c4d8158efa7333"
-    },
-    {
-      "fn": "app::App::yank_schema_browser_insert",
-      "loc": "src/app.rs:6618:5: 6618:45",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba022d95bba6218bb02"
-    },
-    {
-      "fn": "app::App::yank_schema_browser_select",
-      "loc": "src/app.rs:6603:5: 6603:45",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba008db1cb3075adae3"
-    },
-    {
-      "fn": "app::App::yank_schema_lint_suggestion",
-      "loc": "src/app.rs:6409:5: 6409:46",
-      "inferred": [
-        "Clipboard"
-      ],
-      "direct": [
-        "Clipboard"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clipboard"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba088a0bbb3cf69fe41"
-    },
-    {
-      "fn": "app::cache_stamped_path",
-      "loc": "src/app.rs:7488:1: 7488:67",
-      "inferred": [
-        "Clock",
-        "Env"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba04277879ed759ebcf",
-      "calls": [
-        "util::cache_dir"
-      ]
-    },
-    {
-      "fn": "app::chrono_like_now_utc",
-      "loc": "src/app.rs:7521:1: 7521:39",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba051bca89db23b7e33"
-    },
-    {
-      "fn": "app::default_fixture_path",
-      "loc": "src/app.rs:7502:1: 7502:63",
-      "inferred": [
-        "Clock",
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba00439efae019578df",
-      "calls": [
-        "app::cache_stamped_path"
-      ]
-    },
-    {
-      "fn": "app::default_report_path",
-      "loc": "src/app.rs:7480:1: 7480:51",
-      "inferred": [
-        "Clock",
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock",
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ab91dee95da61475",
-      "calls": [
-        "app::cache_stamped_path"
-      ]
-    },
-    {
-      "fn": "app::draft_path",
-      "loc": "src/app.rs:7455:1: 7455:38",
-      "inferred": [
-        "Env"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Env"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0fe06a7c1aae21855",
-      "calls": [
-        "util::data_dir"
-      ]
-    },
-    {
       "fn": "app::execute",
-      "loc": "src/app.rs:7808:1: 7814:34",
+      "loc": "src/app.rs:3521:1: 3527:34",
       "inferred": [
         "Db"
       ],
@@ -1623,7 +957,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0b2d41046197bc089",
+      "hash": "50f90ebcae654d892158e8fd4e067d9c",
       "calls": [
         "conn::run_batch",
         "conn::run_batch_in_tx_open",
@@ -1634,7 +968,7 @@
     },
     {
       "fn": "app::external_edit_via",
-      "loc": "src/app.rs:7418:1: 7418:82",
+      "loc": "src/app.rs:3220:1: 3220:82",
       "inferred": [
         "Env",
         "Exec",
@@ -1653,15 +987,95 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d8288fa0a1abc838",
+      "hash": "50f90ebcae654d898e3ab055274e0f14",
       "fs": [
         "read",
         "write"
       ]
     },
     {
+      "fn": "app::handle::<impl app::App>::on_event",
+      "loc": "src/app/handle.rs:413:5: 413:49",
+      "inferred": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d8923d590d0e47c165d",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "app::App::on_key"
+      ]
+    },
+    {
+      "fn": "app::handle::<impl app::App>::on_msg",
+      "loc": "src/app/handle.rs:8:5: 8:49",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log"
+      ],
+      "direct": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d899b81572b124a15ee",
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "app::spawn::<impl app::App>::spawn_run",
+        "app::spawn::<impl app::App>::spawn_schema_refresh"
+      ]
+    },
+    {
       "fn": "app::history_path",
-      "loc": "src/app.rs:7462:1: 7462:40",
+      "loc": "src/app.rs:3264:1: 3264:40",
       "inferred": [
         "Env"
       ],
@@ -1672,14 +1086,445 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0b535b6494e5a1f6c",
+      "hash": "50f90ebcae654d89c0e10aaa96a51da3",
       "calls": [
         "util::data_dir"
       ]
     },
     {
+      "fn": "app::keys::<impl app::App>::on_cell_detail_json_key",
+      "loc": "src/app/keys.rs:525:5: 525:68",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89249f1afbd70d732f",
+      "calls": [
+        "app::yank::<impl app::App>::yank_json_cell_path"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_cell_detail_key",
+      "loc": "src/app/keys.rs:482:5: 482:63",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89d14e2d57d22dbe92",
+      "calls": [
+        "app::keys::<impl app::App>::on_cell_detail_json_key",
+        "app::keys::<impl app::App>::on_cell_detail_text_key"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_cell_detail_text_key",
+      "loc": "src/app/keys.rs:490:5: 490:68",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d894a93853dcc3ace73",
+      "calls": [
+        "app::yank::<impl app::App>::yank_focused_field"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_confirm_key",
+      "loc": "src/app/keys.rs:845:5: 845:59",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89f4095ae792d791de",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_run"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_confirm_terminate_key",
+      "loc": "src/app/keys.rs:411:5: 411:69",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8963c5bfc0c3c0d39d",
+      "calls": [
+        "app::spawn::<impl app::App>::spawn_terminate_session"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_conn_pick_key",
+      "loc": "src/app/keys.rs:554:5: 554:61",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89d85a9106db6cec17",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "app::spawn::<impl app::App>::start_connect"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_editor_key",
+      "loc": "src/app/keys.rs:733:5: 733:58",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d898aaf1398eabc537e",
+      "fs": [
+        "read",
+        "write"
+      ],
+      "calls": [
+        "app::App::push_undo",
+        "app::editor::<impl app::App>::editor_redo",
+        "app::editor::<impl app::App>::editor_undo",
+        "app::editor::<impl app::App>::on_editor_key_inner"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_normal_key",
+      "loc": "src/app/keys.rs:619:5: 619:58",
+      "inferred": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d897a0f1760ddace996",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "app::App::export_grid_to_clipboard",
+        "app::App::start_schema_lint",
+        "app::App::start_sessions",
+        "app::App::start_slow_queries",
+        "app::spawn::<impl app::App>::start_connect",
+        "app::spawn::<impl app::App>::start_connection_change",
+        "app::yank::<impl app::App>::yank_row_as_insert"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_notifications_key",
+      "loc": "src/app/keys.rs:158:5: 158:65",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89eabfd0ec2d50a116",
+      "calls": [
+        "app::yank::<impl app::App>::yank_focused_notification"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_rename_query_key",
+      "loc": "src/app/keys.rs:366:5: 366:64",
+      "inferred": [
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8956811b8a1a4f7169",
+      "calls": [
+        "app::saved_queries_path"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_row_detail_key",
+      "loc": "src/app/keys.rs:447:5: 447:62",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89578d783716bdee03",
+      "calls": [
+        "app::yank::<impl app::App>::yank_focused_field"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_save_query_prompt_key",
+      "loc": "src/app/keys.rs:181:5: 181:69",
+      "inferred": [
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89e148386a2be8488b",
+      "calls": [
+        "app::saved_queries_path"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_saved_queries_key",
+      "loc": "src/app/keys.rs:272:5: 272:65",
+      "inferred": [
+        "Env"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Env"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8991e3ce90d3fbb857",
+      "calls": [
+        "app::saved_queries_path"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_schema_browser_key",
+      "loc": "src/app/keys.rs:974:5: 974:66",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8981053c59b43ccd17",
+      "calls": [
+        "app::yank::<impl app::App>::yank_schema_browser_insert",
+        "app::yank::<impl app::App>::yank_schema_browser_select"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_schema_lint_key",
+      "loc": "src/app/keys.rs:956:5: 956:63",
+      "inferred": [
+        "Clipboard",
+        "Db",
+        "Log"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clipboard",
+        "Db",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89d0619909774bc0aa",
+      "calls": [
+        "app::App::start_schema_lint",
+        "app::yank::<impl app::App>::yank_schema_lint_suggestion"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_sessions_key",
+      "loc": "src/app/keys.rs:1150:5: 1150:60",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d894a690f4300f28afb",
+      "calls": [
+        "app::App::refresh_sessions",
+        "app::App::toggle_auto_refresh"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_slow_queries_key",
+      "loc": "src/app/keys.rs:1118:5: 1118:64",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8993c82f99bfcef51e",
+      "calls": [
+        "app::App::refresh_slow_queries",
+        "app::App::toggle_auto_refresh"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_tap_monitor_key",
+      "loc": "src/app/keys.rs:4:5: 4:63",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d892f115ddb47276fd2",
+      "calls": [
+        "app::App::capture_tap_baseline"
+      ]
+    },
+    {
+      "fn": "app::keys::<impl app::App>::on_tx_decision_key",
+      "loc": "src/app/keys.rs:868:5: 868:63",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89d79eb96248c70ad2",
+      "calls": [
+        "app::App::close_tx"
+      ]
+    },
+    {
       "fn": "app::load_draft",
-      "loc": "src/app.rs:7763:1: 7763:38",
+      "loc": "src/app.rs:3476:1: 3476:38",
       "inferred": [
         "Env",
         "Fs"
@@ -1692,7 +1537,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0000ff027bca9c30a",
+      "hash": "50f90ebcae654d89f11dd19965a1ae5a",
       "fs": [
         "read"
       ],
@@ -1703,7 +1548,7 @@
     },
     {
       "fn": "app::load_draft_from",
-      "loc": "src/app.rs:7770:1: 7770:65",
+      "loc": "src/app.rs:3483:1: 3483:65",
       "inferred": [
         "Fs"
       ],
@@ -1716,14 +1561,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba064d3df848fa149b4",
+      "hash": "50f90ebcae654d89e1ede91317a19283",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "app::load_history",
-      "loc": "src/app.rs:7715:1: 7715:37",
+      "loc": "src/app.rs:3428:1: 3428:37",
       "inferred": [
         "Env",
         "Fs"
@@ -1736,7 +1581,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba01f7d914a0e901145",
+      "hash": "50f90ebcae654d89cbfa02bc9210ee5c",
       "fs": [
         "read"
       ],
@@ -1747,7 +1592,7 @@
     },
     {
       "fn": "app::load_history_from",
-      "loc": "src/app.rs:7720:1: 7720:64",
+      "loc": "src/app.rs:3433:1: 3433:64",
       "inferred": [
         "Fs"
       ],
@@ -1760,14 +1605,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0253adaea99ea7f84",
+      "hash": "50f90ebcae654d890372fe29b955eef1",
       "fs": [
         "read"
       ]
     },
     {
       "fn": "app::persist_draft",
-      "loc": "src/app.rs:7782:1: 7782:62",
+      "loc": "src/app.rs:3495:1: 3495:62",
       "inferred": [
         "Env"
       ],
@@ -1778,14 +1623,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba03cacdf7a262c3620",
+      "hash": "50f90ebcae654d891081149fa3ce1fbb",
       "calls": [
         "app::draft_path"
       ]
     },
     {
       "fn": "app::persist_history",
-      "loc": "src/app.rs:7739:1: 7739:73",
+      "loc": "src/app.rs:3452:1: 3452:73",
       "inferred": [
         "Env"
       ],
@@ -1796,48 +1641,36 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba08e8d030105f60330",
+      "hash": "50f90ebcae654d8929088135eee4a9af",
       "calls": [
         "app::history_path"
       ]
     },
     {
       "fn": "app::pg_format_via",
-      "loc": "src/app.rs:7377:1: 7377:74",
+      "loc": "src/app.rs:3179:1: 3179:74",
       "inferred": [
-        "Exec"
+        "Exec",
+        "Unknown"
       ],
       "direct": [
-        "Exec"
+        "Exec",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
         "Exec"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0803cd5e9d3758b4a"
-    },
-    {
-      "fn": "app::run_cost_explain",
-      "loc": "src/app.rs:956:1: 959:25",
-      "inferred": [
-        "Db"
-      ],
-      "direct": [
-        "Db"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Db"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba00f1147e13298d3d5"
+      "unresolved": true,
+      "hash": "50f90ebcae654d89423fcd7ca14f7c0a",
+      "unknownWhy": [
+        "dispatch:std::io::Write"
+      ]
     },
     {
       "fn": "app::saved_queries_path",
-      "loc": "src/app.rs:7467:1: 7467:50",
+      "loc": "src/app.rs:3269:1: 3269:50",
       "inferred": [
         "Env"
       ],
@@ -1848,20 +1681,136 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba02c15c36d1c8a3c76",
+      "hash": "50f90ebcae654d89c37c7547ccf83eea",
       "calls": [
         "util::data_dir"
       ]
     },
     {
-      "fn": "batch::run",
-      "loc": "src/batch.rs:49:1: 49:52",
+      "fn": "app::spawn::<impl app::App>::spawn_cost_preview",
+      "loc": "src/app/spawn.rs:187:5: 187:97",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8952bd4a68ea4cb520",
+      "calls": [
+        "query::explain::run_cost_explain"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::spawn_run",
+      "loc": "src/app/spawn.rs:216:5: 222:6",
+      "inferred": [
+        "Clock",
+        "Db"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d891942dd91b50d26d0",
+      "calls": [
+        "app::execute"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::spawn_schema_refresh",
+      "loc": "src/app/spawn.rs:311:5: 311:46",
+      "inferred": [
+        "Db",
+        "Log"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89e63ee77ae907b6ce",
+      "calls": [
+        "query::schema::fetch"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::spawn_sessions_load",
+      "loc": "src/app/spawn.rs:339:5: 339:93",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d897bfd56009e613862",
+      "calls": [
+        "conn::run_query"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::spawn_slow_queries_load",
+      "loc": "src/app/spawn.rs:326:5: 326:97",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89fc2579f42af9e58e",
+      "calls": [
+        "conn::run_query"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::spawn_terminate_session",
+      "loc": "src/app/spawn.rs:121:5: 121:63",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d899e9e91b3a6ff0a91",
+      "calls": [
+        "conn::run_query",
+        "conn::terminate_backend"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::start_connect",
+      "loc": "src/app/spawn.rs:6:5: 6:43",
       "inferred": [
         "Clock",
         "Db",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [],
       "declared": [],
@@ -1873,8 +1822,202 @@
         "Net"
       ],
       "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d890edc282626c8ce7a",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
+      "calls": [
+        "conn::connect_and_bootstrap"
+      ]
+    },
+    {
+      "fn": "app::spawn::<impl app::App>::start_connection_change",
+      "loc": "src/app/spawn.rs:169:5: 169:53",
+      "inferred": [
+        "Log"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Log"
+      ],
+      "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0689167711bf6fa81",
+      "hash": "50f90ebcae654d899c9afa89469f4382",
+      "calls": [
+        "app::App::cancel_running_query"
+      ]
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_focused_field",
+      "loc": "src/app/yank.rs:44:5: 44:48",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89a55b2e072a415056"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_focused_notification",
+      "loc": "src/app/yank.rs:5:5: 5:55",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89411ec82e05524b0f"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_json_cell_path",
+      "loc": "src/app/yank.rs:22:5: 22:49",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d890686e94e4fc03045"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_row_as_insert",
+      "loc": "src/app/yank.rs:72:5: 72:48",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89817e450ab4a3ca63"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_schema_browser_insert",
+      "loc": "src/app/yank.rs:168:5: 168:56",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8984a8d35fcf4d8b98"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_schema_browser_select",
+      "loc": "src/app/yank.rs:153:5: 153:56",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89df4192c264568148"
+    },
+    {
+      "fn": "app::yank::<impl app::App>::yank_schema_lint_suggestion",
+      "loc": "src/app/yank.rs:117:5: 117:57",
+      "inferred": [
+        "Clipboard"
+      ],
+      "direct": [
+        "Clipboard"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clipboard"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89cc83f5b6d3d7bc17"
+    },
+    {
+      "fn": "batch::run",
+      "loc": "src/batch.rs:109:1: 109:52",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89fb92ce714cdda4c0",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
         "conn::connect_only",
         "conn::run_batch",
@@ -1896,11 +2039,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f4a4f8a0638e1ebc"
+      "hash": "50f90ebcae654d894c23efe9a8e1512a"
     },
     {
       "fn": "conn::apply_ssl_mode",
-      "loc": "src/conn.rs:868:1: 868:71",
+      "loc": "src/conn.rs:891:1: 891:71",
       "inferred": [
         "Log"
       ],
@@ -1913,11 +2056,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba029cd3ee4b41be4d3"
+      "hash": "50f90ebcae654d89d5205a9fe8f2ac67"
     },
     {
       "fn": "conn::build_tls_connector",
-      "loc": "src/conn.rs:908:1: 908:97",
+      "loc": "src/conn.rs:931:1: 931:97",
       "inferred": [
         "Log"
       ],
@@ -1930,17 +2073,18 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba087b4ffee6309d525"
+      "hash": "50f90ebcae654d8969dddac40f191970"
     },
     {
       "fn": "conn::connect_and_bootstrap",
-      "loc": "src/conn.rs:507:1: 514:28",
+      "loc": "src/conn.rs:512:1: 519:28",
       "inferred": [
         "Clock",
         "Db",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [
         "Db"
@@ -1954,8 +2098,23 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0dd3f3f34ba80416b",
+      "unresolved": true,
+      "hash": "50f90ebcae654d89f08a715e0804262b",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
         "conn::connect_inner",
         "conn::run_query",
@@ -1964,13 +2123,14 @@
     },
     {
       "fn": "conn::connect_inner",
-      "loc": "src/conn.rs:547:1: 553:80",
+      "loc": "src/conn.rs:558:1: 564:80",
       "inferred": [
         "Clock",
         "Db",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [
         "Db",
@@ -1985,8 +2145,23 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba034550326333bbc4d",
+      "unresolved": true,
+      "hash": "50f90ebcae654d89d3a113735273224e",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
         "conn::apply_ssl_mode",
         "conn::build_tls_connector",
@@ -1996,13 +2171,14 @@
     },
     {
       "fn": "conn::connect_only",
-      "loc": "src/conn.rs:483:1: 495:2",
+      "loc": "src/conn.rs:488:1: 500:2",
       "inferred": [
         "Clock",
         "Db",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [],
       "declared": [],
@@ -2014,15 +2190,30 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba0c92cfee0ac617e98",
+      "unresolved": true,
+      "hash": "50f90ebcae654d891d2aeb99ac971cba",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
         "conn::connect_inner"
       ]
     },
     {
       "fn": "conn::run_batch",
-      "loc": "src/conn.rs:732:1: 732:93",
+      "loc": "src/conn.rs:743:1: 743:93",
       "inferred": [
         "Db"
       ],
@@ -2035,11 +2226,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0716e08580892c310"
+      "hash": "50f90ebcae654d89ed43fe37ef267257"
     },
     {
       "fn": "conn::run_batch_in_tx_open",
-      "loc": "src/conn.rs:740:1: 743:28",
+      "loc": "src/conn.rs:751:1: 754:28",
       "inferred": [
         "Db"
       ],
@@ -2052,11 +2243,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba019a44cecc663e7c7"
+      "hash": "50f90ebcae654d894798fc742144bcb0"
     },
     {
       "fn": "conn::run_in_tx_open",
-      "loc": "src/conn.rs:715:1: 715:98",
+      "loc": "src/conn.rs:726:1: 726:98",
       "inferred": [
         "Db"
       ],
@@ -2069,14 +2260,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba027eaa589be8a4bf5",
+      "hash": "50f90ebcae654d899926b4786f5574bd",
       "calls": [
         "conn::run_statement"
       ]
     },
     {
       "fn": "conn::run_in_tx_rollback",
-      "loc": "src/conn.rs:783:1: 786:28",
+      "loc": "src/conn.rs:794:1: 797:28",
       "inferred": [
         "Db"
       ],
@@ -2089,14 +2280,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba04e5f250db118a5c8",
+      "hash": "50f90ebcae654d89c6525567f7d98f89",
       "calls": [
         "conn::run_statement"
       ]
     },
     {
       "fn": "conn::run_query",
-      "loc": "src/conn.rs:800:1: 800:91",
+      "loc": "src/conn.rs:811:1: 811:91",
       "inferred": [
         "Db"
       ],
@@ -2109,14 +2300,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0912aaa1459f3cf04",
+      "hash": "50f90ebcae654d89a73d1757e4067762",
       "calls": [
         "conn::stream_rows"
       ]
     },
     {
       "fn": "conn::run_statement",
-      "loc": "src/conn.rs:662:1: 662:97",
+      "loc": "src/conn.rs:673:1: 673:97",
       "inferred": [
         "Db"
       ],
@@ -2129,14 +2320,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba00fc4c7c2c165cf7c",
+      "hash": "50f90ebcae654d89f3bda65a251951b1",
       "calls": [
         "conn::stream_rows"
       ]
     },
     {
       "fn": "conn::spawn_connection_driver",
-      "loc": "src/conn.rs:426:1: 432:78",
+      "loc": "src/conn.rs:431:1: 437:78",
       "inferred": [
         "Log"
       ],
@@ -2149,11 +2340,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a858ec145107f432"
+      "hash": "50f90ebcae654d890f976890641df5a5"
     },
     {
       "fn": "conn::stream_rows",
-      "loc": "src/conn.rs:686:1: 689:48",
+      "loc": "src/conn.rs:697:1: 700:48",
       "inferred": [
         "Db"
       ],
@@ -2166,11 +2357,28 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0179a75931a0e9248"
+      "hash": "50f90ebcae654d8968ba4663480d7eda"
+    },
+    {
+      "fn": "conn::terminate_backend",
+      "loc": "src/conn.rs:832:1: 832:96",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [
+        "Db"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d899ac38f22d0e6fb25"
     },
     {
       "fn": "conn::tx_commit",
-      "loc": "src/conn.rs:766:1: 766:78",
+      "loc": "src/conn.rs:777:1: 777:78",
       "inferred": [
         "Db"
       ],
@@ -2183,11 +2391,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f918a7d72b0bc6c4"
+      "hash": "50f90ebcae654d8987827c4ae18f5e99"
     },
     {
       "fn": "conn::tx_rollback",
-      "loc": "src/conn.rs:774:1: 774:80",
+      "loc": "src/conn.rs:785:1: 785:80",
       "inferred": [
         "Db"
       ],
@@ -2200,7 +2408,24 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ebeee0bfbfb1455a"
+      "hash": "50f90ebcae654d89257b69e5b0f842ab"
+    },
+    {
+      "fn": "creds::intellij::detect_intellij_project",
+      "loc": "src/creds/intellij.rs:37:1: 37:51",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89fa4de2588b703dac"
     },
     {
       "fn": "creds::intellij::expand_to_dsns",
@@ -2219,7 +2444,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba09faaec91cc4fcde4",
+      "hash": "50f90ebcae654d89745aa74202f4fa0a",
       "calls": [
         "conn::Dsn::parse"
       ]
@@ -2241,10 +2466,27 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba02b7461556daab9b5",
+      "hash": "50f90ebcae654d89412af3906006c5d9",
       "calls": [
         "conn::Dsn::parse"
       ]
+    },
+    {
+      "fn": "creds::spring::detect_java_project",
+      "loc": "src/creds/spring.rs:22:1: 22:47",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89ad8db2e77e93b805"
     },
     {
       "fn": "demo::app",
@@ -2261,7 +2503,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0aeff447757c680b3",
+      "hash": "50f90ebcae654d897a838361d55afb45",
       "calls": [
         "app::App::new",
         "conn::Dsn::parse"
@@ -2285,10 +2527,27 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d58107f00840f046",
+      "hash": "50f90ebcae654d89911f58cbbe43781a",
       "calls": [
         "conn::Dsn::parse"
       ]
+    },
+    {
+      "fn": "project::find_root",
+      "loc": "src/project.rs:71:1: 71:50",
+      "inferred": [
+        "Fs"
+      ],
+      "direct": [
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d8975fc9a4de6b15d40"
     },
     {
       "fn": "project::load_from",
@@ -2308,10 +2567,30 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0f791629793935671",
+      "hash": "50f90ebcae654d895e35720a36aaaa4d",
       "fs": [
         "read"
+      ],
+      "calls": [
+        "project::find_root"
       ]
+    },
+    {
+      "fn": "query::explain::run_cost_explain",
+      "loc": "src/query/explain.rs:178:1: 181:25",
+      "inferred": [
+        "Db"
+      ],
+      "direct": [
+        "Db"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d89c3cf8ef9990a851b"
     },
     {
       "fn": "query::lint::fetch_live",
@@ -2330,7 +2609,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba02d56d08804a83a17",
+      "hash": "50f90ebcae654d89297583d22967687a",
       "calls": [
         "query::lint::run_lint101",
         "query::lint::run_lint102",
@@ -2355,7 +2634,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0fbf808d2d2ae5abd"
+      "hash": "50f90ebcae654d892a117b69b6083bd0"
     },
     {
       "fn": "query::lint::run_lint102",
@@ -2372,7 +2651,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba069a42b737551056a"
+      "hash": "50f90ebcae654d89961c529278d83675"
     },
     {
       "fn": "query::lint::run_lint103",
@@ -2389,7 +2668,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba035970a0d8ffda302"
+      "hash": "50f90ebcae654d89cbd3d6b3a7851993"
     },
     {
       "fn": "query::lint::run_lint104",
@@ -2406,7 +2685,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba05e1bd70e2d3b7430"
+      "hash": "50f90ebcae654d8998818cb58cd14a3e"
     },
     {
       "fn": "query::lint::run_lint105",
@@ -2423,7 +2702,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0b0e796f0fee75b37"
+      "hash": "50f90ebcae654d8975fd76edc7cdfd90"
     },
     {
       "fn": "query::lint::run_lint106",
@@ -2440,7 +2719,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba021b63924ee123552"
+      "hash": "50f90ebcae654d8923bf433773893746"
     },
     {
       "fn": "query::schema::fetch",
@@ -2460,7 +2739,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba07b191af5bcf34f2b"
+      "hash": "50f90ebcae654d898830d7a571e9cd88"
     },
     {
       "fn": "saved::load_from",
@@ -2480,7 +2759,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba01ecb862bccc0168b",
+      "hash": "50f90ebcae654d89a878a05001526e45",
       "fs": [
         "read"
       ]
@@ -2500,7 +2779,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba01797e685fed55f82"
+      "hash": "50f90ebcae654d89cfb22c7b5611fe3b"
     },
     {
       "fn": "tap::listener::handle_tcp_conn",
@@ -2519,7 +2798,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba06598da11d7f63874",
+      "hash": "50f90ebcae654d89f4641fe940fac7f6",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros"
@@ -2545,7 +2824,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ff1f606267f5b215",
+      "hash": "50f90ebcae654d897edcc44e60f73c7f",
       "calls": [
         "tap::listener::handle_tcp_conn"
       ]
@@ -2570,7 +2849,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba057a317ab8c4c8124",
+      "hash": "50f90ebcae654d8962123565aa827638",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros"
@@ -2591,11 +2870,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba09eb1cb86c641ca44"
+      "hash": "50f90ebcae654d8941390ade5f543721"
     },
     {
       "fn": "tap::otlp::handle_otlp_conn",
-      "loc": "src/tap/otlp.rs:275:1: 278:25",
+      "loc": "src/tap/otlp.rs:279:1: 282:25",
       "inferred": [
         "Clock",
         "Log"
@@ -2608,7 +2887,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d26c9f23ab13c7f8",
+      "hash": "50f90ebcae654d89f277137bde21afb2",
       "calls": [
         "tap::otlp::process_otlp_request"
       ]
@@ -2626,14 +2905,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d2d580746737aa3a",
+      "hash": "50f90ebcae654d894fc4a74b3f9aa1bd",
       "calls": [
         "tap::otlp::span_to_tap_event"
       ]
     },
     {
       "fn": "tap::otlp::process_otlp_request",
-      "loc": "src/tap/otlp.rs:321:1: 324:18",
+      "loc": "src/tap/otlp.rs:325:1: 328:18",
       "inferred": [
         "Clock",
         "Log"
@@ -2648,7 +2927,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0e2a4e98cac148ef4",
+      "hash": "50f90ebcae654d896b327aac7f872455",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros",
@@ -2657,7 +2936,7 @@
     },
     {
       "fn": "tap::otlp::run_otlp_listener",
-      "loc": "src/tap/otlp.rs:245:1: 248:25",
+      "loc": "src/tap/otlp.rs:249:1: 252:25",
       "inferred": [
         "Clock",
         "Log",
@@ -2675,7 +2954,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba07c8de17478d9052a",
+      "hash": "50f90ebcae654d89e018230a5516df78",
       "calls": [
         "tap::otlp::handle_otlp_conn"
       ]
@@ -2695,7 +2974,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba057ed14e1a9ca5d26"
+      "hash": "50f90ebcae654d89c3f55b1acbc981a7"
     },
     {
       "fn": "tap::replay::run_replay_file",
@@ -2717,7 +2996,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0a909f903952e9ea6",
+      "hash": "50f90ebcae654d89b7588694eda432fb",
       "fs": [
         "read"
       ],
@@ -2738,9 +3017,61 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ce7af45db1caad97",
+      "hash": "50f90ebcae654d89e2f8d1e83d45199d",
       "calls": [
         "ui::draw"
+      ]
+    },
+    {
+      "fn": "tui::Tui::enter",
+      "loc": "src/tui.rs:70:5: 70:39",
+      "inferred": [
+        "Unknown"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d892a756c5ef49ad975",
+      "calls": [
+        "tui::install_panic_hook"
+      ]
+    },
+    {
+      "fn": "tui::install_panic_hook",
+      "loc": "src/tui.rs:57:1: 57:24",
+      "inferred": [
+        "Unknown"
+      ],
+      "direct": [
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d89e70b35c6f70a3497",
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
+      ]
+    },
+    {
+      "fn": "tunnel::SshTunnel::drain_stderr",
+      "loc": "src/tunnel.rs:242:5: 242:41",
+      "inferred": [
+        "Unknown"
+      ],
+      "direct": [
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "50f90ebcae654d896d69a0bf96067482",
+      "unknownWhy": [
+        "dispatch:std::io::Read"
       ]
     },
     {
@@ -2750,13 +3081,15 @@
         "Clock",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [
         "Clock",
         "Exec",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
@@ -2766,10 +3099,30 @@
         "Net"
       ],
       "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba02e32a7f84170d7ca",
+      "unresolved": true,
+      "hash": "50f90ebcae654d89e86287cc955eacb8",
+      "hosts": [
+        "127.0.0.1:0"
+      ],
+      "cmds": [
+        "-L",
+        "-N",
+        "-T",
+        "-o",
+        "-p",
+        "BatchMode=yes",
+        "ExitOnForwardFailure=yes",
+        "ServerAliveCountMax=3",
+        "ServerAliveInterval=30",
+        "ssh"
+      ],
       "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "tunnel::SshTunnel::drain_stderr",
         "tunnel::pick_free_local_port"
+      ],
+      "unknownWhy": [
+        "dispatch:std::io::BufRead"
       ]
     },
     {
@@ -2787,11 +3140,32 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0ef37497338f346fe"
+      "hash": "50f90ebcae654d897e2b964adc6b1043",
+      "hosts": [
+        "127.0.0.1:0"
+      ]
     },
     {
-      "fn": "ui::baseline_age_label",
-      "loc": "src/ui.rs:4365:1: 4365:59",
+      "fn": "ui::draw",
+      "loc": "src/ui.rs:33:1: 33:42",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "unresolved": false,
+      "hash": "50f90ebcae654d897cd3a818fceab687",
+      "calls": [
+        "ui::tap::draw_tap_monitor"
+      ]
+    },
+    {
+      "fn": "ui::tap::baseline_age_label",
+      "loc": "src/ui/tap.rs:465:1: 465:59",
       "inferred": [
         "Clock"
       ],
@@ -2804,11 +3178,11 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0efeaa95cb3b0b9d0"
+      "hash": "50f90ebcae654d891d80a1841f39b7ba"
     },
     {
-      "fn": "ui::draw",
-      "loc": "src/ui.rs:17:1: 17:42",
+      "fn": "ui::tap::draw_tap_monitor",
+      "loc": "src/ui/tap.rs:7:1: 7:69",
       "inferred": [
         "Clock"
       ],
@@ -2819,14 +3193,14 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba06fd06bc87dab29b2",
+      "hash": "50f90ebcae654d89280cd56c20a4599e",
       "calls": [
-        "ui::draw_tap_monitor"
+        "ui::tap::draw_tap_monitor_baseline"
       ]
     },
     {
-      "fn": "ui::draw_tap_monitor",
-      "loc": "src/ui.rs:3891:1: 3891:58",
+      "fn": "ui::tap::draw_tap_monitor_baseline",
+      "loc": "src/ui/tap.rs:309:1: 309:68",
       "inferred": [
         "Clock"
       ],
@@ -2837,27 +3211,9 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba055ef61e6b7777cf0",
+      "hash": "50f90ebcae654d89a15ad854b6e608eb",
       "calls": [
-        "ui::draw_tap_monitor_baseline"
-      ]
-    },
-    {
-      "fn": "ui::draw_tap_monitor_baseline",
-      "loc": "src/ui.rs:4205:1: 4205:68",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "unresolved": false,
-      "hash": "d0fba3fd0d251ba06d48b4a4085cf11c",
-      "calls": [
-        "ui::baseline_age_label"
+        "ui::tap::baseline_age_label"
       ]
     },
     {
@@ -2878,26 +3234,36 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba047216e4e4c859441"
+      "hash": "50f90ebcae654d8959b23077c123b239"
     },
     {
       "fn": "upgrade::run",
       "loc": "src/upgrade.rs:19:1: 19:35",
       "inferred": [
         "Env",
-        "Exec"
+        "Exec",
+        "Fs"
       ],
       "direct": [
-        "Exec"
+        "Exec",
+        "Fs"
       ],
       "declared": [],
       "undeclared": [
         "Env",
-        "Exec"
+        "Exec",
+        "Fs"
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba012d3683d9e9fe282",
+      "hash": "50f90ebcae654d89bacc6de7d53631a0",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "cargo",
+        "git"
+      ],
       "calls": [
         "upgrade::relaunch"
       ]
@@ -2917,7 +3283,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba0d6b427a8c518335a"
+      "hash": "50f90ebcae654d8991f63213c1fd3fe3"
     },
     {
       "fn": "util::config_dir",
@@ -2934,7 +3300,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba084eee3cf92682c6e"
+      "hash": "50f90ebcae654d895154f3bc3d0be51b"
     },
     {
       "fn": "util::config_file",
@@ -2949,7 +3315,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba01325afae465ef2cb",
+      "hash": "50f90ebcae654d8925f0f5a152018a54",
       "calls": [
         "util::config_dir"
       ]
@@ -2969,7 +3335,7 @@
       ],
       "overdeclared": [],
       "unresolved": false,
-      "hash": "d0fba3fd0d251ba00a82a865c5467b21"
+      "hash": "50f90ebcae654d898e144b094f1ef714"
     }
   ]
 }
