@@ -2,7 +2,9 @@
 //!
 //! Substitutes bound parameters back into a statement to produce runnable SQL.
 //! Numeric/boolean types are emitted bare; everything else is single-quoted
-//! with `''` escaping. Placeholders inside string literals are left alone.
+//! with `''` escaping. Placeholders inside single-quoted string literals OR
+//! double-quoted identifiers (e.g. a column literally named `"weird?col"`) are
+//! left alone — a `?`/`$N` in those positions is data, not a placeholder.
 
 use crate::query::reconstruct::{BoundParam, ParamValue};
 use std::fmt;
@@ -57,6 +59,7 @@ fn apply_qmark(sql: &str, params: &[BoundParam]) -> Result<String, SubstError> {
     let mut out = String::with_capacity(sql.len() + 32);
     let mut chars = sql.chars().peekable();
     let mut in_string = false;
+    let mut in_ident = false;
     let mut seen = 0usize;
     while let Some(c) = chars.next() {
         if in_string {
@@ -70,9 +73,24 @@ fn apply_qmark(sql: &str, params: &[BoundParam]) -> Result<String, SubstError> {
             }
             continue;
         }
+        if in_ident {
+            out.push(c);
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    out.push(chars.next().unwrap());
+                } else {
+                    in_ident = false;
+                }
+            }
+            continue;
+        }
         match c {
             '\'' => {
                 in_string = true;
+                out.push(c);
+            }
+            '"' => {
+                in_ident = true;
                 out.push(c);
             }
             '?' => {
@@ -99,6 +117,7 @@ fn apply_numbered(sql: &str, params: &[BoundParam]) -> Result<String, SubstError
     let mut out = String::with_capacity(sql.len() + 32);
     let mut chars = sql.chars().peekable();
     let mut in_string = false;
+    let mut in_ident = false;
     while let Some(c) = chars.next() {
         if in_string {
             out.push(c);
@@ -111,8 +130,24 @@ fn apply_numbered(sql: &str, params: &[BoundParam]) -> Result<String, SubstError
             }
             continue;
         }
+        if in_ident {
+            out.push(c);
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    out.push(chars.next().unwrap());
+                } else {
+                    in_ident = false;
+                }
+            }
+            continue;
+        }
         if c == '\'' {
             in_string = true;
+            out.push(c);
+            continue;
+        }
+        if c == '"' {
+            in_ident = true;
             out.push(c);
             continue;
         }
@@ -312,6 +347,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "SELECT '? literal', 7");
+    }
+
+    #[test]
+    fn qmark_inside_double_quoted_identifier_is_not_a_placeholder() {
+        // A column literally named `weird?col` carries a `?` that must
+        // NOT be counted as a bindable placeholder — only the real
+        // trailing `?` is. Regression: arity miscount → spurious error.
+        let params = [p(1, "INTEGER", "7")];
+        let out = apply(
+            r#"UPDATE t SET "weird?col" = ?"#,
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, r#"UPDATE t SET "weird?col" = 7"#);
+    }
+
+    #[test]
+    fn numbered_inside_double_quoted_identifier_is_not_substituted() {
+        // `$1` inside the quoted identifier `"a$1b"` must be left
+        // verbatim; only the real trailing `$1` is substituted.
+        let params = [p(1, "TEXT", "v")];
+        let out = apply(r#"SELECT "a$1b", $1"#, &params, PlaceholderStyle::Numbered).unwrap();
+        assert_eq!(out, r#"SELECT "a$1b", 'v'"#);
+    }
+
+    #[test]
+    fn doubled_quote_inside_identifier_does_not_end_it() {
+        // `""` is an escaped double-quote within an identifier, so the
+        // `?` after it is still inside the identifier, not a placeholder.
+        let params = [p(1, "INTEGER", "1")];
+        let out = apply(
+            r#"SELECT "a""b?c" , ?"#,
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, r#"SELECT "a""b?c" , 1"#);
     }
 
     #[test]

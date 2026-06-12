@@ -104,6 +104,15 @@ pub enum AppMsg {
         estimated: Result<f64, String>,
         threshold: u64,
     },
+    /// A post-DDL schema re-fetch finished. Replaces `App.schema_cache`
+    /// so completion / schema browser / lint / FK-nav reflect a
+    /// `CREATE`/`ALTER`/`DROP` run from the editor without a full
+    /// reconnect. Generation-tagged so a refetch from a prior connection
+    /// can't clobber the new one.
+    SchemaRefreshed {
+        generation: u64,
+        schema_cache: SchemaCache,
+    },
     /// One JDBC-tap event from the pgman-tap JAR (query,
     /// heartbeat, or txn boundary). The tap listener is bound
     /// at app startup and is independent of the DB connection,
@@ -127,6 +136,7 @@ impl AppMsg {
             | AppMsg::SlowQueriesLoaded { generation, .. }
             | AppMsg::SessionsLoaded { generation, .. }
             | AppMsg::CostPreviewLoaded { generation, .. }
+            | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. } => *generation,
             AppMsg::TapEvent { .. } => 0,
         }

@@ -175,6 +175,43 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // Refresh the cached highlight spans only when the buffer changed since
+    // last frame (a schema change clears the cache on Booted / SchemaRefreshed).
+    // The lex + O(identifiers × schema) classify otherwise re-ran every frame —
+    // including ≈9fps during any animation — for an unchanged buffer. Done
+    // before the `&app.editor.buffer` borrow below so the cache write is clean.
+    if focused {
+        let stale = match &app.editor_highlight_cache {
+            Some((b, _)) => b != &app.editor.buffer,
+            None => true,
+        };
+        if stale {
+            let spans = if app.schema_cache.is_empty() {
+                // No cache to resolve against — lex only; identifiers fall
+                // back to the default text colour rather than turning red.
+                crate::query::highlight::tokenize(&app.editor.buffer)
+            } else {
+                let from_before = crate::query::from_parse::parse_from_tables_resolved(
+                    &app.editor.buffer,
+                    &app.schema_cache,
+                );
+                let ctes = crate::query::clause::extract_ctes_resolved(
+                    &app.editor.buffer,
+                    &app.schema_cache,
+                );
+                let raw = crate::query::highlight::tokenize(&app.editor.buffer);
+                crate::query::highlight::classify(
+                    raw,
+                    &app.editor.buffer,
+                    &app.schema_cache,
+                    &from_before,
+                    &ctes,
+                )
+            };
+            app.editor_highlight_cache = Some((app.editor.buffer.clone(), spans));
+        }
+    }
+
     let buf = &app.editor.buffer;
     let (cur_line, cur_col) = crate::app::cursor_position(buf, app.editor.cursor);
     let text_color = if focused { theme.text } else { theme.muted };
@@ -192,24 +229,15 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    // Lex + semantic-classify the buffer once per frame. Cheap
-    // (single pass, no allocations beyond the span vec) and we'd
-    // otherwise re-derive the same colour for every line render.
-    // Unfocused panes get the muted text colour for everything —
-    // syntax highlighting is for the active edit surface.
-    let highlight_spans = if focused {
-        let raw = crate::query::highlight::tokenize(buf);
-        // Classify only when we have a schema cache to resolve against;
-        // without one, identifiers fall back to the default text
-        // colour rather than turning everything red.
-        if app.schema_cache.is_empty() {
-            raw
-        } else {
-            let from_before =
-                crate::query::from_parse::parse_from_tables_resolved(buf, &app.schema_cache);
-            let ctes = crate::query::clause::extract_ctes_resolved(buf, &app.schema_cache);
-            crate::query::highlight::classify(raw, buf, &app.schema_cache, &from_before, &ctes)
-        }
+    // Read the memoised highlight spans computed above (cheap clone — `Span`
+    // is `Copy`, just byte offsets + a class). Unfocused panes get the muted
+    // text colour for everything — syntax highlighting is for the active edit
+    // surface — so they don't populate or read the cache.
+    let highlight_spans: Vec<crate::query::highlight::Span> = if focused {
+        app.editor_highlight_cache
+            .as_ref()
+            .map(|(_, spans)| spans.clone())
+            .unwrap_or_default()
     } else {
         Vec::new()
     };

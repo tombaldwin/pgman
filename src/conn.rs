@@ -253,14 +253,19 @@ impl Dsn {
         for (k, v) in raw_params {
             if k.eq_ignore_ascii_case("ssh_tunnel") {
                 if saw_tunnel_key {
-                    tracing::warn!("ignoring duplicate ssh_tunnel={v:?}; first occurrence wins");
+                    // Don't log the raw value — it's the one connection-string
+                    // param that would otherwise escape redaction. The spec is
+                    // host/user only (no password by design), but keeping it out
+                    // of the log preserves the uniform "never log connection
+                    // string contents" discipline.
+                    tracing::warn!("ignoring duplicate ssh_tunnel param; first occurrence wins");
                     continue;
                 }
                 saw_tunnel_key = true;
                 match crate::tunnel::SshTunnelSpec::parse(&v) {
                     Ok(spec) => ssh_tunnel = Some(spec),
                     Err(e) => {
-                        tracing::warn!("ignoring malformed ssh_tunnel={v:?}: {e}");
+                        tracing::warn!("ignoring malformed ssh_tunnel param: {e}");
                     }
                 }
             } else {
@@ -520,15 +525,21 @@ pub async fn connect_and_bootstrap(
         notification_tx,
     )
     .await?;
-    let server_version = client
-        .query_one("SHOW server_version", &[])
-        .await
+    let client = Arc::new(client);
+    // The version probe, the bootstrap query, and the schema-cache fetch are
+    // independent reads — run them concurrently (pipelined on the one
+    // connection) instead of serially, cutting time-to-interactive on a
+    // high-latency / tunnelled link.
+    let (version_res, grid_res, schema_cache) = tokio::join!(
+        client.query_one("SHOW server_version", &[]),
+        run_query(&client, &bootstrap_sql),
+        crate::query::schema::fetch(&client),
+    );
+    let server_version = version_res
         .ok()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
-    let client = Arc::new(client);
-    let grid = run_query(&client, &bootstrap_sql).await?;
-    let schema_cache = crate::query::schema::fetch(&client).await;
+    let grid = grid_res?;
     Ok(Booted {
         server_version,
         grid,

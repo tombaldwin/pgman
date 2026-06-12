@@ -45,6 +45,15 @@ struct Cli {
     #[arg(long, default_value = "csv")]
     format: String,
 
+    /// In `--batch` mode, proceed past statements the safety guard rails
+    /// would normally only *confirm* (e.g. INSERT/UPDATE/DELETE-with-WHERE).
+    /// Statements configured to *block* (DROP, unqualified DELETE/UPDATE, …)
+    /// stay blocked — change the guard to `confirm` in safety.toml to permit
+    /// those. Without this flag, a non-interactive batch refuses any statement
+    /// that would prompt interactively.
+    #[arg(long)]
+    yes: bool,
+
     /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON
     /// events). Use `--tap-listen 127.0.0.1:7432` (or `:7432` for the
     /// same). When set, the listener starts before the TUI loop; events
@@ -641,13 +650,20 @@ async fn run_batch(cli: &Cli) -> i32 {
         return 2;
     }
     let safety_cfg = load_safety_config();
-    let profile = safety_cfg.profile_for(&dsn.dbname);
+    // Read the profile values out before moving the config into Opts.
+    let (read_only, statement_timeout_ms) = {
+        let profile = safety_cfg.profile_for(&dsn.dbname);
+        (profile.read_only, profile.statement_timeout_ms)
+    };
     let opts = batch::Opts {
+        db: dsn.dbname.clone(),
+        read_only,
+        statement_timeout_ms,
         dsn,
         sql,
         format,
-        read_only: profile.read_only,
-        statement_timeout_ms: profile.statement_timeout_ms,
+        safety: safety_cfg,
+        assume_yes: cli.yes,
     };
     match batch::run(opts).await {
         Ok(code) => code,

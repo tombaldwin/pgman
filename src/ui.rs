@@ -1534,8 +1534,12 @@ fn format_duration(micros: u64) -> String {
 
 /// A centred `w`%×`h`% rectangle within `area`.
 fn centered_pct(area: Rect, w: u16, h: u16) -> Rect {
-    let width = area.width * w / 100;
-    let height = area.height * h / 100;
+    // Compute in u32: `area.width * w` overflows u16 once the terminal is
+    // ~713+ columns wide (e.g. 713 × 92% > 65535), which panics in debug and
+    // wraps to a garbage rect in release. Both operands are tiny, so u32 is
+    // always lossless and the result fits back in u16.
+    let width = (area.width as u32 * w as u32 / 100) as u16;
+    let height = (area.height as u32 * h as u32 / 100) as u16;
     Rect {
         x: area.x + (area.width - width) / 2,
         y: area.y + (area.height - height) / 2,

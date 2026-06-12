@@ -114,6 +114,73 @@ now cover most painful real-world schema sins. Last one:
   `HistorySearch`, `SchemaBrowserFilter`) still hand-roll append-only
   editing and could adopt the same widget for consistency.
 
+### Second full-codebase review (post-decomposition) *(all fixed)*
+A max-effort review of the whole tree (9 finder angles + per-finding
+verification + a sweep). 14 real bugs found and fixed on
+`fix/review-findings-2`; 5 candidates were verified false and dropped.
+Shipped fixes:
+- **Editor crash**: Ctrl-Z/Ctrl-Y after Tab-completion left the
+  completion cycle's stale byte offsets live → next Tab `replace_range`
+  panicked. Undo/redo now clear the cycle.
+- **`--batch` bypassed the safety guards**: the CLI path ran SQL with
+  only `read_only`/`statement_timeout`, never the per-statement
+  `Guard`. Now routes every split statement through
+  `check_batch_safety` (Block refuses; Confirm needs the new `--yes`).
+- **Stale `grid_view.source` after reconnect** → `I` (row→INSERT)
+  emitted SQL against the previous DB's table. `reset_grid_view` now
+  clears `source` (and bookmarks).
+- **`split_statements` ignored dollar-quoting** → a `;` in a
+  `CREATE FUNCTION $$…$$` body shattered/over-guarded it. Splitter +
+  comment-stripper are now dollar-quote aware.
+- **`query_running` stuck forever** after a mid-query reconnect (the
+  reset message was dropped as stale). Cleared in `start_connect`.
+- **Schema cache never refreshed after DDL** — completion/browser/lint/
+  FK-nav went stale until reconnect. A DDL `QueryOk` (or the commit of a
+  wrapped DDL) now spawns a background `schema::fetch` →
+  `SchemaRefreshed`.
+- **Bookmarks** were a flat App map keyed by raw row index → resolved
+  against unrelated results / other tabs. Now per-tab (in `TabSnapshot`)
+  and cleared on grid replacement.
+- **`centered_pct` u16 overflow** panicked / mis-rendered overlays on
+  713+ column terminals. Now computes in u32.
+- **Auto-refresh reset the Sessions/Slow-Queries cursor to 0** every
+  tick. Now clamps (preserves) the selection.
+- **Plain-EXPLAIN error caret off-by-one** (subtracted 23 for a 22-char
+  prefix). Fixed to 22.
+- **`subst` ignored double-quoted identifiers** → a `?`/`$N` in a quoted
+  column name miscounted/corrupted. Now tracked like single quotes.
+- **OTLP `ts_unix_micros` unclamped** while duration was capped → one
+  hostile span poisoned the N+1 time window. Derived from start + capped
+  duration.
+- **Raw `ssh_tunnel` param logged** via `tracing::warn!` — the one
+  connection-string value escaping redaction. Value dropped from the log.
+- **Dead no-op loop** in `from_parse::parse_from_tables_resolved` removed.
+- Cleanup pass (follow-up, behavior-preserving — verified by the test +
+  snapshot suite):
+  - **`ListCursorNav` applied** to the 7 tap-monitor handlers + row-detail,
+    result-diff, and cell-detail-json panels via a `CursorAt { cursor, len }`
+    adapter + an `apply_list_nav_key` helper (the j/k/g/G/PageUp/PageDown
+    clamp lives once now). `schema_browser` and `explain_tree` left as-is —
+    their nav is intertwined with bespoke keys (`[`/`]`/`+`/toggle) and, for
+    explain, converting would *add* paging it didn't have (a behavior change).
+  - **Bootstrap parallelised** — `schema::fetch`'s four catalog queries, and
+    the top-level version probe + bootstrap query + schema fetch, now run
+    concurrently via `tokio::join!` (pipelined on the one connection),
+    collapsing ~6 serial round-trips toward one. Cuts time-to-interactive on
+    a tunnelled/high-latency link.
+  - **Editor highlight memoised** — `draw_editor` caches the lex+classify
+    spans keyed on the buffer text (cleared on schema change), so the
+    O(identifiers × schema) classify no longer re-runs every frame (≈9fps
+    during animation) for an unchanged buffer. `Span` is `Copy`, so the
+    cache hit is a cheap clone.
+  - **`is_cost_checkable` NOT folded into `safety::classify`** *(evaluated —
+    declined)*. They answer different questions: `classify` is the safety
+    router; `is_cost_checkable` decides whether an `EXPLAIN`-cost preview is
+    worth/possible. Folding would regress its deliberate `SHOW` exclusion
+    (you can't `EXPLAIN SHOW`) and drop its cost-preview-specific `LIMIT`
+    self-bounded check. The minor keyword-extraction overlap isn't worth a
+    behavior regression.
+
 ### JDBC tap — layered build
 The committed observability path. **pgman-tap is not a
 ground-up JDBC wrapper** — it's a thin
