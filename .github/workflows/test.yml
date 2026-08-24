@@ -111,6 +111,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: install candor-scan
-        run: cargo install candor-scan --locked
+        # PINNED deliberately. Unversioned, this gate moves underfoot: a
+        # newer scanner classifies the same source differently, so the job
+        # can go red on a commit that changed no code at all. That happened
+        # in the sibling tb-tui-common repo — passed in June, failed in
+        # August on a dependency-only commit. A required gate you cannot
+        # reason about is worse than no gate. Bump this on purpose, having
+        # re-run `bash ci/candor-check.sh .` against the new version first.
+        run: cargo install candor-scan --locked --version 0.31.0
       - name: enforce DB-access boundary (Db only in conn.rs + query/)
         run: bash ci/candor-check.sh

@@ -4,6 +4,7 @@
 # candor effect-guard: commit the baselines (baseline.*), ignore the
 # transient per-run output and the machine-specific local config.
 .candor/report.*.json
+.candor/deps/
 .candor/state
 .candor/last-error.log
 .candor/config
