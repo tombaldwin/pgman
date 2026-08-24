@@ -9,6 +9,62 @@ under Done, no matter which milestone it came from.
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
 
+### Dependency + CI catch-up — 2026-08-24 *(all done)*
+
+Brought pgman level with ebman, which had just done the same work and
+made most of this cheap.
+
+- [x] **ratatui 0.30 / crossterm 0.29 via tb-tui-common 0.2.0.** Zero
+  code changes. The wall of type errors a naive bump produces is a
+  two-versions-in-one-tree clash (tb-tui-common 0.1.3 pinned ratatui
+  ^0.29, and 0.30 moved types into ratatui-core), not an API migration.
+  The evidence that matters for a TUI bump is the 16 committed insta
+  render snapshots, every one of which matched the 0.29-accepted layout.
+  Confirmed that harness can fail: renaming one pane title fails 11 of
+  the 16.
+- [x] **All 7 dependabot PRs closed** (#3, #5, #6, #7, #8, #13, #16).
+  Taken locally rather than merged so fallout landed in the same commit
+  — criterion 0.8 deprecated `black_box`, which needed a follow-up edit.
+- [x] **`toml` 1.1 (spec 1.1.0), with a guard test.** pgman differs from
+  ebman here: it *writes* TOML in `saved::save_to`, so emitting 1.1-only
+  syntax would mean a saved-query file that an older pgman cannot load —
+  silent data loss on a downgrade. Checked rather than assumed: 1.1
+  still emits 1.0-style escapes inside a multi-line basic string. Pinned
+  by test. The first version of that test was worthless and only the
+  mutation run exposed it — it called `toml::to_string_pretty` directly,
+  so it pinned the crate rather than pgman's write path.
+- [x] **cargo-deny green for the first time since 2026-07-25.**
+  RUSTSEC-2026-0194 and -0195, two denial-of-service paths in quick-xml
+  0.36, fixed by moving to 0.42 rather than waived. Six majors but
+  mechanical: quick-xml went str-based, so the `from_utf8` round-trips
+  collapse and `BytesText::unescape()` becomes the infallible
+  `xml10_content()`. One change is *not* mechanical — attribute values
+  now undergo XML attribute-value normalisation, so a literal newline in
+  an attribute collapses to a space. That does not touch our own files
+  (we write `&#10;`, which the spec exempts) but does change how we read
+  another tool's fixture. Both halves pinned.
+- [x] **Removed a dead deny.toml waiver.** RUSTSEC-2024-0436 suppressed
+  `paste`, pulled in transitively by ratatui 0.29. The 0.30 bump dropped
+  it, so cargo-deny was flagging the exception itself as unused.
+- [x] **Pinned `candor-scan` to 0.31.0.** It was unversioned, so the
+  DB-boundary gate moved underfoot — a newer scanner classifies the same
+  source differently and the job can go red on a commit that changed no
+  code. That happened in tb-tui-common this week. Verified the pin keeps
+  the gate green before committing it.
+- [x] **`.candor/deps/`** (272 dirs of transient scan cache) was
+  untracked but not ignored, one `git add -A` from being committed.
+- [x] **Integration job green, and the refusal it hid now covered.** Two
+  tests had been failing since 2026-07-25, refused by pgman's own safety
+  gate: they run `BEGIN; SELECT 1; COMMIT` and a `DO $$ .. $$` block,
+  both correctly classified `Other`. The tests predate the 2026-06-12
+  tightening in 4a2ac6e and were never updated. Fixed with `--yes` and a
+  comment on each. But that removed something: those two were, by
+  accident, the only end-to-end evidence the binary honours the gate —
+  they were covering it *by failing*. Added
+  `batch_refuses_a_guarded_statement_without_yes`, mutation-verified.
+  This is the ebman 0.14.0 class of bug (`lint --fix` bypassing
+  `safety.envs.*.read_only`), which is why it was worth closing.
+
 ### Connection & chrome
 - IntelliJ `dataSources.local.xml` password parsing — the
   `parse_local_passwords` referenced in `creds::intellij`'s doc

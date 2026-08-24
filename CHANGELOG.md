@@ -6,7 +6,38 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
-Nothing yet — `main` is the moving target between releases.
+### Changed
+
+- **ratatui 0.29 → 0.30.2, crossterm 0.28 → 0.29**, via `tb-tui-common`
+  0.2.0. No code changes needed — the errors a naive bump produces are a
+  version clash, not an API migration. All 16 committed insta render
+  snapshots matched the layout accepted under 0.29.
+- **Dependency majors**: `quick-xml` 0.36 → 0.42, `toml` 0.8 → 1.1,
+  `criterion` 0.5 → 0.8, `tokio-postgres-rustls` 0.13 → 0.14, plus the
+  pinned GitHub Actions.
+
+### Fixed
+
+- **Two RUSTSEC advisories** (2026-0194, 2026-0195) — denial-of-service
+  paths in `quick-xml` 0.36's attribute and namespace handling. Fixed by
+  upgrading rather than waived. `cargo-deny` had been red since
+  2026-07-25.
+- **The integration-test job**, red since 2026-07-25. Two tests predated
+  a safety-gate tightening and were being refused by it; they now
+  confirm explicitly with `--yes`.
+
+### Added
+
+- **End-to-end coverage that the binary honours the batch safety gate.**
+  Previously tested only at the unit level — the two tests above were
+  covering it by accident, and by failing.
+
+### Note on downgrades
+
+`toml` 1.x implements TOML spec 1.1.0, and pgman *writes* TOML
+(`saved::save_to`). Verified and now pinned by test: saved-query files
+are still written with TOML 1.0-compatible escapes, so a file written by
+this build loads in an older pgman.
 
 ## [0.1.0] — 2026-06-06
 
