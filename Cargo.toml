@@ -12,8 +12,8 @@ keywords = ["postgresql", "tui", "database", "cli", "ratatui"]
 categories = ["command-line-utilities", "database"]
 
 [dependencies]
-ratatui = "0.29"
-crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.30"
+crossterm = { version = "0.29", features = ["event-stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.13"
@@ -36,7 +36,7 @@ arboard = "3"
 # flow between both. Local copies of these used to live under
 # src/util.rs and src/font_probe.rs; see `// tui-common: …` notes
 # inline where the migration replaced them.
-tui-common = { package = "tb-tui-common", version = "0.1.3" }
+tui-common = { package = "tb-tui-common", version = "0.2" }
 
 # Deferred — added as the milestones that need them land (see BACKLOG.md):
 #   M2  deadpool-postgres                      — connection pool for interactive queries
