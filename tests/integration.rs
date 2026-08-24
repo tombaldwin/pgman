@@ -76,8 +76,21 @@ fn batch_multistatement_routes_through_simple_query_protocol() {
     // A multi-statement input that `client.prepare()` rejects but
     // `batch_execute()` accepts. Exit success means the splitter
     // detected the multi-stmt shape correctly.
+    //
+    // `--yes` is required and is not incidental to the test. The safety
+    // gate classifies a bare `BEGIN` as `Other` — it cannot tell what a
+    // transaction will go on to do — so batch mode refuses it without
+    // explicit confirmation. That refusal is the gate working. This test
+    // is about statement splitting, so it confirms and moves on.
     let out = Command::new(pgman_binary())
-        .args(["--batch", "--dsn", DSN, "--sql", "BEGIN; SELECT 1; COMMIT"])
+        .args([
+            "--batch",
+            "--yes",
+            "--dsn",
+            DSN,
+            "--sql",
+            "BEGIN; SELECT 1; COMMIT",
+        ])
         .output()
         .expect("spawn pgman");
     assert!(
@@ -113,9 +126,13 @@ fn batch_surfaces_server_notice_on_stderr() {
     // DO block with RAISE NOTICE — the connection driver's poll_message
     // loop should pick it up and route through the notice channel,
     // which the batch path drains to stderr.
+    // `--yes` for the same reason as the multi-statement test above: a
+    // `DO $$ .. $$` block is arbitrary PL/pgSQL, so the gate classifies
+    // it `Other` and asks. This test is about notice routing.
     let out = Command::new(pgman_binary())
         .args([
             "--batch",
+            "--yes",
             "--dsn",
             DSN,
             "--sql",
@@ -206,4 +223,46 @@ fn batch_expanded_format_renders_one_record_per_block() {
     assert!(stdout.contains("RECORD 2"));
     assert!(stdout.contains("id   | 1"));
     assert!(stdout.contains("name | one"));
+}
+
+/// The other half of the two `--yes` tests above, and the reason they
+/// each carry a comment rather than a quietly-added flag.
+///
+/// Those two spent two months failing because the safety gate learned to
+/// refuse `Other`-classified statements in batch mode after they were
+/// written. Adding `--yes` fixes them, but it also means neither of them
+/// exercises the refusal any more — and until now that refusal was
+/// covered only by unit tests of `check_batch_safety`, never end-to-end
+/// through the actual binary.
+///
+/// That gap is worth closing rather than assuming: a CLI path that skips
+/// a safety gate its unit tests pass is a real and well-precedented bug.
+/// So this pins that the *binary*, not just the function, refuses.
+#[test]
+fn batch_refuses_a_guarded_statement_without_yes() {
+    let out = Command::new(pgman_binary())
+        .args([
+            "--batch",
+            "--dsn",
+            DSN,
+            "--sql",
+            "DO $$ BEGIN RAISE NOTICE 'pgman-test-notice'; END $$",
+        ])
+        .output()
+        .expect("spawn pgman");
+
+    assert!(
+        !out.status.success(),
+        "batch mode must REFUSE a guarded statement when --yes is absent, \
+         but it exited 0"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("blocked by safety"),
+        "the refusal must say why it refused: {stderr}"
+    );
+    assert!(
+        stderr.contains("--yes"),
+        "the refusal must tell the operator how to proceed: {stderr}"
+    );
 }
