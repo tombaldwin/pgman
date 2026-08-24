@@ -254,4 +254,66 @@ mod tests {
         assert_eq!(load_from(&path), SavedQueries::default());
         let _ = std::fs::remove_file(&path);
     }
+
+    /// `toml` 1.x implements TOML **spec 1.1.0** — a change to the
+    /// language, not just the crate's API. That matters more here than
+    /// in a read-only consumer, because `save_to` *writes* TOML: if the
+    /// bytes we emit ever drifted into 1.1-only syntax, a file written
+    /// by this build would fail to load in an older pgman and the
+    /// operator would silently lose their saved queries on a downgrade.
+    ///
+    /// TOML 1.1 adds `\e` and `\x41`-style escapes that a 1.0 parser
+    /// rejects. A saved query body is arbitrary SQL and can hold
+    /// anything — a colour escape pasted from a terminal, a DEL, a tab.
+    /// So the property to pin is not "it round-trips" (it trivially
+    /// does, both halves being the same crate) but "the bytes that
+    /// reach disk stay inside TOML 1.0".
+    ///
+    /// Goes through `save_to` and reads the file back rather than
+    /// calling `toml::to_string_pretty` directly. The first version of
+    /// this test did the latter and was worthless: it pinned the toml
+    /// crate's behaviour, not pgman's write path, so a mutation making
+    /// `save_to` emit `\e` passed it clean.
+    #[test]
+    fn saved_queries_reach_disk_as_toml_1_0_even_under_spec_1_1() {
+        let dir = std::env::temp_dir().join(format!("pgman-saved-spec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("saved.toml");
+
+        let q = SavedQueries {
+            entries: vec![SavedQuery {
+                name: "nasty".into(),
+                // ESC, DEL, tab, newline, quote, backslash, accent, emoji.
+                body: "SELECT '\u{1b}[31m', \"q\", \\, \tx,\n\u{7f}, é, 😀".into(),
+            }],
+        };
+        save_to(&path, &q).expect("write");
+        let text = std::fs::read_to_string(&path).expect("read back");
+
+        // The two escape forms TOML 1.1 introduced and 1.0 rejects.
+        assert!(
+            !text.contains("\\e"),
+            "wrote the TOML 1.1 `\\e` escape, which a 1.0 parser rejects — this \
+             file would not load in an older pgman:\n{text}"
+        );
+        assert!(
+            !text.contains("\\x"),
+            "wrote a TOML 1.1 `\\x` hex escape, which a 1.0 parser rejects — this \
+             file would not load in an older pgman:\n{text}"
+        );
+
+        // Positively pin the 1.0 forms it does use, so a switch to the
+        // 1.1 spelling fails here rather than in an operator's downgrade.
+        assert!(
+            text.contains("\\u001B"),
+            "expected the 1.0 \\u escape:\n{text}"
+        );
+        assert!(
+            text.contains("\\u007F"),
+            "expected the 1.0 \\u escape:\n{text}"
+        );
+
+        assert_eq!(load_from(&path), q, "must still load back");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

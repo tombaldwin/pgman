@@ -6,11 +6,12 @@
 //! These exist to catch perf regressions during refactors — when
 //! a number doubles in a PR, ask why before merging.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use pgman::app::compute_visible_rows;
 use pgman::query::complete::candidates_for;
 use pgman::query::highlight::{classify, tokenize};
 use pgman::query::schema::{SchemaCache, TableMeta};
+use std::hint::black_box;
 
 /// A realistic-ish ~1 KB buffer: a CTE + a multi-table join + a
 /// WHERE clause. Mirrors what an operator typically has on screen.
