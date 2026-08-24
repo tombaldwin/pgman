@@ -65,6 +65,21 @@ made most of this cheap.
   This is the ebman 0.14.0 class of bug (`lint --fix` bypassing
   `safety.envs.*.read_only`), which is why it was worth closing.
 
+- [x] **Server notices could be lost on exit in batch mode** — the real
+  bug the red integration job was hiding. `batch::run` drained the
+  notice channel in a detached `tokio::spawn` and returned without
+  sequencing the two, so a `RAISE NOTICE` / `RAISE WARNING`, a "relation
+  already exists, skipping", or constraint context could vanish whenever
+  process exit won the race. Silently, which is worse than not printing
+  it. Now holds the JoinHandle and awaits it (bounded 2s) after dropping
+  the client, on **both** exit paths. Proving it took care, because the
+  race does not reproduce locally — the test passes 20/20 on the unfixed
+  code. Made deterministic by delaying the printer 200ms: the old shape
+  then fails with the exact CI error, the fixed shape passes. Worth
+  noting how it surfaced: it had been sitting behind the safety refusal
+  for two months, because the test that would have caught it never got
+  as far as its own assertion.
+
 ### Connection & chrome
 - IntelliJ `dataSources.local.xml` password parsing — the
   `parse_local_passwords` referenced in `creds::intellij`'s doc
