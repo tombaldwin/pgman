@@ -65,9 +65,7 @@ pub fn parse(xml: &str) -> Vec<IntellijDataSource> {
                 }
             }
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
+                let name = e.name().as_ref().to_string();
                 if name == "data-source" {
                     if let Some(ds) = current.take() {
                         sources.push(ds);
@@ -77,12 +75,14 @@ pub fn parse(xml: &str) -> Vec<IntellijDataSource> {
             }
             Ok(Event::Text(t)) => {
                 if let (Some(ds), Some(tag)) = (current.as_mut(), current_tag.as_deref()) {
-                    if let Ok(val) = t.unescape() {
-                        match tag {
-                            "jdbc-url" => ds.jdbc_url = Some(val.to_string()),
-                            "user-name" => ds.user = Some(val.to_string()),
-                            _ => {}
-                        }
+                    // quick-xml 0.42: `unescape()` became `xml10_content()`,
+                    // which resolves entities infallibly rather than
+                    // returning a Result. IntelliJ writes XML 1.0.
+                    let val = t.xml10_content();
+                    match tag {
+                        "jdbc-url" => ds.jdbc_url = Some(val.to_string()),
+                        "user-name" => ds.user = Some(val.to_string()),
+                        _ => {}
                     }
                 }
             }
@@ -162,9 +162,7 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
                 }
             }
             Ok(Event::End(e)) => {
-                let name = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_string();
+                let name = e.name().as_ref().to_string();
                 match name.as_str() {
                     "data-source" => {
                         if let Some(uuid) = current_uuid.take() {
@@ -194,9 +192,7 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
             Ok(Event::Text(t)) => {
                 if let (Some(_), Some(tag)) = (current_uuid.as_deref(), current_tag.as_deref()) {
                     if tag == "user-name" {
-                        if let Ok(val) = t.unescape() {
-                            current_meta.user = Some(val.to_string());
-                        }
+                        current_meta.user = Some(t.xml10_content().to_string());
                     }
                 }
             }
@@ -327,16 +323,17 @@ pub fn to_dsn(source: &IntellijDataSource) -> Option<crate::conn::Dsn> {
 // -- helpers --
 
 fn element_name(e: &quick_xml::events::BytesStart<'_>) -> String {
-    std::str::from_utf8(e.name().as_ref())
-        .unwrap_or("")
-        .to_string()
+    e.name().as_ref().to_string()
 }
 
 fn attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     for attr in e.attributes().flatten() {
-        let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+        let key = attr.key.as_ref();
         if key == name {
-            return attr.unescape_value().ok().map(|c| c.to_string());
+            return attr
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|c| c.to_string());
         }
     }
     None

@@ -7,11 +7,6 @@ version = 2
 # Fail on security advisories; review unmaintained crates manually.
 yanked = "deny"
 ignore = [
-    # `paste` is archived/unmaintained but stable; it's a transitive,
-    # compile-time-only proc-macro helper pulled in by ratatui, with no
-    # safe upgrade available. Not a vulnerability — revisit when ratatui
-    # drops or replaces it.
-    "RUSTSEC-2024-0436",
 ]
 
 [licenses]
