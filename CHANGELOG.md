@@ -18,6 +18,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Server notices could be lost on exit in batch mode.** `batch::run`
+  drained the notice channel in a detached task and returned without
+  sequencing the two, so a `RAISE NOTICE` / `RAISE WARNING` could vanish
+  whenever process exit won the race. Now awaited (bounded at 2s) on
+  both the success and failure paths.
+
 - **Two RUSTSEC advisories** (2026-0194, 2026-0195) — denial-of-service
   paths in `quick-xml` 0.36's attribute and namespace handling. Fixed by
   upgrading rather than waived. `cargo-deny` had been red since

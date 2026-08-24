@@ -121,7 +121,12 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // stderr; LISTEN/NOTIFY arrivals are silently dropped (a
     // one-shot batch isn't a sensible subscriber).
     let (notice_tx, mut notice_rx) = tokio::sync::mpsc::unbounded_channel::<conn::NoticeMsg>();
-    tokio::spawn(async move {
+    // Keep the handle. A detached task here is a silent-loss bug: the
+    // server sends NOTICE before CommandComplete, but nothing makes the
+    // printer run before `run` returns and the process exits, so a
+    // `RAISE WARNING` or a "relation already exists, skipping" can
+    // vanish whenever the exit wins the race. Awaited below.
+    let notice_task = tokio::spawn(async move {
         while let Some(n) = notice_rx.recv().await {
             eprintln!("[{}] {}", n.severity, n.message);
         }
@@ -154,7 +159,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     } else {
         conn::run_statement(&client, &opts.sql).await
     };
-    match result {
+    let code = match result {
         Ok(grid) => {
             let text = match opts.format {
                 Format::Csv => format_csv(&grid),
@@ -169,13 +174,27 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
             if !text.ends_with('\n') {
                 println!();
             }
-            Ok(0)
+            0
         }
         Err(QueryErr { msg, .. }) => {
             eprintln!("error: {msg}");
-            Ok(1)
+            1
         }
-    }
+    };
+
+    // Both exit paths come through here, because a notice matters just
+    // as much on the failing one. Dropping the client and the tunnel
+    // ends the connection task, which drops the last `notice_tx`, which
+    // ends the printer loop above — so awaiting the handle drains
+    // everything the server sent. Bounded, because a connection that
+    // never finishes closing must not hang a batch run: on timeout we
+    // return the exit code anyway and lose only what a detached task
+    // would have lost regardless.
+    drop(client);
+    drop(_tunnel);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), notice_task).await;
+
+    Ok(code)
 }
 
 /// RFC-4180-style CSV. Fields containing `,`, `"`, `\r`, or `\n` get
