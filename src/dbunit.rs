@@ -257,21 +257,21 @@ fn insert_sql(row: &Row) -> String {
 }
 
 fn element_name(e: &quick_xml::events::BytesStart<'_>) -> String {
-    std::str::from_utf8(e.name().as_ref())
-        .unwrap_or("")
-        .to_string()
+    e.name().as_ref().to_string()
 }
 
 fn row_columns(e: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
     let mut cols = Vec::new();
     for attr in e.attributes().flatten() {
-        let key = std::str::from_utf8(attr.key.as_ref())
-            .unwrap_or("")
-            .to_string();
+        let key = attr.key.as_ref().to_string();
         if key.is_empty() {
             continue;
         }
-        let val = attr.unescape_value().ok().unwrap_or_default().to_string();
+        let val = attr
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
+            .ok()
+            .unwrap_or_default()
+            .to_string();
         cols.push((key, val));
     }
     cols
@@ -470,5 +470,47 @@ mod tests {
         // An invalid `<` makes the parser barf.
         let xml = "<dataset><users id=<></dataset>";
         assert!(parse_flat_xml(xml).is_err());
+    }
+
+    /// The 0.36 -> 0.42 quick-xml bump changed how attribute values
+    /// decode. 0.36 only resolved entities; 0.42 also performs XML
+    /// attribute-value normalisation, under which a *literal* newline
+    /// or tab inside an attribute collapses to a single space.
+    ///
+    /// Note this is a property of the *version*, not of which method
+    /// you call: 0.42's `unescape_value()` is a deprecated shim that
+    /// delegates to `normalized_value(Implicit1_0)` and normalises too.
+    /// Worth stating because it makes the obvious mutation — swap the
+    /// call back — semantically inert, and an inert mutation looks
+    /// exactly like a test that cannot fail.
+    ///
+    /// It does not affect our own files, which is why the existing
+    /// round-trip test still passes: `generate_flat_xml` writes
+    /// whitespace as the character references `&#10;` / `&#9;`, and the
+    /// spec explicitly exempts character references from that collapse.
+    ///
+    /// It does change how we read a fixture some *other* tool wrote
+    /// with a raw newline in an attribute. That is a behaviour change
+    /// worth pinning rather than shipping silently — and the new
+    /// behaviour is the spec-conformant one, so this pins the fix, not
+    /// a regression.
+    #[test]
+    fn literal_whitespace_in_an_attribute_normalises_but_char_refs_survive() {
+        // A raw newline, as an external tool might emit.
+        let external = "<dataset>\n  <t note=\"line1\nline2\" />\n</dataset>";
+        let got = parse_flat_xml(external).expect("parse");
+        assert_eq!(
+            got.rows[0].columns[0].1, "line1 line2",
+            "a LITERAL newline in an attribute must normalise to a space (XML spec)"
+        );
+
+        // The same content written by us, via character references.
+        let ours = "<dataset>\n  <t note=\"line1&#10;line2\" />\n</dataset>";
+        let got = parse_flat_xml(ours).expect("parse");
+        assert_eq!(
+            got.rows[0].columns[0].1, "line1\nline2",
+            "a CHARACTER REFERENCE must survive normalisation intact — this is \
+             what keeps our own fixtures round-tripping"
+        );
     }
 }
