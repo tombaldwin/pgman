@@ -6,9 +6,9 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
 │  ┌ active sessions — pg_stat_activity — r refresh · q close ─────────────┐   │
-│  │     pid              user/app       state    age(s)   blocked  query  │   │
-│  │    1234            alice/psql      active      12.5      5678  UPDATE │   │
-└──│    5678             bob/pgman  idle in tx     300.0         -  BEGIN  │───┘
+│  │     pid  user/app              state         age(s)   blocked  query  │   │
+│  │    1234  alice/psql            active          12.5      5678  UPDATE │   │
+└──│    5678  bob/pgman             idle in tx     300.0         -  BEGIN  │───┘
 ┌ r│                                                                       │───┐
 │id│                                                                       │   │
 │1 │                                                                       │   │

@@ -988,7 +988,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
-            "  {:>6}  {:>20}  {:>state_w$}  {:>8}  {:>8}  {}",
+            "  {:>6}  {:<20}  {:<state_w$}  {:>8}  {:>8}  {}",
             "pid",
             "user/app",
             "state",
@@ -1038,8 +1038,12 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         } else {
             "-"
         };
+        // Text columns left-aligned, numbers right-aligned: right-
+        // aligning `alice/psql` and `idle in tx` pushed every value
+        // away from the label above it and made a ragged left edge of
+        // the two columns an operator actually scans.
         let line = format!(
-            "  {:>6}  {:>20}  {:>state_w$}  {:>8.1}  {:>8}  {}",
+            "  {:>6}  {:<20}  {:<state_w$}  {:>8.1}  {:>8}  {}",
             row.pid,
             user_app,
             abbreviate_state(&row.state),
