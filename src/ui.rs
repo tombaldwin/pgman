@@ -13,12 +13,14 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Tab
 use ratatui::Frame;
 
 mod editor;
+mod landing;
 mod panels;
 mod results;
 mod schema;
 mod tap;
 
 use editor::{draw_completion_popup, draw_editor};
+use landing::draw_landing;
 use panels::{
     draw_about, draw_confirm, draw_conn_pick, draw_error_detail, draw_explain_tree, draw_help,
     draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
@@ -315,12 +317,23 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
         }
         ConnState::Connected { .. } => {
             if app.grid.is_empty() {
-                f.render_widget(
-                    Paragraph::new("(no rows)")
-                        .style(Style::default().fg(app.theme.muted))
-                        .block(bordered(&app.theme, "result")),
-                    area,
-                );
+                // `grid.columns` is empty only when nothing has ever run
+                // (App::new's default `Grid`) — any real result, including
+                // a genuinely empty one, leaves its column list behind.
+                // That's what tells "nothing run yet" (show the start
+                // card) apart from "ran a query, got zero rows" (still
+                // `(no rows)`); an error also forces the plain message so
+                // it isn't hidden behind a welcome screen.
+                if app.grid.columns.is_empty() && app.last_error.is_none() {
+                    draw_landing(f, area, app);
+                } else {
+                    f.render_widget(
+                        Paragraph::new("(no rows)")
+                            .style(Style::default().fg(app.theme.muted))
+                            .block(bordered(&app.theme, "result")),
+                        area,
+                    );
+                }
             } else {
                 draw_grid(f, area, app);
             }

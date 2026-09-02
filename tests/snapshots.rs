@@ -48,6 +48,13 @@ fn dump(buf: &Buffer) -> String {
     out
 }
 
+/// Baseline `App` used by most snapshot tests below. The result panel
+/// carries a grid with columns but no rows — i.e. "a query ran and came
+/// back empty" — so tests that pop a modal over the body (help, slow
+/// queries, …) keep seeing the plain `(no rows)` placeholder behind it,
+/// same as before the start card existed. Tests that specifically want
+/// the "nothing has run yet" start card reset `a.grid` back to
+/// `Grid::default()` (see `landing_after_connect`).
 fn settle_app() -> App {
     let dsn = Some(Dsn::parse("postgres://test@localhost/test").unwrap());
     let picks: Vec<DataSourcePick> = Vec::new();
@@ -57,12 +64,37 @@ fn settle_app() -> App {
     a.conn_state = ConnState::Connected {
         server_version: "16.0".into(),
     };
+    a.grid = Grid {
+        columns: vec!["placeholder".into()],
+        rows: vec![],
+        truncated: false,
+    };
     a
 }
 
+/// Replaces the old `empty_normal_mode` snapshot: with nothing ever run
+/// (`grid` at its `App::new` default — empty columns, empty rows), the
+/// body shows the start card instead of a bare `(no rows)`.
 #[test]
-fn empty_normal_mode() {
+fn landing_after_connect() {
     let mut a = settle_app();
+    a.grid = Grid::default();
+    a.mode = Mode::Normal;
+    let buf = render(&mut a, 80, 16);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+/// A query that legitimately returns zero rows must still show
+/// `(no rows)`, not the start card — `Grid.columns` being non-empty is
+/// what tells "ran a query, got nothing" apart from "nothing run yet".
+#[test]
+fn no_rows_after_empty_query_result() {
+    let mut a = settle_app();
+    a.grid = Grid {
+        columns: vec!["id".into(), "email".into()],
+        rows: vec![],
+        truncated: false,
+    };
     a.mode = Mode::Normal;
     let buf = render(&mut a, 80, 16);
     insta::assert_snapshot!(dump(&buf));
