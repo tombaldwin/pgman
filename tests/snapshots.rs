@@ -14,13 +14,13 @@
 
 use pgman::app::{
     compute_visible_rows, App, CompletionCycle, ConnState, DataSourcePick, DatabaseInfo,
-    HistorySearchState, Mode, WatchState,
+    HistorySearchState, Mode, PendingRun, RunKind, WatchState,
 };
 use pgman::conn::Dsn;
 use pgman::grid::Grid;
 use pgman::query::complete::{Candidate, CandidateKind};
 use pgman::query::schema::TableMeta;
-use pgman::safety::SafetyConfig;
+use pgman::safety::{Decision, Guard, SafetyConfig, StatementKind};
 use pgman::theme::Theme;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -204,6 +204,30 @@ fn history_search_in_progress() {
     a.editor.buffer = "SELECT * FROM users".into();
     a.editor.cursor = a.editor.buffer.len();
     let buf = render(&mut a, 80, 16);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+#[test]
+fn confirm_modal_names_the_statement_not_the_enum_variant() {
+    // Regression coverage for the confirm modal showing Rust `Debug`
+    // syntax (`Delete { has_where: false }`) instead of an
+    // operator-facing phrase (`DELETE without WHERE`) — see
+    // `StatementKind::describe` in `src/safety.rs`.
+    let mut a = settle_app();
+    a.pending_run = Some(PendingRun {
+        sql: "DELETE FROM orders".into(),
+        kind: RunKind::Run,
+        decision: Decision {
+            kind: StatementKind::Delete { has_where: false },
+            guard: Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+        },
+        is_batch: false,
+        summary: None,
+    });
+    a.mode = Mode::Confirm;
+    let buf = render(&mut a, 80, 24);
     insta::assert_snapshot!(dump(&buf));
 }
 

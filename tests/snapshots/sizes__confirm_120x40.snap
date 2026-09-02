@@ -20,8 +20,8 @@ expression: dump(&buf)
 │                                     ┌ confirm ─────────────────────────────────┐                                     │
 │                                     │Confirm                                   │                                     │
 │                                     │                                          │                                     │
-│                                     │run (Delete { has_where: false }) · will  │                                     │
-│                                     │wrap in transaction                       │                                     │
+│                                     │run (DELETE without WHERE) · will wrap in │                                     │
+│                                     │transaction                               │                                     │
 │                                     │                                          │                                     │
 │                                     │DELETE FROM orders                        │                                     │
 │                                     │                                          │                                     │
