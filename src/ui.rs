@@ -279,12 +279,39 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
             );
         }
         ConnState::Disconnected => {
-            f.render_widget(
-                Paragraph::new("no connection — start pgman with --dsn postgres://…")
+            if app.mode == Mode::ConnPick {
+                // `draw_conn_pick` (called from `draw` once the body has
+                // rendered) draws its own framed, titled popup over this
+                // area with the actual picks — a "no connection" message
+                // here would sit directly above it and contradict it.
+                // Leave the body as an empty frame and let the picker own
+                // the content.
+                f.render_widget(bordered(&app.theme, "pgman"), area);
+            } else if app.conn_pick.picks.is_empty() {
+                // Genuinely nothing to connect to and nothing discovered —
+                // spell out both ways forward.
+                f.render_widget(
+                    Paragraph::new(Text::from(vec![
+                        Line::from("no connection — start pgman with --dsn postgres://…"),
+                        Line::from(
+                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
+                        ),
+                    ]))
                     .style(Style::default().fg(app.theme.muted))
                     .block(bordered(&app.theme, "pgman")),
-                area,
-            );
+                    area,
+                );
+            } else {
+                // Discovered connections exist but the picker isn't open
+                // right now (e.g. dismissed via `q`) — point at how to
+                // reopen it instead of implying there's no way to connect.
+                f.render_widget(
+                    Paragraph::new("no connection — press c to choose a connection")
+                        .style(Style::default().fg(app.theme.muted))
+                        .block(bordered(&app.theme, "pgman")),
+                    area,
+                );
+            }
         }
         ConnState::Connected { .. } => {
             if app.grid.is_empty() {

@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 372
 expression: dump(&buf)
 ---
  pgman │ —  disconnected
@@ -8,7 +7,7 @@ expression: dump(&buf)
 │> (empty — press e to focus)                                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ pgman ───────────────────────────────────────────────────────────────────────┐
-│no connection — start pgman with --dsn postgres://…                           │
+│                                                                              │
 │┌ pick a connection · 1/2 ───────────────────────────────────────────────────┐│
 ││▶ [ project] prod                     postgres://app@prod-db:5432/main      ││
 ││  [IntelliJ] staging                  postgres://app@staging-db:5432/main   ││
