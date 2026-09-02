@@ -65,9 +65,9 @@ Red or soft:
 
 | gate | state |
 |---|---|
-| cargo-deny | **red** — yanked `chacha20` (also fails dependabot PR #17) |
-| clippy | 31 warnings, 3 trivial lints; CI runs it *advisory* |
-| MSRV | none declared, no job |
+| cargo-deny | green since Phase 0 (was red on a yanked `chacha20`) |
+| clippy | clean, denied in CI since Phase 0 |
+| MSRV | 1.94.1 declared and gated (build + test) since Phase 0 |
 | README `demo.gif` | referenced, **not in the repo** — broken image |
 | BACKLOG.md | 2467 lines, ~1570 Done; Open carries items already marked done |
 
@@ -102,7 +102,15 @@ app to see them. Several are the exact bugs ebman fixed in 0.36.0
 
 ---
 
-## Phase 0 — make CI honest (½ day) · mechanical
+## Phase 0 — make CI honest · mechanical · **done 2026-09-02**
+
+Landed as six commits (`e096403`..`83a5b00`): CI renamed and hardened,
+clippy cleared and denied, MSRV 1.94.1 gated, machete added, deps
+unyanked, webpki-roots 1.0, CLAUDE.md lifted. Not yet pushed, so CI has
+not run the new workflow; the first push is the verification. The
+dependabot PR #17 closes itself on that push.
+
+What it was:
 
 1. `cargo update -p chacha20`; merge dependabot #17 (webpki-roots 1.0 —
    it failed on deny, not on build; re-check after the update).
