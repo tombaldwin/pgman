@@ -22,6 +22,8 @@ use super::{forward_or_drop, now_unix_micros, parse, TapEvent, WarnThrottle};
 pub const TAP_MAX_CONCURRENT_CONNS: usize = 64;
 
 static TCP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
+static TCP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
+static UDP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
 
 // ---------------------------------------------------------
 // UDP listener — opt-in transport, one event per datagram.
@@ -66,7 +68,14 @@ pub async fn run_udp_listener(
                 }
             }
             Err(e) => {
-                tracing::warn!("tap-udp: dropped malformed datagram from {peer}: {e}");
+                UDP_MALFORMED_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap-udp: dropped malformed datagram from {peer}: {e}{suffix}")
+                });
             }
         }
     }
@@ -162,7 +171,14 @@ pub async fn handle_tcp_conn(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("tap: dropped malformed frame: {e}");
+                    TCP_MALFORMED_WARN.warn(|suppressed| {
+                        let suffix = if suppressed > 0 {
+                            format!(" ({suppressed} more suppressed in the last second)")
+                        } else {
+                            String::new()
+                        };
+                        format!("tap: dropped malformed frame: {e}{suffix}")
+                    });
                 }
             },
         }

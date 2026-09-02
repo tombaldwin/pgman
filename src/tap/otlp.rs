@@ -22,6 +22,7 @@ use super::{
 };
 
 static OTLP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
+static DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
 
 /// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
 /// Anything beyond this is broken telemetry (clock skew /
@@ -130,9 +131,16 @@ pub fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -
         // them from hostile / broken telemetry. Single-line
         // log; the listener's debug-summary line would
         // otherwise hide this entirely.
-        tracing::warn!(
-            "tap-otlp: clamped duration {raw_micros}µs to cap {OTLP_DURATION_CAP_MICROS}µs"
-        );
+        DURATION_CLAMP_WARN.warn(|suppressed| {
+            let suffix = if suppressed > 0 {
+                format!(" ({suppressed} more suppressed in the last second)")
+            } else {
+                String::new()
+            };
+            format!(
+                "tap-otlp: clamped duration {raw_micros}µs to cap {OTLP_DURATION_CAP_MICROS}µs{suffix}"
+            )
+        });
         OTLP_DURATION_CAP_MICROS
     } else {
         raw_micros
