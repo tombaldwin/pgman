@@ -150,7 +150,7 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let total_lines = app.editor.buffer.matches('\n').count() + 1;
     let (cur_line_check, _) = crate::app::cursor_position(&app.editor.buffer, app.editor.cursor);
-    let title_text = if focused {
+    let mut title_text = if focused {
         let base = match app.history_pos {
             None => "editor".to_string(),
             Some(i) => format!("editor · history {}/{}", i + 1, app.history.len()),
@@ -165,6 +165,26 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         "editor (e to focus)".to_string()
     };
+    // Refresh the cached "whole buffer looks like a log" verdict only when
+    // the buffer changed since last frame — same reasoning as the
+    // highlight cache just below: `detect_log` is cheap per call, but not
+    // free enough to re-run unconditionally every render frame against a
+    // multi-MB buffer. Persists the hint after the paste-time status line
+    // (which only covered the pasted text) scrolls off.
+    let log_stale = match &app.editor_log_kind_cache {
+        Some((b, _)) => b != &app.editor.buffer,
+        None => true,
+    };
+    if log_stale {
+        let kind = crate::query::logdetect::detect_log(&app.editor.buffer);
+        app.editor_log_kind_cache = Some((app.editor.buffer.clone(), kind));
+    }
+    if let Some((_, Some(kind))) = &app.editor_log_kind_cache {
+        title_text.push_str(&format!(
+            " · {} log — ctrl-l / F8 to reconstruct",
+            kind.label()
+        ));
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))

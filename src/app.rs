@@ -890,6 +890,12 @@ pub struct App {
     /// (key mismatch) or a schema-cache change (cleared on Booted /
     /// SchemaRefreshed).
     pub editor_highlight_cache: Option<(String, Vec<crate::query::highlight::Span>)>,
+    /// Memoised "does the whole buffer look like a log" verdict, keyed on
+    /// the buffer text it was computed for — same shape and reasoning as
+    /// `editor_highlight_cache`. Read (and refreshed on a key mismatch) by
+    /// the editor block title; recomputing `logdetect::detect_log` from
+    /// scratch every render frame would rescan the whole buffer at ≈9fps.
+    pub editor_log_kind_cache: Option<(String, Option<crate::query::logdetect::LogKind>)>,
     /// Notifications panel state (ring buffer + cursor).
     pub notifications: NotificationsUi,
     /// Ring buffer of recent JDBC-tap events (queries +
@@ -1087,6 +1093,7 @@ impl App {
             bookmarks: std::collections::HashMap::new(),
             schema_dirty_after_run: false,
             editor_highlight_cache: None,
+            editor_log_kind_cache: None,
             notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
             tap_nav: TapNavUi::default(),

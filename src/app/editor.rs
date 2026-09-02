@@ -28,6 +28,16 @@ impl App {
         // multiple seconds; insert_str makes it instant.
         self.editor.buffer.insert_str(self.editor.cursor, &cleaned);
         self.editor.cursor += cleaned.len();
+        // Tell the user a pasted log is exactly the way in: F8 / ctrl-l
+        // (`start_log_import`) turn it into runnable queries. Scoped to the
+        // pasted text, not the whole buffer — cheap even for a large paste,
+        // and it's the paste that prompted the hint.
+        if let Some(kind) = crate::query::logdetect::detect_log(&cleaned) {
+            self.last_status = Some(format!(
+                "looks like a {} log · ctrl-l / F8 to reconstruct queries",
+                kind.label()
+            ));
+        }
     }
 
     /// Inner editor-key handler. Wrapper above adds undo/redo
