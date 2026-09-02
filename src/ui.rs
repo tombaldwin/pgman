@@ -11,6 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod editor;
 mod landing;
@@ -523,6 +524,21 @@ pub(crate) fn footer_badges_with(
     out
 }
 
+/// Display columns `s` occupies in a terminal — NOT its char count.
+/// A CJK server error (`lc_messages=ja_JP`) is roughly two columns per
+/// char, so a 40-char message painted 67 columns wide and shoved the
+/// protected `· F2 detail` pointer off the end of a row that measured
+/// as fitting. Every footer/status width budget goes through this.
+pub(crate) fn display_width(s: &str) -> usize {
+    UnicodeWidthStr::width(s)
+}
+
+/// Display columns one `char` occupies (a combining mark is 0, a
+/// full-width CJK glyph 2, a control char treated as 0).
+fn char_width(c: char) -> usize {
+    UnicodeWidthChar::width(c).unwrap_or(0)
+}
+
 /// Fit a ` · `-joined hint string into `width` columns without ever
 /// truncating a hint mid-item. `hints` is treated as an ordered list of
 /// `" · "`-separated items, already written most-important-first; when
@@ -535,7 +551,7 @@ pub(crate) fn footer_badges_with(
 /// either, an empty string is returned.
 pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     const SEP: &str = " · ";
-    if hints.is_empty() || hints.chars().count() <= width {
+    if hints.is_empty() || display_width(hints) <= width {
         return hints.to_string();
     }
     let items: Vec<&str> = hints.split(SEP).collect();
@@ -547,7 +563,7 @@ pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
         let mut pieces: Vec<&str> = items[..kept].to_vec();
         pieces.push(&marker);
         let candidate = pieces.join(SEP);
-        if candidate.chars().count() <= width {
+        if display_width(&candidate) <= width {
             return candidate;
         }
     }
@@ -573,13 +589,13 @@ pub(crate) fn count_label(n: u64, one: &str, many: &str) -> String {
 /// Pure / testable.
 pub(crate) fn fit_title(title: &str, width: usize) -> String {
     const SEP: &str = " · ";
-    if title.chars().count() <= width {
+    if display_width(title) <= width {
         return title.to_string();
     }
     let items: Vec<&str> = title.split(SEP).collect();
     for kept in (1..items.len()).rev() {
         let candidate = format!("{}{SEP}…", items[..kept].join(SEP));
-        if candidate.chars().count() <= width {
+        if display_width(&candidate) <= width {
             return candidate;
         }
     }
@@ -594,8 +610,7 @@ pub(crate) fn fit_title(title: &str, width: usize) -> String {
 /// `target_len == 1` yields just the ellipsis marker (no room for either
 /// end). Pure / testable.
 fn middle_ellipsis(s: &str, target_len: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= target_len {
+    if display_width(s) <= target_len {
         return s.to_string();
     }
     if target_len == 0 {
@@ -604,11 +619,35 @@ fn middle_ellipsis(s: &str, target_len: usize) -> String {
     if target_len == 1 {
         return "…".to_string();
     }
+    let chars: Vec<char> = s.chars().collect();
     let avail = target_len - 1; // minus the ellipsis marker itself
-    let front = avail.div_ceil(2);
-    let back = avail - front;
-    let front_str: String = chars[..front].iter().collect();
-    let back_str: String = chars[chars.len() - back..].iter().collect();
+    let front_budget = avail.div_ceil(2);
+    let back_budget = avail - front_budget;
+    // Walk in from each end by display columns, never letting the two
+    // walks cross — a double-width glyph that only half fits is
+    // dropped rather than cut.
+    let mut fi = 0;
+    let mut fw = 0;
+    while fi < chars.len() {
+        let cw = char_width(chars[fi]);
+        if fw + cw > front_budget {
+            break;
+        }
+        fw += cw;
+        fi += 1;
+    }
+    let mut bi = chars.len();
+    let mut bw = 0;
+    while bi > fi {
+        let cw = char_width(chars[bi - 1]);
+        if bw + cw > back_budget {
+            break;
+        }
+        bw += cw;
+        bi -= 1;
+    }
+    let front_str: String = chars[..fi].iter().collect();
+    let back_str: String = chars[bi..].iter().collect();
     format!("{front_str}…{back_str}")
 }
 
@@ -616,8 +655,7 @@ fn middle_ellipsis(s: &str, target_len: usize) -> String {
 /// last resort when even the protected final segment (see [`fit_status`])
 /// doesn't fit on its own. Pure / testable.
 fn end_ellipsis(s: &str, width: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= width {
+    if display_width(s) <= width {
         return s.to_string();
     }
     if width == 0 {
@@ -626,7 +664,17 @@ fn end_ellipsis(s: &str, width: usize) -> String {
     if width == 1 {
         return "…".to_string();
     }
-    let keep: String = chars[..width - 1].iter().collect();
+    let budget = width - 1; // minus the ellipsis marker itself
+    let mut keep = String::new();
+    let mut kw = 0;
+    for c in s.chars() {
+        let cw = char_width(c);
+        if kw + cw > budget {
+            break;
+        }
+        kw += cw;
+        keep.push(c);
+    }
     format!("{keep}…")
 }
 
@@ -652,7 +700,7 @@ fn end_ellipsis(s: &str, width: usize) -> String {
 /// The returned string is never wider than `width`.
 pub(crate) fn fit_status(text: &str, width: usize) -> String {
     const SEP: &str = " · ";
-    if text.chars().count() <= width {
+    if display_width(text) <= width {
         return text.to_string();
     }
     let mut segments: Vec<String> = text.split(SEP).map(str::to_string).collect();
@@ -666,17 +714,17 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     const MIN_SHRINK: usize = 16;
     loop {
         let candidate = segments.join(SEP);
-        let over = candidate.chars().count().saturating_sub(width);
+        let over = display_width(&candidate).saturating_sub(width);
         if over == 0 {
             return candidate;
         }
         let longest = segments
             .iter()
             .enumerate()
-            .filter(|(i, s)| *i != last_idx && s.chars().count() >= MIN_SHRINK)
-            .max_by_key(|(_, s)| s.chars().count());
+            .filter(|(i, s)| *i != last_idx && display_width(s) >= MIN_SHRINK)
+            .max_by_key(|(_, s)| display_width(s));
         let Some((i, s)) = longest else { break };
-        let target_len = s.chars().count().saturating_sub(over).max(1);
+        let target_len = display_width(s).saturating_sub(over).max(1);
         segments[i] = middle_ellipsis(s, target_len);
     }
 
@@ -686,7 +734,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     // dispensable.
     while segments.len() > 2 {
         let candidate = segments.join(SEP);
-        if candidate.chars().count() <= width {
+        if display_width(&candidate) <= width {
             return candidate;
         }
         segments.remove(1);
@@ -696,7 +744,7 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     // drop leading segments outright until only the last remains.
     while segments.len() > 1 {
         let candidate = segments.join(SEP);
-        if candidate.chars().count() <= width {
+        if display_width(&candidate) <= width {
             return candidate;
         }
         segments.remove(0);
@@ -740,7 +788,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let badges = footer_badges(app, theme);
     let badge_width: u16 = badges
         .iter()
-        .map(|s| s.content.chars().count() as u16)
+        .map(|s| display_width(&s.content) as u16)
         .sum();
     // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
     let line = if let Some(err) = &app.last_error {
@@ -760,7 +808,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let available = area
             .width
             .saturating_sub(badge_width)
-            .saturating_sub(icon.chars().count() as u16) as usize;
+            .saturating_sub(display_width(icon) as u16) as usize;
         let fitted = fit_status(&full, available);
         let spans = if !pointer.is_empty() && fitted.ends_with(pointer) {
             let msg_part = &fitted[..fitted.len() - pointer.len()];
@@ -786,7 +834,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let available = area
             .width
             .saturating_sub(badge_width)
-            .saturating_sub(prefix.chars().count() as u16) as usize;
+            .saturating_sub(display_width(&prefix) as u16) as usize;
         let fitted = fit_status(status, available);
         Line::from(Span::styled(
             format!("{prefix}{fitted}"),
@@ -935,7 +983,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             // Status reads "filter: /<pat>  · …"; cursor sits just
             // after the typed pattern.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + f.chars().count() as u16
+            PREFIX_CHARS + display_width(f) as u16
         }),
         Mode::HistorySearch => app.history_search.as_ref().map(|s| {
             // Two flavours, picked by `matched`:
@@ -946,18 +994,18 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 "(failed reverse-i-search) '".chars().count() as u16
             };
-            prefix + s.query.chars().count() as u16
+            prefix + display_width(&s.query) as u16
         }),
         Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …" — same shape as
             // GridFilter.
             const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + f.chars().count() as u16
+            PREFIX_CHARS + display_width(f) as u16
         }),
         Mode::GridFind => app.grid_find.needle.as_ref().map(|f| {
             // Status reads "find: <pat>  · …".
             const PREFIX_CHARS: u16 = "find: ".len() as u16;
-            PREFIX_CHARS + f.chars().count() as u16
+            PREFIX_CHARS + display_width(f) as u16
         }),
         _ => None,
     };
