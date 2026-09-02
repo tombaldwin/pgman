@@ -5366,6 +5366,21 @@ fn preload_log_with_hibernate_sample_enters_log_pick() {
 }
 
 #[test]
+fn preload_log_with_jdbc_paste_shape_enters_log_pick_with_substituted_sql() {
+    // Neither log parser matches this — it's the third way in: a
+    // `?`-statement, a blank line, then typed params.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let pasted = "select * from orders where id = ? and status = ?\n\nINTEGER:42\nVARCHAR:shipped";
+    a.preload_log(pasted);
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(a.log_pick.picks.len(), 1);
+    assert_eq!(
+        a.log_pick.picks[0].runnable_sql,
+        "select * from orders where id = 42 and status = 'shipped'"
+    );
+}
+
+#[test]
 fn preload_log_with_prose_lands_in_editor_with_no_queries_error() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.preload_log("just some notes, not a log or SQL at all");

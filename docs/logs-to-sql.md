@@ -5,7 +5,7 @@ parameters substituted in, ready for `F5`. This walks through it end to end.
 
 ## What it reads
 
-Two input shapes are recognised, both in `src/query/`:
+Three input shapes are recognised, all in `src/query/`:
 
 - **Hibernate application logs** (`src/query/hibernate.rs`) — an
   `org.hibernate.SQL` logger line opens a statement, followed by the
@@ -18,11 +18,10 @@ Two input shapes are recognised, both in `src/query/`:
   extended protocol. This is the more reliable source: it needs
   `log_min_duration_statement` / `log_statement` turned on server-side, no
   application redeploy.
-
-A third parser, `src/query/jdbc.rs`, substitutes `?` placeholders in a pasted
-JDBC statement given a separate list of typed parameters — but it isn't wired
-into the editor's import path yet, so there's no way to reach it from the UI
-today. Left out of this walkthrough for that reason.
+- **Pasted JDBC** (`src/query/jdbc.rs`) — no log at all, just a `?`-placeholder
+  statement plus a typed parameter list you already have (a debugger watch, a
+  `PreparedStatement` toString, whatever). See "Three ways in" below for the
+  exact shape.
 
 ## The sample
 
@@ -42,7 +41,7 @@ That `item` select fires twice for two different `order_id`s in the same
 burst — a classic N+1: an order lookup followed by a per-row item lookup
 that should have been a join.
 
-## Two ways in
+## Three ways in
 
 - **Paste it.** Press `e` to focus the editor, paste the lines above, then
   press `F8` (or `ctrl-l` — same binding, for terminals that eat function
@@ -52,9 +51,26 @@ that should have been a join.
 - **Skip the paste.** `pgman --log app.log` (or `--log -` to read stdin)
   loads the file straight into the editor and runs the same reconstruction
   immediately — you land straight in the picker below, no keypress needed.
+- **No log? Paste the statement and its params instead.** If all you have is
+  a `?`-placeholder statement and a list of bound values — no log framing at
+  all — paste both into the editor separated by one blank line: the
+  statement first, then one `TYPE:value` parameter per line, in order:
 
-Both paths run the buffer through the same parsers and land you in the same
-picker.
+  ```
+  select * from orders where id = ? and status = ?
+
+  INTEGER:42
+  VARCHAR:shipped
+  ```
+
+  `F8` / `ctrl-l` recognise this shape exactly like a log paste (the hint
+  reads `looks like a jdbc log · ctrl-l / F8 to reconstruct queries`) and
+  land you in the same picker below with one pick: `select * from orders
+  where id = 42 and status = 'shipped'`. A `NULL` value works for any type
+  (`VARCHAR:NULL`); lines without a `TYPE:` prefix are skipped, so stray
+  blank lines or comments in the tail don't break the parse.
+
+All three paths run through the same picker.
 
 ## The pick list
 
