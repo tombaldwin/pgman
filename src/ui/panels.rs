@@ -372,7 +372,17 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
 
 pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let (lines, anchors) = help_body(theme);
+    let popup = centered_pct(area, 70, 70);
+    // Body content width: popup minus borders (2) and the uniform(1)
+    // padding (2) on the horizontal axis — the same budget `inner_height`
+    // below uses on the vertical axis. Long descriptions get wrapped to
+    // this width ourselves, with a hanging indent to the description
+    // column, rather than left to `Paragraph`'s `Wrap` — which has no
+    // notion of where the description starts and so wraps continuations
+    // to column 0.
+    let inner_width = popup.width.saturating_sub(4) as usize;
+    let (raw_lines, raw_anchors) = help_body(theme);
+    let (lines, anchors) = wrap_help_lines(raw_lines, raw_anchors, inner_width);
     // If we have a captured help_origin, pre-scroll to the matching
     // section the first time draw runs (`help_scroll` is reset to 0
     // by `open_help_from`; we detect that as "anchor not applied
@@ -390,7 +400,6 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         // back to the anchor.
         app.help.origin = None;
     }
-    let popup = centered_pct(area, 70, 70);
     f.render_widget(Clear, popup);
     // Body height = popup height minus borders (top + bottom) minus padding
     // (uniform(1) — top + bottom). That's the visible row budget for clamping
@@ -1156,6 +1165,135 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// Re-flow `help_body`'s lines to `width` columns, giving long
+/// descriptions a hanging indent to the column where the description
+/// starts (right after the key), instead of `Paragraph`'s `Wrap`
+/// dumping the continuation at column 0. Returns the re-flowed lines
+/// plus the `anchors` map remapped to the new row indices — headings
+/// are never wrapped (they're short), so each still points at the
+/// first (and only) row it now occupies.
+fn wrap_help_lines(
+    raw: Vec<Line<'static>>,
+    anchors: std::collections::HashMap<&'static str, u16>,
+    width: usize,
+) -> (
+    Vec<Line<'static>>,
+    std::collections::HashMap<&'static str, u16>,
+) {
+    let mut out: Vec<Line<'static>> = Vec::with_capacity(raw.len());
+    // `row_map[i]` = the new first row for original line `i`.
+    let mut row_map: Vec<u16> = Vec::with_capacity(raw.len());
+    for line in raw {
+        row_map.push(out.len() as u16);
+        let plain: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        if width == 0 || plain.chars().count() <= width {
+            out.push(line);
+            continue;
+        }
+        let style = line.spans.first().map(|s| s.style).unwrap_or_default();
+        match description_split(&plain) {
+            Some((prefix, desc)) => {
+                let desc_col = prefix.chars().count();
+                let wrapped = wrap_hanging(desc.trim_start(), desc_col, desc_col, width);
+                for (i, chunk) in wrapped.into_iter().enumerate() {
+                    let text = if i == 0 {
+                        format!("{prefix}{chunk}")
+                    } else {
+                        chunk
+                    };
+                    out.push(Line::from(Span::styled(text, style)));
+                }
+            }
+            None => {
+                for chunk in wrap_hanging(&plain, 0, 0, width) {
+                    out.push(Line::from(Span::styled(chunk, style)));
+                }
+            }
+        }
+    }
+    let mut new_anchors = std::collections::HashMap::new();
+    for (k, v) in anchors {
+        if let Some(&mapped) = row_map.get(v as usize) {
+            new_anchors.insert(k, mapped);
+        }
+    }
+    (out, new_anchors)
+}
+
+/// Split a help-body line into `(prefix, description)` at the first
+/// run of two-or-more spaces that follows the line's leading indent —
+/// that gap is the column where a `key    description` row's
+/// description text begins. `prefix` includes the gap, so its char
+/// count is the column continuation lines should hang from. Returns
+/// `None` when no such gap exists (headings, blank lines, one-word
+/// rows) — those get wrapped with no hanging indent instead.
+fn description_split(s: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() && chars[i] == ' ' {
+        i += 1;
+    }
+    let mut j = i;
+    while j < chars.len() {
+        if chars[j] == ' ' {
+            let run_start = j;
+            while j < chars.len() && chars[j] == ' ' {
+                j += 1;
+            }
+            if j - run_start >= 2 {
+                let prefix: String = chars[..j].iter().collect();
+                let desc: String = chars[j..].iter().collect();
+                return Some((prefix, desc));
+            }
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+/// Word-wrap `text` to `width` columns with a hanging indent: the
+/// first output line reserves `first_indent` columns for the wrap
+/// decision (but carries no literal padding — the caller supplies its
+/// own prefix, e.g. the help line's key), and continuation lines are
+/// both budgeted against `cont_indent` and literally prefixed with
+/// that many spaces so they line up under the description column. A
+/// single word wider than its line's budget is kept whole rather than
+/// dropped or split.
+fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usize) -> Vec<String> {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return vec![String::new()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for word in words {
+        let indent = if out.is_empty() {
+            first_indent
+        } else {
+            cont_indent
+        };
+        let budget = width.saturating_sub(indent).max(1);
+        let wlen = word.chars().count();
+        if cur.is_empty() {
+            cur.push_str(word);
+        } else if cur.chars().count() + 1 + wlen <= budget {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        }
+    }
+    out.push(cur);
+    for (i, line) in out.iter_mut().enumerate() {
+        if i > 0 {
+            *line = format!("{}{}", " ".repeat(cont_indent), line);
+        }
+    }
+    out
+}
+
 /// Helper: push a `label: value` line pair, wrapping the value
 /// to `width`. Label is muted, value is wrapped onto continuation
 /// lines indented under the label.
@@ -1181,5 +1319,83 @@ fn push_kv(
             Span::styled(p, Style::default().fg(theme.muted)),
             Span::styled(chunk, Style::default().fg(theme.text)),
         ]));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_hanging_line_that_fits_is_unchanged() {
+        assert_eq!(wrap_hanging("quit", 18, 18, 80), vec!["quit".to_string()]);
+    }
+
+    #[test]
+    fn wrap_hanging_wraps_at_a_word_boundary() {
+        // width 20, first_indent 0: "quit (esc here is a" (19 chars) is
+        // the widest prefix that fits — the next word ("no-op)") would
+        // push it past 20, so it starts a new line.
+        let got = wrap_hanging("quit (esc here is a no-op)", 0, 4, 20);
+        assert_eq!(got[0], "quit (esc here is a");
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1], "    no-op)");
+    }
+
+    #[test]
+    fn wrap_hanging_continuation_carries_the_indent() {
+        let got = wrap_hanging("one two three four five", 0, 6, 10);
+        assert!(got.len() > 1);
+        for line in &got[1..] {
+            assert!(line.starts_with("      "), "line {line:?} missing indent");
+        }
+    }
+
+    #[test]
+    fn wrap_hanging_single_long_word_is_not_lost() {
+        let got = wrap_hanging("supercalifragilisticexpialidocious", 0, 4, 10);
+        assert_eq!(got, vec!["supercalifragilisticexpialidocious".to_string()]);
+    }
+
+    #[test]
+    fn wrap_hanging_empty_text_yields_one_empty_line() {
+        assert_eq!(wrap_hanging("", 0, 4, 10), vec![String::new()]);
+    }
+
+    #[test]
+    fn description_split_finds_the_gap_after_the_key() {
+        let (prefix, desc) = description_split("    q             quit now").unwrap();
+        assert_eq!(prefix.chars().count(), 18);
+        assert_eq!(desc, "quit now");
+    }
+
+    #[test]
+    fn description_split_none_when_only_single_spaces() {
+        assert_eq!(description_split("a b c d"), None);
+    }
+
+    #[test]
+    fn wrap_help_lines_keeps_short_lines_untouched_and_remaps_anchors() {
+        let raw = vec![
+            Line::from(Span::raw("heading")),
+            Line::from(Span::raw(
+                "    q             a description long enough to need wrapping across lines",
+            )),
+        ];
+        let mut anchors = std::collections::HashMap::new();
+        anchors.insert("sect", 0u16);
+        let (lines, new_anchors) = wrap_help_lines(raw, anchors, 30);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "heading");
+        assert!(lines.len() > 2, "expected the long line to wrap");
+        assert_eq!(new_anchors.get("sect"), Some(&0));
+        // Every continuation line of the wrapped row is indented to the
+        // description column (18), not column 0.
+        for line in &lines[2..] {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.starts_with(&" ".repeat(18)),
+                "continuation not hanging-indented: {text:?}"
+            );
+        }
     }
 }
