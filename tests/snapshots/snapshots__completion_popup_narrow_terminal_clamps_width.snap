@@ -1,0 +1,16 @@
+---
+source: tests/snapshots.rs
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor ──────────────────────────────┐
+│> SELECT * FROM au                    │
+└──────────────────────────────────────┘
+┌ result ──────────────────────────────┐
+│┌ 2 matches · Tab to cycle ──────────┐│
+││  authentication_audit_log_entries  ││
+││  auth_sessions     (table · public)││
+│└────────────────────────────────────┘│
+│                                      │
+└──────────────────────────────────────┘
+ RO   type to narrow · tab cycle · esc u

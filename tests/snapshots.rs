@@ -208,6 +208,43 @@ fn completion_popup_with_candidates() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// Narrow terminal + long candidate/context strings: the popup's
+/// *desired* width (content + title) exceeds what the result panel has
+/// room for, so it must shrink to fit rather than spill past the
+/// panel's own right border. Pins the clamping path in
+/// `draw_completion_popup` alongside the happy-path test above.
+#[test]
+fn completion_popup_narrow_terminal_clamps_width() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM au".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion = Some(CompletionCycle {
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
+        origin: "au".into(),
+        origin_prefix: "au".into(),
+        origin_cursor: a.editor.cursor,
+        candidates: vec![
+            Candidate {
+                display: "authentication_audit_log_entries".into(),
+                insert: "authentication_audit_log_entries".into(),
+                kind: CandidateKind::Table,
+                context: Some("public_analytics_reporting_schema".into()),
+            },
+            Candidate {
+                display: "auth_sessions".into(),
+                insert: "auth_sessions".into(),
+                kind: CandidateKind::Table,
+                context: Some("public".into()),
+            },
+        ],
+        selected: None,
+    });
+    let buf = render(&mut a, 40, 12);
+    insta::assert_snapshot!(dump(&buf));
+}
+
 #[test]
 fn slow_queries_renders_top_n_panel() {
     use pgman::query::slow_queries::SlowQueryRow;
