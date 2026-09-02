@@ -256,6 +256,13 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(state, state_style),
     ];
+    if let Some(update) = &app.update_available {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("⬆ {}", update.version),
+            Style::default().fg(theme.accent),
+        ));
+    }
     if app.tx_open || app.mode == Mode::TxDecision {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(

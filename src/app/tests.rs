@@ -5374,3 +5374,99 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
     a.conn_state = ConnState::Failed("boom".into());
     assert!(a.not_connected_message().contains("r to retry"));
 }
+
+/// A TuiHost that records "draw" into a shared log, so a test can
+/// assert ordering against another recorder that shares the same
+/// log (the injected update-check spawn hook, below) — proving
+/// `run_with` fires the update check strictly AFTER the first draw,
+/// not before it.
+struct RecordingTui {
+    log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+}
+
+impl crate::tui::TuiHost for RecordingTui {
+    fn draw(&mut self, _app: &mut App) -> std::io::Result<()> {
+        self.log.lock().unwrap().push("draw");
+        Ok(())
+    }
+    fn suspend(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn resume(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn update_check_spawns_after_the_first_draw_never_before() {
+    use std::sync::{Arc, Mutex};
+
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    app.mode = Mode::Normal;
+    app.update_check_enabled = true;
+    let spawn_log = log.clone();
+    // Synchronous recorder in place of the real network spawn — the
+    // point under test is WHEN this hook fires relative to the
+    // first draw, not what it sends back.
+    app.update_check_spawn = Some(Box::new(move |_tx| {
+        spawn_log.lock().unwrap().push("spawn");
+    }));
+
+    let mut tui = RecordingTui { log: log.clone() };
+    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    // Quit immediately after the first iteration so the loop runs
+    // exactly one draw.
+    tx.send(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    drop(tx);
+
+    tokio::time::timeout(Duration::from_secs(2), app.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate quickly")
+        .unwrap();
+
+    let recorded = log.lock().unwrap();
+    assert_eq!(
+        recorded.as_slice(),
+        ["draw", "spawn"],
+        "update check must spawn strictly after the first draw, got {:?}",
+        *recorded
+    );
+}
+
+#[tokio::test]
+async fn update_check_disabled_never_spawns() {
+    use std::sync::{Arc, Mutex};
+
+    let spawned = Arc::new(Mutex::new(false));
+    let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    app.mode = Mode::Normal;
+    app.update_check_enabled = false;
+    let flag = spawned.clone();
+    app.update_check_spawn = Some(Box::new(move |_tx| {
+        *flag.lock().unwrap() = true;
+    }));
+
+    let mut tui = crate::tui::HeadlessTui::default();
+    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    tx.send(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    drop(tx);
+
+    tokio::time::timeout(Duration::from_secs(2), app.run_with(&mut tui, rx))
+        .await
+        .expect("loop should terminate quickly")
+        .unwrap();
+
+    assert!(
+        !*spawned.lock().unwrap(),
+        "update_check_enabled = false must never spawn the check"
+    );
+}

@@ -119,6 +119,13 @@ pub enum AppMsg {
     /// so tap events are NOT generation-tagged — they always
     /// process. `generation()` returns 0 for this variant.
     TapEvent { event: crate::tap::TapEvent },
+    /// The crates.io update check finished — `Some` only when a
+    /// strictly-newer release than the running binary exists.
+    /// Fired at most once per session, independent of the DB
+    /// connection, so (like `TapEvent`) it is NOT
+    /// generation-tagged. `generation()` returns 0 for this
+    /// variant.
+    UpdateCheck(Option<crate::update_check::LatestRelease>),
 }
 
 impl AppMsg {
@@ -138,7 +145,7 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. } => *generation,
-            AppMsg::TapEvent { .. } => 0,
+            AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_) => 0,
         }
     }
 }
