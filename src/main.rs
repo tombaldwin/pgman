@@ -3,6 +3,7 @@
 use clap::Parser;
 use pgman::app::{AppMsg, DataSourcePick};
 use pgman::{app, batch, conn, creds, font_probe, project, safety, tap, theme, tui, upgrade, util};
+use std::io::IsTerminal;
 
 #[derive(Parser)]
 #[command(
@@ -132,6 +133,15 @@ async fn main() -> anyhow::Result<()> {
     if cli.batch {
         let code = run_batch(&cli).await;
         std::process::exit(code);
+    }
+
+    // Every remaining path enters the alternate screen (--demo included).
+    // A launch with no terminal on either end used to die with a raw
+    // `Error: Device not configured (os error 6)` from inside crossterm —
+    // point at `--batch` instead, before anything touches the terminal.
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        eprintln!("pgman needs a terminal. For pipes and scripts use --batch (see pgman --help).");
+        std::process::exit(2);
     }
 
     init_logging();

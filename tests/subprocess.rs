@@ -173,3 +173,36 @@ fn external_edit_scratch_dir_removed_on_spawn_failure() {
         "scratch dir leaked after a spawn failure"
     );
 }
+
+// --- the `pgman` binary itself, spawned end-to-end ------------------
+//
+// Unlike the stubs above, these spawn the real compiled binary
+// (`CARGO_BIN_EXE_pgman`) to exercise the CLI surface rather than a
+// library function.
+
+use std::process::{Command, Stdio};
+
+#[test]
+fn non_tty_launch_prints_the_batch_hint_and_exits_2() {
+    // No --batch / --upgrade / --init-config, so this reaches the
+    // terminal probe. stdin is /dev/null and `.output()` always pipes
+    // stdout — neither is a terminal — so the launch must refuse
+    // before it ever touches the alternate screen (the old behaviour
+    // was a raw `Error: Device not configured (os error 6)` from
+    // inside crossterm).
+    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn pgman");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("pgman needs a terminal") && stderr.contains("--batch"),
+        "got: {stderr}"
+    );
+}
