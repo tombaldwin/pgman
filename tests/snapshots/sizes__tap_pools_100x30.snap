@@ -1,0 +1,34 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  F┌ JDBC tap — 8 query · 0 heartbeat · view: pools · v cycle · Shift-B baseline · s sort · c ┐   │
+│  W│  conns   peak   calls    err        busy        p95  pool · app                          │   │
+│  O│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                  │   │
+└───│                                                                                          │───┘
+┌ re│                                                                                          │───┐
+│id │                                                                                          │   │
+│1  │                                                                                          │   │
+│2  │                                                                                          │   │
+│3  │                                                                                          │   │
+│4  │                                                                                          │   │
+│5  │                                                                                          │   │
+│6  │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
+│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

@@ -1,0 +1,34 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  FRO┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
+│  WHE│▼ public  (3)                     schema: public                                      │     │
+│  ORD│  ▼ order_items  (5 col, 1 cons)                                                      │     │
+└─────│      · id : bigint NOT NULL      3 table(s)                                          │─────┘
+┌ resu│      · order_id : bigint NOT NULL                                                    │─────┐
+│id  e│      · sku : varchar(40) NOT NULLenter to expand — then arrow / j/k into the tables  │     │
+│1   a│      · qty : integer NOT NULL                                                        │     │
+│2   l│      · price_cents : integer NOT                                                     │     │
+│3   g│      ◆ order_items_pkey                                                              │     │
+│4   a│  ▼ orders  (5 col, 1 cons)                                                           │     │
+│5   e│      · id : bigint NOT NULL                                                          │     │
+│6   k│      · user_id : bigint NOT NULL                                                     │     │
+│     │      · status : varchar(20) NOT N                                                    │     │
+│     │      · total_cents : integer NOT                                                     │     │
+│     │      · created_at : timestamptz N                                                    │     │
+│     │      ◆ orders_pkey                                                                   │     │
+│     │  ▼ users  (4 col, 1 cons)                                                            │     │
+│     │      · id : bigint NOT NULL                                                          │     │
+│     │      · email : varchar(255) NOT N                                                    │     │
+│     │      · plan : varchar(20) NOT NUL                                                    │     │
+│     │      · created_at : timestamptz N                                                    │     │
+│     │      ◆ users_pkey                                                                    │     │
+│     │                                                                                      │     │
+│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   expanded all

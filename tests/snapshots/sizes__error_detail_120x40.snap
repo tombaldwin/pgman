@@ -1,0 +1,44 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                  │
+│  FROM users                                                                                                          │
+│  WHERE plan = 'pro'                                                                                                  │
+│  ORDER BY created_at DESC;                                                                                           │
+└────────┌ error detail — F2 / esc / q close ─────────────────────────────────────────────────────────────────┐────────┘
+┌ result │ ERROR · SQLSTATE 23505                                                                             │────────┐
+│id  emai│                                                                                                    │        │
+│1   ada@│    message: duplicate key value violates unique constraint "users_email_key"                       │        │
+│2   linu│     detail: Key (email)=(ada@example.com) already exists.                                          │        │
+│3   grac│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                        │        │
+│4   alan│                                                                                                    │        │
+│5   edsg│affected object:                                                                                    │        │
+│6   kath│     schema: public                                                                                 │        │
+│        │      table: users                                                                                  │        │
+│        │ constraint: users_email_key                                                                        │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        │                                                                                                    │        │
+│        └────────────────────────────────────────────────────────────────────────────────────────────────────┘        │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   ⚠ duplicate key value violates unique constraint "users_email_key"  · F2 detail

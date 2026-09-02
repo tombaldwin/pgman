@@ -1,0 +1,44 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                  │
+│  FROM users                                                                                                          │
+│  WH┌ JDBC tap — 8 query · 0 heartbeat · view: baseline · v cycle · Shift-B baseline · s sort · c clear · q close┐    │
+│  OR│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                         │    │
+└────│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                    │────┘
+┌ res│                                                                                                            │────┐
+│id  │no changes since baseline — nothing new, no regressions, no disappearances.                                 │    │
+│1   │                                                                                                            │    │
+│2   │                                                                                                            │    │
+│3   │                                                                                                            │    │
+│4   │                                                                                                            │    │
+│5   │                                                                                                            │    │
+│6   │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   tap baseline captured · 3 fingerprint(s) · 8 event(s)

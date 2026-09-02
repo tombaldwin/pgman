@@ -1,0 +1,34 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  FROM users                                                                                      │
+│  WHERE plan = 'pro'                                                                              │
+│  ORDER BY created_at DESC;                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────┐
+│id  email                  plan  created_at                                                       │
+│1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
+│2   linus@example.com      ┌ confirm ─────────────────────────────────┐                           │
+│3   grace@example.com      │Confirm                                   │                           │
+│4   alan@example.com       │                                          │                           │
+│5   edsger@example.com     │run (Delete { has_where: false }) · will  │                           │
+│6   katherine@example.com  │wrap in transaction                       │                           │
+│                           │                                          │                           │
+│                           │DELETE FROM orders                        │                           │
+│                           │                                          │                           │
+│                           └──────────────────────────────────────────┘                           │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   y run · n / esc cancel

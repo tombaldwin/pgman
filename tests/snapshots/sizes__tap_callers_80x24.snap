@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> ┌ JDBC tap — 8 query · 0 heartbeat · view: callers · sort: total time · ┐   │
+│  │   calls    err        p50        p95   fps  caller · last fingerprint │   │
+│  │       6      0      450µs      495µs     1  OrderService… · select * f│   │
+│  │       1      0      1.8ms      1.8ms     1  OrderService… · select id,│   │
+└──│       1      0      310µs      310µs     1  UserControll… · select id,│───┘
+┌ r│                                                                       │───┐
+│id│                                                                       │   │
+│1 │                                                                       │   │
+│2 │                                                                       │   │
+│3 │                                                                       │   │
+│4 │                                                                       │   │
+│5 │                                                                       │   │
+│6 │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear

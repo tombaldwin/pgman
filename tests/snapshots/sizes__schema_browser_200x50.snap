@@ -1,0 +1,54 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                                                                                                  │
+│  FROM users                                                                                                                                                                                          │
+│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│  ORDER BY ┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
+└───────────│▼ public  (3)                                                         schema: public                                                                                          │───────────┘
+┌ result · 6│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │───────────┐
+│id  email  │      · id : bigint NOT NULL                                          3 table(s)                                                                                              │           │
+│1   ada@exa│      · order_id : bigint NOT NULL                                                                                                                                            │           │
+│2   linus@e│      · sku : varchar(40) NOT NULL                                    enter to expand — then arrow / j/k into the tables                                                      │           │
+│3   grace@e│      · qty : integer NOT NULL                                                                                                                                                │           │
+│4   alan@ex│      · price_cents : integer NOT NULL                                                                                                                                        │           │
+│5   edsger@│      ◆ order_items_pkey                                                                                                                                                      │           │
+│6   katheri│  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │           │
+│           │      · id : bigint NOT NULL                                                                                                                                                  │           │
+│           │      · user_id : bigint NOT NULL                                                                                                                                             │           │
+│           │      · status : varchar(20) NOT NULL                                                                                                                                         │           │
+│           │      · total_cents : integer NOT NULL                                                                                                                                        │           │
+│           │      · created_at : timestamptz NOT NULL                                                                                                                                     │           │
+│           │      ◆ orders_pkey                                                                                                                                                           │           │
+│           │  ▼ users  (4 col, 1 cons)                                                                                                                                                    │           │
+│           │      · id : bigint NOT NULL                                                                                                                                                  │           │
+│           │      · email : varchar(255) NOT NULL                                                                                                                                         │           │
+│           │      · plan : varchar(20) NOT NULL                                                                                                                                           │           │
+│           │      · created_at : timestamptz NOT NULL                                                                                                                                     │           │
+│           │      ◆ users_pkey                                                                                                                                                            │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘           │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   expanded all

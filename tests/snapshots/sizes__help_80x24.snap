@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                          │
+│  FROM users                                                                  │
+│  WHERE pla┌──────────────────────────────────────────────────────┐           │
+│  ORDER BY │                                                      │           │
+└───────────│ pgman — keys (F1 help · F2 error detail · F3 notify  │───────────┘
+┌ result · 6│ · ? from grid)                                       │───────────┐
+│id  email  │                                                      │           │
+│1   ada@exa│   grid                                               │           │
+│2   linus@e│     q             quit (esc here is a no-op so a     │           │
+│3   grace@e│ reflex press doesn't lose the session)               │           │
+│4   alan@ex│     ? / F1        toggle this help                   │           │
+│5   edsger@│     A             about pgman (version, credits)     │           │
+│6   katheri│     e / i / tab   focus editor                       │           │
+│           │     c             change connection (opens the       │           │
+│           │ picker mid-session)                                  │           │
+│           │ ↓ 157 more below                                     │           │
+│           │                                                      │           │
+│           └──────────────────────────────────────────────────────┘           │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   esc / ?  close help

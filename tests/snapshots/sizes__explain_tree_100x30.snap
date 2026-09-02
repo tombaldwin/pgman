@@ -1,0 +1,34 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  FRO┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────┐     │
+│  WHE│▼ Hash Join · 50.00ms · 4500 rows                                                     │     │
+│  ORD│    Hash Cond: (o.user_id = u.id)                                                     │     │
+└─────│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │─────┘
+┌ resu│  ▼ Hash · 5.00ms                                                                     │─────┐
+│id  e│    · Seq Scan on users u · 4.00ms                                                    │     │
+│1   a│                                                                                      │     │
+│2   l│                                                                                      │     │
+│3   g│                                                                                      │     │
+│4   a│                                                                                      │     │
+│5   e│                                                                                      │     │
+│6   k│                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     │                                                                                      │     │
+│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close · F1 help

@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                          │
+│  FROM users                                                                  │
+│  WHE┌ error detail — F2 / esc / q close ───────────────────────────────┐     │
+│  ORD│ ERROR · SQLSTATE 23505                                           │     │
+└─────│                                                                  │─────┘
+┌ resu│    message: duplicate key value violates unique constraint "use  │─────┐
+│id  e│             rs_email_key"                                        │     │
+│1   a│     detail: Key (email)=(ada@example.com) already exists.        │     │
+│2   l│      where: SQL statement "INSERT INTO users (email, plan) VALU  │     │
+│3   g│             ES ($1, $2)"                                         │     │
+│4   a│                                                                  │     │
+│5   e│affected object:                                                  │     │
+│6   k│     schema: public                                               │     │
+│     │      table: users                                                │     │
+│     │ constraint: users_email_key                                      │     │
+│     │                                                                  │     │
+│     │                                                                  │     │
+│     └──────────────────────────────────────────────────────────────────┘     │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   ⚠ duplicate key value violates unique constraint "users_ema

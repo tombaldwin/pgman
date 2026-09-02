@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> S┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────┐   │
+│  F│  channel                  pid  payload                               │   │
+│  W│  orders_channel          4321  order:9001 shipped                    │   │
+│  O│  cache_invalidate        4322  users                                 │   │
+└───│                                                                      │───┘
+┌ re│                                                                      │───┐
+│id │                                                                      │   │
+│1  │                                                                      │   │
+│2  │                                                                      │   │
+│3  │                                                                      │   │
+│4  │                                                                      │   │
+│5  │                                                                      │   │
+│6  │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   │                                                                      │   │
+│   └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · q / esc close · F

@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> SE┌ schema browser — q / esc close ────────────────────────────────────┐    │
+│  FR│▼ public  (3)              schema: public                           │    │
+│  WH│  ▼ order_items  (5 col, 1                                          │    │
+│  OR│      · id : bigint NOT NUL3 table(s)                               │    │
+└────│      · order_id : bigint N                                         │────┘
+┌ res│      · sku : varchar(40) Nenter to expand — then arrow / j/k into t│────┐
+│id  │      · qty : integer NOT N                                         │    │
+│1   │      · price_cents : integ                                         │    │
+│2   │      ◆ order_items_pkey                                            │    │
+│3   │  ▼ orders  (5 col, 1 cons)                                         │    │
+│4   │      · id : bigint NOT NUL                                         │    │
+│5   │      · user_id : bigint NO                                         │    │
+│6   │      · status : varchar(20                                         │    │
+│    │      · total_cents : integ                                         │    │
+│    │      · created_at : timest                                         │    │
+│    │      ◆ orders_pkey                                                 │    │
+│    │  ▼ users  (4 col, 1 cons)                                          │    │
+│    │      · id : bigint NOT NUL                                         │    │
+│    └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   expanded all

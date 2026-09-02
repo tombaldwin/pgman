@@ -1,0 +1,44 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                  │
+│  FROM users                                                                                                          │
+│  WHER┌ saved queries — enter load · r rename · d delete · / search · q close ────────────────────────────────┐       │
+│  ORDE│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY cre│       │
+└──────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                             │───────┘
+┌ resul│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / │───────┐
+│id  em│                                                                                                       │       │
+│1   ad│                                                                                                       │       │
+│2   li│                                                                                                       │       │
+│3   gr│                                                                                                       │       │
+│4   al│                                                                                                       │       │
+│5   ed│                                                                                                       │       │
+│6   ka│                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │  pro-users                                                                                            │       │
+│      │  SELECT id, email, created_at                                                                         │       │
+│      │  FROM users                                                                                           │       │
+│      │  WHERE plan = 'pro'                                                                                   │       │
+│      │  ORDER BY created_at DESC;                                                                            │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      └───────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   saved queries · 3 entries
