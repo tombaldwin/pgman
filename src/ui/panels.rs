@@ -169,14 +169,10 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     } else {
         pending.sql.clone()
     };
+    // No "Confirm" body line: the block is already titled ` confirm `,
+    // and a modal that spends its first row restating its own title
+    // spends a row it then has to take off the statement.
     let mut lines: Vec<Line> = vec![
-        Line::from(Span::styled(
-            "Confirm",
-            Style::default()
-                .fg(theme.title)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
         Line::from(Span::styled(
             format!("{} ({detail}){wrap_note}", pending.kind.label()),
             Style::default().fg(theme.accent),
@@ -194,13 +190,35 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         "y = run · n / esc = cancel",
         Style::default().fg(theme.muted),
     )));
-    let h = (lines.len() as u16 + 2).min(area.height);
-    let widest_line = sql_preview
-        .lines()
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(40);
-    let w = ((widest_line.max(40) + 4) as u16).min(area.width);
+    // Size to the content — every line, not just the SQL: the
+    // classification line (`run (DELETE without WHERE) · will wrap in
+    // transaction`) is longer than the statement more often than not,
+    // and a fixed ~42-column box wrapped it even on a 120-column
+    // terminal. Capped at 70% of the body so the modal still reads as
+    // a modal rather than taking the screen.
+    let max_w = ((area.width as u32 * 70 / 100) as u16)
+        .max(20)
+        .min(area.width);
+    let content_w = lines.iter().map(Line::width).max().unwrap_or(0) as u16;
+    let w = (content_w + 4).clamp(40.min(max_w), max_w);
+    // Height counts WRAPPED rows: anything still too wide for the
+    // capped box costs extra rows, and under-counting them pushed the
+    // `y = run · n / esc = cancel` line — the only thing the modal is
+    // asking for — off the bottom.
+    let inner_w = w.saturating_sub(2) as usize;
+    let wrapped_rows: usize = lines
+        .iter()
+        .map(|l| {
+            wrapped_line_count(
+                &l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>(),
+                inner_w,
+            )
+        })
+        .sum();
+    let h = (wrapped_rows as u16 + 2).min(area.height);
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
     f.render_widget(
@@ -1589,6 +1607,36 @@ fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usiz
     out
 }
 
+/// How many rows `Paragraph`'s `Wrap { trim: true }` will take to
+/// render `text` at `width` columns: greedy word wrapping, with a word
+/// wider than the whole line hard-split across rows. Used to size a
+/// modal to its own content — under-counting here clips the last line,
+/// which is where the modal's question lives. Pure / testable.
+fn wrapped_line_count(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let mut rows = 1usize;
+    let mut cur = 0usize;
+    for word in text.split_whitespace() {
+        let w = word.chars().count();
+        if cur == 0 {
+            cur = w;
+        } else if cur + 1 + w <= width {
+            cur += 1 + w;
+        } else {
+            rows += 1;
+            cur = w;
+        }
+        // A single word wider than the line is broken across rows.
+        while cur > width {
+            rows += 1;
+            cur -= width;
+        }
+    }
+    rows
+}
+
 /// A horizontal divider `width` columns wide, using `├`/`┤` at the
 /// ends so it joins an outer border when drawn across its two border
 /// columns. Degrades gracefully for pathologically narrow widths.
@@ -1641,6 +1689,33 @@ mod tests {
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         }
+    }
+
+    #[test]
+    fn wrapped_line_count_is_one_row_when_it_fits() {
+        assert_eq!(wrapped_line_count("DELETE FROM orders", 40), 1);
+        assert_eq!(wrapped_line_count("", 40), 1);
+        // Exactly the width is still one row.
+        assert_eq!(wrapped_line_count("abcde", 5), 1);
+    }
+
+    #[test]
+    fn wrapped_line_count_breaks_on_words() {
+        // "aaa bbb ccc" at width 7 → "aaa bbb" / "ccc".
+        assert_eq!(wrapped_line_count("aaa bbb ccc", 7), 2);
+        assert_eq!(wrapped_line_count("aaa bbb ccc", 3), 3);
+    }
+
+    #[test]
+    fn wrapped_line_count_hard_splits_an_overlong_word() {
+        // A 10-char word at width 4 needs three rows.
+        assert_eq!(wrapped_line_count("abcdefghij", 4), 3);
+    }
+
+    #[test]
+    fn wrapped_line_count_survives_a_zero_width() {
+        // Defensive: a box narrower than its own borders.
+        assert_eq!(wrapped_line_count("anything", 0), 1);
     }
 
     #[test]

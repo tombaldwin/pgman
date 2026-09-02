@@ -17,15 +17,15 @@ expression: dump(&buf)
 │4   alan@example.com       team  2026-02-17 19:05:00+00                                                               │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00                                                               │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                                                               │
-│                                     ┌ confirm ─────────────────────────────────┐                                     │
-│                                     │Confirm                                   │                                     │
-│                                     │                                          │                                     │
-│                                     │run (DELETE without WHERE) · will wrap in │                                     │
-│                                     │transaction                               │                                     │
-│                                     │                                          │                                     │
-│                                     │DELETE FROM orders                        │                                     │
-│                                     │                                          │                                     │
-│                                     └──────────────────────────────────────────┘                                     │
+│                                                                                                                      │
+│                              ┌ confirm ──────────────────────────────────────────────┐                               │
+│                              │run (DELETE without WHERE) · will wrap in transaction  │                               │
+│                              │                                                       │                               │
+│                              │DELETE FROM orders                                     │                               │
+│                              │                                                       │                               │
+│                              │y = run · n / esc = cancel                             │                               │
+│                              └───────────────────────────────────────────────────────┘                               │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
