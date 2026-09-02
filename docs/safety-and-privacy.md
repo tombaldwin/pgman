@@ -1,0 +1,178 @@
+# Safety, privacy, and what's stored locally
+
+## Safety model
+
+- **Read-only by default.** Every `SafetyProfile` defaults to
+  `read_only = true` (`src/safety.rs`), which opens the connection
+  with `SET default_transaction_read_only = on` (`src/conn.rs::connect_inner`).
+  A write attempted on such a session is rejected by Postgres itself,
+  independent of the client-side guards below. `statement_timeout_ms`
+  (default 30000) is applied the same way.
+- **Every statement is classified before it runs.** `safety::classify`
+  is pure and heuristic: it strips comments, looks at the leading
+  keyword, and checks whether the statement carries a `WHERE`. It is
+  deliberately over-cautious on ambiguous input — a CTE fronting a
+  `DELETE`, or `EXPLAIN ANALYZE` on DML, is classified as the
+  dangerous inner statement, not as a harmless read. One documented
+  imprecision: `has_where` is a whole-statement token check, so a
+  `DELETE` whose only `WHERE` sits inside a subquery is treated as a
+  guarded delete (`Confirm`) rather than an unqualified one
+  (`Block`) — a real SQL parser would fix this (see `BACKLOG.md`).
+  `MERGE` (PG15+) has no dedicated classification; it maps to `Other`,
+  which is always treated as a write and guarded (`Confirm` by
+  default) rather than allowed through as if it were a `SELECT`.
+- **Guards.** Each statement category (`insert`, `update`,
+  `update_without_where`, `delete`, `delete_without_where`,
+  `truncate`, `drop`, `ddl`, `other`) maps to `Allow` / `Confirm` /
+  `Block` in the active `SafetyProfile` (`~/.config/pgman/safety.toml`,
+  optionally overridden per-database or by a project's
+  `.pgman/pgman.toml`). `SELECT` always resolves to `Allow` and never
+  consults the guard table. Defaults block `DROP` and
+  unqualified `UPDATE`/`DELETE`; everything else that isn't a `SELECT`
+  defaults to `Confirm`.
+- **Interactive confirm.** A `Confirm`-guarded statement puts pgman
+  into `Mode::Confirm`: `y`/`Y` runs it, `n`/`N`/`Esc` cancels
+  (`src/app/keys.rs::on_confirm_key`). A `Block`-guarded statement
+  never reaches this prompt — it's refused outright with an error,
+  and the only way past it is to change the guard in `safety.toml`.
+  A multi-statement script (`;`-separated, dollar-quoting and string
+  literals respected by `safety::split_statements`) takes the
+  *most restrictive* guard across every statement in it, and shows a
+  per-kind summary in the confirm prompt.
+- **Rollback-able writes.** When `auto_tx` is on (default), any write
+  is wrapped in an explicit `BEGIN` and left **open** on success — the
+  statement runs, but nothing is durable until you decide. pgman then
+  shows a commit/rollback prompt (`Mode::TxDecision`): `y`/`Y` commits,
+  `n`/`N`/`Esc` rolls back (`src/app/keys.rs::on_tx_decision_key`). On
+  a statement error, the transaction is rolled back immediately so the
+  session doesn't sit aborted. `EXPLAIN ANALYZE` on DML is a special
+  case: the inner statement genuinely executes, so it's always wrapped
+  in a transaction that is unconditionally rolled back regardless of
+  the `auto_tx` setting — the mutation is guaranteed never to land.
+- **`EXPLAIN` (without `ANALYZE`) bypasses guards entirely** — it
+  never executes the inner statement, so there's nothing to guard.
+- **`--batch --yes` semantics.** Non-interactive batch mode
+  (`pgman --batch --sql "…"`) runs the same `classify`/guard pipeline
+  as the editor (`batch::check_batch_safety`), evaluated statement-by-
+  statement before ever opening the connection. `Guard::Allow` always
+  proceeds. `Guard::Confirm` is refused unless `--yes` is passed.
+  `Guard::Block` is refused **regardless of `--yes`** — the only way
+  to permit a blocked statement in batch mode is to change its guard
+  to `confirm` in `safety.toml` first. A safe leading statement does
+  not excuse a later one in the same script; the first refusal wins.
+- **Optional pre-flight cost preview.** When
+  `cost_preview_threshold_rows` is set above 0 for a database, a plain
+  `SELECT` (via the normal Run, not `EXPLAIN`) first runs an
+  `EXPLAIN (FORMAT JSON)` and prompts if the estimated row count
+  exceeds the threshold. Disabled by default.
+- **This is a client-side guard rail, not a substitute for
+  least-privilege database roles** — see `SECURITY.md`, which this
+  document defers to for the vulnerability-reporting process.
+
+## What's stored locally
+
+| File | Contains |
+| --- | --- |
+| `~/.config/pgman/safety.toml` | Your personal guard-rail configuration. No secrets. |
+| `<repo>/.pgman/pgman.toml` | Project-committed connection URLs (host/port/dbname/user) and safety overrides. **Never a resolved password** — only an optional `password_env` variable *name*. |
+| `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. |
+| `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
+| `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
+| `~/.cache/pgman/pgman.log` | Application log. Connection strings are always logged in redacted form (`Dsn::redacted()` masks the password; unparseable URLs go through `redact_url()`, which also masks `password=`/`pwd=`/`passwd=` query params). Resolved passwords are never passed to `tracing`. |
+| `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
+| `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. |
+
+None of these files are written with restricted permissions (no
+`0600`) — they inherit the process umask. If your `~`
+isn't otherwise locked down, treat the files above (history, draft,
+saved queries, reports, fixtures) as no more private than a shell
+history file.
+
+**Passwords are never written to disk by pgman.** They live only in
+process memory for the duration of the connection, sourced from
+`PGPASSWORD`, a `password_env`-named variable, a Spring config file's
+own plaintext `password` key (if present in the file — pgman doesn't
+add a new place for it to live), or an IntelliJ-committed URL. pgman
+does not read `dataSources.local.xml`'s `<secret-storage>` /
+OS-keychain-backed password at all.
+
+## What leaves the machine
+
+- **The database connection itself** — plaintext TCP or TLS to the
+  host/port in your DSN (or through an SSH tunnel; see below).
+- **The optional update check** — at most once every six hours, one
+  HTTPS GET to `https://crates.io/api/v1/crates/pgman` carrying only
+  the running version in a `User-Agent` header
+  (`pgman/<version> (https://github.com/tombaldwin/pgman)`) and
+  nothing else. Turn it off with `--no-update-check` or
+  `PGMAN_NO_UPDATE_CHECK` (any value). Every failure mode — no
+  network, TLS trust-store issues, a malformed response — degrades
+  silently to "no update known"; it's a courtesy notice, never a hard
+  dependency.
+- **An SSH tunnel**, when `ssh_tunnel` is configured — the system
+  `ssh` binary is shelled out to (`BatchMode=yes`), honouring your
+  `~/.ssh/config`, agent, and `ProxyCommand`.
+- **Nothing else.** No telemetry, no anonymous identifier, no crash
+  reporting, no analytics endpoint.
+
+**Inbound surface, not outbound**: the JDBC-tap listeners
+(`--tap-listen` / `--tap-udp` / `--tap-otlp`) accept connections
+rather than initiate them, but they matter for the same reason — they
+are **unauthenticated ingest**. `--tap-listen`/`--tap-udp` bind
+`127.0.0.1` by default when given a bare port or `:port` (e.g.
+`--tap-listen :7432`); a full `host:port` (e.g. `0.0.0.0:7432`) binds
+exactly what you ask for, with no authentication check at any layer.
+Auto-enabling only ever picks `127.0.0.1:7432` (triggered by detecting
+a Java project in the launch directory) — a non-loopback bind is
+always an explicit, deliberate choice. Only bind a non-loopback
+address on a trusted/firewalled network. Events ingested this way
+(reconstructed SQL, bound-parameter values unless the JAR redacts
+them) are held only in memory (a capped ring buffer) unless you pass
+`--tap-record PATH`, which appends them to a JSONL file you chose.
+
+## TLS
+
+`sslmode` follows libpq's semantics (`src/conn.rs::apply_ssl_mode`,
+`build_tls_connector`):
+
+| `sslmode` | Encrypted | Certificate verified |
+| --- | --- | --- |
+| `disable` | no | — |
+| `prefer` (default when unset) | yes, falls back to plaintext if the server refuses | no |
+| `require` | yes, connection fails if the server refuses | no |
+| `verify-ca` | yes | yes — currently collapsed onto the same check as `verify-full` (hostname included); a `verify-ca`-without-hostname-check custom verifier is a tracked follow-up (`BACKLOG.md`) |
+| `verify-full` | yes | yes, including hostname |
+
+For `prefer`/`require`, pgman installs a rustls verifier that accepts
+any server certificate — equivalent to libpq's "encrypt without
+authenticating the peer." Use `verify-full` on any network where a
+MITM is a real concern. When verification is on, trust roots come
+from the OS keychain (`rustls-native-certs`) unioned with the Mozilla
+bundle (`webpki-roots`), so a fresh container with no populated system
+trust store still connects to RDS.
+
+## Redaction of connection strings
+
+Every place a DSN could be logged or shown routes through one of two
+pure redactors (`src/conn.rs`):
+
+- **`Dsn::redacted()`** — used for a successfully-parsed DSN. Renders
+  `postgres://user:***@host:port/db`, appending `via ssh://user@host`
+  when a tunnel is configured. The password is masked; nothing else
+  is.
+- **`redact_url()`** — used on the fallback path, for a
+  connection-string-shaped value that failed to parse (so
+  `Dsn::redacted()` isn't available). Masks inline userinfo
+  (`user:pass@` → `***@`) and any `password=`/`pwd=`/`passwd=` query
+  parameter, case-insensitively.
+
+Discovery logging (project connections, Spring picks, IntelliJ picks)
+always goes through one of these before hitting `tracing::info!`, so
+`~/.cache/pgman/pgman.log` never carries a resolved password — see
+CLAUDE.md's "never log credentials" rule, which this codebase treats
+as a hard constraint rather than a guideline.
+
+## Reporting a vulnerability
+
+See [`SECURITY.md`](../SECURITY.md) — do not open a public issue for
+security problems.
