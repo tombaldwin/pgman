@@ -47,6 +47,8 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 - **Postgres / RDS server logs → runnable SQL.** Reconstruct from `log_statement`
   output plus `DETAIL: parameters: $1 = …` lines (the more reliable source — it
   needs no application redeploy).
+- **Pasted JDBC → runnable SQL.** No log needed — a `?`-placeholder statement
+  plus a typed parameter list (`TYPE:value` per line) reconstructs the same way.
 - **N+1 detection.** Cluster reconstructed queries by shape to surface
   loop-driven selects.
 

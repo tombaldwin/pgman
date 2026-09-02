@@ -2144,6 +2144,15 @@ impl App {
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
         picks.extend(query::hibernate::parse(log));
         picks.extend(query::pglog::parse(log));
+        // Third way in: neither log parser found anything, but the
+        // buffer has the "?-statement, blank line, typed param list"
+        // shape a pasted JDBC statement makes — same shape
+        // `logdetect::detect_log` hints at, so the two can't disagree.
+        if picks.is_empty() {
+            if let Some((head, tail)) = query::logdetect::split_jdbc_paste(log) {
+                picks.extend(query::jdbc::parse(&head, &tail));
+            }
+        }
         if picks.is_empty() {
             self.last_error = Some(
                 "no queries found (paste a Hibernate or Postgres log into the editor first)"
