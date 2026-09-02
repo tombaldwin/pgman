@@ -5424,7 +5424,13 @@ fn preload_log_overrides_conn_pick_startup_mode() {
 #[test]
 fn blocked_by_safety_message_names_the_statement_without_debug_braces() {
     let msg = blocked_by_safety_message(
-        &crate::safety::StatementKind::Delete { has_where: false },
+        &crate::safety::Decision {
+            kind: crate::safety::StatementKind::Delete { has_where: false },
+            guard: crate::safety::Guard::Block,
+            wrap_in_tx: false,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
         "main",
     );
     assert!(

@@ -40,10 +40,18 @@ const BOOTSTRAP_SQL: &str = "select datname as database, \
 /// The footer line for a statement the per-database guard refuses.
 /// Names the statement in words (`DELETE without WHERE`), never the
 /// enum, and says where the guard lives.
-pub fn blocked_by_safety_message(kind: &safety::StatementKind, db: &str) -> String {
+///
+/// One refusal is not a category guard at all: a statement that would turn
+/// the session's read-only property off is refused because the profile said
+/// read-only, so pointing at the `other` guard would send the operator to the
+/// wrong line of `safety.toml`.
+pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
+    if decision.read_only_escape {
+        return safety::READ_ONLY_ESCAPE_REFUSAL.to_string();
+    }
     format!(
         "blocked by safety: {} on '{db}' · change the guard in safety.toml to allow it",
-        kind.describe()
+        decision.kind.describe()
     )
 }
 
@@ -2479,7 +2487,7 @@ impl App {
         // rollback transaction inside `spawn_run`).
         match decision.guard {
             Guard::Block => {
-                self.last_error = Some(blocked_by_safety_message(&decision.kind, db));
+                self.last_error = Some(blocked_by_safety_message(&decision, db));
             }
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
@@ -2561,11 +2569,18 @@ impl App {
             guard: max_guard,
             wrap_in_tx: decisions.iter().any(|d| d.wrap_in_tx),
             blocked_by_read_only: decisions.iter().any(|d| d.blocked_by_read_only),
+            read_only_escape: decisions.iter().any(|d| d.read_only_escape),
         };
 
         match max_guard {
             Guard::Block => {
-                self.last_error = Some(format!("batch blocked by safety: {summary}"));
+                // A script that opens by turning read-only off gets told so:
+                // the per-kind summary would blame the wrong statement.
+                self.last_error = Some(if synthesized.read_only_escape {
+                    safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
+                } else {
+                    format!("batch blocked by safety: {summary}")
+                });
             }
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {

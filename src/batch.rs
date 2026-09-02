@@ -99,6 +99,11 @@ pub fn check_batch_safety(
                     stmt_summary(stmt),
                 ));
             }
+            // Not a category guard: the profile asked for a read-only
+            // session, and `--yes` does not buy a way out of it either.
+            Guard::Block if decision.read_only_escape => {
+                return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
+            }
             Guard::Block => {
                 return Err(format!(
                     "blocked by safety: {} on '{}' is set to block \
