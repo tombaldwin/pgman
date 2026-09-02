@@ -38,6 +38,15 @@ pub enum SpecError {
     Empty,
     BadPort(String),
     MissingHost,
+    /// `user` or `host` starts with `-` — handed to `ssh` as an
+    /// argument, that would be parsed as an option rather than a
+    /// literal name (e.g. `-oProxyCommand=...`). Rejected at parse
+    /// time rather than relying solely on the `--` we also put in
+    /// front of the destination operand — belt and braces.
+    LeadingDash {
+        field: &'static str,
+        value: String,
+    },
 }
 
 impl std::fmt::Display for SpecError {
@@ -46,6 +55,10 @@ impl std::fmt::Display for SpecError {
             SpecError::Empty => write!(f, "empty ssh tunnel spec"),
             SpecError::BadPort(p) => write!(f, "invalid ssh port {p:?}"),
             SpecError::MissingHost => write!(f, "ssh tunnel spec missing host"),
+            SpecError::LeadingDash { field, value } => write!(
+                f,
+                "ssh tunnel {field} {value:?} starts with '-' — would be read as an ssh option, not a name"
+            ),
         }
     }
 }
@@ -71,6 +84,14 @@ impl SshTunnelSpec {
             Some((_, hp)) => (None, hp),
             None => (None, s),
         };
+        if let Some(u) = &user {
+            if u.starts_with('-') {
+                return Err(SpecError::LeadingDash {
+                    field: "user",
+                    value: u.clone(),
+                });
+            }
+        }
         // Split host and port. Bracketed IPv6 wins; otherwise last `:`.
         let (host, port) = if let Some(stripped) = hostport.strip_prefix('[') {
             let (h, rest) = stripped.split_once(']').ok_or(SpecError::MissingHost)?;
@@ -99,6 +120,12 @@ impl SshTunnelSpec {
                 }
             }
         };
+        if host.starts_with('-') {
+            return Err(SpecError::LeadingDash {
+                field: "host",
+                value: host,
+            });
+        }
         Ok(SshTunnelSpec { user, host, port })
     }
 
@@ -152,20 +179,7 @@ impl SshTunnel {
             None => spec.host.clone(),
         };
         let mut cmd = Command::new("ssh");
-        cmd.arg("-N") // no remote command
-            .arg("-T") // no pty
-            .arg("-o")
-            .arg("BatchMode=yes") // fail fast on missing keys
-            .arg("-o")
-            .arg("ExitOnForwardFailure=yes")
-            .arg("-o")
-            .arg("ServerAliveInterval=30")
-            .arg("-o")
-            .arg("ServerAliveCountMax=3");
-        if let Some(p) = spec.port {
-            cmd.arg("-p").arg(p.to_string());
-        }
-        cmd.arg("-L").arg(&forward).arg(&bastion);
+        cmd.args(build_ssh_args(spec, &forward, &bastion));
         // Keep stdin closed so ssh doesn't try to interact; capture stderr
         // for the failure diagnostic; ignore stdout (ssh -N is silent).
         cmd.stdin(Stdio::null())
@@ -262,6 +276,51 @@ impl Drop for SshTunnel {
     }
 }
 
+/// Build the `ssh` argv for opening the tunnel. Pure — split out of
+/// `SshTunnel::open` so the argument order and fixed safety options
+/// are unit-testable without spawning a process.
+///
+/// `--` immediately precedes the destination operand (`bastion`) so
+/// `ssh`'s own getopt-based parsing stops there: even if a bastion or
+/// user string somehow got past `SshTunnelSpec::parse`'s leading-`-`
+/// rejection (belt and braces — that rejection is the primary guard),
+/// it would be read as a literal destination, never as an option like
+/// `-oProxyCommand=...`. OpenSSH accepts `--` (`ssh -- 2>&1` prints
+/// its usage rather than an "unknown option" error).
+///
+/// `BatchMode=yes` makes `ssh` fail fast on a missing/unloaded key or
+/// agent instead of blocking on an interactive password prompt the
+/// alternate screen would swallow — so a passphrase-protected key
+/// whose passphrase isn't already unlocked in the agent will fail the
+/// tunnel rather than hang; that's the intended trade-off, but it
+/// does mean such a key must be unlocked (`ssh-add`) before pgman
+/// runs. It's compatible with every other option here: none of
+/// `ExitOnForwardFailure`, `ServerAliveInterval/CountMax`, `-p`, `-L`,
+/// `-N`, or `-T` involve any further interactive prompt.
+fn build_ssh_args(spec: &SshTunnelSpec, forward: &str, bastion: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-N".to_string(), // no remote command
+        "-T".to_string(), // no pty
+        "-o".to_string(),
+        "BatchMode=yes".to_string(), // fail fast on missing keys
+        "-o".to_string(),
+        "ExitOnForwardFailure=yes".to_string(),
+        "-o".to_string(),
+        "ServerAliveInterval=30".to_string(),
+        "-o".to_string(),
+        "ServerAliveCountMax=3".to_string(),
+    ];
+    if let Some(p) = spec.port {
+        args.push("-p".to_string());
+        args.push(p.to_string());
+    }
+    args.push("-L".to_string());
+    args.push(forward.to_string());
+    args.push("--".to_string());
+    args.push(bastion.to_string());
+    args
+}
+
 /// Ask the kernel for a free TCP port: bind `127.0.0.1:0`, read back the
 /// assigned port, drop the listener so ssh can re-bind it. There's a
 /// tiny race window between drop and ssh-bind where another process
@@ -340,6 +399,39 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bastion_starting_with_dash() {
+        // A host string handed straight to `ssh` as an argument;
+        // starting with '-' would make it (or, absent `--`, its
+        // sub-parts) readable as an ssh option instead of a
+        // destination — e.g. `-oProxyCommand=...` could exfiltrate
+        // credentials or run an arbitrary command.
+        assert!(matches!(
+            SshTunnelSpec::parse("-oProxyCommand=evil"),
+            Err(SpecError::LeadingDash { field: "host", .. })
+        ));
+        assert!(matches!(
+            SshTunnelSpec::parse("-oProxyCommand=evil:22"),
+            Err(SpecError::LeadingDash { field: "host", .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_user_starting_with_dash() {
+        assert!(matches!(
+            SshTunnelSpec::parse("-oProxyCommand=evil@bastion"),
+            Err(SpecError::LeadingDash { field: "user", .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_host_with_internal_dash() {
+        // The rejection is specifically a *leading* dash — a normal
+        // hyphenated hostname must keep working.
+        let s = SshTunnelSpec::parse("tom@my-bastion-host").unwrap();
+        assert_eq!(s.host, "my-bastion-host");
+    }
+
+    #[test]
     fn orphan_at_means_no_user_not_at_in_host() {
         // `@bastion` is forgiving-parsed as user=None, host=bastion
         // (rather than the prior wrong behaviour of host=`@bastion`,
@@ -369,5 +461,48 @@ mod tests {
             port: Some(22),
         };
         assert_eq!(s.to_display(), "tom@[::1]:22");
+    }
+
+    // --- ssh argv hardening -------------------------------------------------
+
+    #[test]
+    fn ssh_args_put_double_dash_immediately_before_the_destination() {
+        let spec = SshTunnelSpec::parse("tom@bastion:2222").unwrap();
+        let args = super::build_ssh_args(&spec, "127.0.0.1:5555:db.internal:5432", "tom@bastion");
+        let dd = args.iter().position(|a| a == "--").expect("'--' present");
+        assert_eq!(
+            args.get(dd + 1).map(String::as_str),
+            Some("tom@bastion"),
+            "destination must be the argument right after '--': {args:?}"
+        );
+        assert_eq!(
+            args.len(),
+            dd + 2,
+            "nothing may follow the destination: {args:?}"
+        );
+    }
+
+    #[test]
+    fn ssh_args_include_batch_mode() {
+        let spec = SshTunnelSpec::parse("bastion").unwrap();
+        let args = super::build_ssh_args(&spec, "127.0.0.1:5555:db.internal:5432", "bastion");
+        let o_values: Vec<&str> = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .filter(|(flag, _)| *flag == "-o")
+            .map(|(_, v)| v.as_str())
+            .collect();
+        assert!(
+            o_values.contains(&"BatchMode=yes"),
+            "expected BatchMode=yes among -o values: {o_values:?}"
+        );
+    }
+
+    #[test]
+    fn ssh_args_include_port_flag_when_spec_has_one() {
+        let spec = SshTunnelSpec::parse("tom@bastion:2222").unwrap();
+        let args = super::build_ssh_args(&spec, "fwd", "tom@bastion");
+        let p = args.iter().position(|a| a == "-p").expect("'-p' present");
+        assert_eq!(args.get(p + 1).map(String::as_str), Some("2222"));
     }
 }
