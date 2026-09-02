@@ -7,12 +7,12 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER┌ JDBC tap — 8 query · 0 heartbeat · view: callers · sort: total time · v cycle · Shift-B baseline · s sort · c clear · q close ───────────────────────────────────────────────────────┐       │
-└───────│   calls    err        p50        p95   fps  caller · last fingerprint                                                                                                                │───────┘
-┌ result│       6      0      450µs      495µs     1  OrderService.loadItems:88 · select * from order_items where order_id = ?                                                                 │───────┐
-│id  ema│       1      0      1.8ms      1.8ms     1  OrderService.listOpen:54 · select id, user_id, status from orders where status = ?                                                       │       │
-│1   ada│       1      0      310µs      310µs     1  UserController.show:31 · select id, email, plan from users where id = ?                                                                  │       │
-│2   lin│                                                                                                                                                                                      │       │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────┌ JDBC tap — 8 query · 0 heartbeat · view: callers · sort: total time · v cycle · Shift-B baseline · s sort · c clear · q close ───────────────────────────────────────────────────────┐───────┘
+┌ result│   calls    err        p50        p95   fps  caller · last fingerprint                                                                                                                │───────┐
+│id  ema│       6      0      450µs      495µs     1  OrderService.loadItems:88 · select * from order_items where order_id = ?                                                                 │       │
+│1   ada│       1      0      1.8ms      1.8ms     1  OrderService.listOpen:54 · select id, user_id, status from orders where status = ?                                                       │       │
+│2   lin│       1      0      310µs      310µs     1  UserController.show:31 · select id, email, plan from users where id = ?                                                                  │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
@@ -45,8 +45,8 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

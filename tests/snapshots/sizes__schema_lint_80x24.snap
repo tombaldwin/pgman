@@ -4,9 +4,9 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> ┌ schema wizard — y yank suggestion · r refresh · q close ──────────────┐   │
+│> SELECT id, email, plan, created_at                                          │
+│  ┌ schema wizard — y yank suggestion · r refresh · q close ──────────────┐   │
 │  │no findings — schema looks clean                                       │   │
-│  │                                                                       │   │
 │  │                                                                       │   │
 └──│                                                                       │───┘
 ┌ r│                                                                       │───┐
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
-│  │                                                                       │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · F1 +2 more

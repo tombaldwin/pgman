@@ -6,12 +6,12 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WH┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q c┐    │
-│  OR│  state        stmts    fps        span     db-time  pool          txn / conn · last sql                    │    │
-└────│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * from order…         │────┘
-┌ res│  open             1      1         0µs       1.8ms  primary       (autocommit · selec… · select id, user_id│────┐
-│id  │  open             1      1         0µs       310µs  primary       (autocommit · selec… · select id, email, │    │
-│1   │                                                                                                            │    │
+│  WHERE plan = 'pro'                                                                                                  │
+│  OR┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q c┐    │
+└────│  state        stmts    fps        span     db-time  pool          txn / conn · last sql                    │────┘
+┌ res│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * from order…         │────┐
+│id  │  open             1      1         0µs       1.8ms  primary       (autocommit · selec… · select id, user_id│    │
+│1   │  open             1      1         0µs       310µs  primary       (autocommit · selec… · select id, email, │    │
 │2   │                                                                                                            │    │
 │3   │                                                                                                            │    │
 │4   │                                                                                                            │    │
@@ -36,8 +36,8 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    │                                                                                                            │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

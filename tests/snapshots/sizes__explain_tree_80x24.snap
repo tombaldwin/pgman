@@ -4,13 +4,13 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> SE┌ EXPLAIN plan — q / esc close ──────────────────────────────────────┐    │
-│  FR│▼ Hash Join · 50.00ms · 4500 rows                                   │    │
-│  WH│    Hash Cond: (o.user_id = u.id)                                   │    │
-│  OR│  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │    │
-└────│  ▼ Hash · 5.00ms                                                   │────┘
-┌ res│    · Seq Scan on users u · 4.00ms                                  │────┐
-│id  │                                                                    │    │
+│> SELECT id, email, plan, created_at                                          │
+│  FR┌ EXPLAIN plan — q / esc close ──────────────────────────────────────┐    │
+│  WH│▼ Hash Join · 50.00ms · 4500 rows                                   │    │
+│  OR│    Hash Cond: (o.user_id = u.id)                                   │    │
+└────│  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │────┘
+┌ res│  ▼ Hash · 5.00ms                                                   │────┐
+│id  │    · Seq Scan on users u · 4.00ms                                  │    │
 │1   │                                                                    │    │
 │2   │                                                                    │    │
 │3   │                                                                    │    │
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │    │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │
-│    │                                                                    │    │
 │    └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · F1 +3 more

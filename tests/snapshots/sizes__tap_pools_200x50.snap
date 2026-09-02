@@ -7,10 +7,10 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER┌ JDBC tap — 8 query · 0 heartbeat · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ────────────────────────────────────────────────────────────────────────────┐       │
-└───────│  conns   peak   calls    err        busy        p95  pool · app                                                                                                                      │───────┘
-┌ result│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                                                                                              │───────┐
-│id  ema│                                                                                                                                                                                      │       │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────┌ JDBC tap — 8 query · 0 heartbeat · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ────────────────────────────────────────────────────────────────────────────┐───────┘
+┌ result│  conns   peak   calls    err        busy        p95  pool · app                                                                                                                      │───────┐
+│id  ema│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                                                                                              │       │
 │1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
@@ -45,8 +45,8 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

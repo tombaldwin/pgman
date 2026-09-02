@@ -5,11 +5,11 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
-│  FRO┌ saved queries — enter load · r rename · d delete · / search · q close ───────────────┐     │
-│  WHE│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = '│     │
-│  ORD│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;            │     │
-└─────│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        su│─────┘
-┌ resu│                                                                                      │─────┐
+│  FROM users                                                                                      │
+│  WHE┌ saved queries — enter load · r rename · d delete · / search · q close ───────────────┐     │
+│  ORD│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = '│     │
+└─────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;            │─────┘
+┌ resu│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        su│─────┐
 │id  e│                                                                                      │     │
 │1   a│                                                                                      │     │
 │2   l│                                                                                      │     │
@@ -17,7 +17,6 @@ expression: dump(&buf)
 │4   a│                                                                                      │     │
 │5   e│                                                                                      │     │
 │6   k│                                                                                      │     │
-│     │                                                                                      │     │
 │     │  pro-users                                                                           │     │
 │     │  SELECT id, email, created_at                                                        │     │
 │     │  FROM users                                                                          │     │
@@ -29,6 +28,7 @@ expression: dump(&buf)
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   saved queries · 3 entries

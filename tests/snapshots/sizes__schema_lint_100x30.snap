@@ -5,9 +5,9 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
-│  F┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────┐   │
-│  W│no findings — schema looks clean                                                          │   │
-│  O│                                                                                          │   │
+│  FROM users                                                                                      │
+│  W┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────┐   │
+│  O│no findings — schema looks clean                                                          │   │
 └───│                                                                                          │───┘
 ┌ re│                                                                                          │───┐
 │id │                                                                                          │   │
@@ -27,8 +27,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
 │   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help

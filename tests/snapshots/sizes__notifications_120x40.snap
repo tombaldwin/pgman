@@ -6,11 +6,11 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHE┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────┐     │
-│  ORD│  channel                  pid  payload                                                                   │     │
-└─────│  orders_channel          4321  order:9001 shipped                                                        │─────┘
-┌ resu│  cache_invalidate        4322  users                                                                     │─────┐
-│id  e│                                                                                                          │     │
+│  WHERE plan = 'pro'                                                                                                  │
+│  ORD┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────┐     │
+└─────│  channel                  pid  payload                                                                   │─────┘
+┌ resu│  orders_channel          4321  order:9001 shipped                                                        │─────┐
+│id  e│  cache_invalidate        4322  users                                                                     │     │
 │1   a│                                                                                                          │     │
 │2   l│                                                                                                          │     │
 │3   g│                                                                                                          │     │
@@ -36,8 +36,8 @@ expression: dump(&buf)
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
-│     │                                                                                                          │     │
 │     └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

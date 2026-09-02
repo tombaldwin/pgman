@@ -7,17 +7,16 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY ┌ saved queries — enter load · r rename · d delete · / search · q close ───────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
-└───────────│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │───────────┘
-┌ result · 6│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │───────────┐
-│id  email  │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │           │
-│1   ada@exa│                                                                                                                                                                              │           │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────────┌ saved queries — enter load · r rename · d delete · / search · q close ───────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────┘
+┌ result · 6│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │───────────┐
+│id  email  │  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │           │
+│1   ada@exa│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │           │
 │2   linus@e│                                                                                                                                                                              │           │
 │3   grace@e│                                                                                                                                                                              │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
@@ -47,6 +46,7 @@ expression: dump(&buf)
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘           │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

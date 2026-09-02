@@ -7,13 +7,13 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY ┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
-└───────────│▼ Hash Join · 50.00ms · 4500 rows                                                                                                                                             │───────────┘
-┌ result · 6│    Hash Cond: (o.user_id = u.id)                                                                                                                                             │───────────┐
-│id  email  │  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                                                                                              │           │
-│1   ada@exa│  ▼ Hash · 5.00ms                                                                                                                                                             │           │
-│2   linus@e│    · Seq Scan on users u · 4.00ms                                                                                                                                            │           │
-│3   grace@e│                                                                                                                                                                              │           │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────────┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────┘
+┌ result · 6│▼ Hash Join · 50.00ms · 4500 rows                                                                                                                                             │───────────┐
+│id  email  │    Hash Cond: (o.user_id = u.id)                                                                                                                                             │           │
+│1   ada@exa│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                                                                                              │           │
+│2   linus@e│  ▼ Hash · 5.00ms                                                                                                                                                             │           │
+│3   grace@e│    · Seq Scan on users u · 4.00ms                                                                                                                                            │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
@@ -45,8 +45,8 @@ expression: dump(&buf)
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘           │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

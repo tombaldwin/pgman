@@ -4,12 +4,12 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> ┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shif┐   │
+│> SELECT id, email, plan, created_at                                          │
+│  ┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shif┐   │
 │  │  state        stmts    fps        span     db-time  pool          txn │   │
 │  │  open             6      1     125.0ms       2.7ms  primary       c… ·│   │
-│  │  open             1      1         0µs       1.8ms  primary       (… ·│   │
-└──│  open             1      1         0µs       310µs  primary       (… ·│───┘
-┌ r│                                                                       │───┐
+└──│  open             1      1         0µs       1.8ms  primary       (… ·│───┘
+┌ r│  open             1      1         0µs       310µs  primary       (… ·│───┐
 │id│                                                                       │   │
 │1 │                                                                       │   │
 │2 │                                                                       │   │
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
-│  │                                                                       │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · F1 +4 more

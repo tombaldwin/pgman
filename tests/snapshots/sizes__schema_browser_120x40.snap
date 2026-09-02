@@ -6,17 +6,18 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHER┌ schema browser — q / esc close ───────────────────────────────────────────────────────────────────────┐       │
-│  ORDE│▼ public  (3)                            schema: public                                                │       │
-└──────│  ▼ order_items  (5 col, 1 cons)                                                                       │───────┘
-┌ resul│      · id : bigint NOT NULL             3 table(s)                                                    │───────┐
-│id  em│      · order_id : bigint NOT NULL                                                                     │       │
-│1   ad│      · sku : varchar(40) NOT NULL       enter to expand — then arrow / j/k into the tables            │       │
-│2   li│      · qty : integer NOT NULL                                                                         │       │
-│3   gr│      · price_cents : integer NOT NULL                                                                 │       │
-│4   al│      ◆ order_items_pkey                                                                               │       │
-│5   ed│  ▼ orders  (5 col, 1 cons)                                                                            │       │
-│6   ka│      · id : bigint NOT NULL                                                                           │       │
+│  WHERE plan = 'pro'                                                                                                  │
+│  ORDE┌ schema browser — q / esc close ───────────────────────────────────────────────────────────────────────┐       │
+└──────│▼ public  (3)                            schema: public                                                │───────┘
+┌ resul│  ▼ order_items  (5 col, 1 cons)                                                                       │───────┐
+│id  em│      · id : bigint NOT NULL             3 table(s)                                                    │       │
+│1   ad│      · order_id : bigint NOT NULL                                                                     │       │
+│2   li│      · sku : varchar(40) NOT NULL       enter to expand — then arrow / j/k into the tables            │       │
+│3   gr│      · qty : integer NOT NULL                                                                         │       │
+│4   al│      · price_cents : integer NOT NULL                                                                 │       │
+│5   ed│      ◆ order_items_pkey                                                                               │       │
+│6   ka│  ▼ orders  (5 col, 1 cons)                                                                            │       │
+│      │      · id : bigint NOT NULL                                                                           │       │
 │      │      · user_id : bigint NOT NULL                                                                      │       │
 │      │      · status : varchar(20) NOT NULL                                                                  │       │
 │      │      · total_cents : integer NOT NULL                                                                 │       │
@@ -35,9 +36,8 @@ expression: dump(&buf)
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
 │      └───────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

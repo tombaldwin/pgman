@@ -7,13 +7,13 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_┌ row 1 of 6 · field 1/4 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                   │
-└───────────────────│                                                                                                                                                              │───────────────────┘
-┌ result · 6 row(s) │ id         │ 1                                                                                                                                               │───────────────────┐
-│id  email          │ email      │ ada@example.com                                                                                                                                 │                   │
-│1   ada@example.com│ plan       │ pro                                                                                                                                             │                   │
-│2   linus@example.c│ created_at │ 2026-01-04 09:12:00+00                                                                                                                          │                   │
-│3   grace@example.c│                                                                                                                                                              │                   │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────────────────┌ row 1 of 6 · field 1/4 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────────────┘
+┌ result · 6 row(s) │                                                                                                                                                              │───────────────────┐
+│id  email          │ id         │ 1                                                                                                                                               │                   │
+│1   ada@example.com│ email      │ ada@example.com                                                                                                                                 │                   │
+│2   linus@example.c│ plan       │ pro                                                                                                                                             │                   │
+│3   grace@example.c│ created_at │ 2026-01-04 09:12:00+00                                                                                                                          │                   │
 │4   alan@example.co│                                                                                                                                                              │                   │
 │5   edsger@example.│                                                                                                                                                              │                   │
 │6   katherine@examp│                                                                                                                                                              │                   │
@@ -45,8 +45,8 @@ expression: dump(&buf)
 │                   │                                                                                                                                                              │                   │
 │                   │                                                                                                                                                              │                   │
 │                   │                                                                                                                                                              │                   │
-│                   │                                                                                                                                                              │                   │
 │                   └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                   │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
