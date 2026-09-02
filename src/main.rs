@@ -154,7 +154,7 @@ async fn main() -> anyhow::Result<()> {
     // all of that and run the fixture app straight into the TUI.
     if cli.demo {
         tracing::info!("starting in --demo mode (synthetic data, no database)");
-        let mut application = pgman::demo::app(theme);
+        let mut application = pgman::demo::launch_app(theme);
         let mut term = tui::Tui::enter()?;
         let result = application.run(&mut term).await;
         drop(term);

@@ -2427,10 +2427,18 @@ impl App {
             self.dispatch_backslash(cmd);
             return;
         }
-        if self.client.is_none() {
+        // `--demo` never has a real client — but a statement typed or
+        // pasted there should still go through the exact same guard,
+        // batch-split, and pending-confirm machinery a live session
+        // uses (a DELETE without WHERE is refused exactly like it
+        // would be against a real database — see `spawn_run_demo`).
+        // Only the final execution differs: demo answers from the
+        // fixture schema instead of a Postgres connection.
+        if self.client.is_none() && !self.demo {
             self.last_error = Some(self.not_connected_message());
             return;
         }
+        let demo_no_client = self.demo && self.client.is_none();
 
         let db = self
             .dsn
@@ -2450,7 +2458,11 @@ impl App {
         // EXPLAIN (without ANALYZE) never executes the inner statement — bypass
         // guards entirely.
         if kind == RunKind::Explain {
-            self.spawn_run(sql, kind, decision, false);
+            if demo_no_client {
+                self.spawn_run_demo(sql, kind);
+            } else {
+                self.spawn_run(sql, kind, decision, false);
+            }
             return;
         }
 
@@ -2471,6 +2483,10 @@ impl App {
                 self.mode = Mode::Confirm;
             }
             Guard::Allow => {
+                if demo_no_client {
+                    self.spawn_run_demo(sql, kind);
+                    return;
+                }
                 // Pre-flight cost preview: for plain `RunKind::Run`
                 // SELECTs above the profile's threshold, send an
                 // `EXPLAIN (FORMAT JSON)` first and gate on the row
@@ -2541,7 +2557,13 @@ impl App {
                 });
                 self.mode = Mode::Confirm;
             }
-            Guard::Allow => self.spawn_run(sql, kind, synthesized, true),
+            Guard::Allow => {
+                if self.demo && self.client.is_none() {
+                    self.spawn_run_demo(sql, kind);
+                } else {
+                    self.spawn_run(sql, kind, synthesized, true);
+                }
+            }
         }
     }
 

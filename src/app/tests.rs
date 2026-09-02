@@ -5536,3 +5536,88 @@ async fn update_check_disabled_never_spawns() {
         "update_check_enabled = false must never spawn the check"
     );
 }
+
+// --- --demo mode: request_run answers synthetically (no client) ---
+//
+// `crate::demo::app()` builds a fully-populated demo App with `demo =
+// true` and `client = None` — exactly the state `pgman --demo` runs
+// the TUI loop with. `on_key` ctrl-Enter drives `request_run` exactly
+// like a live keypress would; the resulting `AppMsg::QueryOk` is
+// pumped through the SAME `on_msg` handler a real connection uses.
+
+/// Pump the single queued `AppMsg` from `a`'s channel into `on_msg`.
+fn pump_one_demo_msg(a: &mut App) {
+    let msg = a
+        .msg_rx
+        .as_mut()
+        .expect("msg_rx present")
+        .try_recv()
+        .expect("expected a queued AppMsg after a demo run");
+    a.on_msg(msg);
+}
+
+fn run_in_demo(a: &mut App, sql: &str) {
+    a.mode = Mode::Editor;
+    a.editor.buffer = sql.to_string();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+}
+
+#[test]
+fn demo_select_on_users_yields_the_users_grid() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT id, email, plan, created_at FROM users");
+    pump_one_demo_msg(&mut a);
+    assert_eq!(a.grid.columns, vec!["id", "email", "plan", "created_at"]);
+    assert!(!a.grid.rows.is_empty());
+    assert_eq!(a.last_error, None);
+    assert!(
+        a.history.iter().any(|h| h.contains("FROM users")),
+        "a demo run should still land in history like a live one: {:?}",
+        a.history
+    );
+}
+
+#[test]
+fn demo_select_on_orders_yields_rows_with_orders_columns() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT * FROM orders");
+    pump_one_demo_msg(&mut a);
+    assert_eq!(
+        a.grid.columns,
+        vec!["id", "user_id", "status", "total_cents", "created_at"]
+    );
+    assert!(
+        a.grid.rows.len() >= 3,
+        "expected several generated rows, got {}",
+        a.grid.rows.len()
+    );
+}
+
+#[test]
+fn demo_delete_without_where_is_refused_by_the_guard() {
+    // The whole point of routing --demo through safety::evaluate: an
+    // unqualified DELETE gets blocked exactly like it would live —
+    // it never reaches spawn_run_demo, so no AppMsg is ever queued.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "DELETE FROM users");
+    assert!(
+        a.msg_rx.as_mut().unwrap().try_recv().is_err(),
+        "a blocked statement must not queue a QueryOk"
+    );
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("DELETE without WHERE"),
+        "expected the safety-block message, got {err:?}"
+    );
+}
+
+#[test]
+fn demo_unknown_statement_yields_one_row_notice() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT 1");
+    pump_one_demo_msg(&mut a);
+    assert_eq!(a.grid.columns, vec!["demo".to_string()]);
+    assert_eq!(a.grid.rows.len(), 1);
+    assert_eq!(a.grid.rows[0][0], "this is --demo mode, no database");
+}

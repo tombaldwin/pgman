@@ -316,6 +316,49 @@ impl App {
         });
     }
 
+    /// `--demo`'s counterpart to `spawn_run`: no client, no
+    /// `tokio::spawn` — the grid comes from `demo::answer`
+    /// synchronously and lands on the exact same `AppMsg::QueryOk`
+    /// a real client's `execute` would produce, sent to `msg_tx`
+    /// immediately. History, `\x`, tabs, and the status line all go
+    /// through the same `on_msg` handler a live run uses, so they
+    /// can't drift from it.
+    ///
+    /// Only reached from `request_run` / `request_run_batch` after
+    /// `safety::evaluate` already said `Guard::Allow` — a demo
+    /// DELETE without WHERE hits `Guard::Block` same as it would
+    /// live and never gets here.
+    pub(super) fn spawn_run_demo(&mut self, sql: String, kind: RunKind) {
+        // Same history bookkeeping as `spawn_run` (skip consecutive
+        // duplicates, cap at HISTORY_CAP).
+        if self.history.last() != Some(&sql) {
+            self.history.push(sql.clone());
+            if self.history.len() > HISTORY_CAP {
+                self.history.remove(0);
+            }
+        }
+        self.history_pos = None;
+        self.last_run_sql = if matches!(kind, RunKind::Run) {
+            Some(sql.clone())
+        } else {
+            None
+        };
+        // The demo schema cache never changes shape — nothing to
+        // re-fetch after a (guard-permitting) DDL-shaped statement.
+        self.schema_dirty_after_run = false;
+        self.last_error = None;
+        let grid = crate::demo::answer(&sql, &self.schema_cache);
+        let msg = AppMsg::QueryOk {
+            generation: self.generation,
+            grid,
+            kind_label: kind.label().to_string(),
+            // Demo never actually opens a transaction — there's no
+            // connection for a COMMIT/ROLLBACK to run against.
+            tx_open_after: false,
+        };
+        let _ = self.msg_tx.send(msg);
+    }
+
     // -- grid nav --
 
     /// Reset the per-grid view state — sort / filter / column cursor
