@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
                         data_source_picks.push(DataSourcePick {
                             name: c.name.clone(),
                             origin: "project",
-                            dsn: d,
+                            dsn: Some(d),
                             unresolved: Vec::new(),
                             unresolved_host: Vec::new(),
                         });
@@ -233,23 +233,29 @@ async fn main() -> anyhow::Result<()> {
     // open the picker (`c`) or `\c <name>` and get the real error.
     // Multiple candidates → leave them in `data_source_picks` and let the
     // TUI render the picker (Mode::ConnPick).
-    if dsn.is_none() && data_source_picks.len() == 1 && data_source_picks[0].unresolved.is_empty() {
+    if dsn.is_none()
+        && data_source_picks.len() == 1
+        && data_source_picks[0].unresolved.is_empty()
+        && data_source_picks[0].unresolved_host.is_empty()
+    {
         // Clone — keep the pick in the list so the connection-failure
         // screen can re-open the picker for a manual retry. The
         // Mode::ConnPick gate is `>= 2`, so a single entry won't pop the
         // picker at startup.
         let pick = &data_source_picks[0];
-        tracing::info!(
-            "auto-selecting {} data source '{}' → {}",
-            pick.origin,
-            pick.name,
-            pick.dsn.redacted()
-        );
-        dsn_origin = Some(format!(
-            "auto-picked {} data source '{}'",
-            pick.origin, pick.name
-        ));
-        dsn = Some(pick.dsn.clone());
+        if let Some(d) = pick.dsn.clone() {
+            tracing::info!(
+                "auto-selecting {} data source '{}' → {}",
+                pick.origin,
+                pick.name,
+                d.redacted()
+            );
+            dsn_origin = Some(format!(
+                "auto-picked {} data source '{}'",
+                pick.origin, pick.name
+            ));
+            dsn = Some(d);
+        }
     }
 
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
@@ -639,7 +645,7 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
                     picks.push(DataSourcePick {
                         name: c.name.clone(),
                         origin: "project",
-                        dsn: d,
+                        dsn: Some(d),
                         unresolved: Vec::new(),
                         unresolved_host: Vec::new(),
                     });
@@ -664,12 +670,24 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
             // an unresolved Spring placeholder must fail loudly here
             // rather than handing connect_and_bootstrap a literal
             // `${NAME}` hostname.
+            if let Some(name) = pick.unresolved_host.first() {
+                return Err(format!(
+                    "${{{name}}} sits in the host of '{}' — pgman never resolves a \
+                     placeholder into a hostname. Put a literal host in .pgman/pgman.toml",
+                    pick.name
+                ));
+            }
             if let Some(name) = pick.unresolved.first() {
                 return Err(format!(
                     "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
                 ));
             }
-            Ok(pick.dsn)
+            pick.dsn.ok_or_else(|| {
+                format!(
+                    "'{}' has no usable connection URL — check the discovered config",
+                    pick.name
+                )
+            })
         }
         n => Err(format!(
             "found {n} candidate data sources — pass --dsn to disambiguate in batch mode"
@@ -853,7 +871,7 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
             picks.push(DataSourcePick {
                 name: label,
                 origin: "IntelliJ",
-                dsn,
+                dsn: Some(dsn),
                 unresolved: Vec::new(),
                 unresolved_host: Vec::new(),
             });
@@ -988,24 +1006,29 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
             let url = creds::spring::resolve_url_placeholders(raw_url, |n| std::env::var(n).ok());
             let mut unresolved = url.missing;
             let unresolved_host = url.in_host;
-            let Some(raw) = creds::intellij::jdbc_to_dsn(&url.value) else {
-                continue;
-            };
-            let Ok(mut dsn) = conn::Dsn::parse(&raw) else {
-                continue;
-            };
+            // `None` when the URL isn't a parseable postgres DSN — which
+            // includes the placeholder-shaped cases (`db:${DB_PORT}`,
+            // `url: ${SPRING_DATASOURCE_URL}`). Those still become a
+            // marked pick below; only a URL with nothing unresolved
+            // about it (a `jdbc:mysql:` block, say) is skipped.
+            let mut dsn = creds::intellij::jdbc_to_dsn(&url.value)
+                .and_then(|raw| conn::Dsn::parse(&raw).ok());
             if let Some(u) = &p.username {
                 if !u.is_empty() {
                     let (resolved_user, user_missing) = resolve_spring_value(u);
-                    dsn.user = Some(resolved_user);
                     unresolved.extend(user_missing);
+                    if let Some(d) = dsn.as_mut() {
+                        d.user = Some(resolved_user);
+                    }
                 }
             }
             if let Some(pw) = &p.password {
                 if !pw.is_empty() {
                     let (resolved_pw, pw_missing) = resolve_spring_value(pw);
                     if pw_missing.is_empty() {
-                        dsn.password = Some(resolved_pw);
+                        if let Some(d) = dsn.as_mut() {
+                            d.password = Some(resolved_pw);
+                        }
                     } else {
                         // An unresolved password placeholder used to be
                         // dropped on the floor and the literal
@@ -1017,8 +1040,22 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                     }
                 }
             }
+            if dsn.is_none() && unresolved.is_empty() && unresolved_host.is_empty() {
+                // Not a Postgres URL and nothing unresolved to report —
+                // e.g. a `jdbc:mysql:` block. Skipping it silently is
+                // right; skipping a *marked* one is what hid the
+                // problem from the operator.
+                continue;
+            }
             // Provenance only — never the raw password (CLAUDE.md).
-            tracing::info!("  → pick {}.{} = {}", label, p.prefix, dsn.redacted());
+            tracing::info!(
+                "  → pick {}.{} = {}",
+                label,
+                p.prefix,
+                dsn.as_ref()
+                    .map(|d| d.redacted())
+                    .unwrap_or_else(|| conn::redact_url(&url.value))
+            );
             let mut name = format!("{} ({})", p.prefix, label);
             if !unresolved.is_empty() || !unresolved_host.is_empty() {
                 let list = unresolved
@@ -1212,7 +1249,8 @@ mod main_tests {
             vec!["PGMAN_TEST_MAIN_DB_HOST_A".to_string()]
         );
         assert_eq!(
-            picks[0].dsn.host, "${PGMAN_TEST_MAIN_DB_HOST_A}",
+            picks[0].dsn.as_ref().expect("dsn").host,
+            "${PGMAN_TEST_MAIN_DB_HOST_A}",
             "the host must stay literal — the env value must not reach it"
         );
         assert!(
@@ -1248,7 +1286,7 @@ mod main_tests {
         assert_eq!(picks.len(), 1);
         assert!(picks[0].unresolved.is_empty());
         assert!(picks[0].unresolved_host.is_empty());
-        let dsn = &picks[0].dsn;
+        let dsn = picks[0].dsn.as_ref().expect("dsn");
         assert_eq!(dsn.user.as_deref(), Some("svc"));
         assert_eq!(dsn.host, "db.internal");
         assert!(!picks[0].name.contains("unresolved"));
@@ -1311,7 +1349,8 @@ mod main_tests {
             vec!["PGMAN_TEST_MAIN_DB_PW_C".to_string()]
         );
         assert_eq!(
-            picks[0].dsn.password, None,
+            picks[0].dsn.as_ref().expect("dsn").password,
+            None,
             "the literal placeholder text must never become the password"
         );
         assert!(
@@ -1321,6 +1360,79 @@ mod main_tests {
             "picker label should surface it: {}",
             picks[0].name
         );
+    }
+
+    #[test]
+    fn discover_spring_datasources_keeps_a_pick_whose_url_wont_parse() {
+        // A placeholder in the port makes `Dsn::parse` fail. The pick
+        // used to be `continue`d past — it vanished from the picker with
+        // no message anywhere, which reads as "pgman found nothing".
+        let base = spring_project_with(
+            "bad-port",
+            "spring.datasource.url=jdbc:postgresql://db:${PGMAN_TEST_MAIN_DB_PORT_E}/orders\n",
+        );
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_PORT_E");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1, "the pick must still be listed");
+        assert!(picks[0].dsn.is_none(), "no usable DSN");
+        assert_eq!(
+            picks[0].unresolved_host,
+            vec!["PGMAN_TEST_MAIN_DB_PORT_E".to_string()],
+            "the port is part of the host component"
+        );
+        assert!(
+            picks[0]
+                .name
+                .contains("unresolved ${PGMAN_TEST_MAIN_DB_PORT_E}"),
+            "picker label should say why: {}",
+            picks[0].name
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_keeps_a_whole_url_placeholder_pick() {
+        let base = spring_project_with(
+            "whole-url",
+            "spring.datasource.url=${PGMAN_TEST_MAIN_DB_URL_F}\n",
+        );
+        // Set — and still refused, because there is no host component
+        // to protect: resolving it would let the file choose the host.
+        // SAFETY: unique var name, not touched by any other test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_DB_URL_F", "jdbc:postgresql://evil/db");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_URL_F");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert!(picks[0].dsn.is_none());
+        assert_eq!(
+            picks[0].unresolved_host,
+            vec!["PGMAN_TEST_MAIN_DB_URL_F".to_string()]
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_still_skips_a_non_postgres_block() {
+        // Nothing unresolved and not a Postgres URL — skipping this one
+        // silently is still right.
+        let base = spring_project_with(
+            "mysql",
+            "spring.datasource.url=jdbc:mysql://db:3306/orders\n",
+        );
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(picks.is_empty(), "got: {picks:?}");
     }
 
     #[test]
@@ -1344,7 +1456,10 @@ mod main_tests {
 
         assert_eq!(picks.len(), 1);
         assert!(picks[0].unresolved.is_empty());
-        assert_eq!(picks[0].dsn.password.as_deref(), Some("s3cret"));
+        assert_eq!(
+            picks[0].dsn.as_ref().expect("dsn").password.as_deref(),
+            Some("s3cret")
+        );
     }
 
     #[cfg(unix)]

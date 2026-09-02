@@ -184,13 +184,24 @@ impl App {
             ));
             return true;
         }
-        let Some(name) = pick.unresolved.first() else {
-            return false;
-        };
-        self.last_error = Some(format!(
-            "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
-        ));
-        true
+        if let Some(name) = pick.unresolved.first() {
+            self.last_error = Some(format!(
+                "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
+            ));
+            return true;
+        }
+        if pick.dsn.is_none() {
+            // Belt and braces: discovery only keeps a DSN-less pick when
+            // something above is also set, so this shouldn't be
+            // reachable — but a silent no-op on Enter would be the worst
+            // possible answer if it ever were.
+            self.last_error = Some(format!(
+                "'{}' has no usable connection URL — check the discovered config",
+                pick.name
+            ));
+            return true;
+        }
+        false
     }
 
     /// Shared reconnect path for the connection picker's Enter key and

@@ -125,8 +125,13 @@ impl App {
             if self.refuse_if_unresolved(&pick) {
                 return;
             }
+            // `refuse_if_unresolved` already rejected a pick with no
+            // DSN, so this is always `Some`.
+            let Some(dsn) = pick.dsn.clone() else {
+                return;
+            };
             let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
-            self.connect_to_pick(pick.dsn, origin);
+            self.connect_to_pick(dsn, origin);
             return;
         }
         let Some(mut dsn) = self.dsn.clone() else {

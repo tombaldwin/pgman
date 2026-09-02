@@ -184,7 +184,7 @@ fn change_connection_opens_picker_when_picks_exist() {
     let pick = DataSourcePick {
         name: "primary".into(),
         origin: "project",
-        dsn: Dsn::parse("postgres://app@db/x").unwrap(),
+        dsn: Some(Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     };
