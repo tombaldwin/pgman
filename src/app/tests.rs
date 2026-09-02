@@ -4729,6 +4729,120 @@ fn backslash_c_with_no_arg_opens_picker() {
     assert_eq!(a.mode, Mode::ConnPick);
 }
 
+/// A discovered pick carrying an `ssh_tunnel`.
+fn tunnel_pick() -> DataSourcePick {
+    DataSourcePick {
+        name: "via-bastion".into(),
+        origin: "project",
+        dsn: Some(
+            crate::conn::Dsn::parse(
+                "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+            )
+            .unwrap(),
+        ),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }
+}
+
+#[test]
+fn conn_pick_enter_on_a_tunnel_pick_asks_before_spawning_ssh() {
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        vec![tunnel_pick()],
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::ConnPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let pending = a.pending_tunnel.as_ref().expect("tunnel confirmation");
+    assert_eq!(
+        pending.dsn.ssh_tunnel.as_ref().map(|t| t.host.as_str()),
+        Some("bastion.example.com")
+    );
+    assert!(
+        matches!(a.conn_state, ConnState::Disconnected),
+        "no connect — and no ssh — before the confirmation"
+    );
+    assert!(a.dsn.is_none());
+    assert_eq!(a.mode, Mode::ConnPick);
+}
+
+#[test]
+fn tunnel_confirm_cancels_on_anything_but_y() {
+    for cancel in [
+        KeyEvent::from(KeyCode::Char('n')),
+        KeyEvent::from(KeyCode::Esc),
+        KeyEvent::from(KeyCode::Char('j')),
+        KeyEvent::from(KeyCode::Enter),
+    ] {
+        let mut a = App::new(
+            Theme::default(),
+            None,
+            vec![tunnel_pick()],
+            SafetyConfig::default(),
+        );
+        a.mode = Mode::ConnPick;
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert!(a.pending_tunnel.is_some());
+        a.on_key(cancel);
+        assert!(
+            a.pending_tunnel.is_none(),
+            "{cancel:?} must clear the prompt"
+        );
+        assert!(
+            matches!(a.conn_state, ConnState::Disconnected),
+            "{cancel:?} must not connect"
+        );
+        assert!(a.dsn.is_none(), "{cancel:?} must not adopt the dsn");
+        let status = a.last_status.as_deref().unwrap_or("");
+        assert!(
+            status.contains("bastion.example.com"),
+            "cancel should say what didn't happen: {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn tunnel_confirm_proceeds_on_y() {
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        vec![tunnel_pick()],
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::ConnPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    a.on_key(KeyEvent::from(KeyCode::Char('y')));
+    assert!(a.pending_tunnel.is_none());
+    assert!(matches!(a.conn_state, ConnState::Connecting));
+    assert_eq!(
+        a.dsn
+            .as_ref()
+            .and_then(|d| d.ssh_tunnel.as_ref())
+            .map(|t| t.host.as_str()),
+        Some("bastion.example.com")
+    );
+}
+
+#[test]
+fn backslash_c_by_name_also_confirms_a_tunnel() {
+    // Naming a discovered pick is not authorising an ssh session to the
+    // bastion it happens to carry.
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        vec![tunnel_pick()],
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c via-bastion".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(a.pending_tunnel.is_some(), "must ask first");
+    assert!(matches!(a.conn_state, ConnState::Disconnected));
+}
+
 /// The other half of "a lone discovered pick doesn't auto-connect"
 /// (`tests/journeys.rs`): it is still one keypress away, so the rule
 /// costs the operator a keystroke and nothing else.

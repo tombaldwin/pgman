@@ -552,6 +552,29 @@ impl App {
     /// Connection picker (startup): j/k navigate, Enter selects + connects,
     /// Esc/q quits since there's nothing else to do without a connection.
     pub(super) fn on_conn_pick_key(&mut self, key: KeyEvent) {
+        // A pending ssh-tunnel confirmation owns every key while it is
+        // up: `y` proceeds, anything else cancels. Checked before the
+        // navigation arms so a reflex `j` can't scroll past the
+        // question and leave it armed.
+        if self.pending_tunnel.is_some() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(pending) = self.pending_tunnel.take() {
+                        self.connect_to_pick(pending.dsn, pending.origin);
+                    }
+                }
+                _ => {
+                    let pending = self.pending_tunnel.take();
+                    let bastion = pending
+                        .as_ref()
+                        .and_then(|p| p.dsn.ssh_tunnel.as_ref())
+                        .map(|t| t.to_display())
+                        .unwrap_or_default();
+                    self.last_status = Some(format!("cancelled — no ssh session to {bastion}"));
+                }
+            }
+            return;
+        }
         match key.code {
             // q (and Ctrl-C) quit; Esc is a no-op so a reflex press
             // can't abandon the picker by accident.
@@ -573,7 +596,7 @@ impl App {
                     // Re-resolve safety profile against the *picked* db name
                     // — the placeholder in App::new used the empty default.
                     let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
-                    self.connect_to_pick(dsn, origin);
+                    self.connect_to_discovered_pick(dsn, origin);
                 }
             }
             _ => {}

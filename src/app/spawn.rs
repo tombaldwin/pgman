@@ -204,6 +204,30 @@ impl App {
         false
     }
 
+    /// The picker's Enter key and `\c <name>`: connect to a pick that
+    /// came out of the working tree.
+    ///
+    /// Identical to `connect_to_pick` except for one gate: when the
+    /// pick carries an `ssh_tunnel`, connecting spawns the system `ssh`
+    /// binary — the operator's keys, agent and `~/.ssh/config` — against
+    /// a bastion a committed file named, and it happens *before* any
+    /// Postgres traffic, so "the database connection would have failed
+    /// anyway" is no protection. That gets its own explicit `y`.
+    ///
+    /// A tunnel on a `--dsn` is the operator's own and never reaches
+    /// here; nor does the `\c <dbname>` swap, whose tunnel (if any) was
+    /// confirmed when the current connection was made.
+    pub(super) fn connect_to_discovered_pick(&mut self, dsn: Dsn, origin: String) {
+        if dsn.ssh_tunnel.is_some() {
+            self.pending_tunnel = Some(crate::app::PendingTunnel { dsn, origin });
+            // Stay in (or return to) the picker: it renders the
+            // confirmation in place of the candidate list.
+            self.mode = Mode::ConnPick;
+            return;
+        }
+        self.connect_to_pick(dsn, origin);
+    }
+
     /// Shared reconnect path for the connection picker's Enter key and
     /// `\c <name>`: resolve the safety profile against the picked
     /// dsn's database, install it, and hand off to `start_connect`.
@@ -238,6 +262,9 @@ impl App {
         if self.query_running {
             self.cancel_running_query();
         }
+        // Opening the picker afresh must show the candidate list, never
+        // a stale tunnel confirmation.
+        self.pending_tunnel = None;
         self.conn_pick.index = 0;
         self.mode = Mode::ConnPick;
     }

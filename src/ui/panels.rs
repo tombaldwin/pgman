@@ -380,8 +380,73 @@ pub(crate) fn conn_pick_target(pick: &crate::app::DataSourcePick) -> String {
     out
 }
 
+/// The lines of the ssh-tunnel confirmation, as plain text. Pure so the
+/// wording — which is the whole protection — can be tested without a
+/// terminal.
+pub(crate) fn tunnel_confirm_lines(pending: &crate::app::PendingTunnel) -> Vec<String> {
+    let d = &pending.dsn;
+    let bastion = match &d.ssh_tunnel {
+        Some(t) => t.to_display(),
+        // Unreachable: `connect_to_discovered_pick` only sets a
+        // `PendingTunnel` when the tunnel is Some.
+        None => "(no bastion)".to_string(),
+    };
+    vec![
+        format!("  ssh {bastion} → {}:{}", d.host, d.port),
+        String::new(),
+        format!("  {} wants an ssh session first.", pending.origin),
+        "  pgman runs the system ssh binary with your keys, agent and".to_string(),
+        "  ~/.ssh/config — before any Postgres traffic, so a failed".to_string(),
+        "  database login would not stop it.".to_string(),
+        String::new(),
+        "  y proceed · any other key cancels".to_string(),
+    ]
+}
+
 pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+    // A pending tunnel confirmation replaces the candidate list: the
+    // question is about this one pick, and leaving the list up behind
+    // it invites answering it with `j`.
+    if let Some(pending) = &app.pending_tunnel {
+        let lines: Vec<Line> = tunnel_confirm_lines(pending)
+            .into_iter()
+            .map(|s| {
+                let style = if s.starts_with("  ssh ") {
+                    Style::default()
+                        .fg(theme.health_yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                Line::from(Span::styled(s, style))
+            })
+            .collect();
+        let h = (lines.len() as u16 + 2).min(area.height);
+        let w = lines
+            .iter()
+            .map(|l| l.width() as u16)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(4)
+            .clamp(40, area.width.saturating_sub(2));
+        let popup = centered(area, w, h);
+        f.render_widget(Clear, popup);
+        f.render_widget(
+            Paragraph::new(Text::from(lines)).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.health_yellow))
+                    .style(Style::default().fg(theme.text))
+                    .title(Span::styled(
+                        " open an ssh tunnel? ",
+                        Style::default().fg(theme.health_yellow),
+                    )),
+            ),
+            popup,
+        );
+        return;
+    }
     // Find the widest origin tag and name so the columns line up.
     let origin_width = app
         .conn_pick
@@ -1528,6 +1593,25 @@ mod tests {
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         }
+    }
+
+    #[test]
+    fn tunnel_confirm_names_the_bastion_and_the_db_host() {
+        let dsn = crate::conn::Dsn::parse(
+            "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+        )
+        .unwrap();
+        let lines = tunnel_confirm_lines(&crate::app::PendingTunnel {
+            dsn,
+            origin: "picked project data source 'via-bastion'".into(),
+        });
+        assert_eq!(lines[0], "  ssh tom@bastion.example.com → db.internal:5432");
+        let body = lines.join("\n");
+        assert!(
+            body.contains("picked project data source 'via-bastion'"),
+            "the operator needs to know which pick is asking: {body}"
+        );
+        assert!(body.contains("y proceed · any other key cancels"));
     }
 
     #[test]
