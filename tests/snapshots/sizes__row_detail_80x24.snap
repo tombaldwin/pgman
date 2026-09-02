@@ -25,4 +25,4 @@ expression: dump(&buf)
 │       └──────────────────────────────────────────────────────────────┘       │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc
+ RO   TAP   N+1 ×1   ↑↓ / j/k field · enter zoom · y yank · F1 +3 more

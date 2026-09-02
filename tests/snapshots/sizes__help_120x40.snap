@@ -14,14 +14,14 @@ expression: dump(&buf)
 │1   ada@example.c│                                                                                  │                 │
 │2   linus@example│   grid                                                                           │                 │
 │3   grace@example│     q             quit (esc here is a no-op so a reflex press doesn't lose the   │                 │
-│4   alan@example.│ session)                                                                         │                 │
+│4   alan@example.│                   session)                                                       │                 │
 │5   edsger@exampl│     ? / F1        toggle this help                                               │                 │
 │6   katherine@exa│     A             about pgman (version, credits)                                 │                 │
 │                 │     e / i / tab   focus editor                                                   │                 │
 │                 │     c             change connection (opens the picker mid-session)               │                 │
 │                 │     S             schema browser (psql `\d` equivalent)                          │                 │
 │                 │     W             schema wizard / lint (missing PK, mixed-case, reserved words   │                 │
-│                 │ …)                                                                               │                 │
+│                 │                   …)                                                             │                 │
 │                 │     Q             saved queries (named, persisted)                               │                 │
 │                 │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section               │                 │
 │                 │     T             slow queries (pg_stat_statements top-N)                        │                 │
@@ -32,8 +32,8 @@ expression: dump(&buf)
 │                 │     /             live row filter (HIDES non-matching rows)                      │                 │
 │                 │     f             find within grid (HIGHLIGHTS / jumps; n/N step matches)        │                 │
 │                 │     F             follow FK on focused cell → new tab with SELECT * FROM parent  │                 │
-│                 │ WHERE pk=value                                                                   │                 │
-│                 │ ↓ 145 more below                                                                 │                 │
+│                 │                   WHERE pk=value                                                 │                 │
+│                 │ ↓ 151 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

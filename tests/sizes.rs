@@ -112,22 +112,13 @@ const SIZES: &[(u16, u16)] = &[(80, 24), (100, 30), (120, 40), (200, 50)];
 /// allowlist is meant to shrink to empty as each fix lands, not to
 /// grow.
 const KNOWN_DEFECTS: &[&str] = &[
-    // Footer hint clipped mid-word by the 80-col terminal width — the
-    // popup title bar or badge prefix (`RO`, `TAP`, `N+1 ×N`) eats
-    // enough of the row that the trailing " / esc close" of the hint
-    // gets cut, leaving a bare "q". This is `ui::draw_footer`'s
-    // Paragraph rendering without `.wrap()` / without truncating with
-    // an ellipsis — a real defect, not a test artefact.
-    "cell_detail_80x24",
+    // Two footer *status* lines (not hint lists — `fit_hints` already
+    // covers those) that clip mid-word at 80 columns. The fix is in
+    // flight on the same run that emptied the previous ten entries;
+    // this list goes back to empty when it lands. A new entry here is
+    // otherwise a stop condition, not a step — see CLAUDE.md.
     "confirm_terminate_80x24",
-    "editor_multiline_80x24",
-    "editor_multiline_120x40",
-    "explain_tree_80x24",
-    "log_pick_80x24",
-    "notifications_80x24",
-    "sessions_80x24",
-    "sessions_100x30",
-    "slow_queries_80x24",
+    "cell_detail_80x24",
 ];
 
 const SHORT_OK_WORDS: &[&str] = &[

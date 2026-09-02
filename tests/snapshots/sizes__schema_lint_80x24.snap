@@ -25,4 +25,4 @@ expression: dump(&buf)
 │  └───────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · q / esc clos
+ RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · F1 +2 more

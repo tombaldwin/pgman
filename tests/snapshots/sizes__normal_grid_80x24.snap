@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +7 more
