@@ -13,4 +13,4 @@ expression: dump(&buf)
 │└────────────────────────────────────┘│
 │                                      │
 └──────────────────────────────────────┘
- RO   type to narrow · tab cycle · esc u
+ RO   type to narrow · F1 +3 more
