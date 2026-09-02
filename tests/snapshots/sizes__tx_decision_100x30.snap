@@ -2,7 +2,7 @@
 source: tests/sizes.rs
 expression: dump(&buf)
 ---
- pgman │ shop  connected · pg 16.2 (demo)   TX
+ pgman │ shop  connected · pg 16.2   TX
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │

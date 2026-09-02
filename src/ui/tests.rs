@@ -505,3 +505,35 @@ fn footer_badges_surface_tap_and_nplus1_when_findings_exist() {
         "expected N+1 ×1 badge: {labels:?}"
     );
 }
+
+#[test]
+fn short_server_version_drops_the_packager_build_detail() {
+    // The string Postgres actually reports on a Debian package.
+    assert_eq!(
+        short_server_version("16.15 (Debian 16.15-1.pgdg13+2)"),
+        "16.15"
+    );
+    assert_eq!(
+        short_server_version("17.2 (Ubuntu 17.2-1.pgdg24.04+1)"),
+        "17.2"
+    );
+}
+
+#[test]
+fn short_server_version_passes_a_bare_version_through() {
+    assert_eq!(short_server_version("16.2"), "16.2");
+    assert_eq!(short_server_version(""), "");
+}
+
+#[test]
+fn short_server_version_cuts_at_the_first_paren_only() {
+    // Defensive: only the first " (" separates version from detail —
+    // a nested paren in the build id must not re-split the tail.
+    assert_eq!(
+        short_server_version("16.15 (Debian (x86_64) build)"),
+        "16.15"
+    );
+    // A parenthesis with no leading space is part of the version and
+    // stays: nothing is cut that wasn't clearly a build annotation.
+    assert_eq!(short_server_version("16.2(demo)"), "16.2(demo)");
+}
