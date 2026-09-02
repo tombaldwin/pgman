@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   terminate pid 1234? "UPDATE accounts SET balance = 0" · y c
+ RO   TAP   N+1 ×1   terminate pid 1234… SET balance = 0" · y confirm · n cancel

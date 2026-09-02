@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   find: pro  · 1/3 match · n/N jump · enter accept · esc canc
+ RO   TAP   N+1 ×1   find: pro  · 1/3 match · n/N jump · enter…cept · esc cancel

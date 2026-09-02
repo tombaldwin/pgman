@@ -51,4 +51,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ⚠ duplicate key value violates unique constraint "users_email_key"  · F2 detail
+ RO   TAP   N+1 ×1   ⚠ duplicate key value violates unique constraint "users_email_key" · F2 detail

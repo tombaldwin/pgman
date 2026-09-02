@@ -111,15 +111,13 @@ const SIZES: &[(u16, u16)] = &[(80, 24), (100, 30), (120, 40), (200, 50)];
 /// on it. Other agents are fixing these defects in parallel — this
 /// allowlist is meant to shrink to empty as each fix lands, not to
 /// grow.
-const KNOWN_DEFECTS: &[&str] = &[
-    // Two footer *status* lines (not hint lists — `fit_hints` already
-    // covers those) that clip mid-word at 80 columns. The fix is in
-    // flight on the same run that emptied the previous ten entries;
-    // this list goes back to empty when it lands. A new entry here is
-    // otherwise a stop condition, not a step — see CLAUDE.md.
-    "confirm_terminate_80x24",
-    "cell_detail_80x24",
-];
+// Empty on purpose: the last two entries (footer *status* lines clipping
+// mid-word at 80 columns) were fixed by routing `draw_footer`'s error and
+// status branches through `fit_status` (see `src/ui.rs`). Keep this
+// empty — per CLAUDE.md, widening it to make a failing sweep go quiet is
+// a stop condition, not a step; a new entry means the maintainer decides,
+// not the agent mid-run.
+const KNOWN_DEFECTS: &[&str] = &[];
 
 const SHORT_OK_WORDS: &[&str] = &[
     "no", "ok", "up", "in", "on", "of", "to", "at", "by", "or", "is", "it", "go", "re", "db", "id",
