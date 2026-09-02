@@ -198,7 +198,7 @@ fn no_println_in_the_tui() {
 // project.rs
 // ---------------------------------------------------------------------
 
-const PATH_NEEDLES: [&str; 5] = ["/Users/", "/home/", "~/.config", "~/.cache", ".pgman/"];
+const PATH_NEEDLES: [&str; 4] = ["/Users/", "/home/", "~/.config", "~/.cache"];
 
 /// Hardcoded-path hits in `text`, skipping comment text and dropping
 /// everything from an inline `#[cfg(test)] mod <name> { … }` onward.
@@ -243,20 +243,17 @@ fn hardcoded_path_hits(path: &str, text: &str) -> Vec<String> {
 /// project-file convention, so both are exempt; nowhere else should
 /// need to know the literal shape of these paths.
 ///
-/// Checked the current tree by hand first. Three real violations, all
+/// Checked the current tree by hand first. One real violation,
 /// fixed in this change (not allowlisted — CLAUDE.md's own stance is
 /// that widening an allowlist to quiet a guard is the wrong move):
 ///   - `src/ui.rs` (error-detail action bar) hand-typed
 ///     `~/.cache/pgman/pgman.log`; now built from
 ///     `util::cache_dir().join("pgman.log")`, so it stays correct if
 ///     the cache location ever moves.
-///   - `src/ui.rs` (empty connection-picker hint) and `src/main.rs`
-///     (`resolve_batch_dsn`'s no-DSN error) both spelled out
-///     `.pgman/pgman.toml` as descriptive text; reworded to name the
-///     `.pgman` directory without the trailing-slash path fragment,
-///     which was the only thing the guard actually objects to — the
-///     directory *name* isn't a hardcoded path, a duplicated
-///     `<dir>/<file>` join outside `project.rs` would be.
+///   - A user-facing message that *names* `.pgman/pgman.toml` is not a
+///     hardcoded path — it is documentation — so that spelling is not a
+///     needle. The needles are the home-relative and absolute shapes
+///     that would break on another machine.
 ///
 /// The remaining hits are all in `#[cfg(test)]` fixtures (e.g.
 /// `update_check.rs`'s `InstallChannel::detect` tests exercise real
