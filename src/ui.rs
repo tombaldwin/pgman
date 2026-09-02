@@ -607,7 +607,11 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     let last_idx = segments.len() - 1;
 
     // Step 2: shrink the longest non-last segment, repeatedly, until the
-    // join fits or nothing non-last is left to shrink.
+    // join fits or nothing non-last is left to shrink. Only segments
+    // long enough to be prose or SQL are shrunk: a twelve-character key
+    // hint middle-ellipsised reads as broken (`enter…cept`), and a
+    // dropped hint reads as a choice.
+    const MIN_SHRINK: usize = 16;
     loop {
         let candidate = segments.join(SEP);
         let over = candidate.chars().count().saturating_sub(width);
@@ -617,11 +621,23 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
         let longest = segments
             .iter()
             .enumerate()
-            .filter(|(i, s)| *i != last_idx && s.as_str() != "…")
+            .filter(|(i, s)| *i != last_idx && s.chars().count() >= MIN_SHRINK)
             .max_by_key(|(_, s)| s.chars().count());
         let Some((i, s)) = longest else { break };
         let target_len = s.chars().count().saturating_sub(over).max(1);
         segments[i] = middle_ellipsis(s, target_len);
+    }
+
+    // Step 2b: nothing left to shrink. Drop whole segments from the
+    // second onwards — the first is the context (`find: pro`), the
+    // last is the action keys; what sits between is the most
+    // dispensable.
+    while segments.len() > 2 {
+        let candidate = segments.join(SEP);
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+        segments.remove(1);
     }
 
     // Step 3: every other segment is now "…" (or there were none) —
