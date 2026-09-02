@@ -601,14 +601,17 @@ pub struct DataSourcePick {
     /// still carry the literal `${NAME}` text — connecting is refused
     /// before this DSN is used (see `App::refuse_if_unresolved`).
     pub dsn: Dsn,
-    /// `${NAME}` placeholders (from url / username only — never the
-    /// password, see below) that discovery couldn't resolve from the
-    /// environment. Non-empty means this pick must not be connected to
-    /// as-is. Password-only unresolved placeholders are deliberately
-    /// NOT recorded here: `PGPASSWORD` / a project's `password_env`
-    /// are pgman's own, already-documented way to supply a password,
-    /// so an unresolved `${db.password}` isn't a discovery failure.
+    /// `${NAME}` placeholder bodies that discovery couldn't resolve
+    /// from the environment. Non-empty means this pick must not be
+    /// connected to as-is (`App::refuse_if_unresolved`).
     pub unresolved: Vec<String>,
+    /// `${NAME}` placeholder bodies that sat in the URL's host or port.
+    /// These are refused *however the environment is set*: substituting
+    /// an environment value into a hostname chosen by a committed
+    /// config file leaks that value over DNS to whoever wrote it. Kept
+    /// apart from `unresolved` only so the refusal can say the right
+    /// thing — "export it" is not the fix here.
+    pub unresolved_host: Vec<String>,
 }
 
 /// A run waiting on user confirmation (the safety guard returned `Confirm`).

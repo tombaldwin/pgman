@@ -203,6 +203,7 @@ async fn main() -> anyhow::Result<()> {
                             origin: "project",
                             dsn: d,
                             unresolved: Vec::new(),
+                            unresolved_host: Vec::new(),
                         });
                     }
                     None => tracing::warn!(
@@ -640,6 +641,7 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
                         origin: "project",
                         dsn: d,
                         unresolved: Vec::new(),
+                        unresolved_host: Vec::new(),
                     });
                 }
             }
@@ -853,6 +855,7 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
                 origin: "IntelliJ",
                 dsn,
                 unresolved: Vec::new(),
+                unresolved_host: Vec::new(),
             });
         }
     }
@@ -964,22 +967,26 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
     // contributes a pick only when it has a usable jdbc:postgresql
     // URL; username / password from the block win over URL creds.
     //
-    // `${NAME}` / `${NAME:default}` placeholders in the url/username are
-    // resolved from the environment (`resolve_spring_value`); a name
-    // that can't be resolved is left as the literal `${NAME}` text (so
-    // the pick still parses to *some* DSN and stays available for
-    // inspection) but recorded in `unresolved` — `refuse_if_unresolved`
-    // stops the pick from actually being connected to. An unresolved
-    // password is deliberately NOT recorded: `PGPASSWORD` / a project's
-    // `password_env` already cover supplying a password pgman couldn't
-    // read from the file.
+    // `${NAME}` / `${NAME:default}` placeholders in the url are resolved
+    // from the environment by `creds::spring::resolve_url_placeholders`,
+    // which resolves the userinfo / path / query but *never* the host or
+    // port — a resolved value in the host position would leave the
+    // machine as a DNS lookup to a domain the config file chose. Those
+    // land in `unresolved_host` and are refused whatever the
+    // environment holds. A name that simply isn't set lands in
+    // `unresolved`. Either way the literal `${NAME}` text is left in
+    // place (so the pick still parses to *some* DSN and stays visible
+    // for inspection) and `refuse_if_unresolved` stops it being
+    // connected to.
     let mut emit = |label: &str, block: &[SpringDatasourcePartial]| {
         for p in block {
             let Some(raw_url) = p.url.as_deref() else {
                 continue;
             };
-            let (resolved_url, mut unresolved) = resolve_spring_value(raw_url);
-            let Some(raw) = creds::intellij::jdbc_to_dsn(&resolved_url) else {
+            let url = creds::spring::resolve_url_placeholders(raw_url, |n| std::env::var(n).ok());
+            let mut unresolved = url.missing;
+            let unresolved_host = url.in_host;
+            let Some(raw) = creds::intellij::jdbc_to_dsn(&url.value) else {
                 continue;
             };
             let Ok(mut dsn) = conn::Dsn::parse(&raw) else {
@@ -1001,9 +1008,10 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
             // Provenance only — never the raw password (CLAUDE.md).
             tracing::info!("  → pick {}.{} = {}", label, p.prefix, dsn.redacted());
             let mut name = format!("{} ({})", p.prefix, label);
-            if !unresolved.is_empty() {
+            if !unresolved.is_empty() || !unresolved_host.is_empty() {
                 let list = unresolved
                     .iter()
+                    .chain(unresolved_host.iter())
                     .map(|n| format!("${{{n}}}"))
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -1014,6 +1022,7 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                 origin: "Spring",
                 dsn,
                 unresolved,
+                unresolved_host,
             });
         }
     };
@@ -1164,7 +1173,11 @@ mod main_tests {
     }
 
     #[test]
-    fn discover_spring_datasources_resolves_url_placeholder_from_env() {
+    fn discover_spring_datasources_never_resolves_a_host_placeholder_even_when_set() {
+        // The exfiltration case: the repo chooses the domain, so
+        // `${SECRET}.attacker.com` would send the value out as a DNS
+        // lookup the moment we resolved it. The variable IS set here
+        // and the host must still come back literal + refused.
         let base = spring_project_with(
             "resolves",
             "spring.datasource.url=jdbc:postgresql://${PGMAN_TEST_MAIN_DB_HOST_A}:5432/orders\n\
@@ -1182,31 +1195,65 @@ mod main_tests {
         let _ = std::fs::remove_dir_all(&base);
 
         assert_eq!(picks.len(), 1);
-        assert!(
-            picks[0].unresolved.is_empty(),
-            "unexpected unresolved: {:?}",
-            picks[0].unresolved
+        assert_eq!(
+            picks[0].unresolved_host,
+            vec!["PGMAN_TEST_MAIN_DB_HOST_A".to_string()]
         );
-        assert_eq!(picks[0].dsn.host, "db.internal");
+        assert_eq!(
+            picks[0].dsn.host, "${PGMAN_TEST_MAIN_DB_HOST_A}",
+            "the host must stay literal — the env value must not reach it"
+        );
         assert!(
-            !picks[0].name.contains("unresolved"),
-            "resolved pick's name shouldn't mention unresolved: {}",
+            picks[0]
+                .name
+                .contains("unresolved ${PGMAN_TEST_MAIN_DB_HOST_A}"),
+            "picker label should surface it: {}",
             picks[0].name
         );
     }
 
     #[test]
-    fn discover_spring_datasources_marks_pick_when_url_placeholder_unset() {
+    fn discover_spring_datasources_resolves_a_username_placeholder_from_env() {
+        // The other side of the rule: username / password / dbname
+        // still resolve, because those only ever reach the (literal)
+        // host the config already named.
+        let base = spring_project_with(
+            "user",
+            "spring.datasource.url=jdbc:postgresql://db.internal:5432/orders\n\
+             spring.datasource.username=${PGMAN_TEST_MAIN_DB_USER_A}\n",
+        );
+        // SAFETY: unique var name, not touched by any other test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_DB_USER_A", "svc");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_USER_A");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert!(picks[0].unresolved.is_empty());
+        assert!(picks[0].unresolved_host.is_empty());
+        let dsn = &picks[0].dsn;
+        assert_eq!(dsn.user.as_deref(), Some("svc"));
+        assert_eq!(dsn.host, "db.internal");
+        assert!(!picks[0].name.contains("unresolved"));
+    }
+
+    #[test]
+    fn discover_spring_datasources_marks_pick_when_username_placeholder_unset() {
         let base = spring_project_with(
             "unset",
-            "spring.datasource.url=jdbc:postgresql://${PGMAN_TEST_MAIN_DB_HOST_B}:5432/orders\n\
-             spring.datasource.username=svc\n",
+            "spring.datasource.url=jdbc:postgresql://db.internal:5432/orders\n\
+             spring.datasource.username=${PGMAN_TEST_MAIN_DB_USER_B}\n",
         );
         // Deliberately not set — this is the "unresolved" case.
         // SAFETY: unique var name; a stray leftover from a previous
         // run (there shouldn't be one) is removed defensively.
         unsafe {
-            std::env::remove_var("PGMAN_TEST_MAIN_DB_HOST_B");
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_USER_B");
         }
         let mut picks = Vec::new();
         discover_spring_datasources(&base, &mut picks);
@@ -1215,12 +1262,13 @@ mod main_tests {
         assert_eq!(picks.len(), 1);
         assert_eq!(
             picks[0].unresolved,
-            vec!["PGMAN_TEST_MAIN_DB_HOST_B".to_string()]
+            vec!["PGMAN_TEST_MAIN_DB_USER_B".to_string()]
         );
+        assert!(picks[0].unresolved_host.is_empty());
         assert!(
             picks[0]
                 .name
-                .contains("unresolved ${PGMAN_TEST_MAIN_DB_HOST_B}"),
+                .contains("unresolved ${PGMAN_TEST_MAIN_DB_USER_B}"),
             "picker label should surface the unresolved name: {}",
             picks[0].name
         );

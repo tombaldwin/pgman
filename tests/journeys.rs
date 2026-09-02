@@ -186,6 +186,7 @@ fn change_connection_opens_picker_when_picks_exist() {
         origin: "project",
         dsn: Dsn::parse("postgres://app@db/x").unwrap(),
         unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(
         Theme::default(),

@@ -2007,12 +2007,14 @@ fn conn_pick_esc_is_a_noop_does_not_quit() {
             origin: "test",
             dsn: dsn.clone(),
             unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
         },
         DataSourcePick {
             name: "b".into(),
             origin: "test",
             dsn,
             unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -2024,15 +2026,16 @@ fn conn_pick_esc_is_a_noop_does_not_quit() {
 
 #[test]
 fn conn_pick_enter_refuses_a_pick_with_an_unresolved_placeholder() {
-    // Simulates a Spring pick whose url still carries `${DB_HOST}`
+    // Simulates a Spring pick whose username still carries `${DB_USER}`
     // because discovery couldn't resolve it from the environment.
-    // Enter must refuse — not attempt a connection that would just
-    // fail as a confusing DNS lookup on the literal `${DB_HOST}` text.
+    // Enter must refuse — not attempt a connection that would send the
+    // literal `${DB_USER}` text as the login role.
     let pick = DataSourcePick {
-        name: "spring.datasource (application) — unresolved ${DB_HOST}".into(),
+        name: "spring.datasource (application) — unresolved ${DB_USER}".into(),
         origin: "Spring",
-        dsn: Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap(),
-        unresolved: vec!["DB_HOST".to_string()],
+        dsn: Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap(),
+        unresolved: vec!["DB_USER".to_string()],
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::ConnPick;
@@ -2050,8 +2053,37 @@ fn conn_pick_enter_refuses_a_pick_with_an_unresolved_placeholder() {
     assert_eq!(
         a.last_error.as_deref(),
         Some(
-            "unresolved placeholder ${DB_HOST} — export it, or put the connection in .pgman/pgman.toml"
+            "unresolved placeholder ${DB_USER} — export it, or put the connection in .pgman/pgman.toml"
         )
+    );
+}
+
+#[test]
+fn conn_pick_enter_refuses_a_placeholder_in_the_host_with_its_own_message() {
+    // A `${…}` in the host is never resolved, whatever the environment
+    // holds — so "export it" would be the wrong advice. The refusal
+    // says why instead, and names the placeholder.
+    let pick = DataSourcePick {
+        name: "spring.datasource (application) — unresolved ${DB_HOST}".into(),
+        origin: "Spring",
+        dsn: Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap(),
+        unresolved: Vec::new(),
+        unresolved_host: vec!["DB_HOST".to_string()],
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    a.mode = Mode::ConnPick;
+    a.conn_pick.index = 0;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::ConnPick);
+    assert!(
+        matches!(a.conn_state, ConnState::Disconnected),
+        "must not start connecting"
+    );
+    let err = a.last_error.as_deref().expect("refusal message");
+    assert!(err.starts_with("${DB_HOST} sits in the host"), "got: {err}");
+    assert!(
+        !err.contains("export it"),
+        "exporting it doesn't help — the host is never resolved: {err}"
     );
 }
 
@@ -2060,8 +2092,9 @@ fn backslash_c_by_name_refuses_a_pick_with_an_unresolved_placeholder() {
     let pick = DataSourcePick {
         name: "staging".into(),
         origin: "Spring",
-        dsn: Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap(),
-        unresolved: vec!["DB_HOST".to_string()],
+        dsn: Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap(),
+        unresolved: vec!["DB_USER".to_string()],
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -2075,7 +2108,7 @@ fn backslash_c_by_name_refuses_a_pick_with_an_unresolved_placeholder() {
     assert_eq!(
         a.last_error.as_deref(),
         Some(
-            "unresolved placeholder ${DB_HOST} — export it, or put the connection in .pgman/pgman.toml"
+            "unresolved placeholder ${DB_USER} — export it, or put the connection in .pgman/pgman.toml"
         )
     );
 }
@@ -4664,6 +4697,7 @@ fn backslash_c_with_no_arg_opens_picker() {
         origin: "test",
         dsn: crate::conn::Dsn::parse("postgres://app@db/x").unwrap(),
         unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -4680,6 +4714,7 @@ async fn backslash_c_with_matching_name_connects_to_that_pick() {
         origin: "test",
         dsn: crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap(),
         unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -5067,6 +5102,7 @@ fn start_connection_change_with_picks_opens_picker() {
         origin: "test",
         dsn: Dsn::parse("postgres://app@db/x").unwrap(),
         unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Normal;
@@ -5403,12 +5439,14 @@ fn preload_log_overrides_conn_pick_startup_mode() {
             origin: "project",
             dsn: Dsn::parse("postgres://localhost/a").unwrap(),
             unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
         },
         DataSourcePick {
             name: "b".into(),
             origin: "project",
             dsn: Dsn::parse("postgres://localhost/b").unwrap(),
             unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -5456,6 +5494,7 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
         origin: "project",
         dsn: crate::conn::Dsn::parse("postgres://app@prod-db:5432/main").unwrap(),
         unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
     });
     assert!(a.not_connected_message().contains("c to choose"));
     a.conn_state = ConnState::Failed("boom".into());
