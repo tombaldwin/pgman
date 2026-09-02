@@ -47,11 +47,13 @@ pub fn config_file(name: &str) -> PathBuf {
 
 /// Create `dir` (and any missing parents) restricted to the owner
 /// (`0700`) on unix; a plain recursive create on other platforms.
-/// Every directory pgman creates under `config_dir()` / `data_dir()`
-/// / `cache_dir()` should go through this rather than
-/// `std::fs::create_dir_all`, so query history, saved queries, the
-/// draft auto-save, and cached state aren't listable by other local
-/// users even if a file inside ever ends up with looser permissions.
+/// Does **not** repair a pre-existing directory's mode — see
+/// `ensure_private_dir` for that. Every directory pgman creates
+/// under `config_dir()` / `data_dir()` / `cache_dir()` should go
+/// through one of these two rather than `std::fs::create_dir_all`,
+/// so query history, saved queries, the draft auto-save, and cached
+/// state aren't listable by other local users even if a file inside
+/// ever ends up with looser permissions.
 #[cfg(unix)]
 pub fn create_dir_all_private(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
@@ -64,6 +66,25 @@ pub fn create_dir_all_private(dir: &Path) -> io::Result<()> {
 #[cfg(not(unix))]
 pub fn create_dir_all_private(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)
+}
+
+/// Create `dir` if missing, then unconditionally `chmod` it to
+/// owner-only (`0700`) on unix — repairing a directory that was
+/// already there at a looser mode (a stale umask, a `tar`/backup
+/// restore that didn't preserve permissions, a directory that
+/// predates this hardening). `create_dir_all_private`'s `mode(0o700)`
+/// only applies to directories it actually creates; a pre-existing
+/// one is left untouched by a plain recursive create. Every place
+/// pgman first touches `config_dir()` / `data_dir()` / `cache_dir()`
+/// (or a subdirectory under them) should go through this instead.
+pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
+    create_dir_all_private(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
 }
 
 /// `O_CREAT|O_EXCL` a new file at `tmp`, at mode `0600` on unix from
@@ -161,6 +182,16 @@ fn write_atomic_private(path: &Path, contents: &str) -> io::Result<()> {
 pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
+            // Create-only, not `ensure_private_dir`: `path`'s parent
+            // isn't necessarily a directory pgman owns — a `\report
+            // ~/notes/` destination the operator picked, or (in
+            // tests) a bare file dropped straight in the OS temp
+            // dir. Unconditionally `chmod`ing an arbitrary
+            // pre-existing directory pgman didn't create would be
+            // reaching well past "make pgman's own files private".
+            // The known-owned roots (`config_dir()` / `data_dir()` /
+            // `cache_dir()`) get their repair explicitly at startup
+            // instead — see `main.rs::init_logging` and its callers.
             create_dir_all_private(parent)?;
         }
     }
@@ -320,6 +351,26 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "second version, completely different length"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_repairs_a_preexisting_looser_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "pgman-util-ensure-private-dir-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        ensure_private_dir(&dir).expect("ensure_private_dir");
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "dir mode was {mode:o}, want 0700");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

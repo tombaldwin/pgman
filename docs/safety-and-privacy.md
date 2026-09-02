@@ -116,20 +116,27 @@
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
 | `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. |
 
-The five files pgman itself writes — `draft.sql`, `history.log`,
-`saved.toml`, `update_check.json`, and `\report`/`\fixture` output —
-are written `0600` (owner read/write only) regardless of your umask,
-via pgman's own atomic writer (`util::write_private`), which opens
-the file `0600` from the moment it's created rather than writing at a
+The files pgman itself writes — `draft.sql`, `history.log`,
+`saved.toml`, `update_check.json`, `pgman.log`, and `\report`/
+`\fixture` output — are `0600` (owner read/write only) regardless of
+your umask; `draft.sql`, `history.log`, `saved.toml`,
+`update_check.json`, and `\report`/`\fixture` output go through
+pgman's own atomic writer (`util::write_private`), which opens the
+file `0600` from the moment it's created rather than writing at a
 looser default mode and `chmod`ing afterward — there is no window
-where a half-written temp file is world-readable. Directories pgman
-creates under `~/.config/pgman/`, `~/.local/share/pgman/`, and
-`~/.cache/pgman/` are `0700`. That's a floor, not a substitute for
-filesystem hygiene: if your `~` itself isn't otherwise locked down
-(shared account, backup that preserves world-readable ACLs, etc.),
-still treat the files above as no more private than a shell history
-file. `safety.toml` and `pgman.toml` are yours, not pgman's — it
-never writes them, so their permissions are whatever you set.
+where a half-written temp file is world-readable. `pgman.log` is
+opened by the logging library, not `write_private`, so it's `chmod`ed
+`0600` separately right after; the config/data/cache directories
+themselves (`~/.config/pgman/`, `~/.local/share/pgman/`,
+`~/.cache/pgman/`) are `0700`, and pgman repairs that mode on every
+startup even if the directory already existed looser (an old pgman
+version, a backup restore, a stale umask). That's a floor, not a
+substitute for filesystem hygiene: if your `~` itself isn't otherwise
+locked down (shared account, backup that preserves world-readable
+ACLs, etc.), still treat the files above as no more private than a
+shell history file. `safety.toml` and `pgman.toml` are yours, not
+pgman's — it never writes them, so their permissions are whatever you
+set.
 
 **Passwords are never written to disk by pgman.** They live only in
 process memory for the duration of the connection, sourced from

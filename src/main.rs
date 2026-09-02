@@ -746,8 +746,25 @@ fn read_log_source(path: &std::path::Path) -> std::io::Result<String> {
 
 fn init_logging() {
     let dir = util::cache_dir();
-    let _ = util::create_dir_all_private(&dir);
+    // `ensure_private_dir`, not `create_dir_all_private`: this is one
+    // of the three directories pgman actually owns (unlike an
+    // arbitrary `\report` destination), so repair a pre-existing
+    // looser mode here rather than only setting it on first
+    // creation. `data_dir()` / `config_dir()` get the same repair —
+    // this is the one place on the normal startup path (TUI, not
+    // `--batch`) that's guaranteed to run before anything under them
+    // is touched.
+    let _ = util::ensure_private_dir(&dir);
+    let _ = util::ensure_private_dir(&util::data_dir());
+    let _ = util::ensure_private_dir(&util::config_dir());
     let appender = tracing_appender::rolling::never(&dir, "pgman.log");
+    // The appender opens/creates `pgman.log` at construction, at
+    // whatever mode the platform default (umask) gives a new file —
+    // it doesn't know this file must stay owner-only. Repair it here,
+    // and again defensively: a pre-existing log file from before this
+    // hardening landed must also end up `0600`, not just a freshly
+    // created one.
+    chmod_owner_only_if_exists(&dir.join("pgman.log"));
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
@@ -756,6 +773,22 @@ fn init_logging() {
         .with_ansi(false)
         .init();
 }
+
+/// `chmod path 0600` on unix, if `path` exists; a no-op otherwise (and
+/// on non-unix). Split out of `init_logging` so a test can drive the
+/// log-file repair against a scratch file without invoking
+/// `tracing_subscriber::fmt().init()`, which is process-global and
+/// can only run once per process.
+#[cfg(unix)]
+fn chmod_owner_only_if_exists(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if path.exists() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+#[cfg(not(unix))]
+fn chmod_owner_only_if_exists(_path: &std::path::Path) {}
 
 /// Read `.idea/dataSources.xml` + `.idea/dataSources.local.xml`, merge by
 /// UUID (so the local file's `<user-name>` and schema-mapping db names
@@ -1143,5 +1176,43 @@ mod main_tests {
             picks[0].unresolved
         );
         assert!(!picks[0].name.contains("unresolved"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chmod_owner_only_if_exists_repairs_a_preexisting_looser_log_file() {
+        // Mirrors what init_logging does to a `pgman.log` that
+        // predates this hardening (or was somehow created at the
+        // platform-default mode by the rolling appender): it must
+        // end up 0600, not just newly-created files.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pgman-main-log-chmod-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pgman.log");
+        std::fs::write(&path, "pre-existing log content").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        chmod_owner_only_if_exists(&path);
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "log file mode was {mode:o}, want 0600");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chmod_owner_only_if_exists_is_a_noop_for_a_missing_file() {
+        // The appender-hasn't-run-yet / first-launch case: no file
+        // there to chmod, and no error either.
+        let dir = std::env::temp_dir().join(format!(
+            "pgman-main-log-chmod-missing-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("pgman.log");
+        chmod_owner_only_if_exists(&path); // must not panic
+        assert!(!path.exists());
     }
 }
