@@ -587,12 +587,28 @@ pub struct HistorySearchState {
 #[derive(Debug, Clone)]
 pub struct DataSourcePick {
     /// Human label shown in the picker (e.g. the `<data-source name="…">`).
+    /// For a Spring pick with an unresolved `${...}` in its url/username,
+    /// this already carries a trailing `— unresolved ${NAME}` note (see
+    /// `main.rs::discover_spring_datasources`) so the picker row surfaces
+    /// it without the row-rendering code needing to know about
+    /// `unresolved` itself.
     pub name: String,
     /// Where this pick came from, for the operator's benefit
     /// (e.g. "IntelliJ" / "Spring").
     pub origin: &'static str,
-    /// Resolved DSN, ready to hand to `connect_and_bootstrap`.
+    /// Resolved DSN, ready to hand to `connect_and_bootstrap`. For a
+    /// Spring pick with entries in `unresolved`, the url/username may
+    /// still carry the literal `${NAME}` text — connecting is refused
+    /// before this DSN is used (see `App::refuse_if_unresolved`).
     pub dsn: Dsn,
+    /// `${NAME}` placeholders (from url / username only — never the
+    /// password, see below) that discovery couldn't resolve from the
+    /// environment. Non-empty means this pick must not be connected to
+    /// as-is. Password-only unresolved placeholders are deliberately
+    /// NOT recorded here: `PGPASSWORD` / a project's `password_env`
+    /// are pgman's own, already-documented way to supply a password,
+    /// so an unresolved `${db.password}` isn't a discovery failure.
+    pub unresolved: Vec<String>,
 }
 
 /// A run waiting on user confirmation (the safety guard returned `Confirm`).

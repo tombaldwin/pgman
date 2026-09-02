@@ -196,22 +196,32 @@ to supply one without retyping the DSN).
 **Auto-pick**: if `--dsn` was not passed and exactly one candidate was
 discovered across all sources combined, pgman connects to it
 automatically and shows where it came from (`dsn_origin`, e.g.
-`"auto-picked project data source 'staging'"`). Two or more
-candidates leave the interactive picker (`Mode::ConnPick`) open. In
-`--batch` mode there's no picker to fall back on: zero or more-than-one
-candidates is a hard error asking for `--dsn`
-(`src/main.rs::resolve_batch_dsn`).
+`"auto-picked project data source 'staging'"`) — unless that
+candidate still has an unresolved `${...}` placeholder (see below), in
+which case it's left for you to pick explicitly rather than auto-
+connected. Two or more candidates leave the interactive picker
+(`Mode::ConnPick`) open. In `--batch` mode there's no picker to fall
+back on: zero or more-than-one candidates is a hard error asking for
+`--dsn` (`src/main.rs::resolve_batch_dsn`).
 
 **Unresolved `${...}` placeholders**: Spring config files commonly use
 `${DB_HOST}` / `${db.password}`-style placeholders meant to be
 resolved by Spring's own environment/property-source machinery at
-JVM boot. pgman's discovery path does **not** resolve these — a value
-like `jdbc:postgresql://${DB_HOST}:5432/app` is taken literally, so
-`${DB_HOST}` becomes the connection's hostname verbatim and the
-connection will fail (typically as a DNS lookup failure) with no
-warning that the cause was an unresolved placeholder. If your
-`application.yml` relies on placeholders for the datasource block,
-pass `--dsn` explicitly instead of relying on discovery.
+JVM boot. pgman's discovery path resolves `${NAME}` and
+`${NAME:default}` in the url and username against the current
+process's environment (`creds::spring::resolve_placeholders`,
+`std::env::var` as the lookup) — the same variables the JVM would see
+if launched from this shell. A name that's still unresolved (unset,
+with no default; or nested/malformed) leaves the pick in the picker
+but marked, e.g. `[Spring] app — unresolved ${DB_HOST}`; choosing it
+(Enter, or `\c <name>`) is refused with `unresolved placeholder
+${DB_HOST} — export it, or put the connection in .pgman/pgman.toml`
+instead of attempting a connection that would just fail as a
+DNS-shaped lookup on the literal `${DB_HOST}` text. An unresolved
+**password** placeholder alone does *not* mark the pick — `PGPASSWORD`
+/ a project's `password_env` are pgman's own, already-documented ways
+to supply a password it couldn't read from the file (see
+[Environment variables](#environment-variables) below).
 
 ## Environment variables
 

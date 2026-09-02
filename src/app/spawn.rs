@@ -159,12 +159,31 @@ impl App {
         self.grid_view.visible_rows.get(visible_idx).copied()
     }
 
+    /// Guard for the connection picker's Enter key and `\c <name>`:
+    /// a pick whose url/username still carries an unresolved
+    /// `${NAME}` (see `DataSourcePick::unresolved`) would otherwise
+    /// hand `connect_and_bootstrap` a DSN with a literal `${NAME}`
+    /// hostname — a DNS-shaped failure with no hint that the real
+    /// cause was an unresolved Spring placeholder. Refuse up front
+    /// instead, with a message naming a fix. Returns `true` (and sets
+    /// `last_error`) when the pick was refused; `false` means the
+    /// caller should proceed to `connect_to_pick`.
+    pub(super) fn refuse_if_unresolved(&mut self, pick: &DataSourcePick) -> bool {
+        let Some(name) = pick.unresolved.first() else {
+            return false;
+        };
+        self.last_error = Some(format!(
+            "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
+        ));
+        true
+    }
+
     /// Shared reconnect path for the connection picker's Enter key and
     /// `\c <name>`: resolve the safety profile against the picked
     /// dsn's database, install it, and hand off to `start_connect`.
     /// `origin` is the human-readable provenance shown in the status
     /// line / help ("picked X data source 'Y'", or a `\c`-driven
-    /// database swap).
+    /// database swap). Callers must check `refuse_if_unresolved` first.
     pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
         let profile = self.safety_config.profile_for(&dsn.dbname);
         self.read_only = profile.read_only;
