@@ -7,6 +7,7 @@
 //! a terminal. [`draw_landing`] just wraps it in the bordered block.
 
 use super::*;
+use crate::app::DatabaseInfo;
 
 /// Below this inner width, key hints stack in a single column instead
 /// of two side by side.
@@ -55,15 +56,18 @@ impl Hint {
 /// `inner_height` content area. Pure — no rendering, so it's directly
 /// unit-testable.
 ///
-/// Layout, top to bottom: a one-line connection summary; a blank line;
-/// six core key hints (two columns when `inner_width >= 64`, one
-/// otherwise); the F8/F4 differentiator row; a `?  all keys` line;
-/// then (if there's room and history isn't empty) a blank line, a
-/// `recent` label, and up to five of the most recent history entries.
+/// Layout, top to bottom: a one-line connection summary; a `databases`
+/// line (current database first, then the rest as returned — omitted
+/// while `app.databases` is empty, i.e. the bootstrap hasn't answered
+/// yet); a blank line; six core key hints (two columns when
+/// `inner_width >= 64`, one otherwise); the F8/F4 differentiator row; a
+/// `?  all keys` line; then (if there's room and history isn't empty) a
+/// blank line, a `recent` label, and up to five of the most recent
+/// history entries.
 ///
 /// Under height pressure, sections drop in this order: `recent` first,
-/// then the `?` line, then the F8/F4 row — so the connection line and
-/// the six core keys always survive down to 8 rows.
+/// then `databases`, then the `?` line, then the F8/F4 row — so the
+/// connection line and the six core keys always survive down to 8 rows.
 pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> Vec<Line<'static>> {
     let theme = &app.theme;
     let key_style = Style::default()
@@ -106,24 +110,34 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     } else {
         2 + app.history.len().min(RECENT_MAX_ROWS) // blank + label + rows
     };
+    let has_databases = !app.databases.is_empty();
+    let db_len = if has_databases { 1 } else { 0 }; // the `databases` line itself
     const HEADER_LINES: usize = 2; // connection line + blank
 
     let h = inner_height as usize;
-    let (include_recent, include_help, include_f8f4) =
-        if HEADER_LINES + key_lines_with_help + recent_len <= h {
-            (true, true, true)
+    let (include_recent, include_databases, include_help, include_f8f4) =
+        if HEADER_LINES + db_len + key_lines_with_help + recent_len <= h {
+            (true, true, true, true)
+        } else if HEADER_LINES + db_len + key_lines_with_help <= h {
+            (false, true, true, true)
         } else if HEADER_LINES + key_lines_with_help <= h {
-            (false, true, true)
+            (false, false, true, true)
         } else if HEADER_LINES + key_lines_with_f8f4 <= h {
-            (false, false, true)
+            (false, false, false, true)
         } else {
-            (false, false, false)
+            (false, false, false, false)
         };
     let include_recent = include_recent && !app.history.is_empty();
+    let include_databases = include_databases && has_databases;
 
     // --- assemble ------------------------------------------------------
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(header_line(app, muted_style));
+    if include_databases {
+        if let Some(text) = databases_line(app, width) {
+            lines.push(Line::from(Span::styled(text, muted_style)));
+        }
+    }
     lines.push(Line::from(""));
 
     if two_col {
@@ -246,6 +260,84 @@ fn read_only_style(app: &App) -> Style {
         .find(|s| s.content.trim() == "RO")
         .map(|s| s.style)
         .unwrap_or_default()
+}
+
+/// The `databases` line: `databases  main 1.2 GB · analytics 300 MB ·
+/// staging 40 MB` — the current database (matched against the DSN's
+/// `dbname`) first, the rest in the order `app.databases` came back
+/// in. `None` when `app.databases` is empty (the bootstrap query
+/// hasn't answered yet) — callers must not push a blank/empty line for
+/// that case.
+fn databases_line(app: &App, width: usize) -> Option<String> {
+    let current_db = app.dsn.as_ref().map(|d| d.dbname.as_str()).unwrap_or("");
+    format_databases_line(&app.databases, current_db, width)
+}
+
+/// Pure formatter behind [`databases_line`] — no `App` dependency, so
+/// ordering and width-fitting are directly unit-testable. Keeps whole
+/// entries when they don't all fit in `width`, ending with `· +N more`
+/// rather than truncating mid-entry.
+pub(crate) fn format_databases_line(
+    databases: &[DatabaseInfo],
+    current_db: &str,
+    width: usize,
+) -> Option<String> {
+    if databases.is_empty() {
+        return None;
+    }
+    const PREFIX: &str = " databases  ";
+    let ordered = ordered_databases(databases, current_db);
+    let entries: Vec<String> = ordered
+        .iter()
+        .map(|d| format!("{} {}", d.name, d.size))
+        .collect();
+
+    let mut line = PREFIX.to_string();
+    let mut shown = 0;
+    for (i, entry) in entries.iter().enumerate() {
+        let candidate = if shown == 0 {
+            format!("{line}{entry}")
+        } else {
+            format!("{line} · {entry}")
+        };
+        let not_shown_after = entries.len() - i - 1;
+        let suffix_len = if not_shown_after > 0 {
+            format!(" · +{not_shown_after} more").chars().count()
+        } else {
+            0
+        };
+        if candidate.chars().count() + suffix_len <= width {
+            line = candidate;
+            shown = i + 1;
+        } else {
+            break;
+        }
+    }
+    let not_shown = entries.len() - shown;
+    if not_shown > 0 {
+        line.push_str(&format!(" · +{not_shown} more"));
+    }
+    Some(line)
+}
+
+/// `current_db` first (matched by name; only the first match is pulled
+/// forward — a duplicate name, if the server ever returned one, stays
+/// in its original spot in `rest`), the rest in their original
+/// relative order.
+fn ordered_databases<'a>(databases: &'a [DatabaseInfo], current_db: &str) -> Vec<&'a DatabaseInfo> {
+    let mut current = None;
+    let mut rest = Vec::with_capacity(databases.len());
+    for d in databases {
+        if current.is_none() && d.name == current_db {
+            current = Some(d);
+        } else {
+            rest.push(d);
+        }
+    }
+    match current {
+        Some(c) => std::iter::once(c).chain(rest).collect(),
+        None => databases.iter().collect(),
+    }
 }
 
 /// Render one key hint on its own line (single-column layout).
@@ -496,5 +588,160 @@ mod tests {
         assert!(idx7 < idx3);
         assert!(!text.iter().any(|l| l.contains("select 2")));
         assert!(!text.iter().any(|l| l.contains("select 1")));
+    }
+
+    // -- `databases` line -------------------------------------------
+
+    #[test]
+    fn format_databases_line_returns_none_for_empty() {
+        assert_eq!(format_databases_line(&[], "test", 80), None);
+    }
+
+    #[test]
+    fn format_databases_line_orders_current_db_first_then_original_order() {
+        let dbs = vec![
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+            DatabaseInfo {
+                name: "main".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "staging".into(),
+                size: "40 MB".into(),
+            },
+        ];
+        let got = format_databases_line(&dbs, "main", 200).unwrap();
+        assert_eq!(
+            got,
+            " databases  main 1.2 GB · analytics 300 MB · staging 40 MB"
+        );
+    }
+
+    #[test]
+    fn format_databases_line_falls_back_to_returned_order_when_current_db_absent() {
+        let dbs = vec![
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+            DatabaseInfo {
+                name: "staging".into(),
+                size: "40 MB".into(),
+            },
+        ];
+        let got = format_databases_line(&dbs, "nope", 200).unwrap();
+        assert_eq!(got, " databases  analytics 300 MB · staging 40 MB");
+    }
+
+    #[test]
+    fn format_databases_line_keeps_whole_entries_and_ends_with_plus_n_more() {
+        let dbs = vec![
+            DatabaseInfo {
+                name: "main".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+            DatabaseInfo {
+                name: "staging".into(),
+                size: "40 MB".into(),
+            },
+        ];
+        // Full line is 58 chars; width 40 fits the label + first entry
+        // + a "+2 more" suffix, but not the second entry as well.
+        let got = format_databases_line(&dbs, "main", 40).unwrap();
+        assert_eq!(got, " databases  main 1.2 GB · +2 more");
+        assert!(got.chars().count() <= 40);
+        // No entry is cut mid-way — dropped entries don't appear at all.
+        assert!(!got.contains("analytics"));
+        assert!(!got.contains("staging"));
+    }
+
+    #[test]
+    fn databases_line_omitted_when_empty() {
+        let a = app(); // app.databases is empty by default (bootstrap hasn't answered)
+        let lines = landing_lines(&a, 80, 30);
+        let text = plain(&lines);
+        assert!(!text.iter().any(|l| l.contains("databases")));
+    }
+
+    #[test]
+    fn databases_line_appears_directly_under_connection_line() {
+        let mut a = app();
+        a.databases = vec![
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+            DatabaseInfo {
+                name: "test".into(), // matches app()'s dsn dbname "test"
+                size: "1.2 GB".into(),
+            },
+        ];
+        let lines = landing_lines(&a, 80, 30);
+        let text = plain(&lines);
+        assert!(
+            text[0].contains("connected to"),
+            "line 0 should be the connection line: {:?}",
+            text[0]
+        );
+        assert_eq!(
+            text[1], " databases  test 1.2 GB · analytics 300 MB",
+            "line 1 should be the databases line, current db first"
+        );
+        assert_eq!(
+            text[2], "",
+            "a blank line should follow the databases line: {:?}",
+            text[2]
+        );
+    }
+
+    #[test]
+    fn databases_line_survives_recent_drop_but_drops_before_help() {
+        let mut a = app();
+        a.history = vec!["select 1".into()];
+        a.databases = vec![DatabaseInfo {
+            name: "test".into(),
+            size: "1.2 GB".into(),
+        }];
+
+        // height 8: header(2) + databases(1) + keys-with-help(5) = 8 —
+        // fits; recent would need 3 more and doesn't.
+        let lines8 = landing_lines(&a, 80, 8);
+        let text8 = plain(&lines8);
+        assert!(
+            !text8.iter().any(|l| l.contains("recent")),
+            "recent should already be dropped at height 8: {text8:?}"
+        );
+        assert!(
+            text8.iter().any(|l| l.contains("databases")),
+            "databases should still show at height 8: {text8:?}"
+        );
+        assert!(text8
+            .iter()
+            .any(|l| l.contains('?') && l.contains("all keys")));
+
+        // height 7: databases must drop too now — but `?` / F8-F4
+        // survive, matching the documented degradation order (recent,
+        // then databases, then `?`, then F8/F4).
+        let lines7 = landing_lines(&a, 80, 7);
+        let text7 = plain(&lines7);
+        assert!(!text7.iter().any(|l| l.contains("recent")));
+        assert!(
+            !text7.iter().any(|l| l.contains("databases")),
+            "databases should drop before help at height 7: {text7:?}"
+        );
+        assert!(
+            text7
+                .iter()
+                .any(|l| l.contains('?') && l.contains("all keys")),
+            "`?` line should survive databases being dropped: {text7:?}"
+        );
+        assert!(text7.iter().any(|l| l.contains("F8")));
     }
 }

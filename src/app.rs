@@ -37,6 +37,22 @@ const BOOTSTRAP_SQL: &str = "select datname as database, \
     pg_size_pretty(pg_database_size(datname)) as size \
     from pg_database where not datistemplate order by datname";
 
+/// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into
+/// the start card's per-database summary. Positional, not name-keyed —
+/// `BOOTSTRAP_SQL` is the only producer and always emits `(name, size)`
+/// in that order. Rows with fewer than two columns are skipped rather
+/// than panicking; `BOOTSTRAP_SQL` never emits one, but this stays total.
+fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
+    grid.rows
+        .iter()
+        .filter_map(|row| {
+            let name = row.first()?.clone();
+            let size = row.get(1)?.clone();
+            Some(DatabaseInfo { name, size })
+        })
+        .collect()
+}
+
 /// Pure decision: should the next `\watch` tick dispatch a re-run?
 /// Returns `true` when the interval has elapsed AND nothing is
 /// blocking (no query in flight, no modal up, etc.).
@@ -923,6 +939,12 @@ pub struct App {
     /// editor. Refilled on every successful `Booted`. Empty before
     /// connect (or after a failed catalog fetch).
     pub schema_cache: SchemaCache,
+    /// Every database on the server + its on-disk size, from the
+    /// bootstrap query. Refilled on every successful `Booted`; empty
+    /// before connect. App-level (shared across tabs), and rendered
+    /// by the start card's `databases` line rather than the results
+    /// grid — see `parse_bootstrap_databases`.
+    pub databases: Vec<DatabaseInfo>,
     /// Active completion cycle, when the user has pressed Tab one or
     /// more times in a row. Reset on any non-Tab editor keypress so a
     /// subsequent Tab starts a fresh cycle from the current cursor.
@@ -1083,6 +1105,7 @@ impl App {
             row_detail: RowDetailUi::default(),
             cell_detail: CellDetailUi::default(),
             schema_cache: SchemaCache::default(),
+            databases: Vec::new(),
             completion: None,
             history_search: None,
             watch: None,

@@ -13,8 +13,8 @@
 //! `tests/render.rs` which inspects specific cells.
 
 use pgman::app::{
-    compute_visible_rows, App, CompletionCycle, ConnState, DataSourcePick, HistorySearchState,
-    Mode, WatchState,
+    compute_visible_rows, App, CompletionCycle, ConnState, DataSourcePick, DatabaseInfo,
+    HistorySearchState, Mode, WatchState,
 };
 use pgman::conn::Dsn;
 use pgman::grid::Grid;
@@ -74,11 +74,26 @@ fn settle_app() -> App {
 
 /// Replaces the old `empty_normal_mode` snapshot: with nothing ever run
 /// (`grid` at its `App::new` default — empty columns, empty rows), the
-/// body shows the start card instead of a bare `(no rows)`.
+/// body shows the start card instead of a bare `(no rows)`. Also pins
+/// the real end-to-end shape of a connect: the bootstrap query's
+/// result lands in `app.databases` (rendered as the card's
+/// `databases` line, current db first) rather than in the grid — a
+/// real connect must never knock the card back to a two-column grid
+/// of database names and sizes.
 #[test]
 fn landing_after_connect() {
     let mut a = settle_app();
     a.grid = Grid::default();
+    a.databases = vec![
+        DatabaseInfo {
+            name: "analytics".into(),
+            size: "300 MB".into(),
+        },
+        DatabaseInfo {
+            name: "test".into(), // matches settle_app()'s dsn dbname — sorts first
+            size: "1.2 GB".into(),
+        },
+    ];
     a.mode = Mode::Normal;
     let buf = render(&mut a, 80, 16);
     insta::assert_snapshot!(dump(&buf));

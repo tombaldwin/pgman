@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 99
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -8,13 +9,13 @@ expression: dump(&buf)
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ start ───────────────────────────────────────────────────────────────────────┐
 │ connected to test on localhost:5432 · pg 16.0 · RO                           │
+│ databases  test 1.2 GB · analytics 300 MB                                    │
 │                                                                              │
 │   e   write a query                    S   schema browser                    │
 │   Q   saved queries (0)                T   slow queries                      │
 │   W   schema wizard                    L   sessions & locks                  │
 │   F8  logs → SQL (paste a log first)   F4  JDBC tap                          │
 │   ?   all keys                                                               │
-│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   q quit · ? help · e editor · S schema · W wizard · Q saved · F1 +5 more
