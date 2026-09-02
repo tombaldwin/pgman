@@ -263,6 +263,80 @@ fn footer_badges_drop_counter_surfaces_amber_badge() {
 }
 
 #[test]
+fn fit_hints_returns_unchanged_when_everything_fits() {
+    let hints = "q quit · ? help · e editor";
+    assert_eq!(fit_hints(hints, hints.chars().count()), hints);
+    assert_eq!(fit_hints(hints, hints.chars().count() + 10), hints);
+}
+
+#[test]
+fn fit_hints_never_cuts_mid_item() {
+    let hints = "q quit · ? help · e editor · S schema · W wizard";
+    for width in 0..=hints.chars().count() {
+        let fitted = fit_hints(hints, width);
+        assert!(
+            fitted.chars().count() <= width,
+            "fitted {fitted:?} exceeds width {width}"
+        );
+        if fitted.is_empty() {
+            continue;
+        }
+        // Every remaining piece (split on " · ") must be either a whole
+        // item from the source string, or the trailing "N more" marker —
+        // never a partial hint.
+        for piece in fitted.split(" · ") {
+            let is_marker = piece
+                .strip_suffix(" more")
+                .is_some_and(|n| n.parse::<usize>().is_ok());
+            assert!(
+                is_marker || hints.split(" · ").any(|item| item == piece),
+                "piece {piece:?} at width {width} is neither a whole hint nor the marker (fitted: {fitted:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn fit_hints_width_too_small_for_first_hint_yields_just_the_marker() {
+    let hints = "q quit · ? help · e editor";
+    // Too narrow even for "q quit" plus a marker, but the bare "3 more"
+    // marker (6 chars) fits.
+    let fitted = fit_hints(hints, 6);
+    assert_eq!(fitted, "3 more");
+}
+
+#[test]
+fn fit_hints_mid_list_cut_drops_whole_items_and_appends_marker() {
+    let hints = "q quit · ? help · e editor · S schema · W wizard";
+    // Fits "q quit · ? help · e editor" (26 chars) + " · 2 more" (9) = 35.
+    let fitted = fit_hints(hints, 35);
+    assert_eq!(fitted, "q quit · ? help · e editor · 2 more");
+    assert!(fitted.chars().count() <= 35);
+}
+
+#[test]
+fn fit_hints_marker_width_is_always_accounted_for() {
+    let hints = "aaaaaaaaaa · bbbbbbbbbb · cccccccccc";
+    // Any width narrower than the full string must produce output no
+    // wider than that width — including the marker itself.
+    for width in [0, 1, 5, 8, 9, 10, 15, 20] {
+        let fitted = fit_hints(hints, width);
+        assert!(
+            fitted.chars().count() <= width,
+            "fitted {fitted:?} ({}  chars) exceeds width {width}",
+            fitted.chars().count()
+        );
+    }
+}
+
+#[test]
+fn fit_hints_empty_when_nothing_at_all_fits() {
+    // Not even a single-digit "N more" marker (6 chars) fits in 3.
+    let hints = "q quit · ? help";
+    assert_eq!(fit_hints(hints, 3), "");
+}
+
+#[test]
 fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
     let theme = crate::theme::Theme::default();
     let lines = tap_setup_hint_lines(&theme);
