@@ -472,7 +472,7 @@ spring.application.name=orders-api
 
     #[test]
     fn parse_properties_all_handles_non_spring_prefix() {
-        // Real-world: the user's project uses `dataSource.*`, not the
+        // Real-world shape: a project that uses `dataSource.*`, not the
         // Spring-Boot-canonical `spring.datasource.*`. Both should work.
         let text = "\
 dataSource.url=jdbc:postgresql://localhost:5432/shop?escapeSyntaxCallMode=callIfNoReturn
