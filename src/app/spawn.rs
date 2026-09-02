@@ -120,7 +120,7 @@ impl App {
     /// the operator just confirmed in the modal.
     pub(super) fn spawn_terminate_session(&mut self, pid: i32) {
         let Some(client) = self.client.clone() else {
-            self.last_error = Some("not connected".into());
+            self.last_error = Some(self.not_connected_message());
             return;
         };
         let tx = self.msg_tx.clone();
@@ -186,7 +186,7 @@ impl App {
     /// confirm or proceed based on the row estimate vs threshold.
     pub(super) fn spawn_cost_preview(&mut self, sql: String, decision: Decision, threshold: u64) {
         let Some(client) = self.client.clone() else {
-            self.last_error = Some("not connected".to_string());
+            self.last_error = Some(self.not_connected_message());
             return;
         };
         let tx = self.msg_tx.clone();
@@ -221,7 +221,7 @@ impl App {
         is_batch: bool,
     ) {
         let Some(client) = self.client.clone() else {
-            self.last_error = Some("not connected".to_string());
+            self.last_error = Some(self.not_connected_message());
             return;
         };
         // Push to history (skip consecutive duplicates, cap at

@@ -37,6 +37,16 @@ const BOOTSTRAP_SQL: &str = "select datname as database, \
     pg_size_pretty(pg_database_size(datname)) as size \
     from pg_database where not datistemplate order by datname";
 
+/// The footer line for a statement the per-database guard refuses.
+/// Names the statement in words (`DELETE without WHERE`), never the
+/// enum, and says where the guard lives.
+pub fn blocked_by_safety_message(kind: &safety::StatementKind, db: &str) -> String {
+    format!(
+        "blocked by safety: {} on '{db}' · change the guard in safety.toml to allow it",
+        kind.describe()
+    )
+}
+
 /// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into
 /// the start card's per-database summary. Positional, not name-keyed —
 /// `BOOTSTRAP_SQL` is the only producer and always emits `(name, size)`
@@ -2344,10 +2354,24 @@ impl App {
         }
     }
 
+    /// "not connected", plus the one thing the operator can do about
+    /// it from where they are.
+    pub fn not_connected_message(&self) -> String {
+        if matches!(self.conn_state, ConnState::Failed(_)) {
+            "not connected · r to retry · c to choose a connection".to_string()
+        } else if !self.conn_pick.picks.is_empty() {
+            "not connected · c to choose a connection".to_string()
+        } else {
+            "not connected · start pgman with --dsn postgres://… or inside a Spring project"
+                .to_string()
+        }
+    }
+
     fn request_run(&mut self, kind: RunKind) {
         let sql = self.editor.buffer.trim().to_string();
         if sql.is_empty() {
-            self.last_error = Some("editor is empty".to_string());
+            self.last_error =
+                Some("editor is empty · e to focus it, then type SQL or paste a log".to_string());
             return;
         }
         // psql-style `\` commands intercept here, before the
@@ -2360,7 +2384,7 @@ impl App {
             return;
         }
         if self.client.is_none() {
-            self.last_error = Some("not connected".to_string());
+            self.last_error = Some(self.not_connected_message());
             return;
         }
 
@@ -2390,7 +2414,7 @@ impl App {
         // rollback transaction inside `spawn_run`).
         match decision.guard {
             Guard::Block => {
-                self.last_error = Some(format!("blocked by safety: {:?} on '{db}'", decision.kind));
+                self.last_error = Some(blocked_by_safety_message(&decision.kind, db));
             }
             Guard::Confirm => {
                 self.pending_run = Some(PendingRun {
@@ -2962,7 +2986,7 @@ impl App {
     /// `T` from Normal — load + open the slow-queries panel.
     fn start_slow_queries(&mut self) {
         let Some(client) = self.client.clone() else {
-            self.last_error = Some("not connected".into());
+            self.last_error = Some(self.not_connected_message());
             return;
         };
         self.slow_queries.cursor = 0;
@@ -2983,7 +3007,7 @@ impl App {
     /// `L` from Normal — load + open the active-sessions panel.
     fn start_sessions(&mut self) {
         let Some(client) = self.client.clone() else {
-            self.last_error = Some("not connected".into());
+            self.last_error = Some(self.not_connected_message());
             return;
         };
         self.sessions.cursor = 0;
