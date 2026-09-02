@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use crate::app::{App, ConnState};
+use crate::app::{App, ConnState, DatabaseInfo};
 use crate::conn::Dsn;
 use crate::grid::Grid;
 use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, SchemaCache, TableMeta};
@@ -70,6 +70,142 @@ pub fn app(theme: Theme) -> App {
     }
     a.tap_events = events.into();
     a
+}
+
+/// Build the demo [`App`] open on the start card instead of a
+/// pre-run result — the sixty-second story (`docs/logs-to-sql.md`)
+/// starts with an empty grid so the F8 / F4 hint is the first thing
+/// on screen, not a result the operator hasn't asked for yet.
+///
+/// Everything else — schema cache, saved queries, history, tap
+/// events — is identical to [`app`]; only the grid (cleared back to
+/// `Grid::default()`, same as a fresh, query-less connection) and
+/// `databases` (populated, so the start card's databases line isn't
+/// blank) differ.
+pub fn launch_app(theme: Theme) -> App {
+    let mut a = app(theme);
+    a.grid = Grid::default();
+    a.reset_grid_view();
+    a.databases = vec![
+        DatabaseInfo {
+            name: "shop".into(),
+            size: "812 MB".into(),
+        },
+        DatabaseInfo {
+            name: "shop_test".into(),
+            size: "94 MB".into(),
+        },
+        DatabaseInfo {
+            name: "analytics".into(),
+            size: "3.4 GB".into(),
+        },
+    ];
+    a
+}
+
+/// Answer a query synthetically — no client, no network, called from
+/// `App::spawn_run_demo` on `Guard::Allow` in `--demo` mode.
+///
+/// A `SELECT` whose single `FROM` table is in `cache` gets plausible
+/// rows shaped by that table's real columns: the canned
+/// [`users_result`] for `users`, deterministic generated rows for
+/// anything else (`orders`, `order_items`). Everything else — writes
+/// that reached `Allow` under a customised safety profile, joins,
+/// unknown tables, `SELECT 1`-style queries with no table at all —
+/// gets a one-row notice so the operator sees *something* rather than
+/// a raw error.
+pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
+    let table = crate::app::infer_single_source_table(sql).filter(|(schema, name)| {
+        cache
+            .columns_meta_by_table
+            .contains_key(&(schema.clone(), name.clone()))
+    });
+    match table {
+        Some((_, name)) if name == "users" => {
+            let (columns, rows) = users_result();
+            Grid {
+                columns,
+                rows,
+                truncated: false,
+            }
+        }
+        Some((schema, name)) => {
+            let cols = cache
+                .columns_meta_by_table
+                .get(&(schema, name.clone()))
+                .cloned()
+                .unwrap_or_default();
+            generated_rows(&name, &cols)
+        }
+        None => notice_grid(),
+    }
+}
+
+/// A one-row notice: what `answer` falls back to for anything it
+/// can't shape a plausible result for.
+fn notice_grid() -> Grid {
+    Grid {
+        columns: vec!["demo".to_string()],
+        rows: vec![vec!["this is --demo mode, no database".to_string()]],
+        truncated: false,
+    }
+}
+
+/// Number of synthetic rows `generated_rows` fabricates per table —
+/// within the 3–5 range asked for, deterministic across runs.
+const GENERATED_ROW_COUNT: usize = 4;
+
+/// Fabricate `GENERATED_ROW_COUNT` deterministic rows shaped by
+/// `cols` — every value is a pure function of `(table, column name /
+/// type, row index)`, so the same query always answers the same way.
+fn generated_rows(table: &str, cols: &[ColumnMeta]) -> Grid {
+    let columns = cols.iter().map(|c| c.name.clone()).collect();
+    let rows = (0..GENERATED_ROW_COUNT)
+        .map(|i| cols.iter().map(|c| synth_cell(table, c, i)).collect())
+        .collect();
+    Grid {
+        columns,
+        rows,
+        truncated: false,
+    }
+}
+
+/// One synthesized cell for `col` at 0-indexed `row_idx`, biased by
+/// the demo schema's own naming (`_id` foreign keys, `status`,
+/// `*_cents`, `sku`, `qty`) and falling back to the column's Postgres
+/// type for anything it doesn't recognise by name.
+fn synth_cell(table: &str, col: &ColumnMeta, row_idx: usize) -> String {
+    let n = row_idx + 1;
+    let name = col.name.as_str();
+    let ty = col.type_name.as_str();
+    if name == "id" {
+        return n.to_string();
+    }
+    if name.ends_with("_id") {
+        // Foreign key: cycle through a small parent-id range so it
+        // reads as plausible rather than monotonically increasing
+        // alongside the row's own id.
+        return ((row_idx % 3) + 1).to_string();
+    }
+    match (table, name) {
+        ("orders", "status") => {
+            ["pending", "shipped", "delivered", "cancelled"][row_idx % 4].to_string()
+        }
+        ("orders", "total_cents") => (1_999 + row_idx * 550).to_string(),
+        ("order_items", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
+        ("order_items", "qty") => ((row_idx % 4) + 1).to_string(),
+        ("order_items", "price_cents") => (499 + row_idx * 250).to_string(),
+        _ if ty.starts_with("timestamp") => {
+            format!(
+                "2026-0{}-{:02} {:02}:00:00+00",
+                (row_idx % 6) + 1,
+                4 + row_idx,
+                8 + row_idx
+            )
+        }
+        _ if ty.starts_with("bigint") || ty.starts_with("integer") => n.to_string(),
+        _ => format!("{name}-{n}"),
+    }
 }
 
 /// `(schema, table)` keys live a lot here.
@@ -347,5 +483,82 @@ mod tests {
         assert_eq!(c.constraints.len(), 3);
         assert_eq!(c.fk_edges.len(), 2);
         assert!(c.columns_meta_by_table.contains_key(&key("users")));
+    }
+
+    #[test]
+    fn launch_app_opens_empty_with_databases_populated() {
+        let a = launch_app(Theme::default());
+        assert!(a.demo);
+        assert!(
+            a.grid.columns.is_empty() && a.grid.rows.is_empty(),
+            "launch_app must start on an EMPTY grid so draw_landing (the \
+             start card) renders instead of a pre-run result: {:?}",
+            a.grid
+        );
+        assert!(
+            !a.databases.is_empty(),
+            "start card's databases line needs data to show"
+        );
+        // Everything else app() sets up is untouched.
+        assert_eq!(a.schema_cache.tables.len(), 3);
+        assert!(!a.tap_events.is_empty());
+    }
+
+    #[test]
+    fn app_is_unchanged_by_launch_app_existing() {
+        // app() itself still opens with its pre-populated users grid —
+        // tests/sizes.rs and tests/render.rs depend on that shape.
+        let a = app(Theme::default());
+        assert!(!a.grid.rows.is_empty());
+        assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
+    }
+
+    #[test]
+    fn answer_select_on_users_yields_the_users_grid() {
+        let cache = schema_cache();
+        let grid = answer("SELECT id, email, plan, created_at FROM users", &cache);
+        let (expected_cols, expected_rows) = users_result();
+        assert_eq!(grid.columns, expected_cols);
+        assert_eq!(grid.rows, expected_rows);
+    }
+
+    #[test]
+    fn answer_select_on_orders_yields_rows_with_orders_columns() {
+        let cache = schema_cache();
+        let grid = answer("SELECT * FROM orders WHERE status = 'shipped'", &cache);
+        assert_eq!(
+            grid.columns,
+            vec!["id", "user_id", "status", "total_cents", "created_at"]
+        );
+        assert!(
+            grid.rows.len() >= 3 && grid.rows.len() <= 5,
+            "expected 3-5 generated rows, got {}",
+            grid.rows.len()
+        );
+        // Every row is fully shaped (one cell per column) with
+        // non-empty, deterministic values.
+        for row in &grid.rows {
+            assert_eq!(row.len(), grid.columns.len());
+            assert!(row.iter().all(|c| !c.is_empty()));
+        }
+        // Deterministic: same SQL answers the same way every time.
+        let again = answer("SELECT * FROM orders WHERE status = 'shipped'", &cache);
+        assert_eq!(grid.rows, again.rows);
+    }
+
+    #[test]
+    fn answer_unknown_statement_yields_one_row_notice() {
+        let cache = schema_cache();
+        let grid = answer("SELECT 1", &cache);
+        assert_eq!(grid.columns, vec!["demo".to_string()]);
+        assert_eq!(grid.rows.len(), 1);
+        assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
+
+        // A join (not a single-table FROM) also falls back to the notice.
+        let grid = answer(
+            "SELECT * FROM orders o JOIN users u ON u.id = o.user_id",
+            &cache,
+        );
+        assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
     }
 }
