@@ -14,7 +14,7 @@ impl App {
         // Clear the buffer immediately so a second F5 doesn't
         // run the same command twice. `\timing` is the exception:
         // operators often toggle it back off in the same buffer.
-        let clear_buffer = !matches!(cmd, BackslashCmd::Timing(_));
+        let clear_buffer = !matches!(cmd, BackslashCmd::Timing(_) | BackslashCmd::Expanded(_));
         if clear_buffer {
             self.editor.buffer.clear();
             self.editor.cursor = 0;
@@ -60,8 +60,102 @@ impl App {
             }
             BackslashCmd::Report(target) => self.dispatch_report(target),
             BackslashCmd::Fixture(target) => self.dispatch_fixture(target),
+            BackslashCmd::ListDatabases => self.dispatch_list_databases(),
+            BackslashCmd::Expanded(target) => {
+                // Toggle if no explicit value supplied — same shape as
+                // `\timing`.
+                let new = target.unwrap_or(!self.expanded_on);
+                self.expanded_on = new;
+                self.last_status = Some(format!("expanded {}", if new { "on" } else { "off" }));
+            }
+            BackslashCmd::Connect(target) => self.dispatch_connect(target),
+            BackslashCmd::Include(target) => self.dispatch_include(target),
             BackslashCmd::Unknown(raw) => {
                 self.last_error = Some(format!("unknown backslash command: {raw}"));
+            }
+        }
+    }
+
+    /// `\l` handler. Renders `App.databases` — every database on the
+    /// server + its on-disk size, already fetched by the bootstrap
+    /// query at connect time — as a result grid. Sends no query of its
+    /// own.
+    fn dispatch_list_databases(&mut self) {
+        self.grid = Grid {
+            columns: vec!["database".into(), "size".into()],
+            rows: self
+                .databases
+                .iter()
+                .map(|d| vec![d.name.clone(), d.size.clone()])
+                .collect(),
+            truncated: false,
+        };
+        self.grid_state
+            .select(if self.grid.is_empty() { None } else { Some(0) });
+        self.reset_grid_view();
+        self.last_status = Some(if self.databases.is_empty() {
+            "\\l → no databases (connect first)".into()
+        } else {
+            format!("\\l → {} database(s)", self.databases.len())
+        });
+    }
+
+    /// `\c` / `\c <name>` handler.
+    ///
+    /// No argument: open the connection picker (same as the `c` key).
+    /// `<name>` matching a picker entry: reconnect to it, through the
+    /// exact same path the picker's Enter key uses
+    /// (`App::connect_to_pick`). `<name>` matching nothing: swap
+    /// `dbname` on the CURRENT dsn and reconnect through that same
+    /// path — `Dsn::dbname` is a plain `String` field, so the swap is
+    /// trivial and doesn't require reconstructing host/user/etc. With
+    /// no active connection to swap, that's an actionable error.
+    fn dispatch_connect(&mut self, target: Option<String>) {
+        let Some(name) = target else {
+            self.start_connection_change();
+            return;
+        };
+        if let Some(pick) = self
+            .conn_pick
+            .picks
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&name))
+            .cloned()
+        {
+            let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
+            self.connect_to_pick(pick.dsn, origin);
+            return;
+        }
+        let Some(mut dsn) = self.dsn.clone() else {
+            self.last_error = Some(format!(
+                "\\c {name} — no data source named '{name}' and no active connection to swap the database on"
+            ));
+            return;
+        };
+        dsn.dbname = name.clone();
+        self.connect_to_pick(dsn, format!("\\c switched database to '{name}'"));
+    }
+
+    /// `\i <path>` handler. Reads the whole file and replaces the
+    /// editor buffer with it — the operator reviews before running,
+    /// same as pasting it in by hand. Never runs anything itself.
+    fn dispatch_include(&mut self, target: Option<String>) {
+        let Some(path) = target else {
+            self.last_error = Some("\\i requires a file path".into());
+            return;
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let n = contents.lines().count();
+                self.editor.buffer = contents;
+                self.editor.cursor = self.editor.buffer.len();
+                self.editor.preferred_col = None;
+                self.history_pos = None;
+                self.draft_dirty = true;
+                self.last_status = Some(format!("loaded {n} lines from {path}"));
+            }
+            Err(e) => {
+                self.last_error = Some(format!("\\i {path} failed: {e}"));
             }
         }
     }

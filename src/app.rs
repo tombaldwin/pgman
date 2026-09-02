@@ -866,6 +866,10 @@ pub struct App {
     /// psql `\timing` toggle — when on, the QueryOk handler
     /// appends an elapsed-ms marker to the status footer.
     pub timing_on: bool,
+    /// psql `\x` toggle — when on, the QueryOk handler opens the
+    /// existing row-detail view (`Mode::RowDetail`) for the first
+    /// row of a new result instead of leaving it in the grid.
+    pub expanded_on: bool,
     /// Rich detail from the most-recent failed query. Surfaced
     /// by `Mode::ErrorDetail` (Ctrl-E after a failure). Cleared
     /// on the next successful run.
@@ -1096,6 +1100,7 @@ impl App {
             help: HelpUi::default(),
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
+            expanded_on: false,
             last_error_detail: None,
             pending_terminate: None,
             auto_refresh: false,

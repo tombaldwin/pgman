@@ -159,6 +159,22 @@ impl App {
         self.grid_view.visible_rows.get(visible_idx).copied()
     }
 
+    /// Shared reconnect path for the connection picker's Enter key and
+    /// `\c <name>`: resolve the safety profile against the picked
+    /// dsn's database, install it, and hand off to `start_connect`.
+    /// `origin` is the human-readable provenance shown in the status
+    /// line / help ("picked X data source 'Y'", or a `\c`-driven
+    /// database swap).
+    pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
+        let profile = self.safety_config.profile_for(&dsn.dbname);
+        self.read_only = profile.read_only;
+        self.statement_timeout_ms = profile.statement_timeout_ms;
+        self.dsn = Some(dsn);
+        self.dsn_origin = Some(origin);
+        self.mode = Mode::Normal;
+        self.start_connect();
+    }
+
     /// Open the data-source picker mid-session so the operator can
     /// switch connections without quitting. Requires at least one
     /// discovered data source — without that there's nothing

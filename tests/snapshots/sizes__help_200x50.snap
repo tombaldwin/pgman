@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -41,7 +42,7 @@ expression: dump(&buf)
 │                             │                                                                                                                                          │                             │
 │                             │   editor                                                                                                                                 │                             │
 │                             │     F5 / ctrl-↵   run the statement (through safety guards)                                                                              │                             │
-│                             │ ↓ 138 more below                                                                                                                         │                             │
+│                             │ ↓ 142 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │
