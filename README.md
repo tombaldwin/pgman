@@ -176,8 +176,9 @@ than full snapshots, so they survive minor layout shifts.
 CI runs all of the above on every push (`.github/workflows/ci.yml`):
 the unit / render / subprocess / doc tests on linux + macos, the
 integration tests against a live `postgres:16` service container, a
-coverage report via `cargo-llvm-cov`, and `cargo fmt --check` +
-`cargo clippy` (advisory).
+coverage report via `cargo-llvm-cov`, `cargo fmt --check`, `cargo clippy
+-D warnings`, an MSRV build + test on Rust 1.94.1, `cargo-machete`,
+`cargo-deny`, and the candor data-layer gate.
 
 ## Status
 
