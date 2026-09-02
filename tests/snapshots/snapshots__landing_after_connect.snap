@@ -1,0 +1,20 @@
+---
+source: tests/snapshots.rs
+expression: dump(&buf)
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> (empty — press e to focus)                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ start ───────────────────────────────────────────────────────────────────────┐
+│ connected to test on localhost:5432 · pg 16.0 · RO                           │
+│                                                                              │
+│   e   write a query                    S   schema browser                    │
+│   Q   saved queries (0)                T   slow queries                      │
+│   W   schema wizard                    L   sessions & locks                  │
+│   F8  logs → SQL (paste a log first)   F4  JDBC tap                          │
+│   ?   all keys                                                               │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L se

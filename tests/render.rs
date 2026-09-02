@@ -76,6 +76,48 @@ fn settle_app() -> App {
     a
 }
 
+/// Cell-exact (not byte-offset) search for a two-character needle like
+/// `"RO"`: `row_text` + `str::find` mis-locate the column whenever a
+/// multi-byte glyph (e.g. `·`) appears earlier in the same row, since
+/// `find` returns a byte offset, not a terminal column.
+fn find_two_char_cells(buf: &Buffer, needle: [&str; 2]) -> Vec<(u16, u16)> {
+    let mut hits = Vec::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width.saturating_sub(1) {
+            if buf[(x, y)].symbol() == needle[0] && buf[(x + 1, y)].symbol() == needle[1] {
+                hits.push((x, y));
+            }
+        }
+    }
+    hits
+}
+
+#[test]
+fn landing_ro_badge_reuses_footer_style() {
+    // A freshly-connected App (grid still at its `App::new` default —
+    // nothing has run) renders the start card, whose connection line
+    // ends in an inline `RO` token. It must reuse the exact style the
+    // footer's `[RO]` pill uses, not a separately hardcoded colour.
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    let buf = render(&mut a, 80, 16);
+    let ro_cells = find_two_char_cells(&buf, ["R", "O"]);
+    assert!(
+        ro_cells.len() >= 2,
+        "expected both the start card's header and the footer badge to show RO: {ro_cells:?}"
+    );
+    let header_cell = &buf[ro_cells[0]];
+    let footer_cell = &buf[ro_cells[ro_cells.len() - 1]];
+    assert_eq!(
+        header_cell.fg, footer_cell.fg,
+        "start card RO should reuse the footer badge's fg, not a separate colour"
+    );
+    assert_eq!(
+        header_cell.bg, footer_cell.bg,
+        "start card RO should reuse the footer badge's bg, not a separate colour"
+    );
+}
+
 #[test]
 fn editor_renders_keyword_in_title_colour() {
     let mut a = settle_app();
