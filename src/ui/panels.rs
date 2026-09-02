@@ -660,7 +660,31 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     }
     f.render_widget(Paragraph::new(Text::from(lines)), list_area);
 
-    // Bottom: full SQL for the focused row.
+    // Bottom: full SQL for the focused row. The divider above it is
+    // drawn by hand (rather than as a `Block::TOP` border inside
+    // `detail_area`) so its ends land on the outer border's column and
+    // overwrite it with `├` / `┤` — a `Borders::TOP`-only block has no
+    // left/right border to join with, so it can only ever draw a plain
+    // `─…─` that leaves the outer `│`s untouched at each end.
+    let divider_area = Rect {
+        x: detail_area.x.saturating_sub(1),
+        y: detail_area.y,
+        width: detail_area.width + 2,
+        height: 1.min(detail_area.height),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            divider_line(divider_area.width as usize),
+            Style::default().fg(theme.border_idle),
+        ))),
+        divider_area,
+    );
+    let detail_content_area = Rect {
+        x: detail_area.x,
+        y: detail_area.y + divider_area.height,
+        width: detail_area.width,
+        height: detail_area.height.saturating_sub(divider_area.height),
+    };
     let focused_sql = app
         .slow_queries
         .rows
@@ -670,13 +694,8 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(
         Paragraph::new(focused_sql)
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(theme.text))
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(Style::default().fg(theme.border_idle)),
-            ),
-        detail_area,
+            .style(Style::default().fg(theme.text)),
+        detail_content_area,
     );
 }
 
@@ -1344,6 +1363,17 @@ fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usiz
     out
 }
 
+/// A horizontal divider `width` columns wide, using `├`/`┤` at the
+/// ends so it joins an outer border when drawn across its two border
+/// columns. Degrades gracefully for pathologically narrow widths.
+fn divider_line(width: usize) -> String {
+    match width {
+        0 => String::new(),
+        1 => "├".to_string(),
+        n => format!("├{}┤", "─".repeat(n - 2)),
+    }
+}
+
 /// Helper: push a `label: value` line pair, wrapping the value
 /// to `width`. Label is muted, value is wrapped onto continuation
 /// lines indented under the label.
@@ -1465,6 +1495,18 @@ mod tests {
             ),
             22
         );
+    }
+
+    #[test]
+    fn divider_line_joins_at_both_ends() {
+        assert_eq!(divider_line(6), "├────┤");
+    }
+
+    #[test]
+    fn divider_line_minimum_widths_degrade_gracefully() {
+        assert_eq!(divider_line(0), "");
+        assert_eq!(divider_line(1), "├");
+        assert_eq!(divider_line(2), "├┤");
     }
 
     #[test]
