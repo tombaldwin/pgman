@@ -299,6 +299,34 @@ pub(crate) enum SpanKind {
     BlockComment,
 }
 
+impl SpanKind {
+    /// A span whose contents are literal data, not SQL syntax: no splitting,
+    /// no comment stripping, no keyword matching inside it.
+    fn is_quoted(self) -> bool {
+        matches!(
+            self,
+            SpanKind::String | SpanKind::EscapeString | SpanKind::Ident | SpanKind::DollarQuoted
+        )
+    }
+
+    fn is_comment(self) -> bool {
+        matches!(self, SpanKind::LineComment | SpanKind::BlockComment)
+    }
+
+    /// A short name for the construct, for `SplitError`'s log detail.
+    fn name(self) -> &'static str {
+        match self {
+            SpanKind::Code => "code",
+            SpanKind::String => "string literal",
+            SpanKind::EscapeString => "escape string literal",
+            SpanKind::Ident => "quoted identifier",
+            SpanKind::DollarQuoted => "dollar-quoted body",
+            SpanKind::LineComment => "line comment",
+            SpanKind::BlockComment => "block comment",
+        }
+    }
+}
+
 /// One lexical run of the input. Spans tile the input exactly: concatenating
 /// `sql[start..end]` over the returned spans reproduces `sql`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,6 +633,70 @@ pub fn split_statements(sql: &str) -> Vec<String> {
         result.push(trimmed);
     }
     result
+}
+
+/// Why [`split_verified`] refused to vouch for a script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitError {
+    /// A `'`, `"`, `$tag$`, or `/*` was never closed. Names the construct,
+    /// for the log — the operator-facing text is [`SPLIT_REFUSAL`].
+    Unterminated(&'static str),
+    /// Re-joining the split pieces didn't reproduce the input — the splitter
+    /// dropped or moved something and cannot be trusted about this script.
+    Mismatch,
+}
+
+/// The one message the operator sees for any split failure. Deliberately
+/// uniform: which construct confused the lexer is a detail for the log, and
+/// the remedy is the same either way.
+pub const SPLIT_REFUSAL: &str =
+    "refusing to run: could not split this script safely — run the statements one at a time";
+
+impl std::fmt::Display for SplitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(SPLIT_REFUSAL)
+    }
+}
+
+/// Split `sql` and *verify* the split before handing it to a guard: every
+/// quote/comment must close, and re-joining the pieces with `;` must reproduce
+/// the input once comments and inter-token whitespace are normalised away.
+///
+/// This is the fail-closed entry point. A classifier that is fed the wrong
+/// statement boundaries approves the wrong statements, so a script the lexer
+/// cannot account for is refused outright rather than run on a guess. Callers
+/// must also **execute the returned statements**, not the original string —
+/// otherwise the server runs text the classifier never saw.
+pub fn split_verified(sql: &str) -> Result<Vec<String>, SplitError> {
+    let spans = scan(sql);
+    if let Some(bad) = spans
+        .iter()
+        .find(|s| !s.terminated && (s.kind.is_quoted() || s.kind.is_comment()))
+    {
+        return Err(SplitError::Unterminated(bad.kind.name()));
+    }
+    let statements = split_statements(sql);
+    let rejoined = statements.join(";");
+    if canonical_for_compare(&rejoined) != canonical_for_compare(sql) {
+        return Err(SplitError::Mismatch);
+    }
+    Ok(statements)
+}
+
+/// A comparison form for [`split_verified`]: comments dropped, whitespace and
+/// `;` removed from code, quoted spans kept byte-for-byte. Two scripts with
+/// the same canonical form contain the same statements in the same order.
+fn canonical_for_compare(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    for span in scan(sql) {
+        let text = &sql[span.start..span.end];
+        match span.kind {
+            SpanKind::LineComment | SpanKind::BlockComment => {}
+            SpanKind::Code => out.extend(text.chars().filter(|c| !c.is_whitespace() && *c != ';')),
+            _ => out.push_str(text),
+        }
+    }
+    out
 }
 
 /// Remove `-- line` and `/* block */` comments, leaving string literals,
@@ -988,6 +1080,74 @@ mod tests {
             }
             assert_eq!(at, sql.len(), "spans must reach the end of {sql:?}");
         }
+    }
+
+    // --- split_verified: fail closed ------------------------------------
+
+    #[test]
+    fn split_verified_accepts_an_ordinary_script() {
+        let sql = "SELECT 1; -- note\nUPDATE t SET x = 1 WHERE id = 2;";
+        assert_eq!(
+            split_verified(sql).unwrap(),
+            vec![
+                "SELECT 1".to_string(),
+                "UPDATE t SET x = 1 WHERE id = 2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn split_verified_refuses_an_unterminated_quote() {
+        // The lexer cannot know where this statement ends, so it must not
+        // pretend to: guards computed from guessed boundaries approve the
+        // wrong statements.
+        for sql in [
+            "SELECT 1; SELECT 'oops",
+            r#"SELECT 1; SELECT * FROM "oops"#,
+            "SELECT 1; SELECT $t$ oops",
+            "SELECT 1; /* oops",
+        ] {
+            let err = split_verified(sql).unwrap_err();
+            assert!(
+                matches!(err, SplitError::Unterminated(_)),
+                "{sql:?} should be refused as unterminated, got {err:?}"
+            );
+            assert_eq!(err.to_string(), SPLIT_REFUSAL);
+        }
+    }
+
+    #[test]
+    fn split_verified_rejoin_preserves_a_dollar_quoted_body_byte_for_byte() {
+        // The batch paths execute the RE-JOIN, not the original buffer, so a
+        // function body — semicolons, comment markers, blank lines and all —
+        // has to survive the round trip unchanged.
+        let body = "\nBEGIN\n  -- a comment; with a semicolon\n  RETURN 'a''b';\nEND\n";
+        let sql = format!(
+            "SELECT 1;\nCREATE FUNCTION f() RETURNS text AS $fn${body}$fn$ LANGUAGE plpgsql;"
+        );
+        let parts = split_verified(&sql).unwrap();
+        assert_eq!(parts.len(), 2);
+        assert!(
+            parts[1].contains(&format!("$fn${body}$fn$")),
+            "the body must survive verbatim, got {:?}",
+            parts[1]
+        );
+        let rejoined = parts.join(";\n");
+        assert!(rejoined.contains(&format!("$fn${body}$fn$")));
+    }
+
+    #[test]
+    fn split_verified_rejoin_drops_only_comments_and_separators() {
+        let sql = "SELECT 1; /* x */ SELECT 2 -- tail\n; SELECT 3";
+        let parts = split_verified(sql).unwrap();
+        assert_eq!(
+            parts,
+            vec![
+                "SELECT 1".to_string(),
+                "SELECT 2".to_string(),
+                "SELECT 3".to_string()
+            ]
+        );
     }
 
     #[test]

@@ -68,15 +68,25 @@ fn stmt_summary(stmt: &str) -> String {
 /// the non-interactive analogue of the editor's classify→guard step, so a
 /// `safety.toml` rule holds in CI exactly as it does in the TUI. Pure (no I/O)
 /// so it's unit-tested.
+///
+/// On success it returns **the verified statements**, and the caller must run
+/// those rather than the original string — otherwise the server executes text
+/// the classifier never saw. A script `safety::split_verified` cannot account
+/// for is refused outright: guards computed from the wrong statement
+/// boundaries approve the wrong statements.
 pub fn check_batch_safety(
     config: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
     assume_yes: bool,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     use crate::safety::Guard;
-    for stmt in crate::safety::split_statements(sql) {
-        let decision = crate::safety::evaluate(config, db, &stmt);
+    let statements = crate::safety::split_verified(sql).map_err(|e| {
+        tracing::warn!("batch: {e:?}");
+        crate::safety::SPLIT_REFUSAL.to_string()
+    })?;
+    for stmt in &statements {
+        let decision = crate::safety::evaluate(config, db, stmt);
         match decision.guard {
             Guard::Allow => {}
             Guard::Confirm if assume_yes => {}
@@ -86,7 +96,7 @@ pub fn check_batch_safety(
                      — re-run with --yes to allow guarded writes in batch mode (statement: {})",
                     decision.kind.describe(),
                     db,
-                    stmt_summary(&stmt),
+                    stmt_summary(stmt),
                 ));
             }
             Guard::Block => {
@@ -95,12 +105,12 @@ pub fn check_batch_safety(
                      — change this guard to \"confirm\" in safety.toml to permit it (statement: {})",
                     decision.kind.describe(),
                     db,
-                    stmt_summary(&stmt),
+                    stmt_summary(stmt),
                 ));
             }
         }
     }
-    Ok(())
+    Ok(statements)
 }
 
 /// Connect, run `opts.sql`, write the formatted result to `stdout`.
@@ -111,10 +121,17 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // statement should never reach the server. `read_only` and
     // `statement_timeout` are applied server-side at connect; this adds the
     // category guards (drop / unqualified delete / …) the editor enforces.
-    if let Err(msg) = check_batch_safety(&opts.safety, &opts.db, &opts.sql, opts.assume_yes) {
-        eprintln!("error: {msg}");
-        return Ok(1);
-    }
+    //
+    // `checked` is what actually gets sent: the verified statements, re-joined.
+    // Running `opts.sql` instead would let anything the splitter treated as one
+    // statement — but the server treats as several — through unclassified.
+    let checked = match check_batch_safety(&opts.safety, &opts.db, &opts.sql, opts.assume_yes) {
+        Ok(statements) => statements,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return Ok(1);
+        }
+    };
 
     // Discard notices + notifications in batch mode — they'd
     // interleave with the result on stdout. Surface notices on
@@ -151,13 +168,13 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // Multi-statement input (`pgman --batch --sql 'BEGIN; …; COMMIT'`)
     // goes through the simple-query / batch path — `run_statement`
     // uses `client.prepare` under the hood, which the extended-query
-    // protocol rejects for multi-command strings. `safety::split_statements`
+    // protocol rejects for multi-command strings. `safety::split_verified`
     // is the same splitter the interactive editor uses.
-    let statements = crate::safety::split_statements(&opts.sql);
-    let result = if statements.len() > 1 {
-        conn::run_batch(&client, &opts.sql).await
+    let sql = checked.join(";\n");
+    let result = if checked.len() > 1 {
+        conn::run_batch(&client, &sql).await
     } else {
-        conn::run_statement(&client, &opts.sql).await
+        conn::run_statement(&client, &sql).await
     };
     let code = match result {
         Ok(grid) => {
@@ -499,6 +516,61 @@ mod tests {
         let err = check_batch_safety(&cfg, "db", sql, false).unwrap_err();
         assert!(err.contains("--yes"), "got: {err}");
         assert!(check_batch_safety(&cfg, "db", sql, true).is_ok());
+    }
+
+    #[test]
+    fn batch_safety_sees_the_drop_hidden_by_a_dollar_in_an_identifier() {
+        // The security-review reproduction, at the gate that let it through:
+        // the splitter used to read `$b$` as a dollar-quote opener, so the
+        // DROP arrived inside a fragment that classified as a SELECT.
+        let cfg = crate::safety::SafetyConfig::default();
+        let err = check_batch_safety(
+            &cfg,
+            "db",
+            "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE users",
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("DROP"), "got: {err}");
+    }
+
+    #[test]
+    fn batch_safety_sees_the_drop_hidden_by_a_quoted_identifier() {
+        let cfg = crate::safety::SafetyConfig::default();
+        let err = check_batch_safety(
+            &cfg,
+            "db",
+            r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE users"#,
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("DROP"), "got: {err}");
+    }
+
+    #[test]
+    fn batch_safety_refuses_a_script_it_cannot_split() {
+        // Fail closed: an unterminated literal means the boundaries are a
+        // guess, so there is nothing to vouch for. --yes does not help.
+        let cfg = crate::safety::SafetyConfig::default();
+        for assume_yes in [false, true] {
+            let err =
+                check_batch_safety(&cfg, "db", "SELECT 1; SELECT 'oops", assume_yes).unwrap_err();
+            assert_eq!(err, crate::safety::SPLIT_REFUSAL);
+        }
+    }
+
+    #[test]
+    fn batch_safety_returns_the_statements_it_checked() {
+        // The caller runs these, not the original string — comments and the
+        // original separators are gone, and what is left is exactly what was
+        // classified.
+        let cfg = crate::safety::SafetyConfig::default();
+        let checked =
+            check_batch_safety(&cfg, "db", "SELECT 1; -- note\nSELECT 2;", false).unwrap();
+        assert_eq!(
+            checked,
+            vec!["SELECT 1".to_string(), "SELECT 2".to_string()]
+        );
     }
 
     #[test]
