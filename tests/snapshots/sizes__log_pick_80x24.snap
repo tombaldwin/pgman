@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter load · c toggle clusters · esc ca
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter load · F1 +3 more

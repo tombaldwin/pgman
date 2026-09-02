@@ -9,7 +9,7 @@ expression: dump(&buf)
 │  WH┌ active sessions — pg_stat_activity — r refresh · q close ──────────────────────────────────────────────────┐    │
 │  OR│     pid              user/app       state    age(s)   blocked  query                                       │    │
 └────│    1234            alice/psql      active      12.5      5678  UPDATE accounts SET balance = 0             │────┘
-┌ res│    5678             bob/pgman  idle in transaction     300.0         -  BEGIN                              │────┐
+┌ res│    5678             bob/pgman  idle in tx     300.0         -  BEGIN                                       │────┐
 │id  │                                                                                                            │    │
 │1   │                                                                                                            │    │
 │2   │                                                                                                            │    │

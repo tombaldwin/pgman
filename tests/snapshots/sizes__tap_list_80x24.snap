@@ -25,4 +25,4 @@ expression: dump(&buf)
 │  └───────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear
+ RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · F1 +4 more
