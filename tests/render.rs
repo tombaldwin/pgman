@@ -946,3 +946,50 @@ fn log_picker_summary_comes_from_the_cluster_cache() {
         "the summary re-detected instead of reading the cache:\n{rendered}"
     );
 }
+
+/// `--log` accepts a file that is not a log at all. Tokenising a
+/// 200 MB one produced 68 M highlight spans and a 1.9 GB RSS — every
+/// frame, for a pane that shows ten lines. Above 256 KiB the editor
+/// renders plain and says so in its title.
+#[test]
+fn large_editor_buffer_renders_plain_with_a_note_in_the_title() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    // 300 KiB of SQL-ish text: past the cap, and every line would
+    // otherwise be tokenised and classified against the schema cache.
+    a.editor.buffer = "select id, name from users where id = 1;\n".repeat(7_800);
+    assert!(a.editor.buffer.len() > 300 * 1024);
+    a.editor.cursor = 0;
+
+    let buf = render(&mut a, 120, 40);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("(large buffer — highlighting off)"),
+        "expected the plain-render note in the editor title:\n{}",
+        rendered.lines().take(3).collect::<Vec<_>>().join("\n")
+    );
+    // The buffer still renders — plain, not blank.
+    assert!(
+        rendered.contains("select id, name from users where id = 1;"),
+        "the buffer did not render at all"
+    );
+    // And nothing was cached for it.
+    assert!(
+        a.editor_highlight_cache.is_none(),
+        "a 300 KiB buffer was tokenised and cached anyway"
+    );
+}
+
+/// Under the cap nothing changes: highlighting stays on and the title
+/// carries no note.
+#[test]
+fn ordinary_editor_buffer_keeps_its_highlighting() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select id from users;".into();
+    a.editor.cursor = 0;
+    let buf = render(&mut a, 120, 40);
+    let rendered = dump(&buf);
+    assert!(!rendered.contains("large buffer"), "{rendered}");
+    assert!(a.editor_highlight_cache.is_some());
+}

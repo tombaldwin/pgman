@@ -1,5 +1,13 @@
 use super::*;
 
+/// Above this many bytes the editor renders the buffer plain: no
+/// syntax highlighting, no completion popup. `--log` happily accepts a
+/// file that is not a log at all, and tokenising a 200 MB one produced
+/// 68 M highlight spans and a 1.9 GB RSS — every frame, for a pane
+/// that shows at most ten lines of it. 256 KiB is far past any
+/// hand-written statement and far short of that.
+pub(super) const PLAIN_ABOVE_BYTES: usize = 256 * 1024;
+
 /// Walk the highlighter spans that overlap `[line_start, line_end)`,
 /// emitting one styled ratatui `Span` per highlight segment. When
 /// `cursor_byte_in_line` is `Some`, that single char inside the line
@@ -165,6 +173,7 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         "editor (e to focus)".to_string()
     };
+    let plain_only = app.editor.buffer.len() > PLAIN_ABOVE_BYTES;
     // Refresh the cached "whole buffer looks like a log" verdict only when
     // the buffer changed since last frame — same reasoning as the
     // highlight cache just below: `detect_log` is cheap per call, but not
@@ -185,13 +194,22 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             kind.label()
         ));
     }
+    // The title says so when highlighting is off, so the flat colour
+    // reads as a decision rather than as a broken highlighter.
+    let mut title_spans = vec![Span::styled(
+        format!(" {title_text} "),
+        Style::default().fg(theme.title),
+    )];
+    if plain_only {
+        title_spans.push(Span::styled(
+            "(large buffer — highlighting off) ",
+            Style::default().fg(theme.muted),
+        ));
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            format!(" {title_text} "),
-            Style::default().fg(theme.title),
-        ));
+        .title(Line::from(title_spans));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -200,7 +218,7 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     // The lex + O(identifiers × schema) classify otherwise re-ran every frame —
     // including ≈9fps during any animation — for an unchanged buffer. Done
     // before the `&app.editor.buffer` borrow below so the cache write is clean.
-    if focused {
+    if focused && !plain_only {
         let stale = match &app.editor_highlight_cache {
             Some((b, _)) => b != &app.editor.buffer,
             None => true,
@@ -253,7 +271,7 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     // is `Copy`, just byte offsets + a class). Unfocused panes get the muted
     // text colour for everything — syntax highlighting is for the active edit
     // surface — so they don't populate or read the cache.
-    let highlight_spans: Vec<crate::query::highlight::Span> = if focused {
+    let highlight_spans: Vec<crate::query::highlight::Span> = if focused && !plain_only {
         app.editor_highlight_cache
             .as_ref()
             .map(|(_, spans)| spans.clone())
@@ -421,6 +439,12 @@ fn fit_completion_row(
 /// list is longer than the popup. Only the active cycle is rendered;
 /// any non-Tab editor key dismisses (see `App::editor_key`).
 pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area: Rect, app: &App) {
+    // Same cap as the highlighter: over it the editor is a plain
+    // viewer, and a completion popup over a 200 MB paste is neither
+    // wanted nor affordable.
+    if app.editor.buffer.len() > PLAIN_ABOVE_BYTES {
+        return;
+    }
     let Some(cycle) = app.completion.as_ref() else {
         return;
     };
