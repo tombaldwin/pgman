@@ -66,7 +66,8 @@ the project works.
 
 ```toml
 # .pgman/pgman.toml — commit this. No passwords here.
-# Passwords come from PGPASSWORD or per-connection password_env.
+# Passwords come from the variable a connection's password_env names.
+# PGPASSWORD is only used with --dsn, never for a discovered connection.
 
 [[connections]]
 name = "local"
@@ -76,18 +77,20 @@ url  = "postgres://postgres@localhost:5432/myapp"
 name = "staging"
 url  = "postgres://stg-db.internal:5432/myapp"
 user = "app"
-password_env = "STAGING_DB_PASSWORD"   # optional override of PGPASSWORD
+password_env = "STAGING_DB_PASSWORD"   # env var holding the password
 
-# Per-database safety overrides. Project values win on collision, so you can
-# commit just `[safety.databases.production]` and keep your personal
-# `~/.config/pgman/safety.toml` defaults for everything else.
+# Per-database safety overrides. These can only TIGHTEN your personal
+# `~/.config/pgman/safety.toml` — a committed file can't relax your guard
+# rails. Commit just `[safety.databases.production]` and your own defaults
+# still apply everywhere else.
 [safety.databases.production]
 read_only = true
 statement_timeout_ms = 5000
 ```
 
 Project connections show up in the startup picker alongside any IntelliJ
-data sources found in `.idea/dataSources.xml`.
+data sources found in `.idea/dataSources.xml`. Nothing in that picker
+connects until you choose it — see [Safety](#safety).
 
 ## Safety
 
@@ -98,8 +101,14 @@ unqualified `DELETE`, and wrap DML in a transaction you can roll back. (This is
 a guard rail, not a replacement for least-privilege database roles — scope the
 role you connect with.)
 
-Two things worth knowing:
+Three things worth knowing:
 
+- **A checkout you didn't write is untrusted.** pgman discovers connections
+  from files in the working tree, so nothing it finds there connects without a
+  keypress, `PGPASSWORD` is only used with `--dsn`, and a project's `[safety]`
+  block can only *tighten* your own guard rails — never relax them. Full trust
+  model in
+  [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
 - **TLS:** `sslmode=require` / `prefer` encrypt the connection but do **not**
   verify the server certificate (matching libpq). Use `sslmode=verify-full` on
   untrusted networks.

@@ -24,6 +24,19 @@ class:
 - **Credentials are never logged.** Resolved passwords/tokens are kept out of
   `tracing` output and the UI; only redacted DSNs (`postgres://user:***@host/db`)
   and credential *provenance* are shown or logged.
+- **Anything discovered in the working tree is untrusted.** pgman reads
+  connection details from `.pgman/pgman.toml`, `application*.yml` and
+  `.idea/dataSources.xml`, walking up from the current directory — so running
+  it inside a checkout you didn't write means the repo's author chose those
+  hosts. Nothing discovered connects without a keypress (a single candidate
+  still lands in the picker), `PGPASSWORD` is only ever applied to a `--dsn`,
+  a `${…}` placeholder is never resolved into a URL's host or port, and a
+  discovered `ssh_tunnel` is confirmed before `ssh` runs. See
+  [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
+- **A project's safety overrides can only tighten yours.** A committed
+  `[safety]` block in `.pgman/pgman.toml` merges field-by-field into
+  `~/.config/pgman/safety.toml` taking the more restrictive value each time; a
+  looser one is ignored and logged. A repo cannot disarm your guard rails.
 - **`sslmode=require` / `prefer` / `allow` encrypt without verifying the
   server certificate** (matching libpq semantics). Use `sslmode=verify-full`
   on untrusted networks where you need certificate + hostname verification.
