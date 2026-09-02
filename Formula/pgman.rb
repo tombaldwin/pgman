@@ -7,15 +7,16 @@
 #   brew install pgman
 #
 # pgman has not had a first release yet, so every sha256 below is the
-# placeholder `0000…0000`. Cutting v0.2.0 (the first release): run
-# `scripts/update-formula.sh v0.2.0` — it computes SHA-256s from the
+# placeholder `0000…0000`. Cutting v0.1.0 (the first release — 0.1.0 was
+# never tagged or published, so it's the version, not 0.2.0): run
+# `scripts/update-formula.sh v0.1.0` — it computes SHA-256s from the
 # GitHub Release tarballs and writes both this file and the tap's
 # Formula/pgman.rb in one go, creating the tap entry if it doesn't
 # exist yet.
 class Pgman < Formula
   desc "k9s-style Postgres TUI for Java/AWS shops"
   homepage "https://github.com/tombaldwin/pgman"
-  version "0.2.0"
+  version "0.1.0"
   license "MIT OR Apache-2.0"
 
   if OS.mac?
@@ -42,7 +43,7 @@ class Pgman < Formula
   end
 
   test do
-    # pgman prints "pgman 0.2.0 · beta" — a substring match, since the
+    # pgman prints "pgman 0.1.0 · beta" — a substring match, since the
     # trailing beta tag isn't part of the version this formula tracks.
     assert_match "pgman #{version}", shell_output("#{bin}/pgman --version")
   end
