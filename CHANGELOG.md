@@ -21,6 +21,23 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **First-minute polish, found by rendering every screen at four
+  terminal sizes** (`tests/sizes.rs`, 144 snapshots, now a CI gate):
+  the footer clipped key hints mid-word at 80 columns (now sheds whole
+  hints and says `F1 +N more`), and clipped status and error lines the
+  same way (now ellipsised so the action keys survive); the help
+  overlay wrapped descriptions to the left margin with no key beside
+  them; the sessions panel sheared on `idle in transaction`; the
+  slow-queries divider did not join its border; the schema wizard and
+  the schema browser cut text mid-word with no ellipsis, and the
+  browser's tree ran into its detail pane; the completion popup fused
+  with the result panel's border; the safety confirm modal showed a
+  Rust enum (`Delete { has_where: false }`) instead of a sentence; the
+  connection picker said "no connection — start pgman with --dsn" above
+  a picker offering connections.
+- **The splash held for three seconds** even when the connection had
+  resolved or the picker was the landing screen. Now a 600 ms floor,
+  dismissed early by either, or by any key.
 - **A yanked `chacha20` 0.10.1**, pulled in transitively via `rand` →
   `postgres-protocol`, had `cargo-deny` red. Fixed with
   `cargo update -p chacha20` to 0.10.2.
@@ -41,6 +58,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **A start card on connect** instead of a grid of database names.
+  Connection, databases and sizes, the six main keys, and the two
+  things nothing else does: `F8` logs → SQL and `F4` JDBC tap.
+- **Pasting a log into the editor is recognised** — the status line
+  and editor title say "looks like a Hibernate log · ctrl-l / F8 to
+  reconstruct queries", so the headline feature no longer depends on
+  knowing it exists.
+- **`pgman --log PATH`** (`-` for stdin) opens straight into the
+  reconstructed queries from a Hibernate or Postgres server log.
 - **End-to-end coverage that the binary honours the batch safety gate.**
   Previously tested only at the unit level — the two tests above were
   covering it by accident, and by failing.
