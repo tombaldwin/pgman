@@ -100,13 +100,31 @@ impl InstallChannel {
     }
 }
 
+/// Resolve `exe`'s symlinks (falling back to `exe` itself if that
+/// fails — e.g. it doesn't exist), then classify it. Split out of
+/// `detect_install_channel` so a test can drive the symlink
+/// resolution against a real scratch symlink without depending on
+/// `std::env::current_exe()`.
+///
+/// Homebrew's Intel-macOS layout symlinks `/usr/local/bin/pgman` into
+/// the Cellar (`/usr/local/Cellar/pgman/<version>/bin/pgman`), and
+/// macOS doesn't resolve that for us — `current_exe()` returns the
+/// symlink path, which `InstallChannel::detect`'s string match
+/// against `/Cellar/` would miss entirely, misclassifying a Homebrew
+/// install as `Standalone` and sending `--upgrade` to the releases
+/// page instead of running `brew upgrade`.
+fn detect_resolved(exe: &Path, manifest_is_git_tree: bool) -> InstallChannel {
+    let resolved = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+    InstallChannel::detect(&resolved, manifest_is_git_tree)
+}
+
 /// Impure wrapper around [`InstallChannel::detect`] — resolves the
-/// running binary's path and whether the compiled-in manifest dir is
-/// still a git working tree.
+/// running binary's path (symlinks and all) and whether the
+/// compiled-in manifest dir is still a git working tree.
 pub fn detect_install_channel() -> InstallChannel {
     let exe = std::env::current_exe().unwrap_or_default();
     let manifest_is_git_tree = Path::new(crate::upgrade::SOURCE_PATH).join(".git").exists();
-    InstallChannel::detect(&exe, manifest_is_git_tree)
+    detect_resolved(&exe, manifest_is_git_tree)
 }
 
 /// Pull `crate.max_stable_version` out of a crates.io
@@ -122,10 +140,23 @@ pub fn parse_crates_io_body(body: &str) -> Option<String> {
 
 /// Split a version into its numeric core (padded/truncated to three
 /// components) and an optional pre-release tail (the part after the
-/// first `-`). Non-numeric or missing core components parse as `0` —
-/// callers only ever feed this well-formed crates.io version strings,
-/// and a best-effort parse degrades gracefully rather than panicking.
+/// first `-`). Build metadata (a `+` and everything after — semver
+/// permits it after the core or after a pre-release tail, e.g.
+/// `0.2.1+meta` or `0.2.0-rc1+build.5`) is stripped first and
+/// otherwise ignored entirely: semver precedence never considers it,
+/// and treating it as significant is exactly the bug this comment is
+/// here to prevent regressing — `"0.2.1+meta"` was previously parsed
+/// with the core `"1+meta"` for its patch component, which fails to
+/// parse as a number and silently falls back to `0`, so `0.2.1+meta`
+/// compared equal to `0.2.0` instead of newer. Non-numeric or missing
+/// core components (still) parse as `0` — callers only ever feed this
+/// well-formed crates.io version strings, and a best-effort parse
+/// degrades gracefully rather than panicking.
 fn parse_version(v: &str) -> ([u64; 3], Option<&str>) {
+    let v = match v.split_once('+') {
+        Some((base, _build_metadata)) => base,
+        None => v,
+    };
     let (core, pre) = match v.split_once('-') {
         Some((c, p)) => (c, Some(p)),
         None => (v, None),
@@ -183,14 +214,21 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
     }
 }
 
-/// True when a check is due: never checked, or the last check was
-/// more than six hours ago. Pure so the six-hour rule is testable
-/// without a clock.
+/// True when a check is due: never checked, the last check was more
+/// than six hours ago, or the last check's timestamp is in the
+/// future. Pure so the six-hour rule is testable without a clock.
+///
+/// The future-timestamp case matters because `now.saturating_sub(t)`
+/// alone would read as "0 seconds ago" (never over the threshold) for
+/// any `t > now` — a cache written by a machine with a wrong clock,
+/// or restored from a backup/snapshot with a later timestamp, would
+/// then permanently disable the check: every subsequent run sees a
+/// "fresh" cache it can never age out of.
 pub fn should_check(last_checked_at: Option<u64>, now: u64) -> bool {
     const SIX_HOURS_SECS: u64 = 6 * 60 * 60;
     match last_checked_at {
         None => true,
-        Some(t) => now.saturating_sub(t) > SIX_HOURS_SECS,
+        Some(t) => now < t || now.saturating_sub(t) > SIX_HOURS_SECS,
     }
 }
 
@@ -235,12 +273,23 @@ fn user_agent() -> String {
     )
 }
 
+/// A crates.io `/api/v1/crates/<name>` response is a few hundred
+/// bytes of JSON. Cap what we're willing to buffer well above that
+/// (but nowhere near unbounded) so a compromised/spoofed endpoint
+/// can't hand this a multi-gigabyte body and blow up memory.
+const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
+
 /// One crates.io GET, 10-second cap. Any failure (network, non-2xx,
-/// unparseable body) logs at `debug` and returns `None` — this must
-/// never be noisy or block the caller.
+/// oversize or unparseable body) logs at `debug` and returns `None` —
+/// this must never be noisy or block the caller.
 async fn fetch_latest_version() -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        // crates.io's API never redirects; refusing to follow one
+        // means a MITM or DNS-hijacked response can't quietly send
+        // this client's User-Agent (or, if a redirect could ever
+        // carry one, a cookie/auth header) somewhere else entirely.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| tracing::debug!("update check: client build failed: {e}"))
         .ok()?;
@@ -260,14 +309,37 @@ async fn fetch_latest_version() -> Option<String> {
         tracing::debug!("update check: crates.io returned {}", resp.status());
         return None;
     }
-    let body = match resp.text().await {
+    // Reject anything claiming to be oversize before buffering it at
+    // all. A response with no `Content-Length` (chunked) still gets
+    // the post-read length check below.
+    if let Some(len) = resp.content_length() {
+        if len > MAX_RESPONSE_BYTES {
+            tracing::debug!("update check: response body too large ({len} bytes), ignoring");
+            return None;
+        }
+    }
+    let bytes = match resp.bytes().await {
         Ok(b) => b,
         Err(e) => {
             tracing::debug!("update check: could not read response body: {e}");
             return None;
         }
     };
-    let latest = parse_crates_io_body(&body);
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        tracing::debug!(
+            "update check: response body too large ({} bytes), ignoring",
+            bytes.len()
+        );
+        return None;
+    }
+    let body = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("update check: response body was not UTF-8: {e}");
+            return None;
+        }
+    };
+    let latest = parse_crates_io_body(body);
     if latest.is_none() {
         tracing::debug!("update check: could not parse crates.io response");
     }
@@ -360,6 +432,46 @@ mod tests {
         assert_eq!(InstallChannel::detect(p, false), InstallChannel::Standalone);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn detect_resolved_follows_a_symlink_into_the_cellar() {
+        // Homebrew's Intel-macOS layout: `/usr/local/bin/pgman` is a
+        // symlink into the Cellar, and macOS doesn't resolve that for
+        // `current_exe()`. Build a real scratch symlink so this
+        // exercises actual `canonicalize`, not just the string match.
+        let dir =
+            std::env::temp_dir().join(format!("pgman-update-check-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cellar_bin_dir = dir.join("Cellar/pgman/0.1.0/bin");
+        std::fs::create_dir_all(&cellar_bin_dir).unwrap();
+        let real_binary = cellar_bin_dir.join("pgman");
+        std::fs::write(&real_binary, b"not a real binary, just needs to exist").unwrap();
+        let bin_dir = dir.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let symlink = bin_dir.join("pgman");
+        std::os::unix::fs::symlink(&real_binary, &symlink).unwrap();
+
+        assert_eq!(
+            detect_resolved(&symlink, false),
+            InstallChannel::Homebrew,
+            "a symlink resolving into /Cellar/ must classify as Homebrew"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detect_resolved_falls_back_to_the_given_path_when_it_does_not_exist() {
+        // canonicalize fails for a path that doesn't exist (the
+        // common case in CI/sandboxes where current_exe() can behave
+        // oddly, or plain test fixtures like the Standalone tests
+        // above) — detect_resolved must fall back to classifying the
+        // path as given, not silently swallow the whole classification.
+        let p = Path::new("/usr/local/bin/pgman-definitely-does-not-exist-xyz");
+        assert_eq!(detect_resolved(p, false), InstallChannel::Standalone);
+    }
+
     #[test]
     fn upgrade_command_is_concrete_per_channel() {
         assert!(InstallChannel::Checkout
@@ -435,6 +547,22 @@ mod tests {
         assert!(is_newer("0.2.0-rc1", "0.1.0"));
     }
 
+    #[test]
+    fn is_newer_ignores_build_metadata() {
+        // Regression: parse_version used to split only on '-', so
+        // "0.2.1+meta" parsed its patch component as "1+meta", which
+        // fails to parse as u64 and silently defaulted to 0 — making
+        // 0.2.1+meta compare *equal* to 0.2.0 instead of newer.
+        assert!(is_newer("0.2.1+meta", "0.2.0"));
+        // Build metadata alone must not make an otherwise-equal
+        // version look newer.
+        assert!(!is_newer("0.2.0+abc", "0.2.0"));
+        assert!(!is_newer("0.2.0", "0.2.0+abc"));
+        // Build metadata after a pre-release tail (rc1+build.5) is
+        // also stripped, not folded into precedence comparison.
+        assert!(is_newer("0.2.0-rc2+build.9", "0.2.0-rc1+build.1"));
+    }
+
     // ---- should_check ----
 
     #[test]
@@ -453,6 +581,17 @@ mod tests {
     fn should_check_true_after_six_hours() {
         let now = 1_000_000u64;
         assert!(should_check(Some(now - 6 * 3600 - 1), now));
+    }
+
+    #[test]
+    fn should_check_true_when_last_checked_is_in_the_future() {
+        // Regression: `now.saturating_sub(t)` alone reads a future
+        // `t` as "0 seconds ago" — never over the six-hour threshold
+        // — which would permanently disable the check for a cache
+        // written by a machine with a wrong clock, or restored from a
+        // backup/snapshot with a later timestamp than "now".
+        let now = 1_000_000u64;
+        assert!(should_check(Some(now + 1_000_000), now));
     }
 
     // ---- cache round-trip ----
