@@ -710,11 +710,29 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
 
     let visible_h = inner.height as usize;
     let scroll = scroll_offset(app.sessions.cursor, visible_h);
+    // Size the state column from the (abbreviated) states actually shown
+    // in this viewport, so a row with a long state value (e.g. "idle in
+    // transaction") doesn't shear the columns after it out of alignment
+    // with the fixed-width `{:>10}` the header used to hardcode.
+    let state_w = sessions_state_col_width(
+        app.sessions
+            .rows
+            .iter()
+            .skip(scroll)
+            .take(visible_h.saturating_sub(1))
+            .map(|r| r.state.as_str()),
+    );
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
-            "  {:>6}  {:>20}  {:>10}  {:>8}  {:>8}  {}",
-            "pid", "user/app", "state", "age(s)", "blocked", "query"
+            "  {:>6}  {:>20}  {:>state_w$}  {:>8}  {:>8}  {}",
+            "pid",
+            "user/app",
+            "state",
+            "age(s)",
+            "blocked",
+            "query",
+            state_w = state_w
         ),
         Style::default()
             .fg(theme.muted)
@@ -758,12 +776,44 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             "-"
         };
         let line = format!(
-            "  {:>6}  {:>20}  {:>10}  {:>8.1}  {:>8}  {}",
-            row.pid, user_app, row.state, row.age_secs, blocked_disp, one_line
+            "  {:>6}  {:>20}  {:>state_w$}  {:>8.1}  {:>8}  {}",
+            row.pid,
+            user_app,
+            abbreviate_state(&row.state),
+            row.age_secs,
+            blocked_disp,
+            one_line,
+            state_w = state_w
         );
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Shorten well-known long `pg_stat_activity.state` values so the
+/// sessions panel's state column stays narrow at typical terminal
+/// widths. Unknown states pass through unchanged.
+fn abbreviate_state(state: &str) -> &str {
+    match state {
+        "idle in transaction" => "idle in tx",
+        "idle in transaction (aborted)" => "idle in tx (aborted)",
+        "fastpath function call" => "fastpath",
+        other => other,
+    }
+}
+
+/// State column width for the sessions panel: the widest abbreviated
+/// state among the rows actually shown, floored at the header label's
+/// width ("state" = 5) and capped so one long-tailed state can't blow
+/// out the rest of the row.
+fn sessions_state_col_width<'a>(states: impl Iterator<Item = &'a str>) -> usize {
+    const HEADER: usize = 5;
+    const CAP: usize = 22;
+    states
+        .map(|s| abbreviate_state(s).chars().count())
+        .max()
+        .unwrap_or(0)
+        .clamp(HEADER, CAP)
 }
 
 /// Saved-queries panel — list view with body preview for the
@@ -1372,6 +1422,49 @@ mod tests {
     #[test]
     fn description_split_none_when_only_single_spaces() {
         assert_eq!(description_split("a b c d"), None);
+    }
+
+    #[test]
+    fn abbreviate_state_shortens_known_long_states() {
+        assert_eq!(abbreviate_state("idle in transaction"), "idle in tx");
+        assert_eq!(
+            abbreviate_state("idle in transaction (aborted)"),
+            "idle in tx (aborted)"
+        );
+        assert_eq!(abbreviate_state("fastpath function call"), "fastpath");
+    }
+
+    #[test]
+    fn abbreviate_state_passes_through_unknown_states() {
+        assert_eq!(abbreviate_state("active"), "active");
+        assert_eq!(abbreviate_state("idle"), "idle");
+    }
+
+    #[test]
+    fn sessions_state_col_width_floors_at_the_header_width() {
+        // Both states are shorter than "state" (5 chars) — the column
+        // still needs to fit the header label.
+        assert_eq!(sessions_state_col_width(["idle", ""].into_iter()), 5);
+    }
+
+    #[test]
+    fn sessions_state_col_width_grows_for_a_long_abbreviated_state() {
+        // "idle in transaction" -> "idle in tx" (10 chars) — wider than
+        // the 5-char header floor.
+        assert_eq!(
+            sessions_state_col_width(["active", "idle in transaction"].into_iter()),
+            10
+        );
+    }
+
+    #[test]
+    fn sessions_state_col_width_caps_at_22() {
+        assert_eq!(
+            sessions_state_col_width(
+                ["a very extremely long and unusual custom state value"].into_iter()
+            ),
+            22
+        );
     }
 
     #[test]
