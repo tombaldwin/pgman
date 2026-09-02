@@ -81,6 +81,16 @@ impl App {
     /// query at connect time — as a result grid. Sends no query of its
     /// own.
     fn dispatch_list_databases(&mut self) {
+        if self.databases.is_empty() {
+            // Nothing to show. Replacing the grid with a header-only
+            // one would swap the start card ("nothing has run yet") for
+            // a permanent empty two-column result — `Grid.columns`
+            // being non-empty is exactly what tells those apart, and
+            // nothing puts the card back. Say it in the status line and
+            // leave the body alone.
+            self.last_status = Some("\\l → no databases (connect first)".into());
+            return;
+        }
         self.grid = Grid {
             columns: vec!["database".into(), "size".into()],
             rows: self
@@ -93,11 +103,7 @@ impl App {
         self.grid_state
             .select(if self.grid.is_empty() { None } else { Some(0) });
         self.reset_grid_view();
-        self.last_status = Some(if self.databases.is_empty() {
-            "\\l → no databases (connect first)".into()
-        } else {
-            format!("\\l → {} database(s)", self.databases.len())
-        });
+        self.last_status = Some(format!("\\l → {} database(s)", self.databases.len()));
     }
 
     /// `\c` / `\c <name>` handler.
