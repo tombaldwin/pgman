@@ -2459,7 +2459,7 @@ impl App {
         // the batch path which uses `batch_execute` and classifies each part.
         let statements = safety::split_statements(&sql);
         if statements.len() > 1 {
-            return self.request_run_batch(sql, statements, kind, db.to_string());
+            return self.request_run_batch(sql, kind, db.to_string());
         }
 
         let decision = safety::evaluate(&self.safety_config, db, &sql);
@@ -2517,13 +2517,14 @@ impl App {
 
     /// Multi-statement run: classify each piece, take the most-restrictive
     /// guard, and either reject, prompt with a summary, or batch-execute.
-    fn request_run_batch(
-        &mut self,
-        sql: String,
-        statements: Vec<String>,
-        kind: RunKind,
-        db: String,
-    ) {
+    ///
+    /// Two invariants hold here, and the bypass this fixes broke both. The
+    /// script is split by `safety::split_verified`, which refuses a script it
+    /// cannot account for rather than guessing at the boundaries; and what
+    /// gets executed is the **re-joined verified statements**, not the
+    /// original buffer, so the server runs exactly the text the classifier
+    /// saw.
+    fn request_run_batch(&mut self, sql: String, kind: RunKind, db: String) {
         if !matches!(kind, RunKind::Run) {
             self.last_error = Some(format!(
                 "{} not supported for multi-statement scripts",
@@ -2531,6 +2532,16 @@ impl App {
             ));
             return;
         }
+        let statements = match safety::split_verified(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("batch run refused: {e:?}");
+                self.last_error = Some(safety::SPLIT_REFUSAL.to_string());
+                return;
+            }
+        };
+        // From here on, `sql` is the checked text — never the raw buffer.
+        let sql = statements.join(";\n");
         let decisions: Vec<Decision> = statements
             .iter()
             .map(|s| safety::evaluate(&self.safety_config, &db, s))

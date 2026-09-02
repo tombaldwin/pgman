@@ -5653,3 +5653,80 @@ fn demo_confirmed_write_is_answered_synthetically() {
         "a confirmed demo write must yield a grid"
     );
 }
+
+// --- the multi-statement run path: split, verify, run what was checked ---
+
+#[test]
+fn demo_batch_hiding_a_drop_behind_a_dollar_identifier_is_refused() {
+    // The security-review reproduction, driven through the real key path.
+    // `a$b$c` is one identifier, so this is three statements and the third
+    // is a DROP — blocked by default. Before the lexer fix the splitter saw
+    // two SELECTs and ran the DROP along with them.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE users");
+    assert!(
+        a.msg_rx.as_mut().unwrap().try_recv().is_err(),
+        "a blocked batch must not queue a run"
+    );
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("batch blocked by safety")
+            && err.contains("3 statements")
+            && err.contains("Drop"),
+        "expected the batch block to see three statements and name the Drop, \
+         got {err:?}"
+    );
+}
+
+#[test]
+fn demo_batch_hiding_a_drop_behind_a_quoted_identifier_is_refused() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(
+        &mut a,
+        r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE users"#,
+    );
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("batch blocked by safety")
+            && err.contains("3 statements")
+            && err.contains("Drop"),
+        "expected the batch block to see three statements and name the Drop, \
+         got {err:?}"
+    );
+}
+
+#[test]
+fn demo_batch_the_splitter_cannot_verify_is_refused() {
+    // Fail closed. An unterminated literal means the statement boundaries
+    // are a guess, and a guard computed from a guess is not a guard.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "SELECT 1; SELECT 'oops");
+    assert!(
+        a.msg_rx.as_mut().unwrap().try_recv().is_err(),
+        "an unverifiable script must not run"
+    );
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(crate::safety::SPLIT_REFUSAL),
+        "the refusal must tell the operator what to do instead"
+    );
+    assert_ne!(a.mode, Mode::Confirm, "and it must not offer a confirm");
+}
+
+#[test]
+fn demo_batch_runs_the_statements_it_checked_not_the_raw_buffer() {
+    // What reaches the server is the re-join of the verified statements, so
+    // there is no text in flight that the classifier never saw.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(
+        &mut a,
+        "SELECT 1; /* note */ UPDATE users SET active = false WHERE id = 1 -- tail",
+    );
+    assert_eq!(a.mode, Mode::Confirm, "a guarded batch must prompt first");
+    let pending = a.pending_run.as_ref().expect("a pending batch run");
+    assert!(pending.is_batch);
+    assert_eq!(
+        pending.sql,
+        "SELECT 1;\nUPDATE users SET active = false WHERE id = 1"
+    );
+}
