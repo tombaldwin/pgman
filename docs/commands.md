@@ -65,6 +65,12 @@ than sent to the server.
 pgman [OPTIONS]
 ```
 
+pgman is a TUI: every path except `--batch`, `--upgrade`, `--version`, and
+`--help` needs a real terminal on both stdin and stdout. A launch from a
+pipe or script without one is refused with `pgman needs a terminal. For
+pipes and scripts use --batch (see pgman --help).` (exit code `2`) rather
+than the raw crossterm error a bare terminal probe used to surface.
+
 | Flag | Behaviour |
 |---|---|
 | `--dsn <DSN>` | Connect using a `postgres://` DSN. |
