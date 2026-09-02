@@ -872,3 +872,77 @@ fn help_anchor_is_clamped_when_stored_not_only_when_rendered() {
         "expected the last section to anchor at the bottom of the range"
     );
 }
+
+/// The log picker scrolls its rows to follow the cursor. Without an
+/// offset only the first screenful of picks was ever drawn, so `j` /
+/// `G` walked the index — and the title's `n/total` — off the bottom
+/// of a popup that never moved.
+#[test]
+fn log_picker_scrolls_to_keep_the_focused_row_visible() {
+    use pgman::query::reconstruct::{ReconstructedQuery, Source};
+    let mut a = settle_app();
+    a.mode = pgman::app::Mode::LogPick;
+    a.log_pick.picks = (0..100)
+        .map(|i| ReconstructedQuery {
+            raw_sql: format!("select * from t where id = {i}"),
+            runnable_sql: format!("select * from t{i} where id = {i}"),
+            params: Vec::new(),
+            source: Source::HibernateLog,
+            src_line: i,
+        })
+        .collect();
+    a.log_pick.index = 50;
+
+    let buf = render(&mut a, 120, 40);
+    let rendered = dump(&buf);
+    assert!(
+        rendered.contains("select * from t50 where id = 50"),
+        "row 50 of 100 is off-screen:\n{rendered}"
+    );
+    // The focused row carries the ▶ marker, and it is the one shown.
+    assert!(
+        rendered.contains("▶ [hibernate] select * from t50"),
+        "the focused row is not the marked one:\n{rendered}"
+    );
+    // The title agrees with what is drawn.
+    assert!(rendered.contains("log picks · 51/100"), "{rendered}");
+    // And the rows above the window really did scroll away.
+    assert!(
+        !rendered.contains("select * from t0 where id = 0"),
+        "row 0 should have scrolled out of view:\n{rendered}"
+    );
+}
+
+/// The picker's triage header reads the `log_pick.clusters` cache —
+/// written when the picks are set and on every view toggle — instead
+/// of re-running `nplus1::summarize`, which re-fingerprints and
+/// re-clusters the whole import on every frame, animation ticks
+/// included. Pinned by giving the cache a value that a live re-detect
+/// would not produce.
+#[test]
+fn log_picker_summary_comes_from_the_cluster_cache() {
+    use pgman::query::reconstruct::{ReconstructedQuery, Source};
+    let mut a = settle_app();
+    a.mode = pgman::app::Mode::LogPick;
+    // Three copies of one statement: a live re-detect finds one
+    // cluster of three.
+    a.log_pick.picks = (0..3)
+        .map(|i| ReconstructedQuery {
+            raw_sql: "select * from item where order_id = ?".into(),
+            runnable_sql: format!("select * from item where order_id = {i}"),
+            params: Vec::new(),
+            source: Source::HibernateLog,
+            src_line: i,
+        })
+        .collect();
+    // The cache says otherwise. Rendering from it is the whole point.
+    a.log_pick.clusters = Vec::new();
+
+    let buf = render(&mut a, 120, 40);
+    let rendered = dump(&buf);
+    assert!(rendered.contains("3 queries"), "{rendered}");
+    assert!(
+        !rendered.contains("N+1 cluster"),
+        "the summary re-detected instead of reading the cache:\n{rendered}"
+    );
+}
