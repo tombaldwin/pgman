@@ -126,10 +126,25 @@ What it was:
    fixes, "widening an allowlist is a stop condition", PLAN / BACKLOG
    split, Done → archive.
 
-## Phase 1 — the product bar (2–3 days) · behaviour
+## Phase 1 — the product bar · behaviour · **done 2026-09-02** (gif deferred to Phase 4)
 
-This is the phase that protects the name. Do it before any release
-machinery, so the first tag is of something worth tagging.
+Landed as 24 commits after Phase 0. All nine snapshot-visible defects
+fixed with pinning snapshots, plus three the sweep found (confirm modal
+and "blocked by safety" showed Rust enum syntax; schema-browser tree
+bled into its details; status lines clipped mid-word). The size sweep
+(`tests/sizes.rs`, 36 screens × 4 sizes) is a CI gate with an empty
+allowlist. The start card is the real landing screen and the bootstrap
+feeds it. The wedge is discoverable: pasted logs are recognised, the
+card names F8 and F4, and `--log PATH` opens straight into the picks.
+Keyword completion and `\l \x \c \i` close the psql gaps the audit
+found. Error lines say what to do next.
+
+Still open from this phase: the sixty-second wedge recording (needs
+`vhs`, lands with the README in Phase 4) and a timed first-minute run
+against a real database (do it once the update check exists in Phase
+3, since that is the one thing that could delay the first frame).
+
+What it was:
 
 1. **Fix the nine snapshot-visible defects above.** Each gets a
    snapshot that pins the fix.

@@ -67,6 +67,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   knowing it exists.
 - **`pgman --log PATH`** (`-` for stdin) opens straight into the
   reconstructed queries from a Hibernate or Postgres server log.
+- **SQL keyword completion** after identifiers (two characters in,
+  never after a `.` qualifier, case follows what you typed), and
+  **`\l`, `\x`, `\c`, `\i`** for psql muscle memory.
 - **End-to-end coverage that the binary honours the batch safety gate.**
   Previously tested only at the unit level — the two tests above were
   covering it by accident, and by failing.
