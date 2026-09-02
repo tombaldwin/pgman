@@ -362,18 +362,31 @@ async fn main() -> anyhow::Result<()> {
             Some(path) => {
                 if let Some(parent) = path.parent() {
                     if !parent.as_os_str().is_empty() {
-                        // tokio::fs so a slow NFS doesn't
-                        // block the runtime worker at startup.
-                        let _ = tokio::fs::create_dir_all(parent).await;
+                        // Owner-only (0700) — a tap-record capture
+                        // holds production parameter values, so the
+                        // directory it lives in must not be
+                        // listable by other local users either.
+                        let _ = util::create_dir_all_private(parent);
                     }
                 }
-                match tokio::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                    .await
-                {
+                let mut open_opts = tokio::fs::OpenOptions::new();
+                open_opts.create(true).append(true);
+                #[cfg(unix)]
+                open_opts.mode(0o600);
+                match open_opts.open(path).await {
                     Ok(f) => {
+                        // `.mode()` only governs the permissions
+                        // used at CREATE time — clamp explicitly so
+                        // resuming a capture into a pre-existing
+                        // file (e.g. created before this fix, under
+                        // a looser umask) still ends up owner-only.
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = f
+                                .set_permissions(std::fs::Permissions::from_mode(0o600))
+                                .await;
+                        }
                         tracing::info!("tap-record: appending events to {}", path.display());
                         Some(f)
                     }

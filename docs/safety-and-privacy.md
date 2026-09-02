@@ -204,7 +204,8 @@ always an explicit, deliberate choice. Only bind a non-loopback
 address on a trusted/firewalled network. Events ingested this way
 (reconstructed SQL, bound-parameter values unless the JAR redacts
 them) are held only in memory (a capped ring buffer) unless you pass
-`--tap-record PATH`, which appends them to a JSONL file you chose.
+`--tap-record PATH`, which appends them to a JSONL file you chose
+(created owner-only, `0600`, alongside its parent directory).
 Each listener also caps concurrent connections and every event
 field, and throttles its malformed-frame warnings (at most one per
 second, with a suppressed-count) so a hostile or broken client can't

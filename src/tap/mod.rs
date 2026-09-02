@@ -1529,6 +1529,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_replay_file_skips_a_line_past_the_cap_and_continues() {
+        use tokio::io::AsyncWriteExt;
+        let tmp = std::env::temp_dir().join(format!(
+            "pgman-tap-replay-overlong-{}.jsonl",
+            std::process::id()
+        ));
+        // A line whose SQL payload alone pushes it well past
+        // `TAP_REPLAY_MAX_LINE_BYTES` — simulates a corrupt or
+        // hostile capture file rather than anything
+        // `--tap-record` would ever legitimately write (every
+        // live ingest path caps `sql` at `TAP_MAX_SQL_BYTES`
+        // long before it could reach a capture file).
+        let overlong_sql = "x".repeat(TAP_REPLAY_MAX_LINE_BYTES + 10_000);
+        let overlong_line =
+            format!(r#"{{"v":1,"ts_unix_micros":1,"sql":"{overlong_sql}","duration_micros":1}}"#);
+        let mut f = tokio::fs::File::create(&tmp).await.unwrap();
+        let mut body = String::new();
+        body.push_str(r#"{"v":1,"ts_unix_micros":1,"sql":"good 1","duration_micros":1}"#);
+        body.push('\n');
+        body.push_str(&overlong_line);
+        body.push('\n');
+        body.push_str(r#"{"v":1,"ts_unix_micros":2,"sql":"good 2","duration_micros":2}"#);
+        body.push('\n');
+        f.write_all(body.as_bytes()).await.unwrap();
+        f.flush().await.unwrap();
+        drop(f);
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
+        let accepted = run_replay_file(&tmp, tx).await.unwrap();
+        // The overlong line is skipped — never even reaches
+        // `parse_replay_line` — but the stream resyncs and both
+        // well-formed lines around it still land.
+        assert_eq!(accepted, 2);
+        let e1 = rx.try_recv().unwrap();
+        let e2 = rx.try_recv().unwrap();
+        assert_eq!(e1.sql.as_deref(), Some("good 1"));
+        assert_eq!(e2.sql.as_deref(), Some("good 2"));
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
     async fn run_replay_file_missing_returns_err() {
         let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
         let err = run_replay_file("/nonexistent/path/to/replay.jsonl", tx)
