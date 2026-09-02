@@ -74,6 +74,17 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
         env!("CARGO_PKG_DESCRIPTION"),
         Style::default().fg(theme.text),
     )));
+    // The FULL server version, packager build detail and all. The
+    // header and the start card show only the release number
+    // (`ui::short_server_version`), so this card is the one place it
+    // can be read in full — which is what makes shortening it
+    // elsewhere a trim rather than a loss.
+    if let ConnState::Connected { server_version } = &app.conn_state {
+        lines.push(Line::from(Span::styled(
+            format!("server: pg {server_version}"),
+            Style::default().fg(theme.muted),
+        )));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "by Tom Baldwin / Polymorphism Ltd",

@@ -1038,3 +1038,24 @@ fn conn_pick_footer_states_the_tunnel_prompt_keys() {
     // would cancel rather than open help.
     assert!(!footer.contains("F1 help"), "{footer:?}");
 }
+
+/// The header and the start card show `pg 16.15`; the About card is
+/// where the packager's full string can still be read, which is what
+/// makes shortening it elsewhere a trim rather than a loss.
+#[test]
+fn about_card_carries_the_full_server_version() {
+    let mut a = settle_app();
+    a.conn_state = ConnState::Connected {
+        server_version: "16.15 (Debian 16.15-1.pgdg13+2)".into(),
+    };
+    a.mode = Mode::About;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        rendered.contains("server: pg 16.15 (Debian 16.15-1.pgdg13+2)"),
+        "About card should carry the full server version:\n{rendered}"
+    );
+    // And the header above it shows only the release number.
+    let header = rendered.lines().next().unwrap();
+    assert!(header.contains("pg 16.15"), "{header}");
+    assert!(!header.contains("Debian"), "{header}");
+}

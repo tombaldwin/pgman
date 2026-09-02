@@ -13,14 +13,14 @@ expression: dump(&buf)
 │id  email      │        pgman 0.1.0 · beta · 2026-06-06       │               │
 │1   ada@example│      installed via a local git checkout      │               │
 │2   linus@examp│   k9s-style Postgres TUI for Java/AWS shops  │               │
-│3   grace@examp│                                              │               │
-│4   alan@exampl│       by Tom Baldwin / Polymorphism Ltd      │               │
-│5   edsger@exam│          license: MIT OR Apache-2.0          │               │
-│6   katherine@e│                                              │               │
+│3   grace@examp│            server: pg 16.2 (demo)            │               │
+│4   alan@exampl│                                              │               │
+│5   edsger@exam│       by Tom Baldwin / Polymorphism Ltd      │               │
+│6   katherine@e│          license: MIT OR Apache-2.0          │               │
+│               │                                              │               │
 │               │           esc / enter / A to close           │               │
 │               │                                              │               │
 │               └──────────────────────────────────────────────┘               │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
