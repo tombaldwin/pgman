@@ -18,8 +18,10 @@
 
 use super::{
     enforce_field_caps, forward_or_drop, now_unix_micros, validate_required, TapEvent, TapKind,
-    PROTOCOL_VERSION,
+    WarnThrottle, PROTOCOL_VERSION,
 };
+
+static OTLP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
 
 /// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
 /// Anything beyond this is broken telemetry (clock skew /
@@ -263,6 +265,9 @@ pub async fn run_otlp_listener(
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("tap: OTLP/HTTP listener bound on {addr}");
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
+        super::listener::TAP_MAX_CONCURRENT_CONNS,
+    ));
     loop {
         let (sock, peer) = match listener.accept().await {
             Ok(pair) => pair,
@@ -271,8 +276,30 @@ pub async fn run_otlp_listener(
                 continue;
             }
         };
+        // Same connection cap as the TCP tap listener — an
+        // OTLP POST can carry up to `OTLP_MAX_BODY_BYTES`, so
+        // unbounded concurrency here is the same memory risk in
+        // a different transport.
+        let permit = match permits.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                OTLP_CONN_LIMIT_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more rejections suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "tap-otlp: rejected connection from {peer}: {} concurrent connections already open{suffix}",
+                        super::listener::TAP_MAX_CONCURRENT_CONNS
+                    )
+                });
+                continue;
+            }
+        };
         let tx = tx.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_otlp_conn(sock, &tx).await {
                 tracing::warn!("tap-otlp: conn {peer} ended: {e}");
             }
@@ -532,19 +559,36 @@ where
             "Content-Length {content_length} exceeds cap {max_body}"
         ));
     }
-    let mut body = vec![0u8; content_length];
-    let mut filled = body_prefix.len().min(content_length);
-    if filled > 0 {
-        body[..filled].copy_from_slice(&body_prefix[..filled]);
-    }
-    if filled < content_length {
-        reader
-            .read_exact(&mut body[filled..])
+    // Read the body incrementally rather than pre-allocating
+    // `vec![0u8; content_length]` up front. `content_length` is
+    // already capped at `max_body` above, so this isn't about
+    // trusting the header less — it's about not letting a slow
+    // client (Content-Length: 4 MiB, one byte every few
+    // seconds) hold a full-size allocation for the duration of
+    // the read on every one of up to
+    // `listener::TAP_MAX_CONCURRENT_CONNS` connections at once.
+    // The cap is re-checked every chunk rather than relied on
+    // once at the top.
+    const BODY_READ_CHUNK: usize = 64 * 1024;
+    let mut body: Vec<u8> = Vec::with_capacity(body_prefix.len().min(content_length));
+    let prefix_take = body_prefix.len().min(content_length);
+    body.extend_from_slice(&body_prefix[..prefix_take]);
+    let mut chunk_buf = [0u8; BODY_READ_CHUNK];
+    while body.len() < content_length {
+        if body.len() > max_body {
+            return Err(format!("body exceeded cap {max_body} while reading"));
+        }
+        let want = (content_length - body.len()).min(BODY_READ_CHUNK);
+        let n = reader
+            .read(&mut chunk_buf[..want])
             .await
             .map_err(|e| format!("body read failed: {e}"))?;
-        filled = content_length;
+        if n == 0 {
+            return Err("connection closed before body complete".into());
+        }
+        body.extend_from_slice(&chunk_buf[..n]);
     }
-    debug_assert_eq!(filled, content_length);
+    debug_assert_eq!(body.len(), content_length);
     Ok(HttpRequest {
         method,
         path,
