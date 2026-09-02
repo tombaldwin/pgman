@@ -58,6 +58,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **An update check that knows how you installed pgman.** Once per
+  six hours, after the first frame is drawn, one request to crates.io;
+  a `⬆ x.y.z` badge in the header and the exact upgrade command in the
+  About overlay (`brew upgrade pgman`, `cargo install pgman --locked
+  --force`, or the releases page). Off with `--no-update-check` or
+  `PGMAN_NO_UPDATE_CHECK`, and always off in `--demo` and `--batch`.
+- **`--upgrade` works for every install channel** it can act on:
+  checkout, cargo, and Homebrew. A standalone binary is told where the
+  releases are instead of being told it "is not a working tree".
 - **Release machinery**, ported from ebman: a tag-triggered workflow
   that refuses to build from a commit CI never passed, builds four
   targets with build provenance, drafts the GitHub Release, and
