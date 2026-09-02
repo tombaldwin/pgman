@@ -266,3 +266,188 @@ fn batch_refuses_a_guarded_statement_without_yes() {
         "the refusal must tell the operator how to proceed: {stderr}"
     );
 }
+
+// --- the safety gate, end to end against a real server ------------------
+//
+// These are the security-review reproductions. They were reported as
+// "`pgman --batch` with every guard at its default and only
+// `read_only = false` still ran a `DROP TABLE`", so they are only worth
+// anything if they run against a real Postgres with a real safety profile.
+//
+// pgman reads `$HOME/.config/pgman/safety.toml` (`util::config_dir`), so each
+// test builds a throwaway HOME and writes its own profile there. The
+// developer's real config is never read and never touched.
+
+/// A scratch `HOME` containing `.config/pgman/safety.toml` with `body`.
+/// Returned path is handed to the child process as `HOME`.
+fn scratch_home(name: &str, body: &str) -> std::path::PathBuf {
+    let home = std::env::temp_dir().join(format!("pgman-it-{name}-{}", std::process::id()));
+    let cfg = home.join(".config/pgman");
+    std::fs::create_dir_all(&cfg).expect("create scratch config dir");
+    std::fs::write(cfg.join("safety.toml"), body).expect("write safety.toml");
+    home
+}
+
+/// Run `pgman --batch` with `HOME` pointed at a scratch profile.
+fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(pgman_binary())
+        .env("HOME", home)
+        .args(["--batch", "--dsn", DSN])
+        .args(args)
+        .output()
+        .expect("spawn pgman")
+}
+
+/// `read_only = false`, everything else default — the exact profile the
+/// security report used. `drop` is still `block` by default.
+const WRITABLE_PROFILE: &str = "[default]\nread_only = false\n";
+
+/// `true` if `table` is still there. Uses a separate, plainly-safe query.
+fn table_exists(home: &std::path::Path, table: &str) -> bool {
+    let out = batch_with_home(
+        home,
+        &[
+            "--sql",
+            &format!("SELECT to_regclass('{table}') IS NOT NULL AS present"),
+            "--format",
+            "csv",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "existence probe failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).contains('t')
+}
+
+#[test]
+fn batch_refuses_a_drop_hidden_behind_a_dollar_in_an_identifier() {
+    let home = scratch_home("dollar", WRITABLE_PROFILE);
+    // `a$b$c` is one identifier to Postgres. The splitter used to read `$b$`
+    // as opening a dollar-quote, swallow the rest of the script into a
+    // fragment that classified as SELECT, and hand the ORIGINAL string to
+    // batch_execute — so all three statements ran under an `Allow`.
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_repro_dollar (id int)",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let out = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE pgman_repro_dollar",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the DROP must be refused; exited 0 with stdout {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        stderr.contains("blocked by safety") && stderr.contains("DROP"),
+        "the refusal must name the DROP: {stderr}"
+    );
+    assert!(
+        table_exists(&home, "pgman_repro_dollar"),
+        "the table must still be there"
+    );
+
+    let _ = batch_with_home(&home, &["--yes", "--sql", "TRUNCATE pgman_repro_dollar"]);
+}
+
+#[test]
+fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
+    let home = scratch_home("quoted", WRITABLE_PROFILE);
+    // `"a--b"` is one identifier; the `--` inside it is part of the name. The
+    // comment stripper used to eat it as a line comment along with the rest
+    // of the line, and the DROP came back attached to a SELECT fragment.
+    //
+    // Both tables are created so that, had the guard missed it, the script
+    // would have run clean and the DROP would genuinely have landed — the
+    // test must not pass merely because Postgres errored first.
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            r#"CREATE TABLE IF NOT EXISTS "a--b" (id int); CREATE TABLE IF NOT EXISTS pgman_repro_quoted (id int)"#,
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let out = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE pgman_repro_quoted"#,
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the DROP must be refused; exited 0 with stdout {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        stderr.contains("blocked by safety") && stderr.contains("DROP"),
+        "the refusal must name the DROP: {stderr}"
+    );
+    assert!(
+        table_exists(&home, "pgman_repro_quoted"),
+        "the table must still be there"
+    );
+}
+
+#[test]
+fn batch_refuses_a_script_it_cannot_split_and_never_connects() {
+    // An unterminated literal means the statement boundaries are a guess.
+    // pgman refuses rather than guessing, and --yes does not buy a way past.
+    let home = scratch_home("unsplittable", WRITABLE_PROFILE);
+    let out = batch_with_home(&home, &["--yes", "--sql", "SELECT 1; SELECT 'oops"]);
+    assert!(!out.status.success(), "an unverifiable script must not run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("could not split this script safely"),
+        "the refusal must say why: {stderr}"
+    );
+}
+
+#[test]
+fn batch_refuses_to_turn_the_read_only_session_writable() {
+    // `read_only = true` is applied server-side, but the setting itself is a
+    // plain session GUC — Postgres happily lets a script turn it off. The
+    // client is the only thing standing in the way, so it has to be.
+    let home = scratch_home("readonly", "[default]\nread_only = true\n");
+    for sql in [
+        "SET default_transaction_read_only = off",
+        "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+        "SET default_transaction_read_only = off; SELECT 1",
+    ] {
+        let out = batch_with_home(&home, &["--yes", "--sql", sql]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success(),
+            "{sql:?} must be refused even with --yes"
+        );
+        assert!(
+            stderr.contains("read-only by safety.toml"),
+            "{sql:?} must be refused for the right reason: {stderr}"
+        );
+    }
+}
