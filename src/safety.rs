@@ -265,61 +265,339 @@ pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     }
 }
 
-/// Split a SQL script on `;` outside string literals, dollar-quoted bodies, and
-/// SQL comments. Returns the trimmed, non-empty statements in order. Used by the
-/// editor's multi-statement run path (DBUnit scripts, hand-written batches).
+// ---------------------------------------------------------------------------
+// The statement lexer
+// ---------------------------------------------------------------------------
+//
+// `split_statements` and `strip_sql_comments` used to carry a hand-rolled
+// scanner each. They disagreed — one tracked `'…'` and `$tag$…$tag$`, neither
+// tracked `"…"` quoted identifiers, and both treated *any* `$` as a
+// dollar-quote opener even where Postgres reads it as an ordinary identifier
+// character. A script like `SELECT 1 AS a$b$c; DROP TABLE users` therefore
+// split into two statements instead of two-plus-a-DROP, and the DROP rode
+// along inside a fragment that classified as `Select` → `Allow`.
+//
+// Both now run off ONE scanner, [`scan`], so they cannot drift apart again.
+
+/// What a [`Span`] of the input is, lexically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpanKind {
+    /// Ordinary SQL text — this is the only kind `;` splits on and the only
+    /// kind keywords are matched in.
+    Code,
+    /// `'…'` string literal (`''` escapes the quote).
+    String,
+    /// `E'…'` escape-string literal (backslash escapes, plus `''`).
+    EscapeString,
+    /// `"…"` quoted identifier (`""` escapes the quote).
+    Ident,
+    /// `$tag$ … $tag$` dollar-quoted body, tag included.
+    DollarQuoted,
+    /// `-- …` to end of line.
+    LineComment,
+    /// `/* … */`, nesting as Postgres does.
+    BlockComment,
+}
+
+/// One lexical run of the input. Spans tile the input exactly: concatenating
+/// `sql[start..end]` over the returned spans reproduces `sql`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Span {
+    pub(crate) kind: SpanKind,
+    /// Byte offset of the first byte of the span.
+    pub(crate) start: usize,
+    /// Byte offset one past the last byte of the span.
+    pub(crate) end: usize,
+    /// `false` when the input ended before the span's closing delimiter — an
+    /// unterminated `'`, `"`, `$tag$`, or `/*`. A line comment is always
+    /// terminated (end-of-input closes it).
+    pub(crate) terminated: bool,
+}
+
+/// Lex `sql` into quoted / comment / code spans. The single source of truth
+/// for "is this `;` a statement separator?" and "is this `--` a comment?".
 ///
-/// Dollar-quoting (`$$ … $$` / `$tag$ … $tag$`) is tracked so a `;` inside a
-/// `CREATE FUNCTION` body doesn't shatter the statement into mis-classified
-/// fragments.
-pub fn split_statements(sql: &str) -> Vec<String> {
-    let stripped = strip_sql_comments(sql);
-    let chars: Vec<char> = stripped.chars().collect();
-    let mut result = Vec::new();
-    let mut current = String::new();
-    let mut in_string = false;
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if in_string {
-            current.push(c);
-            if c == '\'' {
-                if chars.get(i + 1) == Some(&'\'') {
-                    current.push('\''); // '' escape — still in string
-                    i += 2;
-                    continue;
-                }
-                in_string = false;
-            }
-            i += 1;
+/// Postgres rules implemented here:
+/// - `'…'` with `''` as the escaped quote; `E'…'` (case-insensitive `E`, and
+///   only when the `E` is not itself part of a longer identifier) additionally
+///   honours backslash escapes, so `E'\''` is one literal.
+/// - `"…"` quoted identifiers with `""` as the escaped quote. A `;`, `--`, or
+///   `$$` inside one is part of the name, not syntax.
+/// - `$tag$ … $tag$` dollar-quoting, where the tag is empty or matches
+///   `[A-Za-z_][A-Za-z0-9_]*`, **and** the opening `$` is not preceded by an
+///   identifier character. Postgres allows `$` inside an identifier after the
+///   first character, so the `$b$` in `a$b$c` opens nothing.
+/// - `--` to end of line, and `/* … */` which nests.
+pub(crate) fn scan(sql: &str) -> Vec<Span> {
+    let b = sql.as_bytes();
+    let mut spans: Vec<Span> = Vec::new();
+    let mut code_start = 0usize;
+    let mut i = 0usize;
+
+    // Close the run of plain code that ends just before `at`.
+    fn flush_code(spans: &mut Vec<Span>, code_start: usize, at: usize) {
+        if at > code_start {
+            spans.push(Span {
+                kind: SpanKind::Code,
+                start: code_start,
+                end: at,
+                terminated: true,
+            });
+        }
+    }
+
+    while i < b.len() {
+        let c = b[i];
+
+        // `E'…'` / `e'…'` — an escape string, but only when the `E` stands
+        // alone (`table_e'x'` is not a thing, but `some_e` followed by a
+        // literal would be, so check the preceding byte).
+        if (c == b'E' || c == b'e')
+            && b.get(i + 1) == Some(&b'\'')
+            && !i.checked_sub(1).is_some_and(|p| is_ident_byte(b[p]))
+        {
+            flush_code(&mut spans, code_start, i);
+            let (end, terminated) = scan_quoted_string(b, i + 2, true);
+            spans.push(Span {
+                kind: SpanKind::EscapeString,
+                start: i,
+                end,
+                terminated,
+            });
+            i = end;
+            code_start = i;
             continue;
         }
-        // Dollar-quoted body — copy it verbatim, `;` and all, through the
-        // matching close tag.
-        if c == '$' {
-            if let Some(tag) = dollar_tag_at(&chars, i) {
-                i = copy_dollar_body(&chars, i, &tag, &mut current);
-                continue;
+
+        match c {
+            b'\'' => {
+                flush_code(&mut spans, code_start, i);
+                let (end, terminated) = scan_quoted_string(b, i + 1, false);
+                spans.push(Span {
+                    kind: SpanKind::String,
+                    start: i,
+                    end,
+                    terminated,
+                });
+                i = end;
+                code_start = i;
+            }
+            b'"' => {
+                flush_code(&mut spans, code_start, i);
+                let (end, terminated) = scan_quoted_ident(b, i + 1);
+                spans.push(Span {
+                    kind: SpanKind::Ident,
+                    start: i,
+                    end,
+                    terminated,
+                });
+                i = end;
+                code_start = i;
+            }
+            b'$' => {
+                // Only a `$` that is NOT continuing an identifier can open a
+                // dollar-quote. `a$b$c` is one identifier to Postgres.
+                let after_ident = i
+                    .checked_sub(1)
+                    .is_some_and(|p| is_ident_byte(b[p]) || b[p] == b'$');
+                match if after_ident {
+                    None
+                } else {
+                    dollar_tag_at(b, i)
+                } {
+                    Some(tag_len) => {
+                        flush_code(&mut spans, code_start, i);
+                        let (end, terminated) = scan_dollar_body(b, i, tag_len);
+                        spans.push(Span {
+                            kind: SpanKind::DollarQuoted,
+                            start: i,
+                            end,
+                            terminated,
+                        });
+                        i = end;
+                        code_start = i;
+                    }
+                    // `$1` (a positional parameter), `a$b`, a bare `$` — code.
+                    None => i += 1,
+                }
+            }
+            b'-' if b.get(i + 1) == Some(&b'-') => {
+                flush_code(&mut spans, code_start, i);
+                let mut end = i + 2;
+                while end < b.len() && b[end] != b'\n' {
+                    end += 1;
+                }
+                // The newline itself stays code, so stripping a line comment
+                // still leaves the line break behind.
+                spans.push(Span {
+                    kind: SpanKind::LineComment,
+                    start: i,
+                    end,
+                    terminated: true,
+                });
+                i = end;
+                code_start = i;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                flush_code(&mut spans, code_start, i);
+                let (end, terminated) = scan_block_comment(b, i);
+                spans.push(Span {
+                    kind: SpanKind::BlockComment,
+                    start: i,
+                    end,
+                    terminated,
+                });
+                i = end;
+                code_start = i;
+            }
+            _ => i += 1,
+        }
+    }
+    flush_code(&mut spans, code_start, b.len());
+    spans
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Scan from just past the opening `'` to just past the closing one. `escapes`
+/// enables backslash escapes (`E'…'`). Returns `(end, terminated)`.
+fn scan_quoted_string(b: &[u8], mut i: usize, escapes: bool) -> (usize, bool) {
+    while i < b.len() {
+        match b[i] {
+            b'\\' if escapes => i += 2, // `\'`, `\\`, `\n`, … — skip the pair
+            b'\'' => {
+                if b.get(i + 1) == Some(&b'\'') {
+                    i += 2; // `''` — an escaped quote, still inside
+                } else {
+                    return (i + 1, true);
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    (b.len(), false)
+}
+
+/// Scan from just past the opening `"` to just past the closing one.
+fn scan_quoted_ident(b: &[u8], mut i: usize) -> (usize, bool) {
+    while i < b.len() {
+        if b[i] == b'"' {
+            if b.get(i + 1) == Some(&b'"') {
+                i += 2; // `""` — an escaped quote, still inside
+            } else {
+                return (i + 1, true);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    (b.len(), false)
+}
+
+/// If `b[i..]` opens a dollar-quote (`$$` or `$tag$`), return the byte length
+/// of the opening tag. The caller has already ruled out a `$` that continues
+/// an identifier.
+fn dollar_tag_at(b: &[u8], i: usize) -> Option<usize> {
+    if b.get(i) != Some(&b'$') {
+        return None;
+    }
+    let mut j = i + 1;
+    while let Some(&c) = b.get(j) {
+        if c == b'$' {
+            return Some(j + 1 - i);
+        }
+        let first = j == i + 1;
+        // Tag rules: a letter or `_` first, digits allowed after.
+        let ok = c == b'_' || c.is_ascii_alphabetic() || (!first && c.is_ascii_digit());
+        if !ok {
+            return None;
+        }
+        j += 1;
+    }
+    None
+}
+
+/// Scan a dollar-quoted body whose opening tag starts at `start` and is
+/// `tag_len` bytes long, through the matching close tag.
+fn scan_dollar_body(b: &[u8], start: usize, tag_len: usize) -> (usize, bool) {
+    let tag = &b[start..start + tag_len];
+    let mut i = start + tag_len;
+    while i + tag_len <= b.len() {
+        if b[i] == b'$' && &b[i..i + tag_len] == tag {
+            return (i + tag_len, true);
+        }
+        i += 1;
+    }
+    (b.len(), false)
+}
+
+/// Scan `/* … */`, honouring Postgres's nesting.
+fn scan_block_comment(b: &[u8], start: usize) -> (usize, bool) {
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < b.len() {
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+            depth += 1;
+            i += 2;
+        } else if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                return (i, true);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    (b.len(), false)
+}
+
+/// Split a SQL script on `;` outside string literals, quoted identifiers,
+/// dollar-quoted bodies, and SQL comments. Returns the trimmed, non-empty
+/// statements in order. Used by the editor's multi-statement run path (DBUnit
+/// scripts, hand-written batches).
+///
+/// Runs off [`scan`], so it agrees with [`strip_sql_comments`] by construction.
+/// Prefer [`split_verified`] on any path that then *runs* the statements: it
+/// refuses a script this splitter cannot account for, rather than guessing.
+pub fn split_statements(sql: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    // Append `text` to the statement being built, ending a statement at every
+    // top-level `;` in it.
+    let push_code = |current: &mut String, result: &mut Vec<String>, text: &str| {
+        for part in text.split_inclusive(';') {
+            match part.strip_suffix(';') {
+                Some(before) => {
+                    current.push_str(before);
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() {
+                        result.push(trimmed);
+                    }
+                    current.clear();
+                }
+                None => current.push_str(part),
             }
         }
-        match c {
-            '\'' => {
-                in_string = true;
-                current.push(c);
-                i += 1;
-            }
-            ';' => {
-                let trimmed = current.trim().to_string();
-                if !trimmed.is_empty() {
-                    result.push(trimmed);
+    };
+    for span in scan(sql) {
+        let text = &sql[span.start..span.end];
+        match span.kind {
+            SpanKind::LineComment => {}
+            SpanKind::BlockComment => {
+                current.push(' ');
+                // An unterminated `/*` must not swallow the rest of the
+                // script: swallowing could hide a destructive verb and get a
+                // fragment misclassified as a harmless SELECT. Keep the text
+                // as code (Postgres rejects the unterminated comment anyway).
+                if !span.terminated {
+                    push_code(&mut current, &mut result, &text[2..]);
                 }
-                current.clear();
-                i += 1;
             }
-            _ => {
-                current.push(c);
-                i += 1;
-            }
+            SpanKind::Code => push_code(&mut current, &mut result, text),
+            _ => current.push_str(text),
         }
     }
     let trimmed = current.trim().to_string();
@@ -329,129 +607,29 @@ pub fn split_statements(sql: &str) -> Vec<String> {
     result
 }
 
-/// Remove `-- line` and `/* block */` comments, leaving string literals and
-/// dollar-quoted bodies intact (a `--` inside a `$$ … $$` function body is data,
-/// not a comment).
+/// Remove `-- line` and `/* block */` comments, leaving string literals,
+/// quoted identifiers, and dollar-quoted bodies intact (a `--` inside a
+/// `$$ … $$` function body — or inside `"a--b"` — is data, not a comment).
 pub(crate) fn strip_sql_comments(sql: &str) -> String {
-    let chars: Vec<char> = sql.chars().collect();
     let mut out = String::with_capacity(sql.len());
-    let mut in_string = false;
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if in_string {
-            out.push(c);
-            if c == '\'' {
-                if chars.get(i + 1) == Some(&'\'') {
-                    out.push('\''); // '' escape — still in string
-                    i += 2;
-                    continue;
-                }
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        // Preserve dollar-quoted bodies verbatim — comment markers inside them
-        // are literal text.
-        if c == '$' {
-            if let Some(tag) = dollar_tag_at(&chars, i) {
-                i = copy_dollar_body(&chars, i, &tag, &mut out);
-                continue;
-            }
-        }
-        match c {
-            '\'' => {
-                in_string = true;
-                out.push(c);
-                i += 1;
-            }
-            '-' if chars.get(i + 1) == Some(&'-') => {
-                i += 2;
-                while i < chars.len() {
-                    let cc = chars[i];
-                    i += 1;
-                    if cc == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            '/' if chars.get(i + 1) == Some(&'*') => {
-                i += 2;
-                let mut closed = false;
-                let mut body = String::new();
-                while i < chars.len() {
-                    if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
-                        closed = true;
-                        i += 2;
-                        break;
-                    }
-                    body.push(chars[i]);
-                    i += 1;
-                }
+    for span in scan(sql) {
+        let text = &sql[span.start..span.end];
+        match span.kind {
+            // The span stops before the newline, which stays in the following
+            // code span — so the line break survives the strip.
+            SpanKind::LineComment => {}
+            SpanKind::BlockComment => {
                 out.push(' ');
-                // Unterminated `/*` — don't swallow the rest of the buffer.
-                // Swallowing could hide a destructive verb (e.g. a CTE whose
-                // INSERT/DELETE sits after an unclosed comment) and get the
-                // statement misclassified as a harmless SELECT. Keeping the
-                // text leaves classification fail-safe (the verb is still
-                // seen and guarded); Postgres rejects the unterminated
-                // comment as a syntax error anyway.
-                if !closed {
-                    out.push_str(&body);
+                // See `split_statements`: an unterminated `/*` keeps its text
+                // so a destructive verb behind it still reaches the classifier.
+                if !span.terminated {
+                    out.push_str(&text[2..]);
                 }
             }
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            _ => out.push_str(text),
         }
     }
     out
-}
-
-/// If `chars[i..]` opens a PostgreSQL dollar-quote tag (`$$` or `$tag$`, where
-/// `tag` follows identifier rules — letter/underscore start, no digit lead),
-/// return the full tag (including both `$`). Returns `None` for a `$` that is a
-/// positional parameter (`$1`) or anything else.
-fn dollar_tag_at(chars: &[char], i: usize) -> Option<Vec<char>> {
-    if chars.get(i) != Some(&'$') {
-        return None;
-    }
-    let mut j = i + 1;
-    while let Some(&c) = chars.get(j) {
-        if c == '$' {
-            return Some(chars[i..=j].to_vec());
-        }
-        let first = j == i + 1;
-        // Identifier rules: first char letter/`_`; later chars may add digits.
-        let ok = c == '_' || c.is_ascii_alphabetic() || (!first && c.is_ascii_digit());
-        if !ok {
-            return None;
-        }
-        j += 1;
-    }
-    None
-}
-
-/// Copy a dollar-quoted body (opening tag already at `start`) verbatim into
-/// `out` through the matching close tag, and return the index just past it. An
-/// unterminated body copies to end-of-input (Postgres rejects it as a syntax
-/// error anyway).
-fn copy_dollar_body(chars: &[char], start: usize, tag: &[char], out: &mut String) -> usize {
-    let n = tag.len();
-    out.extend(tag.iter());
-    let mut i = start + n;
-    while i < chars.len() {
-        if chars[i] == '$' && i + n <= chars.len() && chars[i..i + n] == *tag {
-            out.extend(tag.iter());
-            return i + n;
-        }
-        out.push(chars[i]);
-        i += 1;
-    }
-    i
 }
 
 /// `true` if `word` appears in `haystack` as a whole token (case-insensitive).
@@ -658,6 +836,158 @@ mod tests {
         let sql = "-- header\nselect 1;\n\n/* block */\nselect 2;;;";
         let parts = split_statements(sql);
         assert_eq!(parts, vec!["select 1".to_string(), "select 2".to_string()]);
+    }
+
+    // --- lexer: the security-review reproductions ------------------------
+
+    /// The reproduction. `$` after an identifier character is an identifier
+    /// character to Postgres, not a dollar-quote opener. The old splitter read
+    /// `$b$` as opening a quote, swallowed the rest of the script into a
+    /// fragment starting `SELECT`, classified it `Select` -> `Allow`, and let
+    /// the `DROP` through.
+    #[test]
+    fn dollar_inside_an_identifier_does_not_open_a_dollar_quote() {
+        let sql = "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE users";
+        let parts = split_statements(sql);
+        assert_eq!(
+            parts,
+            vec![
+                "SELECT 1".to_string(),
+                "SELECT 1 AS a$b$c".to_string(),
+                "DROP TABLE users".to_string(),
+            ]
+        );
+        let kinds: Vec<StatementKind> = parts.iter().map(|s| classify(s)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StatementKind::Select,
+                StatementKind::Select,
+                StatementKind::Drop
+            ]
+        );
+    }
+
+    /// The second reproduction. `--` inside a quoted identifier is part of the
+    /// name; the old comment stripper treated it as a line comment and ate the
+    /// rest of the line, including the `"` that would have re-balanced things.
+    #[test]
+    fn a_comment_marker_inside_a_quoted_identifier_is_part_of_the_name() {
+        let sql = r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE users"#;
+        let parts = split_statements(sql);
+        assert_eq!(
+            parts,
+            vec![
+                "SELECT 1".to_string(),
+                r#"SELECT * FROM "a--b""#.to_string(),
+                "DROP TABLE users".to_string(),
+            ]
+        );
+        let kinds: Vec<StatementKind> = parts.iter().map(|s| classify(s)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                StatementKind::Select,
+                StatementKind::Select,
+                StatementKind::Drop
+            ]
+        );
+        // And the stripper agrees - it runs off the same scanner.
+        assert_eq!(strip_sql_comments(sql), sql);
+    }
+
+    // --- lexer: the rest of the constructs -------------------------------
+
+    #[test]
+    fn a_semicolon_inside_a_quoted_identifier_is_not_a_separator() {
+        let sql = r#"SELECT * FROM "a;b""#;
+        assert_eq!(split_statements(sql), vec![sql.to_string()]);
+    }
+
+    #[test]
+    fn doubled_quote_escapes_inside_a_quoted_identifier() {
+        // `"a""b;c"` is the single identifier `a"b;c`.
+        let sql = r#"SELECT * FROM "a""b;c"; DROP TABLE users"#;
+        assert_eq!(
+            split_statements(sql),
+            vec![
+                r#"SELECT * FROM "a""b;c""#.to_string(),
+                "DROP TABLE users".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn escape_strings_honour_backslash_escapes() {
+        // In `E'...'` a `\'` does NOT close the literal, so the `;` stays
+        // inside it and the whole thing is one statement.
+        let sql = r"SELECT E'a\'; DROP TABLE users --' AS x";
+        assert_eq!(split_statements(sql), vec![sql.to_string()]);
+        assert_eq!(classify(sql), StatementKind::Select);
+        // A lower-case `e` prefix behaves the same.
+        assert_eq!(split_statements(r"SELECT e'a\'; b' ; SELECT 2").len(), 2);
+    }
+
+    #[test]
+    fn an_e_that_ends_an_identifier_does_not_start_an_escape_string() {
+        // `date'2020-01-01'` is a typed literal: the `e` belongs to `date`, so
+        // this is an ordinary string and `\` is not an escape.
+        let sql = r"SELECT date'2020-01-01'; SELECT 2";
+        assert_eq!(split_statements(sql).len(), 2);
+    }
+
+    #[test]
+    fn block_comments_nest() {
+        let sql = "SELECT 1 /* outer /* inner */ still comment */, 2; SELECT 3";
+        assert_eq!(
+            split_statements(sql),
+            vec!["SELECT 1  , 2".to_string(), "SELECT 3".to_string()]
+        );
+    }
+
+    #[test]
+    fn comment_markers_inside_a_string_literal_are_data() {
+        let sql = "SELECT '-- not a comment', '/* nor this */'; SELECT 2";
+        assert_eq!(split_statements(sql).len(), 2);
+        assert_eq!(strip_sql_comments(sql), sql);
+    }
+
+    #[test]
+    fn a_positional_parameter_is_not_a_dollar_quote() {
+        let sql = "SELECT * FROM t WHERE id = $1; DROP TABLE users";
+        let parts = split_statements(sql);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(classify(&parts[1]), StatementKind::Drop);
+    }
+
+    #[test]
+    fn a_tag_that_is_not_an_identifier_does_not_open_a_dollar_quote() {
+        // `$9x$` is not a legal dollar-quote tag (digit lead), so the `;`
+        // after it still separates statements.
+        let sql = "SELECT $9x$ ; DROP TABLE users";
+        let parts = split_statements(sql);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(classify(&parts[1]), StatementKind::Drop);
+    }
+
+    #[test]
+    fn the_scanner_tiles_the_input_exactly() {
+        // Every byte belongs to exactly one span, in order - the property the
+        // two consumers rely on to stay in agreement.
+        for sql in [
+            r#"SELECT 'a', "b--c", $t$ d; $t$, E'\'' /* x /* y */ z */ -- tail"#,
+            "SELECT 1; DROP TABLE t",
+            "",
+            "'unterminated",
+        ] {
+            let spans = scan(sql);
+            let mut at = 0usize;
+            for s in &spans {
+                assert_eq!(s.start, at, "gap or overlap in {sql:?}");
+                at = s.end;
+            }
+            assert_eq!(at, sql.len(), "spans must reach the end of {sql:?}");
+        }
     }
 
     #[test]
