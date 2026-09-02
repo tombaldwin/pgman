@@ -22,6 +22,12 @@ passwords in the OS keychain rather than `dataSources.xml`.
 | `~/.cache/pgman/report-<ts>-<pid>.md` (or `.html`) | Default `\report` output path when none is given (`src/app.rs::default_report_path`). |
 | `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path (`src/app.rs::default_fixture_path`). |
 
+Every `~/.config`, `~/.local/share`, and `~/.cache` path above honours
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` respectively
+when set to an absolute path (e.g. `safety.toml` moves to
+`$XDG_CONFIG_HOME/pgman/safety.toml`), falling back to the paths shown
+above when the variable is unset, empty, or relative.
+
 Every file pgman itself writes — `draft.sql`, `history.log`,
 `saved.toml`, `update_check.json`, and `\report`/`\fixture` output —
 goes through `util::write_private`, which writes atomically and then

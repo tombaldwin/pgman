@@ -11,34 +11,43 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub fn config_dir() -> PathBuf {
+/// `$<xdg_var>/pgman` when `xdg_var` is set to an absolute path,
+/// else `$HOME/<home_suffix>`, else `.` (matches the pre-XDG
+/// fallback for a `HOME`-less environment). Shared by `config_dir`,
+/// `data_dir`, and `cache_dir` so the three XDG variables
+/// (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`) and their
+/// `~/.config` / `~/.local/share` / `~/.cache` fallbacks stay in
+/// lockstep. A relative or empty override is ignored — the XDG
+/// base-dir spec treats a relative value as invalid — and falls back
+/// to `HOME` same as if the variable were unset.
+fn xdg_dir(xdg_var: &str, home_suffix: &str) -> PathBuf {
+    if let Some(val) = std::env::var_os(xdg_var) {
+        let p = PathBuf::from(&val);
+        if p.is_absolute() {
+            return p.join("pgman");
+        }
+    }
     if let Some(home) = std::env::var_os("HOME") {
         let mut p = PathBuf::from(home);
-        p.push(".config/pgman");
+        p.push(home_suffix);
         return p;
     }
     PathBuf::from(".")
 }
 
+pub fn config_dir() -> PathBuf {
+    xdg_dir("XDG_CONFIG_HOME", ".config/pgman")
+}
+
 pub fn cache_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        let mut p = PathBuf::from(home);
-        p.push(".cache/pgman");
-        return p;
-    }
-    PathBuf::from(".")
+    xdg_dir("XDG_CACHE_HOME", ".cache/pgman")
 }
 
 /// Directory for persistent app state — query history, the editor
 /// draft auto-save, etc. Distinct from `cache_dir` (which is
 /// derivable / OK to lose).
 pub fn data_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        let mut p = PathBuf::from(home);
-        p.push(".local/share/pgman");
-        return p;
-    }
-    PathBuf::from(".")
+    xdg_dir("XDG_DATA_HOME", ".local/share/pgman")
 }
 
 pub fn config_file(name: &str) -> PathBuf {
@@ -372,5 +381,68 @@ mod tests {
         assert_eq!(mode, 0o700, "dir mode was {mode:o}, want 0700");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- XDG overrides ----
+    //
+    // std::env is process-global, so these tests serialise on a
+    // mutex — otherwise a parallel test thread reading config_dir()
+    // etc. while these are set/unset would see a torn view.
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_home_only<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+            ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "HOME"]
+                .iter()
+                .map(|&k| (k, std::env::var_os(k)))
+                .collect();
+        for (k, _) in &saved {
+            if *k != "HOME" {
+                std::env::remove_var(k);
+            }
+        }
+        std::env::set_var("HOME", "/home/tester");
+        let result = f();
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn config_dir_falls_back_to_home_config_when_xdg_unset() {
+        with_home_only(|| {
+            assert_eq!(config_dir(), PathBuf::from("/home/tester/.config/pgman"));
+            assert_eq!(data_dir(), PathBuf::from("/home/tester/.local/share/pgman"));
+            assert_eq!(cache_dir(), PathBuf::from("/home/tester/.cache/pgman"));
+        });
+    }
+
+    #[test]
+    fn xdg_overrides_win_when_set_and_absolute() {
+        with_home_only(|| {
+            std::env::set_var("XDG_CONFIG_HOME", "/custom/config");
+            std::env::set_var("XDG_DATA_HOME", "/custom/data");
+            std::env::set_var("XDG_CACHE_HOME", "/custom/cache");
+            assert_eq!(config_dir(), PathBuf::from("/custom/config/pgman"));
+            assert_eq!(data_dir(), PathBuf::from("/custom/data/pgman"));
+            assert_eq!(cache_dir(), PathBuf::from("/custom/cache/pgman"));
+        });
+    }
+
+    #[test]
+    fn xdg_override_ignored_when_relative() {
+        with_home_only(|| {
+            std::env::set_var("XDG_CACHE_HOME", "relative/path");
+            assert_eq!(
+                cache_dir(),
+                PathBuf::from("/home/tester/.cache/pgman"),
+                "a relative XDG_CACHE_HOME must fall back to HOME, not be joined as-is"
+            );
+        });
     }
 }
