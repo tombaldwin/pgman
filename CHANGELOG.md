@@ -21,6 +21,17 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Everything pgman writes is now owner-only (0600)**: query history,
+  the draft, saved queries, report and fixture output, the update-check
+  cache; the cache directory is 0700. They were created at the umask
+  default, usually world-readable.
+- **An unresolved Spring `${PLACEHOLDER}` was used as a literal
+  hostname.** `${VAR}` and `${VAR:default}` now resolve from the
+  environment; a pick that still has one is labelled in the picker and
+  refused with "unresolved placeholder ${DB_HOST} — export it, or put the
+  connection in .pgman/pgman.toml" instead of a DNS error.
+- **The in-app help had no section for the JDBC tap monitor or the
+  result diff**, and omitted `D`, `r`, `/`, `q` and quote autoclose.
 - **First-minute polish, found by rendering every screen at four
   terminal sizes** (`tests/sizes.rs`, 144 snapshots, now a CI gate):
   the footer clipped key hints mid-word at 80 columns (now sheds whole
@@ -58,6 +69,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **Docs**: `docs/keys.md`, `docs/commands.md`, `docs/configuration.md`,
+  `docs/safety-and-privacy.md`, `docs/logs-to-sql.md`,
+  `docs/development.md`, and `ARCHITECTURE.md`; a README for the
+  binary-install era; the demo re-recorded around the wedge.
+- **Guard tests for the house conventions** (`tests/guards.rs`): no
+  hardcoded colours outside the theme, no `println!` in the TUI, no
+  hardcoded home paths, Ctrl-guarded key arms before unguarded ones.
 - **An update check that knows how you installed pgman.** Once per
   six hours, after the first frame is drawn, one request to crates.io;
   a `⬆ x.y.z` badge in the header and the exact upgrade command in the
