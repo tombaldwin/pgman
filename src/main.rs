@@ -706,7 +706,17 @@ async fn run_batch(cli: &Cli) -> i32 {
         eprintln!("no SQL provided (pass --sql or pipe via stdin)");
         return 2;
     }
-    let safety_cfg = load_safety_config();
+    // Batch runs the same tighten-only project merge the TUI does, so a
+    // team's committed `[safety]` block still holds in CI. (Only
+    // tightening survives the merge — a project can't hand a CI job a
+    // relaxed guard table; see `project::merge_safety`.)
+    let safety_cfg = project::merge_safety(
+        load_safety_config(),
+        std::env::current_dir()
+            .ok()
+            .and_then(|cwd| load_project_safety(&cwd))
+            .as_ref(),
+    );
     // Read the profile values out before moving the config into Opts.
     let (read_only, statement_timeout_ms) = {
         let profile = safety_cfg.profile_for(&dsn.dbname);
@@ -1022,6 +1032,14 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
     }
 }
 
+/// The `[safety]` block of the project config found by walking up from
+/// `start`, if any. Split out from the TUI's inline discovery so
+/// `--batch` can apply exactly the same overrides — the merge itself is
+/// `project::merge_safety`, which only ever tightens.
+fn load_project_safety(start: &std::path::Path) -> Option<project::ProjectSafety> {
+    project::load_from(start).and_then(|(_, cfg)| cfg.safety)
+}
+
 /// Load `~/.config/pgman/safety.toml`, falling back to defaults if it's absent
 /// or malformed.
 fn load_safety_config() -> safety::SafetyConfig {
@@ -1073,6 +1091,63 @@ mod main_tests {
     fn parse_tap_addr_rejects_oversize_port() {
         let err = parse_tap_addr(":99999").unwrap_err();
         assert!(err.contains("port"), "expected port-range error: {err}");
+    }
+
+    /// Unique-per-test scratch project dir under the OS temp dir with a
+    /// `.pgman/pgman.toml` holding `toml_body`. Cleaned up by the caller.
+    fn project_dir_with(name: &str, toml_body: &str) -> std::path::PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("pgman-main-proj-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".pgman")).unwrap();
+        std::fs::write(base.join(".pgman/pgman.toml"), toml_body).unwrap();
+        base
+    }
+
+    #[test]
+    fn batch_applies_the_projects_safety_block_tighten_only() {
+        // The committed file asks for a tighter timeout and a tighter
+        // `insert` guard, and tries to relax `read_only` + `drop`.
+        // `--batch` must see the tightening and none of the relaxing —
+        // it goes through the same `project::merge_safety` the TUI does.
+        let base = project_dir_with(
+            "safety",
+            "[safety.default]\n\
+             read_only = false\n\
+             statement_timeout_ms = 2000\n\
+             [safety.default.guards]\n\
+             insert = \"block\"\n\
+             drop = \"allow\"\n",
+        );
+        let project_safety = load_project_safety(&base).expect("project [safety] block");
+        // Stand in for a personal safety.toml — reading the real one
+        // would make the test depend on the developer's home dir.
+        let personal = safety::SafetyConfig::default();
+        let merged = project::merge_safety(personal, Some(&project_safety));
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(merged.default.statement_timeout_ms, 2_000, "tightened");
+        assert_eq!(merged.default.guards.insert, safety::Guard::Block);
+        assert!(merged.default.read_only, "project can't clear read_only");
+        assert_eq!(
+            merged.default.guards.drop,
+            safety::Guard::Block,
+            "project can't relax drop"
+        );
+    }
+
+    #[test]
+    fn load_project_safety_is_none_without_a_project_file() {
+        let base =
+            std::env::temp_dir().join(format!("pgman-main-proj-none-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // `.pgman/` is absent here, but `find_root` walks up — so this
+        // only proves "None" when no ancestor has one either. The temp
+        // dir is not inside a pgman checkout, so that holds.
+        let got = load_project_safety(&base);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(got.is_none());
     }
 
     /// Unique-per-test scratch project dir under the OS temp dir, with
