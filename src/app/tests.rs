@@ -3139,6 +3139,41 @@ fn new_tab_pushes_a_fresh_state_and_switches() {
     assert_eq!(a.editor.buffer, "");
 }
 
+/// `databases` is app-level (not part of `TabSnapshot`), so a fresh
+/// tab must (a) start with an empty grid — the start card shows there
+/// too, same as the very first tab right after connect — and (b)
+/// still see the same `databases` list as every other tab, since
+/// they all share one connection.
+#[test]
+fn new_tab_has_empty_grid_and_shares_app_level_databases() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.databases = vec![DatabaseInfo {
+        name: "main".into(),
+        size: "1.2 GB".into(),
+    }];
+    a.grid = Grid {
+        columns: vec!["id".into()],
+        rows: vec![vec!["1".into()]],
+        truncated: false,
+    };
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!(a.tabs.len(), 2);
+    assert_eq!(a.active_tab, 1);
+    assert!(
+        a.grid.columns.is_empty(),
+        "a new tab's grid should start empty: {:?}",
+        a.grid
+    );
+    assert_eq!(
+        a.databases,
+        vec![DatabaseInfo {
+            name: "main".into(),
+            size: "1.2 GB".into(),
+        }],
+        "databases is app-level — a new tab must still see it"
+    );
+}
+
 #[test]
 fn cycle_tab_round_trips_state_per_tab() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -4938,4 +4973,95 @@ fn query_failed_with_position_past_buffer_clamps_to_end() {
         }
     }
     assert_eq!(a.editor.cursor, a.editor.buffer.len());
+}
+
+// -- bootstrap → start card (not the grid) --------------------------
+
+fn bootstrap_grid(rows: &[(&str, &str)]) -> Grid {
+    Grid {
+        columns: vec!["database".into(), "size".into()],
+        rows: rows
+            .iter()
+            .map(|(name, size)| vec![name.to_string(), size.to_string()])
+            .collect(),
+        truncated: false,
+    }
+}
+
+#[test]
+fn parse_bootstrap_databases_extracts_name_and_size_in_row_order() {
+    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    let got = parse_bootstrap_databases(&grid);
+    assert_eq!(
+        got,
+        vec![
+            DatabaseInfo {
+                name: "main".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn parse_bootstrap_databases_skips_rows_with_fewer_than_two_columns() {
+    let grid = Grid {
+        columns: vec!["database".into(), "size".into()],
+        rows: vec![vec!["only_name".into()], vec!["main".into(), "1 GB".into()]],
+        truncated: false,
+    };
+    let got = parse_bootstrap_databases(&grid);
+    assert_eq!(
+        got,
+        vec![DatabaseInfo {
+            name: "main".into(),
+            size: "1 GB".into(),
+        }]
+    );
+}
+
+#[test]
+fn parse_bootstrap_databases_empty_grid_yields_empty_vec() {
+    let grid = Grid::default();
+    assert!(parse_bootstrap_databases(&grid).is_empty());
+}
+
+/// `apply_bootstrap_grid` is what `on_msg`'s `Booted` arm calls with the
+/// bootstrap query's result. It must populate `App.databases` — never
+/// `App.grid` — so the start card (which only shows while
+/// `grid.columns` is empty) is what the operator lands on after every
+/// real connect, not a two-column grid of database names and sizes.
+///
+/// VERIFY-THE-CLAIM: temporarily changing `apply_bootstrap_grid` back
+/// to `self.grid = grid;` (the old, pre-fix path) makes this test fail
+/// both assertions — confirmed by hand, then reverted. See the task
+/// report for the CAUGHT line.
+#[test]
+fn bootstrap_result_populates_databases_and_leaves_grid_empty() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let grid = bootstrap_grid(&[("main", "1.2 GB"), ("analytics", "300 MB")]);
+    a.apply_bootstrap_grid(grid);
+    assert_eq!(
+        a.databases,
+        vec![
+            DatabaseInfo {
+                name: "main".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+        ]
+    );
+    assert!(
+        a.grid.columns.is_empty(),
+        "bootstrap result must not land in the grid: {:?}",
+        a.grid
+    );
+    assert!(a.grid.rows.is_empty());
 }

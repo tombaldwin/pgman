@@ -397,6 +397,19 @@ pub struct TabSnapshot {
     /// Cleared when the tab's grid is replaced (see QueryOk / Booted).
     pub bookmarks: std::collections::HashMap<char, GridBookmark>,
 }
+
+/// One row of the bootstrap "every database's name + size" overview
+/// (`BOOTSTRAP_SQL`). Feeds the start card's `databases` line — the
+/// bootstrap result never lands in `App.grid`, so the start card
+/// survives every real connect instead of being replaced by a grid of
+/// database names. App-level (not per-tab): every tab shares the same
+/// connection's database list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseInfo {
+    pub name: String,
+    pub size: String,
+}
+
 /// A vim-style bookmark on the result grid — snapshot of the
 /// `(visible row index, column cursor)` at the time `m<x>` was
 /// pressed. Persistence intentionally narrow: tracking the

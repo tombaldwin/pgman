@@ -41,10 +41,7 @@ impl App {
                     tokio::task::spawn_blocking(move || drop(old));
                 }
                 self.tunnel = tunnel;
-                self.grid = grid;
-                self.grid_state
-                    .select(if self.grid.is_empty() { None } else { Some(0) });
-                self.reset_grid_view();
+                self.apply_bootstrap_grid(grid);
                 self.schema_cache = schema_cache;
                 // Schema changed → editor highlight (keyed on buffer only)
                 // must be recomputed against the new cache.
@@ -409,6 +406,20 @@ impl App {
             }
             AppMsg::TapEvent { event } => self.on_tap_event(event),
         }
+    }
+
+    /// Route the bootstrap query's result grid into `databases`
+    /// instead of the results grid, so the start card — which only
+    /// shows while `grid.columns` is empty — is what the operator
+    /// lands on after every real connect, not a two-column grid of
+    /// database names and sizes. Also resets the grid-view state a
+    /// fresh connection warrants (sort/filter/bookmarks from the
+    /// previous session don't carry over).
+    pub(super) fn apply_bootstrap_grid(&mut self, grid: Grid) {
+        self.databases = parse_bootstrap_databases(&grid);
+        self.grid = Grid::default();
+        self.grid_state.select(None);
+        self.reset_grid_view();
     }
 
     pub(super) fn on_event(&mut self, ev: Event) {
