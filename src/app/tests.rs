@@ -1330,6 +1330,70 @@ fn history_search_next_walks_backward_case_insensitive() {
     assert_eq!(history_search_next(&history, "insert", None), Some(1));
 }
 
+#[test]
+fn splash_should_dismiss_picker_landing_dismisses_even_while_disconnected() {
+    use std::time::Instant;
+    let t0 = Instant::now();
+    let until = Some(t0 + SPLASH_MIN);
+    // Picker landing: `conn_state` is `Disconnected` (never resolves on
+    // its own), but the picker is what the operator needs — dismiss
+    // regardless, both at the minimum...
+    assert!(splash_should_dismiss(
+        true,
+        until,
+        false,
+        true,
+        t0 + SPLASH_MIN
+    ));
+    // ...and well before it, since the picker shouldn't force a wait
+    // for a connection resolution that will never come.
+    assert!(splash_should_dismiss(true, until, false, true, t0));
+}
+
+#[test]
+fn splash_should_dismiss_keypress_dismisses_before_the_minimum() {
+    // A keypress dismisses the splash directly (App::on_key sets
+    // `splash_visible = false` unconditionally) rather than going
+    // through `splash_should_dismiss` — so simulate that path here
+    // and confirm the splash is down before the minimum would have
+    // elapsed on its own.
+    use std::time::Instant;
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let t0 = Instant::now();
+    assert!(a.splash_visible);
+    assert!(a.splash_until.unwrap() > t0);
+    a.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+    assert!(!a.splash_visible);
+    assert!(a.splash_until.is_none());
+    // Confirm this really did happen before the minimum — the app was
+    // just constructed, so `now` is still well inside the window.
+    assert!(Instant::now() < t0 + SPLASH_MIN);
+}
+
+#[test]
+fn splash_should_dismiss_connecting_with_no_keypress_holds_until_the_minimum() {
+    use std::time::{Duration, Instant};
+    let t0 = Instant::now();
+    let until = Some(t0 + SPLASH_MIN);
+    // Connecting, not the picker: neither early-dismiss condition
+    // applies, so the splash holds right up to the deadline...
+    assert!(!splash_should_dismiss(
+        true,
+        until,
+        false,
+        false,
+        t0 + Duration::from_millis(1),
+    ));
+    // ...and dismisses once the minimum has elapsed.
+    assert!(splash_should_dismiss(
+        true,
+        until,
+        false,
+        false,
+        t0 + SPLASH_MIN
+    ));
+}
+
 fn app_with_grid(grid: Grid) -> App {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = grid;
