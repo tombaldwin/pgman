@@ -5,11 +5,11 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SE┌ schema browser — q / esc close ────────────────────────────────────┐    │
-│  FR│▼ public  (3)              schema: public                           │    │
+│  FR│▼ public  (3)               schema: public                          │    │
 │  WH│  ▼ orders  (5 col, 1 cons)                                         │    │
-│  OR│      · user_id : bigint NO3 table(s)                               │    │
-└────│      · status : varchar(20                                         │────┘
-┌ res│  ▼ users  (4 col, 1 cons) enter to expand — then arrow / j/k into t│────┐
+│  OR│      · user_id : bigint N… 3 table(s)                              │    │
+└────│      · status : varchar(2…                                         │────┘
+┌ res│  ▼ users  (4 col, 1 cons)  enter to expand — then arrow / j/k into…│────┐
 │id  │      ◆ users_pkey                                                  │    │
 │1   │                                                                    │    │
 │2   │                                                                    │    │
