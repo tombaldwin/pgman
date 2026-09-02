@@ -3627,6 +3627,15 @@ pub const NOTIFICATION_CAP: usize = 200;
 /// and we want a useful window without ballooning the process.
 /// 2000 events ≈ a few seconds at 1000 QPS or several minutes
 /// at typical interactive rates.
+///
+/// This bounds event COUNT only. Per-event SIZE is bounded
+/// separately, at ingest — `tap::TAP_MAX_SQL_BYTES` /
+/// `tap::TAP_MAX_FIELD_BYTES` truncate every string-shaped
+/// field on the way in (`tap::enforce_field_caps`), and the
+/// transport frame/body caps (`tap::TAP_MAX_FRAME_BYTES`,
+/// `tap::OTLP_MAX_BODY_BYTES`) bound a single frame before that
+/// even runs. Before both existed, this cap alone still allowed
+/// a multi-GB ring: 2000 events x a 1 MiB `sql` string each.
 pub const TAP_CAP: usize = 2000;
 
 /// Encode a multi-line SQL entry to a single line: `\\` → `\\\\`,

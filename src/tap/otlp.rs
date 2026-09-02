@@ -17,7 +17,8 @@
 //! functions are re-exported.
 
 use super::{
-    forward_or_drop, now_unix_micros, validate_required, TapEvent, TapKind, PROTOCOL_VERSION,
+    enforce_field_caps, forward_or_drop, now_unix_micros, validate_required, TapEvent, TapKind,
+    PROTOCOL_VERSION,
 };
 
 /// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
@@ -161,7 +162,7 @@ pub fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -
     } else {
         None
     };
-    Some(TapEvent {
+    let mut event = TapEvent {
         v: PROTOCOL_VERSION,
         kind: TapKind::Query,
         ts_unix_micros,
@@ -185,7 +186,13 @@ pub fn span_to_tap_event(span: &serde_json::Value, service_name: Option<&str>) -
         caller: None,
         dropped_events_total: None,
         txn_outcome: None,
-    })
+    };
+    // `parse` (the TCP/UDP/replay path) truncates every
+    // string-shaped field at ingest — do the same here so an
+    // OTLP `db.statement` / status message can't hand pgman an
+    // unbounded string the tap-protocol path would have capped.
+    enforce_field_caps(&mut event);
+    Some(event)
 }
 
 /// Look up a string-valued attribute by key in an OTLP
@@ -234,11 +241,15 @@ pub fn otlp_unix_nano(v: Option<&serde_json::Value>) -> Option<u64> {
 // receive pipeline.
 // ---------------------------------------------------------
 
-/// Maximum OTLP HTTP body size we'll accept. 16 MiB — well
+/// Maximum OTLP HTTP body size we'll accept. 4 MiB — well
 /// above any reasonable single OTLP batch. Bigger would
 /// suggest a misbehaving agent or a hostile client trying to
-/// exhaust memory.
-pub const OTLP_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// exhaust memory; at the old 16 MiB cap, 100 concurrent
+/// uploads could hold ~1.6 GB before the connection cap
+/// ([`super::listener::TAP_MAX_CONCURRENT_CONNS`]) existed to
+/// bound "concurrent" in the first place. With both caps in
+/// place the worst case is bounded connections × this cap.
+pub const OTLP_MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Spawn an OTLP/HTTP listener on `addr`. Accepts only
 /// `POST /v1/traces` with `Content-Type: application/json`;
