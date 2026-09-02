@@ -13,7 +13,7 @@
 //! Subprocesses inherit stdio so the user sees the upgrade command's output
 //! live.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::update_check::InstallChannel;
@@ -70,13 +70,43 @@ fn run_checkout() -> anyhow::Result<()> {
     finish()
 }
 
+/// Pick a working directory for an upgrade subprocess: `home` if it's
+/// a directory that actually exists, otherwise `temp`. Pure — the
+/// impure caller (`run_step`) resolves `$HOME` and `std::env::temp_dir()`
+/// and passes them in, so this stays testable without touching the
+/// filesystem or environment.
+fn choose_working_dir(home: Option<PathBuf>, home_is_dir: bool, temp: PathBuf) -> PathBuf {
+    match home {
+        Some(p) if home_is_dir => p,
+        _ => temp,
+    }
+}
+
+/// `$HOME` if set and an actual directory, else the OS temp dir.
+/// `cargo install` and `brew upgrade` search upward from the
+/// subprocess's *current working directory* for `.cargo/config.toml`
+/// — a `build.rustc-wrapper` or `target.*.runner` entry in one runs
+/// arbitrary commands. Running the upgrade from wherever the operator
+/// happened to invoke `pgman --upgrade` (which might be sitting inside
+/// some other, untrusted checkout) would let that checkout's config
+/// hijack the upgrade; running from `$HOME` (or the temp dir) instead
+/// means only a config *there* — Homebrew's or cargo's own concern —
+/// can affect it.
+fn home_or_temp_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home_is_dir = home.as_deref().is_some_and(Path::is_dir);
+    choose_working_dir(home, home_is_dir, std::env::temp_dir())
+}
+
 /// Run one upgrade subprocess with inherited stdio, echoing the command
-/// first so the operator sees exactly what ran. `Err` on a failed spawn or
-/// a non-zero exit.
+/// first so the operator sees exactly what ran. Runs from `$HOME` (or the
+/// OS temp dir) rather than pgman's own working directory — see
+/// `home_or_temp_dir` for why. `Err` on a failed spawn or a non-zero exit.
 fn run_step(program: &str, args: &[&str]) -> anyhow::Result<()> {
     eprintln!("→ {program} {}", args.join(" "));
     let status = Command::new(program)
         .args(args)
+        .current_dir(home_or_temp_dir())
         .status()
         .map_err(|e| anyhow::anyhow!("could not run {program}: {e}"))?;
     if !status.success() {
@@ -128,4 +158,31 @@ fn relaunch() -> anyhow::Result<()> {
         .status()
         .map_err(|e| anyhow::anyhow!("spawn failed: {e}"))?;
     std::process::exit(status.code().unwrap_or(1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn choose_working_dir_prefers_home_when_it_is_a_real_directory() {
+        let home = PathBuf::from("/Users/tester");
+        let temp = PathBuf::from("/tmp");
+        assert_eq!(choose_working_dir(Some(home.clone()), true, temp), home);
+    }
+
+    #[test]
+    fn choose_working_dir_falls_back_to_temp_when_home_unset() {
+        let temp = PathBuf::from("/tmp");
+        assert_eq!(choose_working_dir(None, false, temp.clone()), temp);
+    }
+
+    #[test]
+    fn choose_working_dir_falls_back_to_temp_when_home_is_not_a_directory() {
+        // HOME set but pointing at something that doesn't exist (or
+        // isn't a directory) — e.g. a stale/misconfigured env.
+        let home = PathBuf::from("/Users/tester");
+        let temp = PathBuf::from("/tmp");
+        assert_eq!(choose_working_dir(Some(home), false, temp.clone()), temp);
+    }
 }
