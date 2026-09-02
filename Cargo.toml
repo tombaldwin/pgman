@@ -2,6 +2,7 @@
 name = "pgman"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.94.1"
 authors = ["Tom Baldwin <tom@polymorphism.co.uk>"]
 description = "k9s-style Postgres TUI for Java/AWS shops"
 license = "MIT OR Apache-2.0"

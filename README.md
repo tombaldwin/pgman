@@ -1,6 +1,6 @@
 # pgman
 
-[![CI](https://github.com/tombaldwin/pgman/actions/workflows/test.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/test.yml)
+[![CI](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![status: public beta](https://img.shields.io/badge/status-public%20beta-orange.svg)](https://github.com/tombaldwin/pgman/releases)
 
@@ -173,7 +173,7 @@ real Postgres on `127.0.0.1:55432`. Subprocess paths (`\e` editor,
 ratatui's `TestBackend` and inspect specific cells / strings rather
 than full snapshots, so they survive minor layout shifts.
 
-CI runs all of the above on every push (`.github/workflows/test.yml`):
+CI runs all of the above on every push (`.github/workflows/ci.yml`):
 the unit / render / subprocess / doc tests on linux + macos, the
 integration tests against a live `postgres:16` service container, a
 coverage report via `cargo-llvm-cov`, and `cargo fmt --check` +

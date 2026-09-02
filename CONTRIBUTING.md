@@ -14,7 +14,7 @@ cargo test
 
 ## Before opening a PR
 
-The CI gates (see `.github/workflows/test.yml`) must pass, so run these locally:
+The CI gates (see `.github/workflows/ci.yml`) must pass, so run these locally:
 
 ```sh
 cargo fmt --all                 # formatting (CI runs --check)
