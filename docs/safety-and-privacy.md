@@ -144,18 +144,30 @@ them) are held only in memory (a capped ring buffer) unless you pass
 | `sslmode` | Encrypted | Certificate verified |
 | --- | --- | --- |
 | `disable` | no | — |
+| `allow` | yes if the server demands it, otherwise no | no. Same wire outcome as `prefer` — pgman makes a single connection attempt, so it can't preserve libpq's "try plaintext, retry with TLS" negotiation order; that order has no observable effect once the server states its own requirement anyway. |
 | `prefer` (default when unset) | yes, falls back to plaintext if the server refuses | no |
 | `require` | yes, connection fails if the server refuses | no |
-| `verify-ca` | yes | yes — currently collapsed onto the same check as `verify-full` (hostname included); a `verify-ca`-without-hostname-check custom verifier is a tracked follow-up (`BACKLOG.md`) |
+| `verify-ca` | yes | yes — currently collapsed onto the same check as `verify-full`, i.e. **including hostname**. This makes pgman's `verify-ca` strictly *stricter* than libpq's (which checks the chain but not the hostname for `verify-ca`) — deliberate, and safe in the sense that it can only reject a connection libpq's `verify-ca` would accept, never the reverse. A `verify-ca`-without-hostname-check custom verifier, to match libpq exactly, is a tracked follow-up (`BACKLOG.md`) |
 | `verify-full` | yes | yes, including hostname |
 
-For `prefer`/`require`, pgman installs a rustls verifier that accepts
-any server certificate — equivalent to libpq's "encrypt without
-authenticating the peer." Use `verify-full` on any network where a
-MITM is a real concern. When verification is on, trust roots come
-from the OS keychain (`rustls-native-certs`) unioned with the Mozilla
-bundle (`webpki-roots`), so a fresh container with no populated system
-trust store still connects to RDS.
+For `prefer`/`require`/`allow`, pgman installs a rustls verifier that
+accepts any server certificate — equivalent to libpq's "encrypt
+without authenticating the peer." Use `verify-full` on any network
+where a MITM is a real concern. When verification is on, trust roots
+come from the OS keychain (`rustls-native-certs`) unioned with the
+Mozilla bundle (`webpki-roots`), so a fresh container with no
+populated system trust store still connects to RDS.
+
+**An unrecognised `sslmode` is a hard `Dsn::parse` error, not a silent
+downgrade.** Values are trimmed and ASCII-lowercased before matching
+(so `VERIFY-FULL`, and a value with a stray trailing space or `\r`
+from a Windows-authored config file, are accepted and normalised) —
+but anything outside the six modes above (a typo like `verify_full`,
+an empty `sslmode=`) refuses to parse. Before this fix, an unrecognised
+value fell through to `prefer` (encrypt without verifying, and fall
+back to plaintext if the server declines) with only a `tracing::warn!`
+that the alternate screen never surfaces — the weakest mode of the
+five, chosen silently.
 
 ## Redaction of connection strings
 

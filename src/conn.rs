@@ -58,6 +58,10 @@ pub enum DsnError {
     MissingHost,
     /// The `:port` component didn't parse as a `u16`.
     BadPort(String),
+    /// `sslmode=<value>` (trimmed, lowercased) wasn't one of the
+    /// recognised modes. A typo or wrong separator here must never
+    /// fall through to a weaker mode — see `apply_ssl_mode`.
+    UnknownSslMode(String),
 }
 
 impl fmt::Display for DsnError {
@@ -67,6 +71,10 @@ impl fmt::Display for DsnError {
             DsnError::BadScheme(s) => write!(f, "unsupported scheme {s:?} (expected postgres)"),
             DsnError::MissingHost => write!(f, "no host in connection string"),
             DsnError::BadPort(p) => write!(f, "invalid port {p:?}"),
+            DsnError::UnknownSslMode(v) => write!(
+                f,
+                "unknown sslmode {v:?} — use one of disable, allow, prefer, require, verify-ca, verify-full"
+            ),
         }
     }
 }
@@ -184,6 +192,13 @@ impl Dsn {
     /// raw in the authority; they start the query/fragment). `host`
     /// and `dbname` are **not** percent-decoded.
     ///
+    /// Every query-param value is trimmed of surrounding whitespace.
+    /// `sslmode=` is additionally validated against
+    /// [`KNOWN_SSLMODES`] (case-insensitively) and normalised to its
+    /// canonical lowercase form — an unrecognised value is a hard
+    /// `Err(DsnError::UnknownSslMode)`, never a value that quietly
+    /// falls through to a weaker mode at connect time.
+    ///
     /// Known limitation: bracketed IPv6 hosts (`[::1]:5432`) are not
     /// yet handled — see BACKLOG.md M0.
     pub fn parse(dsn: &str) -> Result<Dsn, DsnError> {
@@ -238,13 +253,18 @@ impl Dsn {
         } else {
             path.to_string()
         };
+        // Trim whitespace off both key and value — a `?sslmode=require `
+        // (trailing space) or `sslmode=require\r` (stray CR from a
+        // Windows-authored `.env`/config file) is a real value some
+        // sources hand us, and it shouldn't be treated as an unrecognised
+        // one just because of incidental whitespace.
         let raw_params: Vec<(String, String)> = match query {
             Some(q) => q
                 .split('&')
                 .filter(|s| !s.is_empty())
                 .map(|kv| match kv.split_once('=') {
-                    Some((k, v)) => (k.to_string(), v.to_string()),
-                    None => (kv.to_string(), String::new()),
+                    Some((k, v)) => (k.trim().to_string(), v.trim().to_string()),
+                    None => (kv.trim().to_string(), String::new()),
                 })
                 .collect(),
             None => Vec::new(),
@@ -259,6 +279,14 @@ impl Dsn {
         // Duplicate `ssh_tunnel=` keys: first-set-wins (whether valid
         // or not) so the resolution doesn't depend on later occurrences
         // — typical URL-param convention.
+        //
+        // `sslmode=` is different: unlike a stray/duplicate tunnel
+        // param, a bad `sslmode` is a *security* setting, and the
+        // whole point of this validation is that it must never be
+        // silently swallowed — so every occurrence is validated
+        // strictly and normalised to its canonical lowercase form
+        // (`apply_ssl_mode` then matches on that verbatim, with no
+        // further case/whitespace handling of its own).
         let mut params: Vec<(String, String)> = Vec::with_capacity(raw_params.len());
         let mut ssh_tunnel: Option<crate::tunnel::SshTunnelSpec> = None;
         let mut saw_tunnel_key = false;
@@ -280,6 +308,12 @@ impl Dsn {
                         tracing::warn!("ignoring malformed ssh_tunnel param: {e}");
                     }
                 }
+            } else if k.eq_ignore_ascii_case("sslmode") {
+                let lower = v.to_ascii_lowercase();
+                if !KNOWN_SSLMODES.contains(&lower.as_str()) {
+                    return Err(DsnError::UnknownSslMode(v));
+                }
+                params.push((k, lower));
             } else {
                 params.push((k, v));
             }
@@ -964,11 +998,35 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
     rendered.unwrap_or_else(|| "?".to_string())
 }
 
+/// The exact set of `sslmode` values `Dsn::parse` accepts (after
+/// trimming and ASCII-lowercasing). Anything else — a typo, the wrong
+/// separator (`verify_full`), wrong case surviving some other way, an
+/// empty value — is a hard parse error. See `apply_ssl_mode`: the
+/// previous behaviour silently downgraded an unrecognised value to
+/// `prefer` (encrypt-without-verifying, falls back to plaintext), which
+/// is a strictly weaker guarantee than most of the other five modes —
+/// exactly the kind of security setting that must never fail open.
+const KNOWN_SSLMODES: [&str; 6] = [
+    "disable",
+    "allow",
+    "prefer",
+    "require",
+    "verify-ca",
+    "verify-full",
+];
+
 /// Apply `sslmode` from `dsn.params` to a `tokio_postgres::Config` and
 /// return whether certificate verification should be performed by the
 /// TLS connector. Matches libpq's semantics:
 ///
 /// - `disable`              → plaintext only (no verify regardless)
+/// - `allow`                → encrypt if the server demands it, don't
+///   verify. libpq's `allow` tries plaintext first and retries with
+///   TLS only if refused; pgman makes a single connection attempt, so
+///   there's no "try order" to preserve — we get the same eventual
+///   encryption state as `prefer` either way, just not libpq's
+///   negotiation *order* preference (which has no observable effect
+///   once the server states its own requirement).
 /// - `prefer` / `require`   → encrypt without verifying — works against
 ///   self-signed dev databases. `require` differs from `prefer` only in
 ///   the connector's handling when the server says no: `require` fails.
@@ -976,7 +1034,16 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
 ///   for verify-full, the hostname). `tokio-postgres-rustls`'s default
 ///   verifier checks both; we currently collapse verify-ca onto
 ///   verify-full (a noted follow-up — verify-ca-without-hostname needs
-///   a custom rustls verifier).
+///   a custom rustls verifier). This makes pgman's `verify-ca` strictly
+///   *stricter* than libpq's (which does not check the hostname for
+///   `verify-ca`) — a deliberate simplification, not a bug: it can
+///   only ever reject a connection libpq's `verify-ca` would accept,
+///   never the reverse.
+///
+/// `Dsn::parse` validates `sslmode` against [`KNOWN_SSLMODES`] before
+/// this ever runs, so every arm below except the last is reachable
+/// only with a value from that exact set — the `unreachable!` is a
+/// tripwire for that invariant, not a real code path.
 fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> bool {
     use tokio_postgres::config::SslMode;
     let mode = dsn
@@ -989,7 +1056,7 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> bool {
             cfg.ssl_mode(SslMode::Disable);
             false
         }
-        Some("prefer") | None => {
+        Some("allow") | Some("prefer") | None => {
             cfg.ssl_mode(SslMode::Prefer);
             false
         }
@@ -1002,9 +1069,7 @@ fn apply_ssl_mode(cfg: &mut tokio_postgres::Config, dsn: &Dsn) -> bool {
             true
         }
         Some(other) => {
-            tracing::warn!("unknown sslmode={other:?} — defaulting to Prefer");
-            cfg.ssl_mode(SslMode::Prefer);
-            false
+            unreachable!("Dsn::parse should have rejected sslmode={other:?}")
         }
     }
 }
@@ -1276,6 +1341,84 @@ mod tests {
         );
     }
 
+    // --- Security-review: sslmode is validated, never silently downgraded ---
+
+    #[test]
+    fn rejects_uppercase_sslmode_separator_typo() {
+        // Was: byte-exact match missed this, fell through to the
+        // `Prefer` + no-op-verifier fallback with only a `tracing::warn!`
+        // the operator would never see behind the alternate screen.
+        // `verify_full` (underscore, not a case variant) is a genuine
+        // typo — it must be rejected, not guessed at.
+        assert_eq!(
+            Dsn::parse("postgres://h/d?sslmode=verify_full"),
+            Err(DsnError::UnknownSslMode("verify_full".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_sslmode() {
+        assert_eq!(
+            Dsn::parse("postgres://h/d?sslmode="),
+            Err(DsnError::UnknownSslMode(String::new()))
+        );
+    }
+
+    #[test]
+    fn rejects_garbage_sslmode() {
+        assert_eq!(
+            Dsn::parse("postgres://h/d?sslmode=yolo"),
+            Err(DsnError::UnknownSslMode("yolo".to_string()))
+        );
+    }
+
+    #[test]
+    fn accepts_uppercase_sslmode_case_insensitively() {
+        // Wrong CASE is not a typo — `VERIFY-FULL` unambiguously means
+        // `verify-full`, so it's accepted (and normalised), not
+        // rejected. This is the actual security fix: before, this
+        // fell through to the silent-downgrade fallback instead of
+        // being treated as the strict mode it obviously is.
+        let d = Dsn::parse("postgres://h/d?sslmode=VERIFY-FULL").unwrap();
+        assert_eq!(
+            d.params,
+            vec![("sslmode".to_string(), "verify-full".to_string())]
+        );
+    }
+
+    #[test]
+    fn accepts_sslmode_with_trailing_whitespace_or_cr() {
+        // A stray trailing space or CR (Windows-authored config /
+        // .env files) is whitespace noise, not a typo — trim it and
+        // accept the mode it clearly names. The whitespace sits
+        // *before* a following `&param`, not at the very end of the
+        // DSN string, so this exercises the per-value trim in the
+        // params loop rather than `Dsn::parse`'s outer `dsn.trim()`
+        // (which would mask the bug by trimming the whole string).
+        let d = Dsn::parse("postgres://h/d?sslmode=verify-full &application_name=x").unwrap();
+        assert_eq!(
+            d.params,
+            vec![
+                ("sslmode".to_string(), "verify-full".to_string()),
+                ("application_name".to_string(), "x".to_string()),
+            ]
+        );
+        let d2 = Dsn::parse("postgres://h/d?sslmode=verify-full\r&application_name=x").unwrap();
+        assert_eq!(
+            d2.params,
+            vec![
+                ("sslmode".to_string(), "verify-full".to_string()),
+                ("application_name".to_string(), "x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_allow_sslmode() {
+        let d = Dsn::parse("postgres://h/d?sslmode=allow").unwrap();
+        assert_eq!(d.params, vec![("sslmode".to_string(), "allow".to_string())]);
+    }
+
     #[test]
     fn ssh_tunnel_url_param_extracted_into_field_and_dropped_from_params() {
         let dsn = Dsn::parse(
@@ -1494,8 +1637,10 @@ mod tests {
         let (_, v) = parsed("postgres://h/d?sslmode=verify-ca");
         assert!(v);
 
-        // Unknown value falls back to Prefer.
-        let (cfg, v) = parsed("postgres://h/d?sslmode=bogus");
+        // `allow`: same wire outcome as `prefer` (see apply_ssl_mode's
+        // doc comment for why pgman can't preserve libpq's
+        // plaintext-first negotiation order).
+        let (cfg, v) = parsed("postgres://h/d?sslmode=allow");
         assert_eq!(cfg.get_ssl_mode(), SslMode::Prefer);
         assert!(!v);
     }

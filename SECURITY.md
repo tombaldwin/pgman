@@ -24,9 +24,12 @@ class:
 - **Credentials are never logged.** Resolved passwords/tokens are kept out of
   `tracing` output and the UI; only redacted DSNs (`postgres://user:***@host/db`)
   and credential *provenance* are shown or logged.
-- **`sslmode=require` / `prefer` encrypt without verifying the server
-  certificate** (matching libpq semantics). Use `sslmode=verify-full` on
-  untrusted networks where you need certificate + hostname verification.
+- **`sslmode=require` / `prefer` / `allow` encrypt without verifying the
+  server certificate** (matching libpq semantics). Use `sslmode=verify-full`
+  on untrusted networks where you need certificate + hostname verification.
+  An `sslmode` value outside `disable | allow | prefer | require | verify-ca
+  | verify-full` (case-insensitive, whitespace-trimmed) is a hard connection
+  error — it never falls back to a weaker mode silently.
 - **The JDBC-tap listeners (`--tap-listen` / `--tap-otlp` / `--tap-udp`) are
   unauthenticated ingest** and bind to `127.0.0.1` by default. Only bind a
   non-loopback address (e.g. `0.0.0.0`) on a trusted/firewalled network — doing
