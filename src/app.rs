@@ -3409,43 +3409,76 @@ pub fn pg_format_via(input: &str, binary: &str) -> Result<String, String> {
     Ok(formatted.trim_end_matches('\n').to_string())
 }
 
+/// RAII guard for the `$EDITOR` scratch directory: removes the whole
+/// directory (and anything the editor left in it, e.g. a swap file)
+/// on drop, so every exit path — success, the read-back failure that
+/// used to `return` before its `remove_file`, a spawn failure — gets
+/// cleanup without each branch having to remember it. Best-effort:
+/// a failed removal (directory already gone, permissions changed
+/// under us) is not itself an error worth surfacing.
+struct EditScratchDir(std::path::PathBuf);
+
+impl Drop for EditScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Write `input` to a temp file, invoke `editor_cmd` (with optional
 /// args, whitespace-split) against the file, read it back. The
 /// extracted core of `\e` external-editor handling — same shape as
 /// `pg_format_via`: takes the editor command as a parameter so the
 /// integration test can drive a stubbed editor without `$EDITOR` env
 /// gymnastics.
+///
+/// The buffer can hold literal query text — table data, `WHERE`
+/// clause values — so it gets the same treatment as everything else
+/// under `util::write_private`: a private (`0700`) per-invocation
+/// scratch directory rather than a predictable
+/// `$TMPDIR/pgman-edit-<pid>-<seq>.sql` name any local user could
+/// read while the editor has it open, holding one `0600` file
+/// written atomically. `EditScratchDir` removes the directory on
+/// every exit path, including ones a plain `return` used to skip.
 pub fn external_edit_via(input: &str, editor_cmd: &str) -> Result<String, String> {
     use std::process::Command;
     let (prog, args) = split_editor_command(editor_cmd);
-    // Per-call temp file: pid + a monotonic counter so parallel
-    // invocations (cargo's test runner spawns several test threads in
-    // one process) don't collide on the same path. Cleaned up on
-    // every exit branch.
+    // Per-call scratch dir: pid + wall-clock nanos + a monotonic
+    // counter so parallel invocations (cargo's test runner spawns
+    // several test threads in one process) don't collide.
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!("pgman-edit-{}-{}.sql", std::process::id(), seq));
-    std::fs::write(&path, input)
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir_path = std::env::temp_dir().join(format!(
+        "pgman-edit-{}-{}-{}",
+        std::process::id(),
+        nanos,
+        seq
+    ));
+    crate::util::create_dir_all_private(&dir_path)
+        .map_err(|e| format!("could not create scratch dir for {prog}: {e}"))?;
+    // From here on, every return path — the `?`s below included —
+    // runs this guard's `Drop` and removes `dir_path`.
+    let _scratch = EditScratchDir(dir_path.clone());
+    let path = dir_path.join("buffer.sql");
+
+    crate::util::write_private(&path, input)
         .map_err(|e| format!("could not write temp file for {prog}: {e}"))?;
     let status = Command::new(&prog)
         .args(&args)
         .arg(&path)
         .status()
-        .map_err(|e| {
-            // Best-effort cleanup before surfacing the spawn failure.
-            let _ = std::fs::remove_file(&path);
-            format!("could not run {prog}: {e}")
-        })?;
+        .map_err(|e| format!("could not run {prog}: {e}"))?;
     if !status.success() {
-        let _ = std::fs::remove_file(&path);
         return Err(format!(
             "{prog} exited with status {status} — buffer unchanged"
         ));
     }
     let text =
         std::fs::read_to_string(&path).map_err(|e| format!("could not read {prog} output: {e}"))?;
-    let _ = std::fs::remove_file(&path);
     Ok(text.trim_end_matches('\n').to_string())
 }
 

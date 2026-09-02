@@ -1,0 +1,20 @@
+#!/bin/sh
+# fake_editor_stat — like fake_editor, but reports the octal
+# permission mode of the file it's editing and of that file's parent
+# directory, appended to the buffer content. Used to assert the
+# `$EDITOR` scratch file/dir are owner-only *while the editor has
+# them open* — checking from outside the subprocess would race the
+# cleanup that runs right after this script exits.
+set -e
+for last; do :; done
+file="$last"
+dir=$(dirname "$file")
+# BSD stat (macOS) uses `-f FORMAT`; GNU stat (Linux) uses `-c FORMAT`.
+# Try BSD first, fall back to GNU.
+file_mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file" 2>/dev/null)
+dir_mode=$(stat -f '%Lp' "$dir" 2>/dev/null || stat -c '%a' "$dir" 2>/dev/null)
+content="$(cat "$file")"
+{
+  printf '%s' "$content"
+  printf '\n-- file_mode=%s dir_mode=%s' "$file_mode" "$dir_mode"
+} > "$file"
