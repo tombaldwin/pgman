@@ -15,8 +15,15 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - **Dependency majors**: `quick-xml` 0.36 → 0.42, `toml` 0.8 → 1.1,
   `criterion` 0.5 → 0.8, `tokio-postgres-rustls` 0.13 → 0.14, plus the
   pinned GitHub Actions.
+- **`webpki-roots` 0.26 → 1.0**. No code changes needed — the Mozilla
+  root bundle fallback in `conn.rs` uses the same `TLS_SERVER_ROOTS`
+  shape.
 
 ### Fixed
+
+- **A yanked `chacha20` 0.10.1**, pulled in transitively via `rand` →
+  `postgres-protocol`, had `cargo-deny` red. Fixed with
+  `cargo update -p chacha20` to 0.10.2.
 
 - **Server notices could be lost on exit in batch mode.** `batch::run`
   drained the notice channel in a detached task and returned without
