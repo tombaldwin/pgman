@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> S┌ schema browser — q / esc close ──────────────────┐   │
+│  F│▼ public  (3)               schema: public        │   │
+│  W│  ▼ orders  (5 col, 1 cons)                       │   │
+│  O│      · user_id : bigint N… 3 table(s)            │   │
+└───│      · status : varchar(2…                       │───┘
+┌ re│  ▼ users  (4 col, 1 cons)  enter to expand — the…│───┐
+│id │      ◆ users_pkey                                │   │
+│1  │                                                  │   │
+│2  │                                                  │   │
+│3  │                                                  │   │
+│4  └──────────────────────────────────────────────────┘   │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   filter: /us  · enter accept · esc clear

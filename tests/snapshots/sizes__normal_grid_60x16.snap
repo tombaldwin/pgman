@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                      │
+│  FROM users                                              │
+│  WHERE plan = 'pro'                                      │
+│  ORDER BY created_at DESC;                               │
+└──────────────────────────────────────────────────────────┘
+┌ result · 6 row(s) ───────────────────────────────────────┐
+│id  email                  plan  created_at               │
+│1   ada@example.com        pro   2026-01-04 09:12:00+00   │
+│2   linus@example.com      free  2026-01-09 14:48:00+00   │
+│3   grace@example.com      pro   2026-02-01 08:30:00+00   │
+│4   alan@example.com       team  2026-02-17 19:05:00+00   │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · F1 +8 more

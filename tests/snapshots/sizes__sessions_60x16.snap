@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│>┌ active sessions — pg_stat_activity — r refresh · q c┐  │
+│ │     pid  user/app              state         age(s) │  │
+│ │    1234  alice/psql            active          12.5 │  │
+│ │    5678  bob/pgman             idle in tx     300.0 │  │
+└─│                                                     │──┘
+┌ │                                                     │──┐
+│i│                                                     │  │
+│1│                                                     │  │
+│2│                                                     │  │
+│3│                                                     │  │
+│4└─────────────────────────────────────────────────────┘  │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · K terminate · F1 +4 more

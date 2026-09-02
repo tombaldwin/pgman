@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> S┌ saved queries — /d  (3/3 shown) · enter load · es┐   │
+│  F│  pro-users                     SELECT id, email, │   │
+│  W│  order-by-id                   SELECT * FROM orde│   │
+│  O│  daily-revenue                 SELECT date_trunc(│   │
+└───│                                                  │───┘
+┌ re│                                                  │───┐
+│id │  pro-users                                       │   │
+│1  │  SELECT id, email, created_at                    │   │
+│2  │  FROM users                                      │   │
+│3  │  WHERE plan = 'pro'                              │   │
+│4  └──────────────────────────────────────────────────┘   │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   filter saved queries · type to narrow
