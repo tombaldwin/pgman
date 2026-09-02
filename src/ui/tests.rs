@@ -282,11 +282,12 @@ fn fit_hints_never_cuts_mid_item() {
             continue;
         }
         // Every remaining piece (split on " · ") must be either a whole
-        // item from the source string, or the trailing "N more" marker —
+        // item from the source string, or the trailing "F1 +N more" marker —
         // never a partial hint.
         for piece in fitted.split(" · ") {
             let is_marker = piece
-                .strip_suffix(" more")
+                .strip_prefix("F1 +")
+                .and_then(|rest| rest.strip_suffix(" more"))
                 .is_some_and(|n| n.parse::<usize>().is_ok());
             assert!(
                 is_marker || hints.split(" · ").any(|item| item == piece),
@@ -299,19 +300,20 @@ fn fit_hints_never_cuts_mid_item() {
 #[test]
 fn fit_hints_width_too_small_for_first_hint_yields_just_the_marker() {
     let hints = "q quit · ? help · e editor";
-    // Too narrow even for "q quit" plus a marker, but the bare "3 more"
-    // marker (6 chars) fits.
-    let fitted = fit_hints(hints, 6);
-    assert_eq!(fitted, "3 more");
+    // Too narrow even for "q quit" plus a marker, but the bare
+    // "F1 +3 more" marker (10 chars) fits.
+    let fitted = fit_hints(hints, 10);
+    assert_eq!(fitted, "F1 +3 more");
 }
 
 #[test]
 fn fit_hints_mid_list_cut_drops_whole_items_and_appends_marker() {
     let hints = "q quit · ? help · e editor · S schema · W wizard";
-    // Fits "q quit · ? help · e editor" (26 chars) + " · 2 more" (9) = 35.
-    let fitted = fit_hints(hints, 35);
-    assert_eq!(fitted, "q quit · ? help · e editor · 2 more");
-    assert!(fitted.chars().count() <= 35);
+    // Fits "q quit · ? help · e editor" (26 chars) + " · F1 +2 more"
+    // (13) = 39.
+    let fitted = fit_hints(hints, 39);
+    assert_eq!(fitted, "q quit · ? help · e editor · F1 +2 more");
+    assert!(fitted.chars().count() <= 39);
 }
 
 #[test]
@@ -331,7 +333,7 @@ fn fit_hints_marker_width_is_always_accounted_for() {
 
 #[test]
 fn fit_hints_empty_when_nothing_at_all_fits() {
-    // Not even a single-digit "N more" marker (6 chars) fits in 3.
+    // Not even a single-digit "F1 +N more" marker (10 chars) fits in 3.
     let hints = "q quit · ? help";
     assert_eq!(fit_hints(hints, 3), "");
 }
