@@ -79,11 +79,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::Confirm {
         draw_confirm(f, area, app);
     }
+    // The two pickers float inside the results panel rather than
+    // being centred on the body: centred, the popup's own frame landed
+    // on the panel's top border and title (`┌ pgman┌ pick a
+    // connection`). Same treatment the completion popup already gets.
     if app.mode == Mode::LogPick {
-        draw_log_pick(f, area, app);
+        draw_log_pick(f, chunks[3], app);
     }
     if app.mode == Mode::ConnPick {
-        draw_conn_pick(f, area, app);
+        draw_conn_pick(f, chunks[3], app);
     }
     if app.mode == Mode::RowDetail {
         draw_row_detail(f, area, app);
@@ -1879,6 +1883,25 @@ fn centered_pct(area: Rect, w: u16, h: u16) -> Rect {
         y: area.y + (area.height - height) / 2,
         width,
         height,
+    }
+}
+
+/// A popup floated one row and one column inside `panel`, sized to
+/// `content_w` × `content_h` but never past the room that leaves.
+/// Anchored top-left rather than centred: a popup centred on a panel
+/// it is nearly as wide as puts its own top border on the panel's
+/// border and title, fusing the two frames into one run of glyphs
+/// (`┌ pgman┌ pick a connection`). Falls back to centring when the
+/// panel is too small to float inside at all.
+fn floated_in_panel(panel: Rect, content_w: u16, content_h: u16) -> Rect {
+    if panel.width < 4 || panel.height < 4 {
+        return centered(panel, content_w, content_h);
+    }
+    Rect {
+        x: panel.x + 1,
+        y: panel.y + 1,
+        width: content_w.min(panel.width - 2),
+        height: content_h.min(panel.height - 2),
     }
 }
 

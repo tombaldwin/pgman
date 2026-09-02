@@ -691,3 +691,79 @@ fn history_search_status_renders_bash_style_prompt() {
         "footer should show the reverse-i-search prompt; full render:\n{rendered}"
     );
 }
+
+/// The connection picker floats one row and one column inside the
+/// results panel, and pads its origin column outside the brackets.
+/// Centred, the popup's own top border landed on the panel's border
+/// and title (`┌ pgman┌ pick a connection`); padded inside, the tag
+/// read `[ project]`, fencing off a run of spaces that belongs to the
+/// column, not to the tag.
+#[test]
+fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
+    let picks = vec![
+        DataSourcePick {
+            name: "prod".into(),
+            origin: "project",
+            dsn: Some(Dsn::parse("postgres://app@prod-db/main").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "staging".into(),
+            origin: "IntelliJ",
+            dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+    ];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    let buf = render(&mut a, 80, 16);
+    let rendered = dump(&buf);
+
+    // Padding outside the brackets, never inside.
+    assert!(
+        rendered.contains("[project]") && rendered.contains("[IntelliJ]"),
+        "origin tags should be padded outside the brackets:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("[ project]"),
+        "origin tag was padded inside its brackets:\n{rendered}"
+    );
+
+    // The panel's own top border row is intact — the popup starts on
+    // the row below it, and one column in.
+    let lines: Vec<&str> = rendered.lines().collect();
+    let panel_top = lines
+        .iter()
+        .position(|l| l.starts_with("┌ pgman"))
+        .expect("results panel border");
+    assert!(
+        !lines[panel_top].contains("pick a connection"),
+        "picker landed on the panel's top border row:\n{rendered}"
+    );
+    assert!(
+        lines[panel_top + 1].starts_with("│┌ pick a connection"),
+        "picker should float one row/column inside the panel:\n{rendered}"
+    );
+
+    // Every popup row keeps a blank column before its right border, so
+    // the longest target doesn't read as jammed against the frame.
+    let right_border = lines[panel_top + 1]
+        .chars()
+        .position(|c| c == '┐')
+        .expect("popup right border");
+    for line in &lines[panel_top + 2..] {
+        let chars: Vec<char> = line.chars().collect();
+        if chars.get(right_border) != Some(&'│') {
+            continue;
+        }
+        assert_eq!(
+            chars.get(right_border - 1),
+            Some(&' '),
+            "picker row touches the popup's right border:\n{rendered}"
+        );
+    }
+}

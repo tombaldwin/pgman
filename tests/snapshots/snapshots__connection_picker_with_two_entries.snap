@@ -6,14 +6,14 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                  │
 └──────────────────────────────────────────────────────────────────────────────┘
-┌ pgman┌ pick a connection · 1/2 ──────────────────────────────────────┐───────┐
-│      │▶ [ project] prod     app@prod-db:5432/main  sslmode=default   │       │
-│      │  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default│       │
-│      │                                                               │       │
-│      │  nothing here connects until you press enter                  │       │
-│      │  PGPASSWORD is only used with --dsn                           │       │
-│      └───────────────────────────────────────────────────────────────┘       │
-│                                                                              │
+┌ pgman ───────────────────────────────────────────────────────────────────────┐
+│┌ pick a connection · 1/2 ───────────────────────────────────────┐            │
+││▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │            │
+││  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │            │
+││                                                                │            │
+││  nothing here connects until you press enter                   │            │
+││  PGPASSWORD is only used with --dsn                            │            │
+│└────────────────────────────────────────────────────────────────┘            │
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘

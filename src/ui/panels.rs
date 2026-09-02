@@ -300,10 +300,11 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(theme.text)
                 };
-                Line::from(Span::styled(
-                    format!("{prefix}[{source:>9}] {preview}"),
-                    style,
-                ))
+                // Pad the source column OUTSIDE the brackets — `[pglog]
+                // ` — so the bracket sits against its own tag instead
+                // of fencing off a run of spaces (`[    pglog]`).
+                let tag = format!("[{source}]");
+                Line::from(Span::styled(format!("{prefix}{tag:<11} {preview}"), style))
             })
             .collect(),
         LogPickView::Clusters => app
@@ -353,11 +354,9 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
         },
         total,
     );
-    let h = (lines.len() as u16 + 2)
-        .min(area.height.saturating_sub(2))
-        .max(3);
+    let h = (lines.len() as u16 + 2).max(3);
     let w = 100u16.min(area.width.saturating_sub(2));
-    let popup = centered(area, w, h);
+    let popup = floated_in_panel(area, w, h);
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
@@ -472,11 +471,14 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
     // Find the widest origin tag and name so the columns line up.
+    // The padding goes OUTSIDE the brackets (`[project]  `), never
+    // inside (`[ project]`) — the bracket belongs to the tag, not to
+    // the column.
     let origin_width = app
         .conn_pick
         .picks
         .iter()
-        .map(|p| p.origin.len())
+        .map(|p| p.origin.chars().count())
         .max()
         .unwrap_or(0);
     // Cap the name column so one long label (a Spring pick carries its
@@ -491,7 +493,12 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         .max()
         .unwrap_or(0)
         .clamp(8, 24);
-    let mut lines: Vec<Line> = app
+    // Each row is `<head><target>`: the head (marker, origin tag,
+    // name) identifies the pick and always survives; the target's
+    // tail (`sslmode=…`, `tunnel → …`) is what gets ellipsised when
+    // the row won't fit, so the `user@host` an operator reads first
+    // stays whole.
+    let rows: Vec<(String, String)> = app
         .conn_pick
         .picks
         .iter()
@@ -502,23 +509,14 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 "  "
             };
-            let style = if i == app.conn_pick.index {
-                Style::default()
-                    .bg(theme.row_selected_bg)
-                    .fg(theme.text)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            let body = format!(
-                "{prefix}[{origin:>w$}] {name:<nw$} {target}",
-                origin = pick.origin,
-                w = origin_width,
+            let tag = format!("[{}]", pick.origin);
+            let head = format!(
+                "{prefix}{tag:<tw$} {name:<nw$} ",
+                tw = origin_width + 2,
                 name = pick.name,
                 nw = name_width,
-                target = conn_pick_target(pick),
             );
-            Line::from(Span::styled(body, style))
+            (head, conn_pick_target(pick))
         })
         .collect();
 
@@ -528,37 +526,63 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     // Two lines rather than one joined by a separator: at an 80-column
     // terminal the joined form is cut mid-word, and "--ds" is not a
     // rule anyone can act on.
-    lines.push(Line::from(""));
-    for note in [
+    let notes = [
         "  nothing here connects until you press enter",
         "  PGPASSWORD is only used with --dsn",
-    ] {
-        lines.push(Line::from(Span::styled(
-            note,
-            Style::default().fg(theme.muted),
-        )));
-    }
+    ];
 
     let title = format!(
         " pick a connection · {}/{} ",
         app.conn_pick.index + 1,
         app.conn_pick.picks.len()
     );
-    let h = (lines.len() as u16 + 2)
-        .min(area.height.saturating_sub(2))
-        .max(3);
     // Width follows the content (plus borders) rather than a flat 100:
     // the row now carries the target, sslmode and any tunnel, and a
     // truncated bastion hostname is exactly the detail the operator is
-    // being asked to check. Still bounded by the terminal.
-    let w = lines
+    // being asked to check. Bounded by what floating inside the panel
+    // leaves, since that's the width rows are then fitted to.
+    let max_w = area.width.saturating_sub(2);
+    let widest_row = rows
         .iter()
-        .map(|l| l.width() as u16)
+        .map(|(head, target)| (head.chars().count() + target.chars().count()) as u16)
+        .chain(notes.iter().map(|n| n.chars().count() as u16))
+        .chain(std::iter::once(title.chars().count() as u16))
         .max()
-        .unwrap_or(0)
-        .saturating_add(2)
-        .clamp(40, area.width.saturating_sub(2));
-    let popup = centered(area, w, h);
+        .unwrap_or(0);
+    // +3, not +2: two border columns plus one blank column before the
+    // right border, so the longest row (the one carrying the bastion
+    // host) reads as text inside a frame rather than as text jammed
+    // against it.
+    let w = widest_row.saturating_add(3).min(max_w).max(4.min(max_w));
+    let inner_w = (w.saturating_sub(2) as usize).saturating_sub(1);
+
+    let mut lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (head, target))| {
+            let style = if i == app.conn_pick.index {
+                Style::default()
+                    .bg(theme.row_selected_bg)
+                    .fg(theme.text)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            let budget = inner_w.saturating_sub(head.chars().count());
+            let (kept, ellipsis) = crate::grid::truncate_cell_parts(target, budget);
+            Line::from(Span::styled(format!("{head}{kept}{ellipsis}"), style))
+        })
+        .collect();
+    lines.push(Line::from(""));
+    for note in notes {
+        lines.push(Line::from(Span::styled(
+            crate::grid::truncate_cell(note, inner_w),
+            Style::default().fg(theme.muted),
+        )));
+    }
+
+    let h = (lines.len() as u16 + 2).max(3);
+    let popup = floated_in_panel(area, w, h);
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
