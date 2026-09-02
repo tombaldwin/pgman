@@ -20,7 +20,7 @@ tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.14"
 rustls = "0.23"
 rustls-native-certs = "0.8"
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 futures = "0.3"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
