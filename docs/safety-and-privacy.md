@@ -43,8 +43,9 @@
   `update_without_where`, `delete`, `delete_without_where`,
   `truncate`, `drop`, `ddl`, `other`) maps to `Allow` / `Confirm` /
   `Block` in the active `SafetyProfile` (`~/.config/pgman/safety.toml`,
-  optionally overridden per-database or by a project's
-  `.pgman/pgman.toml`). `SELECT` always resolves to `Allow` and never
+  optionally overridden per-database, and **tightened** — never
+  relaxed — by a project's `.pgman/pgman.toml`; see below).
+  `SELECT` always resolves to `Allow` and never
   consults the guard table. Defaults block `DROP` and
   unqualified `UPDATE`/`DELETE`; everything else that isn't a `SELECT`
   defaults to `Confirm`.
@@ -103,6 +104,28 @@
   least-privilege database roles** — see `SECURITY.md`, which this
   document defers to for the vulnerability-reporting process.
 
+## Running pgman inside a checkout you did not write
+
+pgman reads connection details out of the working tree — a project's
+`.pgman/pgman.toml`, Spring's `application*.{properties,yml,yaml}`, and
+IntelliJ's `.idea/dataSources.xml` — walking up from the current
+directory, so a parent directory counts too. **Everything found that
+way is untrusted**: the repo's author chose those hosts, not you.
+Nothing discovered connects without a keypress — a single candidate
+lands in the picker exactly like ten, and the row shows the origin,
+`user@host:port/db`, the `sslmode` and any `tunnel → <bastion>` before
+you press enter. `PGPASSWORD` is only used with `--dsn`, so a
+discovered connection can never borrow it, and a `${…}` placeholder is
+never resolved into a URL's host or port, so a committed config can't
+turn one of your environment variables into a DNS lookup it controls.
+A project's `[safety]` block can only *tighten* your personal
+`~/.config/pgman/safety.toml`, never relax it. And a discovered
+`ssh_tunnel` asks before pgman runs `ssh` with your keys, because that
+happens before any Postgres traffic.
+
+The escape hatch from all of the above is `--dsn`, which is your own
+typed choice and behaves as it always has.
+
 ## What's stored locally
 
 | File | Contains |
@@ -140,11 +163,11 @@ set.
 
 **Passwords are never written to disk by pgman.** They live only in
 process memory for the duration of the connection, sourced from
-`PGPASSWORD`, a `password_env`-named variable, a Spring config file's
-own plaintext `password` key (if present in the file — pgman doesn't
-add a new place for it to live), or an IntelliJ-committed URL. pgman
-does not read `dataSources.local.xml`'s `<secret-storage>` /
-OS-keychain-backed password at all.
+`PGPASSWORD` (for a `--dsn` only), a `password_env`-named variable, a
+Spring config file's own plaintext `password` key (if present in the
+file — pgman doesn't add a new place for it to live), or a URL's
+embedded password. pgman does not read `dataSources.local.xml`'s
+`<secret-storage>` / OS-keychain-backed password at all.
 
 ## What leaves the machine
 
@@ -161,7 +184,10 @@ OS-keychain-backed password at all.
   dependency.
 - **An SSH tunnel**, when `ssh_tunnel` is configured — the system
   `ssh` binary is shelled out to (`BatchMode=yes`), honouring your
-  `~/.ssh/config`, agent, and `ProxyCommand`.
+  `~/.ssh/config`, agent, and `ProxyCommand`. When the connection came
+  from discovery rather than `--dsn`, this is gated behind an explicit
+  confirmation naming the bastion (`ssh <user>@<bastion> → <db
+  host>:<port>`), because it runs before any Postgres traffic.
 - **Nothing else.** No telemetry, no anonymous identifier, no crash
   reporting, no analytics endpoint.
 
