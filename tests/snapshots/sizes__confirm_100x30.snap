@@ -15,8 +15,8 @@ expression: dump(&buf)
 │2   linus@example.com      ┌ confirm ─────────────────────────────────┐                           │
 │3   grace@example.com      │Confirm                                   │                           │
 │4   alan@example.com       │                                          │                           │
-│5   edsger@example.com     │run (Delete { has_where: false }) · will  │                           │
-│6   katherine@example.com  │wrap in transaction                       │                           │
+│5   edsger@example.com     │run (DELETE without WHERE) · will wrap in │                           │
+│6   katherine@example.com  │transaction                               │                           │
 │                           │                                          │                           │
 │                           │DELETE FROM orders                        │                           │
 │                           │                                          │                           │

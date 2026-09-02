@@ -83,7 +83,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let detail = match &pending.summary {
         Some(s) => s.clone(),
-        None => format!("{:?}", pending.decision.kind),
+        None => pending.decision.kind.describe(),
     };
     let wrap_note = if pending.decision.wrap_in_tx {
         " · will wrap in transaction"

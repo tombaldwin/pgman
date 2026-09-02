@@ -45,6 +45,24 @@ impl StatementKind {
     pub fn is_write(self) -> bool {
         !matches!(self, StatementKind::Select)
     }
+
+    /// An operator-facing phrase for this classification — what the confirm
+    /// modal shows in place of the enum's `Debug` form. Never contains `{`
+    /// or `}`; see `describe_never_leaks_debug_braces` in the tests below.
+    pub fn describe(&self) -> String {
+        match self {
+            StatementKind::Select => "SELECT".to_string(),
+            StatementKind::Insert => "INSERT".to_string(),
+            StatementKind::Update { has_where: true } => "UPDATE with WHERE".to_string(),
+            StatementKind::Update { has_where: false } => "UPDATE without WHERE".to_string(),
+            StatementKind::Delete { has_where: true } => "DELETE with WHERE".to_string(),
+            StatementKind::Delete { has_where: false } => "DELETE without WHERE".to_string(),
+            StatementKind::Truncate => "TRUNCATE".to_string(),
+            StatementKind::Drop => "DROP".to_string(),
+            StatementKind::AlterDdl => "ALTER / DDL".to_string(),
+            StatementKind::Other => "other statement".to_string(),
+        }
+    }
 }
 
 /// Action a guard rail takes for a statement category.
@@ -746,5 +764,57 @@ mod tests {
             cfg.profile_for("other").clean_mode,
             crate::dbunit::CleanMode::Truncate
         );
+    }
+
+    #[test]
+    fn describe_reads_as_an_operator_facing_phrase() {
+        assert_eq!(StatementKind::Select.describe(), "SELECT");
+        assert_eq!(StatementKind::Insert.describe(), "INSERT");
+        assert_eq!(
+            StatementKind::Update { has_where: false }.describe(),
+            "UPDATE without WHERE"
+        );
+        assert_eq!(
+            StatementKind::Update { has_where: true }.describe(),
+            "UPDATE with WHERE"
+        );
+        assert_eq!(
+            StatementKind::Delete { has_where: false }.describe(),
+            "DELETE without WHERE"
+        );
+        assert_eq!(
+            StatementKind::Delete { has_where: true }.describe(),
+            "DELETE with WHERE"
+        );
+        assert_eq!(StatementKind::Truncate.describe(), "TRUNCATE");
+        assert_eq!(StatementKind::Drop.describe(), "DROP");
+        assert_eq!(StatementKind::AlterDdl.describe(), "ALTER / DDL");
+        assert_eq!(StatementKind::Other.describe(), "other statement");
+    }
+
+    #[test]
+    fn describe_never_leaks_debug_braces() {
+        // The bug this exists to stop: `format!("{:?}", kind)` on a
+        // struct-like variant (e.g. `Delete { has_where: false }`) puts
+        // Rust's `Debug` syntax straight in front of the user.
+        let all = [
+            StatementKind::Select,
+            StatementKind::Insert,
+            StatementKind::Update { has_where: false },
+            StatementKind::Update { has_where: true },
+            StatementKind::Delete { has_where: false },
+            StatementKind::Delete { has_where: true },
+            StatementKind::Truncate,
+            StatementKind::Drop,
+            StatementKind::AlterDdl,
+            StatementKind::Other,
+        ];
+        for kind in all {
+            let d = kind.describe();
+            assert!(
+                !d.contains('{') && !d.contains('}'),
+                "describe() leaked Debug syntax for {kind:?}: {d:?}"
+            );
+        }
     }
 }
