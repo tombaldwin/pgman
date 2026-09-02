@@ -25,4 +25,4 @@ expression: dump(&buf)
 │   │                                                                      │   │
 │   └──────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   tip · JSON cells render as a tree · y yanks the value (or j
+ RO   TAP   N+1 ×1   tip · JSON cells…as a tree · y yanks the value (or jq path)

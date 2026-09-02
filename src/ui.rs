@@ -534,6 +534,112 @@ pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     String::new()
 }
 
+/// Middle-ellipsise `s` down to `target_len` chars, keeping both ends —
+/// `"abc…xyz"` — since for a quoted SQL statement the tail matters as
+/// much as the head (a `WHERE` clause, a trailing `;`). `target_len` is
+/// the *exact* char budget the result must not exceed; if `s` already
+/// fits, it's returned unchanged. `target_len == 0` yields `""`;
+/// `target_len == 1` yields just the ellipsis marker (no room for either
+/// end). Pure / testable.
+fn middle_ellipsis(s: &str, target_len: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= target_len {
+        return s.to_string();
+    }
+    if target_len == 0 {
+        return String::new();
+    }
+    if target_len == 1 {
+        return "…".to_string();
+    }
+    let avail = target_len - 1; // minus the ellipsis marker itself
+    let front = avail.div_ceil(2);
+    let back = avail - front;
+    let front_str: String = chars[..front].iter().collect();
+    let back_str: String = chars[chars.len() - back..].iter().collect();
+    format!("{front_str}…{back_str}")
+}
+
+/// End-ellipsise `s` down to `width` chars — `"abc…"` — used only as the
+/// last resort when even the protected final segment (see [`fit_status`])
+/// doesn't fit on its own. Pure / testable.
+fn end_ellipsis(s: &str, width: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let keep: String = chars[..width - 1].iter().collect();
+    format!("{keep}…")
+}
+
+/// Fit a ` · `-joined status/error line into `width` columns without ever
+/// cutting a word mid-letter. Unlike [`fit_hints`] (whole hint items,
+/// dropped from the tail), the *last* segment here is load-bearing — it
+/// carries the action keys (`y confirm · n cancel`) or a discoverability
+/// pointer (`F2 detail`) — so it is never dropped and never cut except as
+/// an absolute last resort.
+///
+/// Order of attack, stopping as soon as the candidate fits:
+/// 1. If `text` already fits, return it unchanged.
+/// 2. Split on `" · "`. Repeatedly middle-ellipsise the longest segment
+///    other than the last (`"abc…xyz"`, keeping both ends) until either
+///    the join fits or every other segment has been collapsed to a bare
+///    `"…"`.
+/// 3. Still too wide → drop whole leading segments (the ones already
+///    reduced to `"…"` first, by construction) until only the last
+///    segment remains.
+/// 4. Still too wide (the last segment alone doesn't fit) → end-
+///    ellipsise the last segment (`"abc…"`).
+///
+/// The returned string is never wider than `width`.
+pub(crate) fn fit_status(text: &str, width: usize) -> String {
+    const SEP: &str = " · ";
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    let mut segments: Vec<String> = text.split(SEP).map(str::to_string).collect();
+    let last_idx = segments.len() - 1;
+
+    // Step 2: shrink the longest non-last segment, repeatedly, until the
+    // join fits or nothing non-last is left to shrink.
+    loop {
+        let candidate = segments.join(SEP);
+        let over = candidate.chars().count().saturating_sub(width);
+        if over == 0 {
+            return candidate;
+        }
+        let longest = segments
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| *i != last_idx && s.as_str() != "…")
+            .max_by_key(|(_, s)| s.chars().count());
+        let Some((i, s)) = longest else { break };
+        let target_len = s.chars().count().saturating_sub(over).max(1);
+        segments[i] = middle_ellipsis(s, target_len);
+    }
+
+    // Step 3: every other segment is now "…" (or there were none) —
+    // drop leading segments outright until only the last remains.
+    while segments.len() > 1 {
+        let candidate = segments.join(SEP);
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+        segments.remove(0);
+    }
+
+    // Step 4: the last segment alone doesn't fit — end-ellipsise it.
+    // (`segments[0]` here since drops above always leave the last
+    // segment at index 0.)
+    end_ellipsis(&segments[0], width)
+}
+
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // TxDecision is its own prominent prompt — it pre-empts the normal
@@ -570,18 +676,37 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .sum();
     // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
     let line = if let Some(err) = &app.last_error {
-        let mut spans = vec![
-            Span::styled(" ⚠ ", Style::default().fg(theme.health_red)),
-            Span::styled(err.clone(), Style::default().fg(theme.health_red)),
-        ];
-        if app.last_error_detail.is_some() {
-            // F2 surfaces the rich detail — make the pointer
-            // visible so operators discover it.
-            spans.push(Span::styled(
-                "  · F2 detail",
-                Style::default().fg(theme.muted),
-            ));
-        }
+        let icon = " ⚠ ";
+        // The "F2 detail" pointer is the load-bearing part of this line
+        // when it's present — it's how the operator finds the rich error
+        // view — so it's appended as `fit_status`'s protected last
+        // segment (joined with the same " · " it uses to split on)
+        // rather than as a separate span that could get truncated away
+        // by a raw cell-width clip.
+        let pointer = if app.last_error_detail.is_some() {
+            " · F2 detail"
+        } else {
+            ""
+        };
+        let full = format!("{err}{pointer}");
+        let available = area
+            .width
+            .saturating_sub(badge_width)
+            .saturating_sub(icon.chars().count() as u16) as usize;
+        let fitted = fit_status(&full, available);
+        let spans = if !pointer.is_empty() && fitted.ends_with(pointer) {
+            let msg_part = &fitted[..fitted.len() - pointer.len()];
+            vec![
+                Span::styled(icon, Style::default().fg(theme.health_red)),
+                Span::styled(msg_part.to_string(), Style::default().fg(theme.health_red)),
+                Span::styled(pointer.to_string(), Style::default().fg(theme.muted)),
+            ]
+        } else {
+            vec![
+                Span::styled(icon, Style::default().fg(theme.health_red)),
+                Span::styled(fitted, Style::default().fg(theme.health_red)),
+            ]
+        };
         Line::from(spans)
     } else if let Some(status) = &app.last_status {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
@@ -590,8 +715,13 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         } else {
             " ".to_string()
         };
+        let available = area
+            .width
+            .saturating_sub(badge_width)
+            .saturating_sub(prefix.chars().count() as u16) as usize;
+        let fitted = fit_status(status, available);
         Line::from(Span::styled(
-            format!("{prefix}{status}"),
+            format!("{prefix}{fitted}"),
             Style::default().fg(theme.health_green),
         ))
     } else {

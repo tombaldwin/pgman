@@ -339,6 +339,86 @@ fn fit_hints_empty_when_nothing_at_all_fits() {
 }
 
 #[test]
+fn fit_status_returns_unchanged_when_everything_fits() {
+    let text = "terminate pid 1234? \"UPDATE accounts SET balance = 0\" · y confirm · n cancel";
+    assert_eq!(fit_status(text, text.chars().count()), text);
+    assert_eq!(fit_status(text, text.chars().count() + 10), text);
+}
+
+#[test]
+fn fit_status_shrinks_the_longest_non_last_segment_first() {
+    let text = "terminate pid 1234? \"UPDATE accounts SET balance = 0\" · y confirm · n cancel";
+    let fitted = fit_status(text, 60);
+    assert_eq!(
+        fitted,
+        "terminate pid 1234…s SET balance = 0\" · y confirm · n cancel"
+    );
+    assert!(fitted.chars().count() <= 60);
+    // The action-key segments (the whole point of the fix) survive
+    // untouched — only the quoted SQL got the middle-ellipsis treatment.
+    assert!(fitted.ends_with("y confirm · n cancel"));
+}
+
+#[test]
+fn fit_status_drops_leading_segments_once_others_are_fully_ellipsised() {
+    let text = "terminate pid 1234? \"UPDATE accounts SET balance = 0\" · y confirm · n cancel";
+    // Both non-last segments get collapsed to a bare "…" first; that
+    // still doesn't fit 15, so the leading "…" segment is dropped
+    // outright rather than the protected last segment being touched.
+    let fitted = fit_status(text, 15);
+    assert_eq!(fitted, "… · n cancel");
+    assert!(fitted.chars().count() <= 15);
+    assert!(fitted.ends_with("n cancel"));
+}
+
+#[test]
+fn fit_status_end_ellipsises_the_last_segment_as_a_last_resort() {
+    let text = "terminate pid 1234? \"UPDATE accounts SET balance = 0\" · y confirm · n cancel";
+    assert_eq!(fit_status(text, 8), "n cancel"); // exact fit — no ellipsis needed
+    assert_eq!(fit_status(text, 5), "n ca…");
+    assert_eq!(fit_status(text, 3), "n …");
+    assert_eq!(fit_status(text, 1), "…");
+    assert_eq!(fit_status(text, 0), "");
+}
+
+#[test]
+fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
+    // Real footer status strings (confirm prompt, tip) plus a couple of
+    // edge shapes (a segment that already contains a real "…" glyph, an
+    // empty string) swept across every width from 0 up to the full
+    // length. Property: the result is never wider than asked, and its
+    // trailing word is always either a real word from the source text
+    // (an untouched, or wholesale-dropped, segment) or ends with the
+    // ellipsis marker (an intentional truncation) — never a raw
+    // mid-word cut.
+    let samples = [
+        "terminate pid 1234? \"UPDATE accounts SET balance = 0\" · y confirm · n cancel",
+        "tip · JSON cells render as a tree · y yanks the value (or jq path)",
+        "connecting… · q quit",
+        "no separators here at all",
+        "",
+    ];
+    for text in samples {
+        let words: std::collections::HashSet<&str> = text.split_whitespace().collect();
+        for width in 0..=text.chars().count() {
+            let fitted = fit_status(text, width);
+            assert!(
+                fitted.chars().count() <= width,
+                "text={text:?} width={width} fitted={fitted:?} exceeds width"
+            );
+            if let Some(last_word) = fitted.split_whitespace().last() {
+                let ok = last_word.ends_with('…') || words.contains(last_word);
+                assert!(
+                    ok,
+                    "text={text:?} width={width} fitted={fitted:?} \
+                     last_word={last_word:?} looks like a mid-word cut"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
     let theme = crate::theme::Theme::default();
     let lines = tap_setup_hint_lines(&theme);
