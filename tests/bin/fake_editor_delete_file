@@ -1,0 +1,10 @@
+#!/bin/sh
+# fake_editor_delete_file — pretends to be an $EDITOR that deletes
+# the file it was handed (crashed mid-save, wrote to a swap file and
+# renamed it away, whatever) and exits 0 anyway. Exercises
+# external_edit_via's read-back-failure path: the subprocess
+# succeeded, but the file is gone by the time we try to read it back.
+set -e
+for last; do :; done
+file="$last"
+rm -f "$file"

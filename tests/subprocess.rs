@@ -16,6 +16,35 @@ fn stub(name: &str) -> String {
     format!("{manifest_dir}/tests/bin/{name}")
 }
 
+/// Serializes every test in this file that calls `external_edit_via`.
+/// `external_edit_via`'s `$EDITOR` scratch directory is named
+/// `pgman-edit-<pid>-<nanos>-<seq>` — unique per call — but the
+/// leak-detection tests below count directories under that shared
+/// `pgman-edit-<pid>-` prefix, which would race another thread's
+/// transient directory if these tests ran in parallel with each
+/// other (cargo's default test runner). Every `external_edit_via`
+/// call in this file takes the lock first.
+static EDIT_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_edit_tests() -> std::sync::MutexGuard<'static, ()> {
+    EDIT_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Count `$TMPDIR` entries whose name starts with this process's
+/// `$EDITOR` scratch-directory prefix — i.e. how many are currently
+/// leaked. Comparing this before/after an `external_edit_via` call
+/// (under `EDIT_MUTEX`) proves the scratch directory it created was
+/// actually removed.
+fn edit_scratch_dir_count() -> usize {
+    let prefix = format!("pgman-edit-{}-", std::process::id());
+    std::fs::read_dir(std::env::temp_dir())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .count()
+}
+
 #[test]
 fn pg_format_subprocess_writes_marker_and_passes_stdin_through() {
     let input = "select 1";
@@ -36,6 +65,7 @@ fn pg_format_missing_binary_surfaces_actionable_error() {
 
 #[test]
 fn external_edit_subprocess_prepends_marker_and_buffer_round_trips() {
+    let _guard = lock_edit_tests();
     let buffer = "SELECT 1\nFROM t";
     let edited =
         external_edit_via(buffer, &stub("fake_editor")).expect("fake_editor should succeed");
@@ -44,6 +74,7 @@ fn external_edit_subprocess_prepends_marker_and_buffer_round_trips() {
 
 #[test]
 fn external_edit_nonzero_exit_surfaces_buffer_unchanged() {
+    let _guard = lock_edit_tests();
     let err = external_edit_via("anything", &stub("fake_editor_failure"))
         .expect_err("exit 17 stub should error");
     assert!(err.contains("buffer unchanged"), "got: {err}");
@@ -56,7 +87,89 @@ fn external_edit_nonzero_exit_surfaces_buffer_unchanged() {
 fn external_edit_with_args_splits_command_line() {
     // The stub doesn't care about extra args; the test just proves
     // that a command like `fake_editor --some-flag` parses and runs.
+    let _guard = lock_edit_tests();
     let cmd = format!("{} --noop-flag", stub("fake_editor"));
     let edited = external_edit_via("hello", &cmd).expect("split-arg invocation should still run");
     assert!(edited.contains("hello"));
+}
+
+#[cfg(unix)]
+#[test]
+fn external_edit_scratch_file_and_dir_are_owner_only_while_open() {
+    // The stub `stat`s the file it's editing and its parent dir
+    // *while the editor has them open* and reports the octal modes
+    // back through the buffer content — checking from out here after
+    // the call returns would race the scratch-dir cleanup that runs
+    // right after the subprocess exits.
+    let _guard = lock_edit_tests();
+    let edited = external_edit_via("SELECT 1", &stub("fake_editor_stat"))
+        .expect("fake_editor_stat should succeed");
+    assert!(
+        edited.contains("file_mode=600"),
+        "buffer file was not 0600 while open: {edited}"
+    );
+    assert!(
+        edited.contains("dir_mode=700"),
+        "scratch dir was not 0700 while the editor had it open: {edited}"
+    );
+}
+
+#[test]
+fn external_edit_scratch_dir_removed_on_success() {
+    let _guard = lock_edit_tests();
+    let before = edit_scratch_dir_count();
+    external_edit_via("SELECT 1", &stub("fake_editor")).expect("fake_editor should succeed");
+    assert_eq!(
+        edit_scratch_dir_count(),
+        before,
+        "scratch dir leaked after a successful edit"
+    );
+}
+
+#[test]
+fn external_edit_scratch_dir_removed_on_nonzero_exit() {
+    // Regression test: the old implementation `return`ed from the
+    // read-back-failure branch before its `remove_file` call, and a
+    // nonzero editor exit is the closest end-to-end path to that —
+    // proving cleanup survives every early return, not just the
+    // happy path.
+    let _guard = lock_edit_tests();
+    let before = edit_scratch_dir_count();
+    let _ = external_edit_via("anything", &stub("fake_editor_failure"));
+    assert_eq!(
+        edit_scratch_dir_count(),
+        before,
+        "scratch dir leaked after editor failure"
+    );
+}
+
+#[test]
+fn external_edit_scratch_dir_removed_on_read_failure() {
+    // The exact bug this hardening fixes: the old implementation
+    // returned from the read-back-failure branch *before* its
+    // `remove_file` call. The editor here exits 0 (success) but has
+    // deleted the file out from under us, so `external_edit_via`
+    // must hit the read-failure `Err` path while still cleaning up.
+    let _guard = lock_edit_tests();
+    let before = edit_scratch_dir_count();
+    let err = external_edit_via("anything", &stub("fake_editor_delete_file"))
+        .expect_err("editor deleting the file should surface a read failure");
+    assert!(err.contains("could not read"), "got: {err}");
+    assert_eq!(
+        edit_scratch_dir_count(),
+        before,
+        "scratch dir leaked after a read-back failure"
+    );
+}
+
+#[test]
+fn external_edit_scratch_dir_removed_on_spawn_failure() {
+    let _guard = lock_edit_tests();
+    let before = edit_scratch_dir_count();
+    let _ = external_edit_via("anything", "definitely_not_a_real_binary_xyz");
+    assert_eq!(
+        edit_scratch_dir_count(),
+        before,
+        "scratch dir leaked after a spawn failure"
+    );
 }
