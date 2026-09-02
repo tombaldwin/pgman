@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::conn::Dsn;
-use crate::safety::{SafetyConfig, SafetyProfile};
+use crate::safety::{Guard, Guards, SafetyConfig, SafetyProfile};
 
 /// Top-level shape of `.pgman/pgman.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -141,20 +141,171 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
     Some(dsn)
 }
 
-/// Fold a project's safety overrides into a global `SafetyConfig`. Project
-/// values win on collision; absent project entries leave the global value
-/// untouched. So you can commit just `[safety.databases.production]` and
-/// keep your personal defaults for everything else.
+/// Fold a project's safety overrides into the operator's personal
+/// `SafetyConfig`. **Overrides can only tighten.**
+///
+/// `.pgman/pgman.toml` is committed to the repo, so its contents are
+/// chosen by whoever wrote the checkout — not by the operator running
+/// pgman inside it. A project that could *replace* the personal
+/// profile could ship `read_only = false` plus `drop = "allow"` and
+/// quietly disarm every guard rail. So for each field the merged value
+/// is the more restrictive of the two:
+///
+/// - `read_only` / `auto_tx`: `personal || project` (on is stricter).
+/// - `statement_timeout_ms` / `cost_preview_threshold_rows`: the
+///   smaller non-zero value (`0` means "no limit", the weakest).
+/// - each guard: the stricter of `Allow < Confirm < Block`.
+/// - `clean_mode`: not a guard rail and not orderable, so the personal
+///   value always stands (a project override there is ignored).
+///
+/// A project that tries to relax something is not an error — the
+/// looser value is ignored, with a `tracing::info!` naming the field so
+/// the operator can see what the repo asked for.
+///
+/// Note that `ProjectSafety` deserialises through `SafetyProfile`'s
+/// serde defaults, so a field the project file omits arrives as
+/// pgman's *default* value, not as "unset" — and pgman's defaults are
+/// strict. A project `[safety]` block therefore also re-tightens
+/// anything the operator personally relaxed. That is the safe
+/// direction, and it is the documented behaviour (see
+/// `docs/configuration.md`).
 pub fn merge_safety(global: SafetyConfig, project: Option<&ProjectSafety>) -> SafetyConfig {
     let mut out = global;
     let Some(p) = project else { return out };
     if let Some(d) = &p.default {
-        out.default = d.clone();
+        out.default = tighten_profile(&out.default, d, "safety.default");
     }
     for (db, profile) in &p.databases {
-        out.databases.insert(db.clone(), profile.clone());
+        // The base for a database the personal config doesn't mention
+        // is the (already-tightened) personal default — otherwise a
+        // project could relax a database simply by naming it.
+        let base = out
+            .databases
+            .get(db)
+            .cloned()
+            .unwrap_or_else(|| out.default.clone());
+        let merged = tighten_profile(&base, profile, &format!("safety.databases.{db}"));
+        out.databases.insert(db.clone(), merged);
     }
     out
+}
+
+/// How strict a guard is. `Allow < Confirm < Block`.
+fn guard_rank(g: Guard) -> u8 {
+    match g {
+        Guard::Allow => 0,
+        Guard::Confirm => 1,
+        Guard::Block => 2,
+    }
+}
+
+/// The stricter of two guards; logs when the project's is the looser one.
+fn stricter_guard(personal: Guard, project: Guard, scope: &str, field: &str) -> Guard {
+    match guard_rank(project).cmp(&guard_rank(personal)) {
+        std::cmp::Ordering::Greater => project,
+        std::cmp::Ordering::Less => {
+            tracing::info!(
+                "project {scope}.guards.{field} = {project:?} is looser than your \
+                 {personal:?}; ignoring (project overrides can only tighten)"
+            );
+            personal
+        }
+        std::cmp::Ordering::Equal => personal,
+    }
+}
+
+/// `true` is the strict setting for these booleans, so the merged value
+/// is `personal || project`.
+fn stricter_flag(personal: bool, project: bool, scope: &str, field: &str) -> bool {
+    if personal && !project {
+        tracing::info!(
+            "project {scope}.{field} = false is looser than your true; \
+             ignoring (project overrides can only tighten)"
+        );
+    }
+    personal || project
+}
+
+/// Smaller-non-zero wins: `0` means "no limit" for both
+/// `statement_timeout_ms` and `cost_preview_threshold_rows`, so it is
+/// the weakest value, never the strictest.
+fn stricter_limit(personal: u64, project: u64, scope: &str, field: &str) -> u64 {
+    match (personal, project) {
+        (0, p) => p,
+        (l, 0) => {
+            tracing::info!(
+                "project {scope}.{field} = 0 (no limit) is looser than your {l}; \
+                 ignoring (project overrides can only tighten)"
+            );
+            l
+        }
+        (l, p) => {
+            if p > l {
+                tracing::info!(
+                    "project {scope}.{field} = {p} is looser than your {l}; \
+                     ignoring (project overrides can only tighten)"
+                );
+            }
+            l.min(p)
+        }
+    }
+}
+
+/// Field-by-field tighten-only merge of one profile. Pure apart from the
+/// `tracing::info!` lines; `scope` only names the block in those logs.
+fn tighten_profile(
+    personal: &SafetyProfile,
+    project: &SafetyProfile,
+    scope: &str,
+) -> SafetyProfile {
+    let g = &personal.guards;
+    let q = &project.guards;
+    if personal.clean_mode != project.clean_mode {
+        tracing::info!(
+            "project {scope}.clean_mode = {:?} isn't a guard rail and isn't orderable; \
+             keeping your {:?}",
+            project.clean_mode,
+            personal.clean_mode
+        );
+    }
+    SafetyProfile {
+        read_only: stricter_flag(personal.read_only, project.read_only, scope, "read_only"),
+        statement_timeout_ms: stricter_limit(
+            personal.statement_timeout_ms,
+            project.statement_timeout_ms,
+            scope,
+            "statement_timeout_ms",
+        ),
+        auto_tx: stricter_flag(personal.auto_tx, project.auto_tx, scope, "auto_tx"),
+        guards: Guards {
+            insert: stricter_guard(g.insert, q.insert, scope, "insert"),
+            update: stricter_guard(g.update, q.update, scope, "update"),
+            update_without_where: stricter_guard(
+                g.update_without_where,
+                q.update_without_where,
+                scope,
+                "update_without_where",
+            ),
+            delete: stricter_guard(g.delete, q.delete, scope, "delete"),
+            delete_without_where: stricter_guard(
+                g.delete_without_where,
+                q.delete_without_where,
+                scope,
+                "delete_without_where",
+            ),
+            truncate: stricter_guard(g.truncate, q.truncate, scope, "truncate"),
+            drop: stricter_guard(g.drop, q.drop, scope, "drop"),
+            ddl: stricter_guard(g.ddl, q.ddl, scope, "ddl"),
+            other: stricter_guard(g.other, q.other, scope, "other"),
+        },
+        cost_preview_threshold_rows: stricter_limit(
+            personal.cost_preview_threshold_rows,
+            project.cost_preview_threshold_rows,
+            scope,
+            "cost_preview_threshold_rows",
+        ),
+        clean_mode: personal.clean_mode,
+    }
 }
 
 /// Locate and load the project config, with structured logging at each step.
@@ -352,44 +503,257 @@ statement_timeout_ms = 5000
         assert_eq!(merged.databases.len(), global.databases.len());
     }
 
-    #[test]
-    fn merge_safety_project_database_overrides_global() {
-        let mut global = SafetyConfig::default();
-        let g_prod = SafetyProfile {
-            statement_timeout_ms: 99_999,
-            ..Default::default()
-        };
-        global.databases.insert("prod".into(), g_prod);
-
-        let p_prod = SafetyProfile {
-            statement_timeout_ms: 1_000,
-            ..Default::default()
-        };
-        let project = ProjectSafety {
+    /// A `ProjectSafety` carrying just one `[safety.databases.<db>]`
+    /// profile.
+    fn project_db(db: &str, profile: SafetyProfile) -> ProjectSafety {
+        ProjectSafety {
             default: None,
             databases: {
                 let mut m = HashMap::new();
-                m.insert("prod".into(), p_prod);
+                m.insert(db.to_string(), profile);
                 m
             },
-        };
+        }
+    }
+
+    /// A `ProjectSafety` carrying just `[safety.default]`.
+    fn project_default(profile: SafetyProfile) -> ProjectSafety {
+        ProjectSafety {
+            default: Some(profile),
+            databases: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn merge_safety_project_database_tightens_the_timeout() {
+        let mut global = SafetyConfig::default();
+        global.databases.insert(
+            "prod".into(),
+            SafetyProfile {
+                statement_timeout_ms: 99_999,
+                ..Default::default()
+            },
+        );
+        let project = project_db(
+            "prod",
+            SafetyProfile {
+                statement_timeout_ms: 1_000,
+                ..Default::default()
+            },
+        );
         let merged = merge_safety(global, Some(&project));
         assert_eq!(merged.databases["prod"].statement_timeout_ms, 1_000);
     }
 
     #[test]
-    fn merge_safety_project_default_overrides_global_default() {
+    fn merge_safety_project_database_cannot_loosen_the_timeout() {
         let mut global = SafetyConfig::default();
-        global.default.statement_timeout_ms = 11_111;
-        let p_default = SafetyProfile {
-            statement_timeout_ms: 22_222,
-            ..Default::default()
-        };
-        let project = ProjectSafety {
-            default: Some(p_default),
-            databases: HashMap::new(),
-        };
+        global.databases.insert(
+            "prod".into(),
+            SafetyProfile {
+                statement_timeout_ms: 1_000,
+                ..Default::default()
+            },
+        );
+        let project = project_db(
+            "prod",
+            SafetyProfile {
+                statement_timeout_ms: 99_999,
+                ..Default::default()
+            },
+        );
         let merged = merge_safety(global, Some(&project));
-        assert_eq!(merged.default.statement_timeout_ms, 22_222);
+        assert_eq!(merged.databases["prod"].statement_timeout_ms, 1_000);
+    }
+
+    #[test]
+    fn merge_safety_zero_timeout_is_no_limit_not_the_strictest() {
+        // 0 means "no statement_timeout at all" — the weakest value,
+        // so a project can't disable the operator's timeout with it…
+        let mut global = SafetyConfig::default();
+        global.default.statement_timeout_ms = 5_000;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                statement_timeout_ms: 0,
+                ..Default::default()
+            })),
+        );
+        assert_eq!(merged.default.statement_timeout_ms, 5_000);
+
+        // …but when the operator has no limit, the project's does apply.
+        let mut global = SafetyConfig::default();
+        global.default.statement_timeout_ms = 0;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                statement_timeout_ms: 7_000,
+                ..Default::default()
+            })),
+        );
+        assert_eq!(merged.default.statement_timeout_ms, 7_000);
+    }
+
+    #[test]
+    fn merge_safety_project_default_tightens_read_only_but_cannot_clear_it() {
+        // personal read_only=false, project true → true (tightened).
+        let mut global = SafetyConfig::default();
+        global.default.read_only = false;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                read_only: true,
+                ..Default::default()
+            })),
+        );
+        assert!(merged.default.read_only, "project must be able to tighten");
+
+        // personal read_only=true, project false → stays true.
+        let global = SafetyConfig::default();
+        assert!(global.default.read_only, "default profile is read-only");
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                read_only: false,
+                ..Default::default()
+            })),
+        );
+        assert!(
+            merged.default.read_only,
+            "a committed pgman.toml must not be able to clear read_only"
+        );
+    }
+
+    #[test]
+    fn merge_safety_project_cannot_clear_auto_tx() {
+        let global = SafetyConfig::default();
+        assert!(global.default.auto_tx);
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                auto_tx: false,
+                ..Default::default()
+            })),
+        );
+        assert!(
+            merged.default.auto_tx,
+            "a committed pgman.toml must not be able to clear auto_tx"
+        );
+    }
+
+    #[test]
+    fn merge_safety_guards_take_the_stricter_of_the_two() {
+        // personal allows DROP; project blocks it → Block.
+        let mut global = SafetyConfig::default();
+        global.default.guards.drop = Guard::Allow;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                guards: Guards {
+                    drop: Guard::Block,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+        );
+        assert_eq!(merged.default.guards.drop, Guard::Block);
+    }
+
+    #[test]
+    fn merge_safety_project_cannot_relax_a_guard() {
+        // personal blocks DROP; project says allow → still Block.
+        let global = SafetyConfig::default();
+        assert_eq!(global.default.guards.drop, Guard::Block);
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                guards: Guards {
+                    drop: Guard::Allow,
+                    delete_without_where: Guard::Allow,
+                    insert: Guard::Allow,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })),
+        );
+        assert_eq!(merged.default.guards.drop, Guard::Block);
+        assert_eq!(merged.default.guards.delete_without_where, Guard::Block);
+        assert_eq!(
+            merged.default.guards.insert,
+            Guard::Confirm,
+            "insert stays at the operator's Confirm, not the project's Allow"
+        );
+    }
+
+    #[test]
+    fn merge_safety_named_database_starts_from_the_personal_default() {
+        // The personal config has no `prod` entry, so `prod` inherits
+        // the personal default — a project can't relax a database
+        // just by being the first to name it.
+        let global = SafetyConfig::default();
+        let project = project_db(
+            "prod",
+            SafetyProfile {
+                read_only: false,
+                statement_timeout_ms: 0,
+                auto_tx: false,
+                guards: Guards {
+                    drop: Guard::Allow,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let merged = merge_safety(global, Some(&project));
+        let prod = &merged.databases["prod"];
+        assert!(prod.read_only);
+        assert!(prod.auto_tx);
+        assert_eq!(prod.statement_timeout_ms, 30_000);
+        assert_eq!(prod.guards.drop, Guard::Block);
+    }
+
+    #[test]
+    fn merge_safety_cost_preview_threshold_takes_the_smaller_non_zero() {
+        let mut global = SafetyConfig::default();
+        global.default.cost_preview_threshold_rows = 0; // disabled
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                cost_preview_threshold_rows: 1_000,
+                ..Default::default()
+            })),
+        );
+        assert_eq!(merged.default.cost_preview_threshold_rows, 1_000);
+
+        let mut global = SafetyConfig::default();
+        global.default.cost_preview_threshold_rows = 500;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                cost_preview_threshold_rows: 0,
+                ..Default::default()
+            })),
+        );
+        assert_eq!(
+            merged.default.cost_preview_threshold_rows, 500,
+            "0 disables the preview — a project must not be able to turn it off"
+        );
+    }
+
+    #[test]
+    fn merge_safety_clean_mode_stays_the_operators() {
+        let mut global = SafetyConfig::default();
+        global.default.clean_mode = crate::dbunit::CleanMode::DeleteFrom;
+        let merged = merge_safety(
+            global,
+            Some(&project_default(SafetyProfile {
+                clean_mode: crate::dbunit::CleanMode::Truncate,
+                ..Default::default()
+            })),
+        );
+        assert_eq!(
+            merged.default.clean_mode,
+            crate::dbunit::CleanMode::DeleteFrom
+        );
     }
 }
