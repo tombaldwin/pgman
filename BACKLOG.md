@@ -144,7 +144,7 @@ seconds, schema browser fully functional, EXPLAIN one
 keypress away, and L4's evidence-packet handoff is the
 right shape for fixing the issues the operator sees.
 
-#### L1 — receive + render *(landed; see Done → JDBC tap)*
+#### L1 — receive + render *(pgman side landed; see docs/backlog/archive.md → JDBC tap)*
 The pgman-side receive + render layer is shipped. Open
 work that still belongs to L1:
 - **`pgman-tap` JVM library** *(separate repo / Gradle
