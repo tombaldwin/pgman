@@ -15,7 +15,7 @@ categories = ["command-line-utilities", "database"]
 # the crates.io page, CHANGELOG for a build script to read). Everything
 # else here is dev/CI tooling that has no business in a `cargo install`
 # tarball.
-exclude = ["target", "fuzz", ".candor", "tests/snapshots"]
+exclude = ["target", "fuzz", ".candor"]
 
 [dependencies]
 ratatui = "0.30"
