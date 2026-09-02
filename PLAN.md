@@ -197,7 +197,23 @@ What it was:
 4. Optional: ebman's `build.rs` release-date-from-CHANGELOG for About.
 5. `CARGO_REGISTRY_TOKEN` repo secret before the first tag.
 
-## Phase 3 — an upgrade story that survives a binary install (1–2 days) · behaviour
+## Phase 3 — an upgrade story that survives a binary install · behaviour · **done 2026-09-02**
+
+Three commits: `update_check.rs` (channel detection from the executable
+path, crates.io `max_stable_version` via reqwest with a 10 s timeout,
+a six-hour cache under the cache dir, all pure parts tested); the check
+spawns only after the first frame is drawn and is off for `--demo`,
+`--batch`, `--no-update-check` and `PGMAN_NO_UPDATE_CHECK`, with a test
+that pins the order; a `⬆ x.y.z` header badge and two About lines
+(channel, update command); `--upgrade` runs the right command for
+checkout, cargo and Homebrew installs and points standalone binaries
+at the releases page. reqwest adds ~170 transitive crates; deny and
+machete stay green. Also this phase: a history scan found one fixture
+lifted from a real project (a password-shaped value and a project's
+database names) — neutralised at HEAD; **the history rewrite is a
+maintainer decision, see the session summary.**
+
+What it was:
 
 1. Port ebman's `update_check.rs`: `InstallChannel` from the executable
    path, crates.io `max_version` poll, per-channel upgrade command,
