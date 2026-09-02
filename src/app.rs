@@ -3864,19 +3864,29 @@ impl App {
 
     /// Compute the current hotspot list per `tap_sort`. Called
     /// each frame from the renderer and from the key handler.
-    /// Cheap relative to the rest of the frame budget — ~2k
-    /// events × one fingerprint each is sub-millisecond.
+    /// Once tap events could carry arbitrarily large fields
+    /// (pre-truncation-at-ingest, see `tap::enforce_field_caps`),
+    /// re-aggregating a full `TAP_CAP`-sized ring from scratch
+    /// every frame stopped being the "sub-millisecond" cost this
+    /// comment used to promise — measured ~1.7s/frame at 200 x
+    /// 1 MiB events. `tap::cached_hotspots` memoises the result
+    /// per ring-content-fingerprint (see its doc comment for why
+    /// that's the proxy used instead of a real generation counter)
+    /// so a frame with an unchanged ring is a cache hit, not a
+    /// re-walk.
     pub fn current_hotspots(&self) -> Vec<crate::tap::Hotspot> {
-        crate::tap::group_hotspots(self.tap_events.iter(), self.tap_nav.sort)
+        crate::tap::cached_hotspots(&self.tap_events, self.tap_nav.sort)
     }
 
     /// Compute the current N+1 findings — called by the panel
     /// renderer on demand. Uses the defaults
     /// (`NPLUS1_WINDOW_MICROS`, `NPLUS1_MIN_REPEATS`) which
-    /// match the offline classifier's operating point.
+    /// match the offline classifier's operating point. Memoised
+    /// the same way as `current_hotspots` — see
+    /// `tap::cached_nplus1`.
     pub fn current_nplus1(&self) -> Vec<crate::tap::NplusOneFinding> {
-        crate::tap::detect_nplus1(
-            self.tap_events.iter(),
+        crate::tap::cached_nplus1(
+            &self.tap_events,
             crate::tap::NPLUS1_WINDOW_MICROS,
             crate::tap::NPLUS1_MIN_REPEATS,
         )
@@ -3885,9 +3895,9 @@ impl App {
     /// Compute the current per-caller rollup per `tap_sort`.
     /// Same shape as `current_hotspots` but the grouping key
     /// is the innermost caller frame instead of the SQL
-    /// fingerprint.
+    /// fingerprint. Memoised — see `tap::cached_callers`.
     pub fn current_callers(&self) -> Vec<crate::tap::CallerStats> {
-        crate::tap::group_by_caller(self.tap_events.iter(), self.tap_nav.sort)
+        crate::tap::cached_callers(&self.tap_events, self.tap_nav.sort)
     }
 }
 
