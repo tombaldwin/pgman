@@ -292,6 +292,12 @@ fn scratch_home(name: &str, body: &str) -> std::path::PathBuf {
 fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(pgman_binary())
         .env("HOME", home)
+        // The GitHub runner exports XDG_CONFIG_HOME, and pgman honours
+        // it over $HOME — so point all three XDG dirs at the scratch
+        // home too, or the profile under it is never read.
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
         .args(["--batch", "--dsn", DSN])
         .args(args)
         .output()
