@@ -852,7 +852,15 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // accepts r).
         let connecting_normal =
             app.mode == Mode::Normal && matches!(app.conn_state, ConnState::Connecting);
-        let hints: &str = if failed_normal {
+        // The picker's list keys are wrong while its ssh-tunnel
+        // confirmation is up: `enter` does nothing, `q` cancels along
+        // with every other key, and the footer said `enter connect ·
+        // q quit` under a prompt asking a yes/no question about
+        // running ssh with the operator's keys.
+        let tunnel_prompt = app.mode == Mode::ConnPick && app.pending_tunnel.is_some();
+        let hints: &str = if tunnel_prompt {
+            "y proceed · any other key cancels"
+        } else if failed_normal {
             if app.conn_pick.picks.len() >= 2 {
                 "r retry · p change connection · q quit · ? help"
             } else {
@@ -937,7 +945,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 | Mode::ParamPrompt
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
-        ) || failed_normal
+        ) || tunnel_prompt
+            || failed_normal
             || connecting_normal
             || hints.contains("help")
         {
