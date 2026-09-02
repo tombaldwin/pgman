@@ -67,8 +67,13 @@ pub async fn run_udp_listener(
 /// Maximum frame size we'll accept on the TCP stream. Bigger
 /// payloads mean a misbehaving (or hostile) client tries to
 /// pull pgman into a large allocation; we cap it well above
-/// any reasonable SQL string + parameters.
-pub const TAP_MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// any reasonable SQL string + parameters. 256 KiB is generous
+/// against the per-field caps in `tap::enforce_field_caps`
+/// (8 KiB `sql`, 1 KiB everything else) while keeping the
+/// worst case for a full ring (`app::TAP_CAP` frames) in the
+/// hundreds of MB rather than the multiple GB a 1 MiB cap
+/// allowed.
+pub const TAP_MAX_FRAME_BYTES: usize = 256 * 1024;
 
 /// Spawn a TCP listener that accepts pgman-tap connections,
 /// reads length-prefixed frames, decodes each via [`parse`],

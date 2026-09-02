@@ -97,6 +97,35 @@ use serde::{Deserialize, Serialize};
 /// panel rows.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// Ceiling on `sql` after ingest, in bytes. The struct doc
+/// above (and the wire-format doc for `sql`) already claims
+/// the JAR truncates huge SQL text before it ships — this is
+/// the receiver-side backstop that makes that true regardless
+/// of what an old, buggy, or hostile JAR actually sends. A
+/// single 1 MiB `sql` string × [`crate::app::TAP_CAP`] events
+/// is enough to put the process at multiple GB RSS; capping at
+/// ingest, not at render time, is what keeps that bound real.
+pub const TAP_MAX_SQL_BYTES: usize = 8 * 1024;
+
+/// Ceiling on every other string-shaped field after ingest, in
+/// bytes: `app`, `pool`, `conn`, `txn`, each `params` entry,
+/// each `caller` frame, each `error` cause. Applied per-string,
+/// not per-field-total — a `caller` stack with many short
+/// frames isn't capped further, but the overall frame is
+/// already bounded by [`crate::tap::listener::TAP_MAX_FRAME_BYTES`]
+/// (TCP) / [`crate::tap::otlp::OTLP_MAX_BODY_BYTES`] (OTLP).
+pub const TAP_MAX_FIELD_BYTES: usize = 1024;
+
+/// Marker appended to a field truncated at ingest. Doubles as
+/// the caller-visible signal that a field was shortened —
+/// pgman doesn't carry a dedicated `truncated: bool` on
+/// [`TapEvent`] because the struct is constructed by-value at
+/// ~70 call sites across the codebase (demo data, tests,
+/// replay) and adding a required field would ripple far outside
+/// the tap module for no reader-visible benefit over the
+/// marker itself.
+pub const TAP_TRUNCATION_MARKER: char = '…';
+
 /// Default capacity for each of the bounded mpsc channels
 /// between listeners and the App-side adapter.
 ///
@@ -369,7 +398,7 @@ impl TapEvent {
 #[must_use = "parse returns a Result — dropping it silently loses the event"]
 pub fn parse(bytes: &[u8]) -> Result<TapEvent, String> {
     let s = std::str::from_utf8(bytes).map_err(|e| format!("not utf-8: {e}"))?;
-    let event: TapEvent = serde_json::from_str(s).map_err(|e| format!("bad json: {e}"))?;
+    let mut event: TapEvent = serde_json::from_str(s).map_err(|e| format!("bad json: {e}"))?;
     if event.v != PROTOCOL_VERSION {
         return Err(format!(
             "protocol version mismatch: got v={}, expected v={PROTOCOL_VERSION}",
@@ -377,7 +406,77 @@ pub fn parse(bytes: &[u8]) -> Result<TapEvent, String> {
         ));
     }
     validate_required(&event)?;
+    enforce_field_caps(&mut event);
     Ok(event)
+}
+
+/// Truncate `s` in place to at most `max_bytes` UTF-8 bytes,
+/// appending [`TAP_TRUNCATION_MARKER`]. No-op (returns `false`)
+/// when `s` is already within the cap. Cuts on a `char`
+/// boundary at or before `max_bytes` so the result is always
+/// valid UTF-8 — never splits a multi-byte codepoint.
+fn truncate_field(s: &mut String, max_bytes: usize) -> bool {
+    if s.len() <= max_bytes {
+        return false;
+    }
+    // Leave room for the marker itself (`…` is 3 bytes in
+    // UTF-8) so the result never exceeds `max_bytes`.
+    let mut cut = max_bytes.saturating_sub(TAP_TRUNCATION_MARKER.len_utf8());
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    s.truncate(cut);
+    s.push(TAP_TRUNCATION_MARKER);
+    true
+}
+
+/// Bound every string-shaped field on `event` to
+/// [`TAP_MAX_SQL_BYTES`] (`sql`) / [`TAP_MAX_FIELD_BYTES`]
+/// (everything else), truncating in place. Called from
+/// [`parse`] for the TCP/UDP/replay path; the OTLP path
+/// ([`otlp::span_to_tap_event`]) calls it too since it builds
+/// `TapEvent`s outside `parse`. Returns `true` when at least
+/// one field was shortened, so a caller that wants to log a
+/// one-line notice can do so without re-scanning the event.
+///
+/// This is the receiver-side enforcement of the truncation the
+/// JAR is documented (see the `sql` field doc on [`TapEvent`])
+/// to already do — an old, buggy, or actively hostile JAR that
+/// skips its own truncation must not be able to turn one frame
+/// into a multi-MB ring entry.
+pub(crate) fn enforce_field_caps(event: &mut TapEvent) -> bool {
+    let mut truncated = false;
+    if let Some(sql) = event.sql.as_mut() {
+        truncated |= truncate_field(sql, TAP_MAX_SQL_BYTES);
+    }
+    if let Some(app) = event.app.as_mut() {
+        truncated |= truncate_field(app, TAP_MAX_FIELD_BYTES);
+    }
+    if let Some(pool) = event.pool.as_mut() {
+        truncated |= truncate_field(pool, TAP_MAX_FIELD_BYTES);
+    }
+    if let Some(conn) = event.conn.as_mut() {
+        truncated |= truncate_field(conn, TAP_MAX_FIELD_BYTES);
+    }
+    if let Some(txn) = event.txn.as_mut() {
+        truncated |= truncate_field(txn, TAP_MAX_FIELD_BYTES);
+    }
+    if let Some(params) = event.params.as_mut() {
+        for p in params.iter_mut() {
+            truncated |= truncate_field(p, TAP_MAX_FIELD_BYTES);
+        }
+    }
+    if let Some(caller) = event.caller.as_mut() {
+        for frame in caller.iter_mut() {
+            truncated |= truncate_field(frame, TAP_MAX_FIELD_BYTES);
+        }
+    }
+    if let Some(error) = event.error.as_mut() {
+        for cause in error.iter_mut() {
+            truncated |= truncate_field(cause, TAP_MAX_FIELD_BYTES);
+        }
+    }
+    truncated
 }
 
 /// Enforce the per-kind required-fields contract documented
@@ -639,6 +738,122 @@ mod tests {
         }"#;
         let e = parse(bytes).expect("unknown fields must be ignored");
         assert_eq!(e.sql.as_deref(), Some("SELECT 1"));
+    }
+
+    // --- ingest field-size caps ------------------------
+
+    #[test]
+    fn parse_truncates_an_oversized_sql_field() {
+        // A single JSON frame carrying a huge `sql` string.
+        // Well under the (256 KiB) TCP frame cap tested
+        // separately in listener.rs — this test pins the
+        // FIELD-level cap `parse` enforces regardless of frame
+        // size, i.e. it must fire even for a frame that would
+        // pass the frame-size gate untouched.
+        let huge_sql = "x".repeat(50_000);
+        let payload = serde_json::json!({
+            "v": 1,
+            "ts_unix_micros": 1,
+            "sql": huge_sql,
+            "duration_micros": 1,
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let e = parse(&bytes).expect("oversized sql must still parse, just truncated");
+        let sql = e.sql.as_deref().expect("sql present");
+        assert!(
+            sql.len() <= TAP_MAX_SQL_BYTES,
+            "sql must be capped at {TAP_MAX_SQL_BYTES} bytes; got {}",
+            sql.len()
+        );
+        assert!(
+            sql.ends_with(TAP_TRUNCATION_MARKER),
+            "truncated sql must carry the marker; got tail {:?}",
+            &sql[sql.len().saturating_sub(8)..]
+        );
+    }
+
+    #[test]
+    fn parse_truncates_oversized_app_pool_conn_txn_fields() {
+        let huge = "y".repeat(10_000);
+        let payload = serde_json::json!({
+            "v": 1,
+            "ts_unix_micros": 1,
+            "sql": "SELECT 1",
+            "duration_micros": 1,
+            "app": huge,
+            "pool": huge,
+            "conn": huge,
+            "txn": huge,
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let e = parse(&bytes).unwrap();
+        for field in [
+            e.app.as_deref().unwrap(),
+            e.pool.as_deref().unwrap(),
+            e.conn.as_deref().unwrap(),
+            e.txn.as_deref().unwrap(),
+        ] {
+            assert!(field.len() <= TAP_MAX_FIELD_BYTES);
+            assert!(field.ends_with(TAP_TRUNCATION_MARKER));
+        }
+    }
+
+    #[test]
+    fn parse_truncates_each_oversized_params_caller_and_error_entry() {
+        let huge = "z".repeat(5_000);
+        let payload = serde_json::json!({
+            "v": 1,
+            "ts_unix_micros": 1,
+            "sql": "SELECT 1",
+            "duration_micros": 1,
+            "params": [huge.clone(), "short"],
+            "caller": [huge.clone()],
+            "error": [huge],
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let e = parse(&bytes).unwrap();
+        let params = e.params.as_ref().unwrap();
+        assert!(params[0].len() <= TAP_MAX_FIELD_BYTES);
+        assert!(params[0].ends_with(TAP_TRUNCATION_MARKER));
+        // The short entry is untouched — truncation is
+        // per-string, not "cap the whole vec to one size."
+        assert_eq!(params[1], "short");
+        assert!(e.caller.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+        assert!(e.error.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn parse_leaves_small_fields_untouched() {
+        let bytes = br#"{
+            "v": 1, "ts_unix_micros": 1,
+            "sql": "SELECT 1", "duration_micros": 1,
+            "app": "billing-service"
+        }"#;
+        let e = parse(bytes).unwrap();
+        assert_eq!(e.sql.as_deref(), Some("SELECT 1"));
+        assert_eq!(e.app.as_deref(), Some("billing-service"));
+    }
+
+    #[test]
+    fn truncate_field_never_splits_a_multibyte_char_boundary() {
+        // Every char here is a 3-byte UTF-8 codepoint (€). A
+        // naive byte-index truncation could split one down the
+        // middle and panic (or produce invalid UTF-8).
+        let mut s = "€".repeat(2000); // 6000 bytes
+        let truncated = truncate_field(&mut s, TAP_MAX_FIELD_BYTES);
+        assert!(truncated);
+        assert!(s.len() <= TAP_MAX_FIELD_BYTES);
+        // Must still be valid UTF-8 — `String` guarantees this
+        // if we got here without panicking, but assert the
+        // marker landed too.
+        assert!(s.ends_with(TAP_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn truncate_field_is_a_no_op_under_the_cap() {
+        let mut s = String::from("short");
+        assert!(!truncate_field(&mut s, TAP_MAX_FIELD_BYTES));
+        assert_eq!(s, "short");
     }
 
     #[test]
@@ -1804,6 +2019,30 @@ mod tests {
         // OTel typically strips params for PII safety.
         assert!(e.params_redacted);
         assert!(e.error.is_none());
+    }
+
+    #[test]
+    fn span_to_tap_event_truncates_an_oversized_db_statement() {
+        // OTLP spans build their `TapEvent` outside `parse` (the
+        // TCP/UDP/replay path) — `enforce_field_caps` must be
+        // applied here too, not just there.
+        let huge_sql = "x".repeat(50_000);
+        let span_json = serde_json::json!({
+            "startTimeUnixNano": "1700000000000000000",
+            "endTimeUnixNano": "1700000000010000000",
+            "attributes": [
+                {"key": "db.system", "value": {"stringValue": "postgresql"}},
+                {"key": "db.statement", "value": {"stringValue": huge_sql}},
+            ],
+        });
+        let e = span_to_tap_event(&span_json, None).expect("postgres span maps");
+        let sql = e.sql.as_deref().unwrap();
+        assert!(
+            sql.len() <= TAP_MAX_SQL_BYTES,
+            "OTLP path must cap sql just like the tap-protocol path; got {} bytes",
+            sql.len()
+        );
+        assert!(sql.ends_with(TAP_TRUNCATION_MARKER));
     }
 
     #[test]
