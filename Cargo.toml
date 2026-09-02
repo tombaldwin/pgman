@@ -11,6 +11,11 @@ repository = "https://github.com/tombaldwin/pgman"
 homepage = "https://github.com/tombaldwin/pgman"
 keywords = ["postgresql", "tui", "database", "cli", "ratatui"]
 categories = ["command-line-utilities", "database"]
+# Keep the published crate to source + the docs cargo needs (README for
+# the crates.io page, CHANGELOG for a build script to read). Everything
+# else here is dev/CI tooling that has no business in a `cargo install`
+# tarball.
+exclude = ["target", "fuzz", ".candor", "tests/snapshots"]
 
 [dependencies]
 ratatui = "0.30"
@@ -66,6 +71,10 @@ harness = false
 lto = "thin"
 codegen-units = 1
 strip = true
+# Smaller/faster release binary: no unwind tables to build or walk. Safe
+# here because src/tui.rs's panic hook only uses `set_hook` (no
+# `catch_unwind`), so terminal restore on panic is unaffected.
+panic = "abort"
 
 # Local co-development of tb-tui-common: uncomment to build against a
 # sibling checkout instead of crates.io. Leave commented in git.
