@@ -67,6 +67,31 @@ jobs:
       contents: read
       actions: read
     steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Tag must match Cargo.toml version, and the changelog must have its section
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          v="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          # Nothing else stops a tag drifting from the version actually
+          # built — `cargo build --locked --release` in the build matrix
+          # doesn't care what the tag says. Catch it here, before four
+          # platform builds run for a release nobody can install by the
+          # version they think they're getting.
+          if [ "$tag" != "v$v" ]; then
+            echo "::error::tag $tag != Cargo.toml v$v"
+            exit 1
+          fi
+          # A release with no changelog section is a release with no
+          # notes — `publish` below extracts this exact heading's section
+          # for the GitHub Release body, so its absence must fail here,
+          # not surface as an empty release page.
+          if ! grep -qE "^## \[$v\] — " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$v] — ' (em dash) heading — add a dated section before tagging"
+            exit 1
+          fi
+          echo "tag $tag matches Cargo.toml v$v, and CHANGELOG.md has its section"
       - name: Require a successful CI run for this SHA
         env:
           GH_TOKEN: ${{ github.token }}
