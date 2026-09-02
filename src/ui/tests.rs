@@ -382,6 +382,20 @@ fn fit_status_end_ellipsises_the_last_segment_as_a_last_resort() {
 }
 
 #[test]
+fn fit_status_drops_short_middle_segments_whole_instead_of_mangling_a_key_hint() {
+    // The real 80-column grid-find footer, two characters over budget.
+    // The only non-last segments are short key hints; middle-ellipsis
+    // would produce `enter…cept`. Drop `1/3 match` whole instead.
+    let text = "find: pro  · 1/3 match · n/N jump · enter accept · esc cancel";
+    let fitted = fit_status(text, text.chars().count() - 2);
+    assert_eq!(fitted, "find: pro  · n/N jump · enter accept · esc cancel");
+    assert!(
+        !fitted.contains('…'),
+        "no key hint may be ellipsised: {fitted:?}"
+    );
+}
+
+#[test]
 fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
     // Real footer status strings (confirm prompt, tip) plus a couple of
     // edge shapes (a segment that already contains a real "…" glyph, an
