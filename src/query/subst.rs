@@ -176,17 +176,70 @@ fn apply_numbered(sql: &str, params: &[BoundParam]) -> Result<String, SubstError
 }
 
 /// Render one parameter as a SQL literal.
+///
+/// A bare (unquoted) rendering is only safe when the value really is the
+/// scalar its declared type claims. Both halves come from the same untrusted
+/// log line, so a declared type is a hint, never a permission: given
+/// `INTEGER:0; DROP TABLE users; --` the old code emitted
+/// `where id = 0; DROP TABLE users; --` — a second statement, spliced into
+/// SQL that then goes to the editor and, from there, to a server. A value
+/// that doesn't parse as the scalar it claims to be is quoted as a string
+/// literal instead, where it is inert.
 fn quote(p: &BoundParam) -> String {
     match &p.value {
         ParamValue::Null => "NULL".to_string(),
         ParamValue::Literal(v) => {
-            if is_bare_type(&p.sql_type) {
+            if is_bare_type(&p.sql_type) && is_bare_literal(&p.sql_type, v) {
                 v.clone()
             } else {
                 format!("'{}'", v.replace('\'', "''"))
             }
         }
     }
+}
+
+/// `true` if `value` is genuinely the scalar `sql_type` declares — the check
+/// that lets [`quote`] emit it unquoted.
+fn is_bare_literal(sql_type: &str, value: &str) -> bool {
+    let upper = sql_type.to_ascii_uppercase();
+    let base = upper.split('(').next().unwrap_or(&upper).trim();
+    if matches!(base, "BOOL" | "BOOLEAN") {
+        return matches!(
+            value.to_ascii_lowercase().as_str(),
+            "t" | "f" | "true" | "false" | "1" | "0" | "yes" | "no" | "on" | "off"
+        );
+    }
+    is_numeric_literal(value)
+}
+
+/// `true` if `value` is a plain SQL numeric literal: an optional sign, digits
+/// with at most one decimal point, and an optional `e`-exponent. No
+/// whitespace, no `inf`/`NaN` (`f64::from_str` accepts both, and neither is
+/// bare-safe SQL), nothing else — so there is nowhere for a `;` to hide.
+fn is_numeric_literal(value: &str) -> bool {
+    let body = value.strip_prefix(['+', '-']).unwrap_or(value);
+    if body.is_empty() {
+        return false;
+    }
+    // Charset first: this is what rules out `inf`, `NaN`, whitespace, and the
+    // `;`/`--` that make an injection possible.
+    if !body
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-'))
+    {
+        return false;
+    }
+    if !body.chars().any(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Exactly one leading sign. `--5` parses as a float once the first `-` is
+    // stripped, and would render as a SQL line comment.
+    if !body.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+        return false;
+    }
+    // …then let the float parser rule on the shape (one point, one exponent,
+    // signs only where they belong).
+    body.parse::<f64>().is_ok()
 }
 
 /// Types emitted without surrounding quotes — numerics and booleans.
@@ -264,6 +317,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "SELECT * FROM t WHERE id = 42 AND name = 'alice'");
+    }
+
+    #[test]
+    fn a_numeric_typed_value_that_is_not_a_number_is_quoted() {
+        // The injection sample from the security review. The declared type and
+        // the value come from the same untrusted log line, so `INTEGER` is a
+        // claim, not a permission.
+        let params = [p(1, "INTEGER", "0; DROP TABLE users; --")];
+        let out = apply(
+            "SELECT * FROM t WHERE id = ?",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "SELECT * FROM t WHERE id = '0; DROP TABLE users; --'");
+        assert!(
+            !out.trim_end().contains("; DROP TABLE users; --'") || out.contains('\''),
+            "the payload must be inside a literal: {out}"
+        );
+        // No bare statement separator survives outside the literal.
+        let before_literal = out.split('\'').next().unwrap();
+        assert!(
+            !before_literal.contains(';'),
+            "a bare `;` escaped the literal: {out}"
+        );
+    }
+
+    #[test]
+    fn genuine_numbers_still_render_bare() {
+        for (ty, v) in [
+            ("INTEGER", "42"),
+            ("BIGINT", "-7"),
+            ("NUMERIC", "3.14"),
+            ("FLOAT8", "1e-5"),
+            ("NUMERIC(10,2)", "+0.50"),
+        ] {
+            let out = apply("SELECT ?", &[p(1, ty, v)], PlaceholderStyle::QuestionMark).unwrap();
+            assert_eq!(out, format!("SELECT {v}"), "{ty}:{v}");
+        }
+    }
+
+    #[test]
+    fn numeric_lookalikes_are_quoted_not_emitted_bare() {
+        for v in [
+            "--5",      // a SQL line comment once unquoted
+            "1 OR 1=1", // whitespace
+            "",         // empty
+            "0x10",     // not decimal
+            "inf",      // f64::from_str accepts it; SQL does not
+            "NaN",      //   "
+            "1;2",      // a separator
+            "5-3",      // an expression, not a literal
+        ] {
+            let out = apply(
+                "SELECT ?",
+                &[p(1, "INTEGER", v)],
+                PlaceholderStyle::QuestionMark,
+            )
+            .unwrap();
+            assert_eq!(
+                out,
+                format!("SELECT '{}'", v.replace('\'', "''")),
+                "{v:?} must be quoted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_boolean_typed_value_that_is_not_a_boolean_is_quoted() {
+        // `BOOL` is bare-rendered too, so it needs the same check.
+        let out = apply(
+            "SELECT ?",
+            &[p(1, "BOOLEAN", "true; DROP TABLE users; --")],
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "SELECT 'true; DROP TABLE users; --'");
+        // A real boolean is untouched.
+        let ok = apply(
+            "SELECT ?",
+            &[p(1, "BOOLEAN", "true")],
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(ok, "SELECT true");
     }
 
     #[test]
