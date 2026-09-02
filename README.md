@@ -14,7 +14,7 @@ A k9s-style Postgres TUI aimed at Java / AWS shops. Sibling project to
 > without reviewing your `safety.toml` first. Bug reports and feedback very
 > welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
 
-![pgman demo — live filter, schema browser, saved-query :param prompt](demo.gif)
+![pgman demo — paste a Hibernate log, F8 to reconstruct queries, N+1 clusters, load + run](demo.gif)
 
 > Captured from `pgman --demo`, the synthetic-data mode baked into the binary
 > (no database needed). Regenerate after a code change with `vhs demo.tape`.
@@ -25,7 +25,9 @@ At a glance:
   `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a
   committed `.pgman/pgman.toml`.
 - **Logs / pasted code → runnable SQL** — Hibernate logs, Postgres/RDS server
-  logs, and pasted JDBC, with N+1 detection.
+  logs, and pasted JDBC, with N+1 detection. Paste a log into the editor and
+  press F8 (the start card names it), or launch straight into it with
+  `pgman --log app.log`.
 - **Safe by default** — read-only connections, `statement_timeout`, and
   per-database guard rails on every statement.
 - **Editor** — syntax highlighting, `pg_format`, history, saved queries
@@ -45,9 +47,12 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 - **Postgres / RDS server logs → runnable SQL.** Reconstruct from `log_statement`
   output plus `DETAIL: parameters: $1 = …` lines (the more reliable source — it
   needs no application redeploy).
-- **Pasted JDBC → runnable SQL.** Substitute `?` placeholders with bound values.
 - **N+1 detection.** Cluster reconstructed queries by shape to surface
   loop-driven selects.
+
+Two ways in: paste a log into the editor and press F8 (or `ctrl-l`), or skip
+the paste and launch straight into the reconstructed queries with
+`pgman --log app.log`. Walkthrough: [`docs/logs-to-sql.md`](docs/logs-to-sql.md).
 
 Run it inside a Spring project and it picks up `spring.datasource.*` to connect.
 
@@ -102,13 +107,27 @@ Two things worth knowing:
 
 ## Install
 
-Straight from the repo:
+**Homebrew (macOS / Linux):**
 
 ```sh
-cargo install --git https://github.com/tombaldwin/pgman --locked
+brew tap tombaldwin/tap
+brew install pgman
 ```
 
-Or from a local checkout (handy while hacking on it):
+**Cargo:**
+
+```sh
+cargo install pgman --locked
+```
+
+**Pre-built binary:** download the tarball for your platform from the
+[GitHub Releases page](https://github.com/tombaldwin/pgman/releases), extract,
+and put `pgman` on your `PATH`. Built for `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
+`x86_64-apple-darwin`.
+
+The crates.io and Homebrew-tap routes go live with v0.2.0. Until then, or if
+you want to hack on it, install from a checkout:
 
 ```sh
 cargo install --path . --locked
@@ -123,62 +142,34 @@ sources `~/.cargo/env` (rustup does this for you).
 pgman --upgrade
 ```
 
-That's it. `--upgrade` pulls the source repo it was built from (baked in at
-compile time via `CARGO_MANIFEST_DIR`), reinstalls via
-`cargo install --path … --locked --force`, then `exec`s the new binary —
-so the upgrade command effectively becomes the new pgman. Any other args
-you passed (`--dsn`, `--theme`) are forwarded; `--upgrade` is stripped so
-it doesn't loop. Run from a non-TTY (CI / piped) and it stops after
-installing rather than launching a TUI with no terminal.
+Works in place for a checkout (`git pull` + `cargo install --path .`), a
+`cargo install` install, and a Homebrew install. A standalone binary (a
+downloaded release tarball) has no in-place upgrade — `--upgrade` prints the
+[releases page](https://github.com/tombaldwin/pgman/releases/latest) instead.
 
-Subprocesses inherit stdio so you see `git pull` and `cargo install`
-output live.
-
-If you installed via `cargo install --git`, `--upgrade` will tell you to
-reinstall manually — it can't know the git URL.
+pgman also checks crates.io for a newer release at most once every six hours
+and shows a header badge when one exists. Turn that off with
+`--no-update-check` (or `PGMAN_NO_UPDATE_CHECK`); it never blocks startup and
+degrades silently if there's no network.
 
 ## Testing
 
 ```bash
-cargo test                              # unit + render + subprocess + doctests
-cargo test --doc                        # just the doctests
-docker compose -f docker-compose.test.yml up -d
-cargo test --features integration       # adds the Postgres-driving tests
-docker compose -f docker-compose.test.yml down
+cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-Coverage (requires `cargo install cargo-llvm-cov`):
+See [`docs/development.md`](docs/development.md) for the integration suite,
+coverage, fuzzing, and what CI runs on every push.
 
-```bash
-cargo llvm-cov --all-targets            # summary in the terminal
-cargo llvm-cov --all-targets --html     # writes target/llvm-cov/html/
-```
+## Docs
 
-Fuzzing (requires nightly + `cargo install cargo-fuzz`):
-
-```bash
-cd fuzz
-cargo +nightly fuzz run dsn_parse       # also: tokenize, hibernate_parse,
-                                        # pglog_parse, project_parse,
-                                        # safety_classify
-```
-
-Property-based tests (`cargo test`) and benchmarks (`cargo bench`)
-both run on stable. See `benches/hot_paths.rs` for the perf baseline.
-
-The integration tests cover end-to-end batch / pipe mode against a
-real Postgres on `127.0.0.1:55432`. Subprocess paths (`\e` editor,
-`pg_format`) are covered without integration by PATH-stubbed
-`tests/bin/fake_*` shell scripts. Render-path snapshots use
-ratatui's `TestBackend` and inspect specific cells / strings rather
-than full snapshots, so they survive minor layout shifts.
-
-CI runs all of the above on every push (`.github/workflows/ci.yml`):
-the unit / render / subprocess / doc tests on linux + macos, the
-integration tests against a live `postgres:16` service container, a
-coverage report via `cargo-llvm-cov`, `cargo fmt --check`, `cargo clippy
--D warnings`, an MSRV build + test on Rust 1.94.1, `cargo-machete`,
-`cargo-deny`, and the candor data-layer gate.
+- [`docs/keys.md`](docs/keys.md) — every keybinding, by mode.
+- [`docs/commands.md`](docs/commands.md) — command reference.
+- [`docs/configuration.md`](docs/configuration.md) — config file locations and options.
+- [`docs/safety-and-privacy.md`](docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
+- [`docs/logs-to-sql.md`](docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
+- [`docs/development.md`](docs/development.md) — build / test / clippy + distribution notes.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map and the invariants the compiler doesn't enforce.
 
 ## Status
 
