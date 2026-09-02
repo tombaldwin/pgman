@@ -82,18 +82,18 @@ pub fn check_batch_safety(
             Guard::Confirm if assume_yes => {}
             Guard::Confirm => {
                 return Err(format!(
-                    "blocked by safety: {:?} on '{}' would need confirmation \
+                    "blocked by safety: {} on '{}' would need confirmation \
                      — re-run with --yes to allow guarded writes in batch mode (statement: {})",
-                    decision.kind,
+                    decision.kind.describe(),
                     db,
                     stmt_summary(&stmt),
                 ));
             }
             Guard::Block => {
                 return Err(format!(
-                    "blocked by safety: {:?} on '{}' is set to block \
+                    "blocked by safety: {} on '{}' is set to block \
                      — change this guard to \"confirm\" in safety.toml to permit it (statement: {})",
-                    decision.kind,
+                    decision.kind.describe(),
                     db,
                     stmt_summary(&stmt),
                 ));
@@ -467,7 +467,7 @@ mod tests {
         let cfg = crate::safety::SafetyConfig::default();
         let err = check_batch_safety(&cfg, "db", "DROP TABLE legacy", true).unwrap_err();
         assert!(err.contains("block"), "got: {err}");
-        assert!(err.contains("Drop"), "got: {err}");
+        assert!(err.contains("DROP"), "got: {err}");
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
         // A safe leading SELECT does not excuse a later DROP.
         let cfg = crate::safety::SafetyConfig::default();
         let err = check_batch_safety(&cfg, "db", "SELECT 1; DROP TABLE t", true).unwrap_err();
-        assert!(err.contains("Drop"), "got: {err}");
+        assert!(err.contains("DROP"), "got: {err}");
     }
 
     #[test]

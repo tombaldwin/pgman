@@ -177,7 +177,9 @@ impl App {
             .cloned()
             .unwrap_or_default();
         if cols.is_empty() {
-            self.last_error = Some(format!("no column info cached for {schema}.{table}"));
+            self.last_error = Some(format!(
+                "no columns known for {schema}.{table} yet · S opens the schema browser"
+            ));
             return;
         }
         let sql = build_insert_template(&schema, &table, &cols);

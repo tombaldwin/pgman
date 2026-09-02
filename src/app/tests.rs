@@ -2516,7 +2516,7 @@ fn schema_browser_i_with_no_cached_columns_surfaces_error() {
     a.schema_browser.cursor = idx;
     a.on_key(KeyEvent::from(KeyCode::Char('i')));
     let err = a.last_error.as_deref().unwrap_or("");
-    assert!(err.contains("no column info"), "got: {err}");
+    assert!(err.contains("no columns known"), "got: {err}");
 }
 
 #[test]
@@ -5141,4 +5141,40 @@ fn preload_log_overrides_conn_pick_startup_mode() {
     // A pick was found → LogPick; either way the ConnPick startup picker
     // has been overridden by the explicit --log.
     assert_eq!(a.mode, Mode::LogPick);
+}
+
+// -- error surfaces say what to do next ---------------------------
+
+#[test]
+fn blocked_by_safety_message_names_the_statement_without_debug_braces() {
+    let msg = blocked_by_safety_message(
+        &crate::safety::StatementKind::Delete { has_where: false },
+        "main",
+    );
+    assert!(
+        msg.starts_with("blocked by safety: DELETE without WHERE on 'main'"),
+        "{msg}"
+    );
+    assert!(
+        !msg.contains('{') && !msg.contains('}'),
+        "leaked Debug syntax: {msg}"
+    );
+    assert!(
+        msg.contains("safety.toml"),
+        "must say where the guard lives: {msg}"
+    );
+}
+
+#[test]
+fn not_connected_message_offers_the_next_step_for_each_state() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    assert!(a.not_connected_message().contains("--dsn"));
+    a.conn_pick.picks.push(DataSourcePick {
+        name: "prod".into(),
+        origin: "project",
+        dsn: crate::conn::Dsn::parse("postgres://app@prod-db:5432/main").unwrap(),
+    });
+    assert!(a.not_connected_message().contains("c to choose"));
+    a.conn_state = ConnState::Failed("boom".into());
+    assert!(a.not_connected_message().contains("r to retry"));
 }
