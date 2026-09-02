@@ -16,14 +16,14 @@ expression: dump(&buf)
 │3   grace@example.com    │        pgman 0.1.0 · beta · 2026-06-06       │                         │
 │4   alan@example.com     │      installed via a local git checkout      │                         │
 │5   edsger@example.com   │   k9s-style Postgres TUI for Java/AWS shops  │                         │
-│6   katherine@example.com│                                              │                         │
+│6   katherine@example.com│            server: pg 16.2 (demo)            │                         │
+│                         │                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
 │                         │                                              │                         │
 │                         │           esc / enter / A to close           │                         │
 │                         │                                              │                         │
 │                         └──────────────────────────────────────────────┘                         │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

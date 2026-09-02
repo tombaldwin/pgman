@@ -16,6 +16,7 @@ expression: dump(&buf)
 │                         │        pgman 0.1.0 · beta · 2026-06-06       │                         │
 │                         │       installed via a standalone binary      │                         │
 │                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
+│                         │                server: pg 16.0               │                         │
 │                         │                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
@@ -23,7 +24,6 @@ expression: dump(&buf)
 │                         │           esc / enter / A to close           │                         │
 │                         │                                              │                         │
 │                         └──────────────────────────────────────────────┘                         │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
