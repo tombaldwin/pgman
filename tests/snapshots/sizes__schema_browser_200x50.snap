@@ -8,11 +8,11 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY ┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
-└───────────│▼ public  (3)                                                         schema: public                                                                                          │───────────┘
+└───────────│▼ public  (3)                                                        schema: public                                                                                           │───────────┘
 ┌ result · 6│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │───────────┐
-│id  email  │      · id : bigint NOT NULL                                          3 table(s)                                                                                              │           │
+│id  email  │      · id : bigint NOT NULL                                         3 table(s)                                                                                               │           │
 │1   ada@exa│      · order_id : bigint NOT NULL                                                                                                                                            │           │
-│2   linus@e│      · sku : varchar(40) NOT NULL                                    enter to expand — then arrow / j/k into the tables                                                      │           │
+│2   linus@e│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
 │3   grace@e│      · qty : integer NOT NULL                                                                                                                                                │           │
 │4   alan@ex│      · price_cents : integer NOT NULL                                                                                                                                        │           │
 │5   edsger@│      ◆ order_items_pkey                                                                                                                                                      │           │

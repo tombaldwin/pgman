@@ -20,13 +20,13 @@ expression: dump(&buf)
 │      │      · user_id : bigint NOT NULL                                                                      │       │
 │      │      · status : varchar(20) NOT NULL                                                                  │       │
 │      │      · total_cents : integer NOT NULL                                                                 │       │
-│      │      · created_at : timestamptz NOT NULL                                                              │       │
+│      │      · created_at : timestamptz NOT NU…                                                               │       │
 │      │      ◆ orders_pkey                                                                                    │       │
 │      │  ▼ users  (4 col, 1 cons)                                                                             │       │
 │      │      · id : bigint NOT NULL                                                                           │       │
 │      │      · email : varchar(255) NOT NULL                                                                  │       │
 │      │      · plan : varchar(20) NOT NULL                                                                    │       │
-│      │      · created_at : timestamptz NOT NULL                                                              │       │
+│      │      · created_at : timestamptz NOT NU…                                                               │       │
 │      │      ◆ users_pkey                                                                                     │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │

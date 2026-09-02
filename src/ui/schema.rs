@@ -1,5 +1,22 @@
 use super::*;
 
+/// Fit `text` to `width` display columns, marking a cut with `…`
+/// styled in `theme.accent` (bold) — the same truncation `grid.rs`
+/// gives the results table, so a clipped tree/detail row reads the
+/// same way a clipped grid cell does instead of just running off the
+/// edge of its pane.
+fn clamped_line(text: &str, style: Style, width: usize, theme: &Theme) -> Line<'static> {
+    let (kept, marker) = grid::truncate_cell_parts(text, width);
+    if marker.is_empty() {
+        Line::from(Span::styled(kept, style))
+    } else {
+        Line::from(vec![
+            Span::styled(kept, style),
+            Span::styled(marker, style.fg(theme.accent).add_modifier(Modifier::BOLD)),
+        ])
+    }
+}
+
 /// Schema browser modal. Two panes inside a centered overlay:
 /// the left holds the schema → table tree, the right holds the
 /// columns / constraints for the focused table (or a one-line
@@ -22,15 +39,39 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
-    let split = Layout::default()
-        .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(inner);
-    let left = split[0];
-    let right = split[1];
+    // Split tree (left) / details (right). A straight 40/60 percentage
+    // split leaves the tree unusably narrow at 80 columns (~27 cells,
+    // not enough for a nested column row before it starts eating the
+    // right pane's border) — so the tree gets a fixed floor and the
+    // details pane takes whatever's left, mirroring how ebman sizes
+    // its table columns from a computed minimum rather than a bare
+    // percentage.
+    const TREE_MIN_WIDTH: u16 = 28;
+    let left_width = ((inner.width as u32 * 40 / 100) as u16)
+        .max(TREE_MIN_WIDTH)
+        .min(inner.width);
+    let right_width = inner.width.saturating_sub(left_width);
+    let left = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: left_width,
+        height: inner.height,
+    };
+    let right = Rect {
+        x: inner.x + left_width,
+        y: inner.y,
+        width: right_width,
+        height: inner.height,
+    };
 
     // Left: scrollable tree.
     let visible_h = left.height as usize;
+    // Reserve a one-column gutter at the tree pane's right edge: the
+    // two panes sit flush against each other with no border between
+    // them, so a row that fills its pane exactly would otherwise
+    // touch the detail pane's text with nothing to show the two are
+    // separate.
+    let tree_width = left.width.saturating_sub(1) as usize;
     let scroll = scroll_offset(app.schema_browser.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     for (i, row) in rows.iter().enumerate().skip(scroll).take(visible_h) {
@@ -85,41 +126,53 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
             }
             SchemaBrowserRow::Constraint { name, .. } => format!("      ◆ {name}"),
         };
-        lines.push(Line::from(Span::styled(text, style)));
+        lines.push(clamped_line(&text, style, tree_width, theme));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), left);
 
     // Right: details for the focused row.
+    let detail_width = right.width as usize;
     let mut right_lines: Vec<Line> = Vec::new();
     match rows.get(app.schema_browser.cursor) {
         Some(SchemaBrowserRow::Schema {
             name, table_count, ..
         }) => {
-            right_lines.push(Line::from(Span::styled(
-                format!("schema: {name}"),
+            right_lines.push(clamped_line(
+                &format!("schema: {name}"),
                 Style::default()
                     .fg(theme.title)
                     .add_modifier(Modifier::BOLD),
-            )));
+                detail_width,
+                theme,
+            ));
             right_lines.push(Line::from(""));
-            right_lines.push(Line::from(format!("{table_count} table(s)")));
+            right_lines.push(clamped_line(
+                &format!("{table_count} table(s)"),
+                Style::default().fg(theme.text),
+                detail_width,
+                theme,
+            ));
             right_lines.push(Line::from(""));
-            right_lines.push(Line::from(Span::styled(
+            right_lines.push(clamped_line(
                 "enter to expand — then arrow / j/k into the tables",
                 Style::default().fg(theme.muted),
-            )));
+                detail_width,
+                theme,
+            ));
         }
         Some(SchemaBrowserRow::Column {
             schema,
             table,
             name,
         }) => {
-            right_lines.push(Line::from(Span::styled(
-                format!("{schema}.{table}.{name}"),
+            right_lines.push(clamped_line(
+                &format!("{schema}.{table}.{name}"),
                 Style::default()
                     .fg(theme.title)
                     .add_modifier(Modifier::BOLD),
-            )));
+                detail_width,
+                theme,
+            ));
             right_lines.push(Line::from(""));
             let meta = app
                 .schema_cache
@@ -128,23 +181,29 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .and_then(|v| v.iter().find(|m| m.name == *name));
             match meta {
                 Some(m) if !m.type_name.is_empty() => {
-                    right_lines.push(Line::from(Span::styled(
-                        format!("type:  {}", m.type_name),
+                    right_lines.push(clamped_line(
+                        &format!("type:  {}", m.type_name),
                         Style::default().fg(theme.text),
-                    )));
-                    right_lines.push(Line::from(Span::styled(
-                        format!(
+                        detail_width,
+                        theme,
+                    ));
+                    right_lines.push(clamped_line(
+                        &format!(
                             "nullable: {}",
                             if m.not_null { "NO (NOT NULL)" } else { "YES" }
                         ),
                         Style::default().fg(theme.text),
-                    )));
+                        detail_width,
+                        theme,
+                    ));
                 }
                 _ => {
-                    right_lines.push(Line::from(Span::styled(
+                    right_lines.push(clamped_line(
                         "column · type info unavailable (older cache?)",
                         Style::default().fg(theme.muted),
-                    )));
+                        detail_width,
+                        theme,
+                    ));
                 }
             }
         }
@@ -153,25 +212,31 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
             table,
             name,
         }) => {
-            right_lines.push(Line::from(Span::styled(
-                format!("{schema}.{table} · {name}"),
+            right_lines.push(clamped_line(
+                &format!("{schema}.{table} · {name}"),
                 Style::default()
                     .fg(theme.title)
                     .add_modifier(Modifier::BOLD),
-            )));
+                detail_width,
+                theme,
+            ));
             right_lines.push(Line::from(""));
-            right_lines.push(Line::from(Span::styled(
+            right_lines.push(clamped_line(
                 "unique / primary-key constraint",
                 Style::default().fg(theme.muted),
-            )));
+                detail_width,
+                theme,
+            ));
         }
         Some(SchemaBrowserRow::Table { schema, name, .. }) => {
-            right_lines.push(Line::from(Span::styled(
-                format!("{schema}.{name}"),
+            right_lines.push(clamped_line(
+                &format!("{schema}.{name}"),
                 Style::default()
                     .fg(theme.title)
                     .add_modifier(Modifier::BOLD),
-            )));
+                detail_width,
+                theme,
+            ));
             right_lines.push(Line::from(""));
             // Size info (third-pass fetch). Missing entry =
             // permission gap on pg_relation_size; render nothing.
@@ -180,14 +245,16 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .table_sizes
                 .get(&(schema.clone(), name.clone()))
             {
-                right_lines.push(Line::from(Span::styled(
-                    format!(
+                right_lines.push(clamped_line(
+                    &format!(
                         "size: total {}  ·  heap {}",
                         crate::query::schema::format_bytes(sz.total_bytes),
                         crate::query::schema::format_bytes(sz.table_bytes),
                     ),
                     Style::default().fg(theme.muted),
-                )));
+                    detail_width,
+                    theme,
+                ));
                 right_lines.push(Line::from(""));
             }
             // Columns from the cache (ordered by attnum).
@@ -197,14 +264,21 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .get(&(schema.clone(), name.clone()))
                 .cloned()
                 .unwrap_or_default();
-            right_lines.push(Line::from(Span::styled(
-                format!("columns ({})", cols.len()),
+            right_lines.push(clamped_line(
+                &format!("columns ({})", cols.len()),
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
-            )));
+                detail_width,
+                theme,
+            ));
             for c in &cols {
-                right_lines.push(Line::from(format!("  · {c}")));
+                right_lines.push(clamped_line(
+                    &format!("  · {c}"),
+                    Style::default().fg(theme.text),
+                    detail_width,
+                    theme,
+                ));
             }
             // Constraints for this table.
             let cons: Vec<&crate::query::schema::ConstraintMeta> = app
@@ -217,14 +291,21 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 .collect();
             if !cons.is_empty() {
                 right_lines.push(Line::from(""));
-                right_lines.push(Line::from(Span::styled(
-                    format!("constraints ({})", cons.len()),
+                right_lines.push(clamped_line(
+                    &format!("constraints ({})", cons.len()),
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),
-                )));
+                    detail_width,
+                    theme,
+                ));
                 for c in cons {
-                    right_lines.push(Line::from(format!("  · {}", c.name)));
+                    right_lines.push(clamped_line(
+                        &format!("  · {}", c.name),
+                        Style::default().fg(theme.text),
+                        detail_width,
+                        theme,
+                    ));
                 }
             }
         }
