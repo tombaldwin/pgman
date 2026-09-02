@@ -43,6 +43,22 @@ pub enum BackslashCmd {
     /// under the cache dir." Needs a single-table result so the
     /// element name is known.
     Fixture(Option<String>),
+    /// `\l` — list databases. Renders `App.databases` (name +
+    /// on-disk size, already filled by the bootstrap query at
+    /// connect time) as a result grid. No new query.
+    ListDatabases,
+    /// `\x` / `\x on` / `\x off` — toggle expanded (row-detail)
+    /// output. `None` means toggle from the current state, same
+    /// shape as `Timing`.
+    Expanded(Option<bool>),
+    /// `\c` — open the connection picker. `\c <name>` — connect
+    /// to the picker entry matching `<name>`. `None` arg means
+    /// no name was given (open the picker).
+    Connect(Option<String>),
+    /// `\i <path>` — read a SQL file into the editor buffer
+    /// (replacing it) without running it. `None` when no path
+    /// was given.
+    Include(Option<String>),
     /// Anything else starting with `\`. The dispatcher uses the
     /// inner string to compose a useful error.
     Unknown(String),
@@ -79,6 +95,14 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
         }),
         "report" => BackslashCmd::Report(arg1.map(str::to_string)),
         "fixture" => BackslashCmd::Fixture(arg1.map(str::to_string)),
+        "l" => BackslashCmd::ListDatabases,
+        "x" => BackslashCmd::Expanded(match arg1.map(str::to_ascii_lowercase).as_deref() {
+            Some("on") => Some(true),
+            Some("off") => Some(false),
+            _ => None,
+        }),
+        "c" => BackslashCmd::Connect(arg1.map(str::to_string)),
+        "i" => BackslashCmd::Include(arg1.map(str::to_string)),
         _ => BackslashCmd::Unknown(raw),
     })
 }
@@ -185,6 +209,76 @@ mod tests {
         assert_eq!(
             parse_backslash_command("\\fixture users.xml"),
             Some(BackslashCmd::Fixture(Some("users.xml".into())))
+        );
+    }
+
+    #[test]
+    fn parse_list_databases() {
+        assert_eq!(
+            parse_backslash_command("\\l"),
+            Some(BackslashCmd::ListDatabases)
+        );
+        // Extra token ignored — psql's `\l` also accepts (and ignores)
+        // a pattern here.
+        assert_eq!(
+            parse_backslash_command("\\l ignored"),
+            Some(BackslashCmd::ListDatabases)
+        );
+    }
+
+    #[test]
+    fn parse_expanded_toggle_and_explicit_on_off() {
+        assert_eq!(
+            parse_backslash_command("\\x"),
+            Some(BackslashCmd::Expanded(None))
+        );
+        assert_eq!(
+            parse_backslash_command("\\x on"),
+            Some(BackslashCmd::Expanded(Some(true)))
+        );
+        assert_eq!(
+            parse_backslash_command("\\x OFF"),
+            Some(BackslashCmd::Expanded(Some(false)))
+        );
+        // Garbage arg falls back to toggle, same as `\timing`.
+        assert_eq!(
+            parse_backslash_command("\\x foo"),
+            Some(BackslashCmd::Expanded(None))
+        );
+    }
+
+    #[test]
+    fn parse_connect_with_and_without_name() {
+        assert_eq!(
+            parse_backslash_command("\\c"),
+            Some(BackslashCmd::Connect(None))
+        );
+        assert_eq!(
+            parse_backslash_command("\\c prod"),
+            Some(BackslashCmd::Connect(Some("prod".into())))
+        );
+        // Extra tokens past the name ignored.
+        assert_eq!(
+            parse_backslash_command("\\c prod extra"),
+            Some(BackslashCmd::Connect(Some("prod".into())))
+        );
+    }
+
+    #[test]
+    fn parse_include_with_and_without_path() {
+        assert_eq!(
+            parse_backslash_command("\\i"),
+            Some(BackslashCmd::Include(None))
+        );
+        assert_eq!(
+            parse_backslash_command("\\i /tmp/q.sql"),
+            Some(BackslashCmd::Include(Some("/tmp/q.sql".into())))
+        );
+        // Extra tokens past the path ignored, same as every other
+        // arg1-only command here.
+        assert_eq!(
+            parse_backslash_command("\\i /tmp/q.sql extra"),
+            Some(BackslashCmd::Include(Some("/tmp/q.sql".into())))
         );
     }
 

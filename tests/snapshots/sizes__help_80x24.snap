@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -19,7 +20,7 @@ expression: dump(&buf)
 │6   katheri│     A             about pgman (version, credits)     │           │
 │           │     e / i / tab   focus editor                       │           │
 │           │     c             change connection (opens the       │           │
-│           │ ↓ 238 more below                                     │           │
+│           │ ↓ 245 more below                                     │           │
 │           │                                                      │           │
 │           └──────────────────────────────────────────────────────┘           │
 │                                                                              │

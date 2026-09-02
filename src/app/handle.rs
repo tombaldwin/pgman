@@ -80,6 +80,13 @@ impl App {
                     .last_run_sql
                     .as_deref()
                     .and_then(infer_single_source_table);
+                // psql `\x` — expanded output. Land the new result in
+                // the row-detail view for its first row instead of
+                // the grid. No-op when the result is empty (nothing
+                // to expand into).
+                if self.expanded_on {
+                    self.open_row_detail();
+                }
                 self.query_running = false;
                 self.last_error = None;
                 self.last_error_detail = None;

@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -33,7 +34,7 @@ expression: dump(&buf)
 │                 │     f             find within grid (HIGHLIGHTS / jumps; n/N step matches)        │                 │
 │                 │     F             follow FK on focused cell → new tab with SELECT * FROM parent  │                 │
 │                 │                   WHERE pk=value                                                 │                 │
-│                 │ ↓ 151 more below                                                                 │                 │
+│                 │ ↓ 155 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

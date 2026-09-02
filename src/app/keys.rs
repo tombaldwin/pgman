@@ -561,20 +561,11 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.conn_pick.select_first(),
             KeyCode::Char('G') | KeyCode::End => self.conn_pick.select_last(),
             KeyCode::Enter => {
-                if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index) {
-                    let dsn = pick.dsn.clone();
+                if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index).cloned() {
                     // Re-resolve safety profile against the *picked* db name
                     // — the placeholder in App::new used the empty default.
-                    let profile = self.safety_config.profile_for(&dsn.dbname);
-                    self.read_only = profile.read_only;
-                    self.statement_timeout_ms = profile.statement_timeout_ms;
-                    self.dsn = Some(dsn);
-                    self.dsn_origin = Some(format!(
-                        "picked {} data source '{}'",
-                        pick.origin, pick.name
-                    ));
-                    self.mode = Mode::Normal;
-                    self.start_connect();
+                    let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
+                    self.connect_to_pick(pick.dsn, origin);
                 }
             }
             _ => {}

@@ -1526,6 +1526,22 @@ pub(crate) fn help_body(
         row("    \\fixture [path]  capture current result as a DBUnit fixture (XML)"),
         &mut lines,
     );
+    push(
+        row("    \\l                list databases (name + size)"),
+        &mut lines,
+    );
+    push(
+        row("    \\x [on/off]       toggle expanded (row-detail) output"),
+        &mut lines,
+    );
+    push(
+        row("    \\c [name]         connect · no name opens the picker"),
+        &mut lines,
+    );
+    push(
+        row("    \\i <path>         load a SQL file into the editor (doesn't run it)"),
+        &mut lines,
+    );
     push(Line::from(""), &mut lines);
 
     heading("tabs", &mut lines, &mut anchors);

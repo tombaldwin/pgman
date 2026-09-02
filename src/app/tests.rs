@@ -4501,6 +4501,202 @@ fn backslash_report_writes_html_when_extension_matches() {
 }
 
 #[test]
+fn backslash_l_renders_databases_as_result_grid() {
+    let mut a = app_with_schemas();
+    a.databases = vec![
+        DatabaseInfo {
+            name: "app_dev".into(),
+            size: "42 MB".into(),
+        },
+        DatabaseInfo {
+            name: "postgres".into(),
+            size: "7580 kB".into(),
+        },
+    ];
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\l".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(
+        a.grid.columns,
+        vec!["database".to_string(), "size".to_string()]
+    );
+    assert_eq!(
+        a.grid.rows,
+        vec![
+            vec!["app_dev".to_string(), "42 MB".to_string()],
+            vec!["postgres".to_string(), "7580 kB".to_string()],
+        ]
+    );
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("2 database(s)"), "got: {status}");
+}
+
+#[test]
+fn backslash_l_with_no_databases_surfaces_hint_not_panic() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\l".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(a.grid.is_empty());
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("connect first"), "got: {status}");
+}
+
+#[test]
+fn backslash_x_toggles_expanded_state() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\x".into();
+    a.editor.cursor = a.editor.buffer.len();
+    assert!(!a.expanded_on);
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(a.expanded_on);
+    assert_eq!(a.last_status.as_deref(), Some("expanded on"));
+    // Buffer preserved — same rationale as `\timing`: operators
+    // commonly toggle it back off in the same buffer.
+    assert_eq!(a.editor.buffer, "\\x");
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(!a.expanded_on);
+    assert_eq!(a.last_status.as_deref(), Some("expanded off"));
+}
+
+#[test]
+fn expanded_on_lands_new_query_result_in_row_detail() {
+    let mut a = app_with_schemas();
+    a.expanded_on = true;
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        },
+        kind_label: "SELECT".into(),
+        tx_open_after: false,
+    });
+    assert_eq!(a.mode, Mode::RowDetail);
+}
+
+#[test]
+fn expanded_off_leaves_new_query_result_in_grid_mode() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    assert!(!a.expanded_on);
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: vec![vec!["1".into()]],
+            truncated: false,
+        },
+        kind_label: "SELECT".into(),
+        tx_open_after: false,
+    });
+    assert_eq!(a.mode, Mode::Editor);
+}
+
+#[test]
+fn backslash_c_with_no_arg_opens_picker() {
+    let pick = DataSourcePick {
+        name: "primary".into(),
+        origin: "test",
+        dsn: crate::conn::Dsn::parse("postgres://app@db/x").unwrap(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(a.mode, Mode::ConnPick);
+}
+
+#[tokio::test]
+async fn backslash_c_with_matching_name_connects_to_that_pick() {
+    let pick = DataSourcePick {
+        name: "staging".into(),
+        origin: "test",
+        dsn: crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c staging".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(
+        a.dsn.as_ref().map(|d| d.dbname.as_str()),
+        Some("staging_db")
+    );
+    assert_eq!(a.mode, Mode::Normal);
+    let origin = a.dsn_origin.as_deref().unwrap_or("");
+    assert!(origin.contains("staging"), "got: {origin}");
+}
+
+#[tokio::test]
+async fn backslash_c_with_unmatched_name_swaps_dbname_on_current_dsn() {
+    let mut a = App::new(
+        Theme::default(),
+        Some(crate::conn::Dsn::parse("postgres://app@db/app_dev").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c reporting".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(a.dsn.as_ref().map(|d| d.dbname.as_str()), Some("reporting"));
+}
+
+#[test]
+fn backslash_c_with_unmatched_name_and_no_active_connection_errors() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c reporting".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("no active connection"), "got: {err}");
+}
+
+#[test]
+fn backslash_i_loads_file_into_editor_buffer() {
+    let mut a = app_with_schemas();
+    let tmp = std::env::temp_dir().join(format!("pgman-include-test-{}.sql", std::process::id()));
+    std::fs::write(&tmp, "select 1;\nselect 2;\n").unwrap();
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("\\i {}", tmp.display());
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(a.editor.buffer, "select 1;\nselect 2;\n");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("loaded 2 lines from"), "got: {status}");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn backslash_i_missing_file_is_actionable_error() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\i /no/such/path-pgman-test.sql".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("/no/such/path-pgman-test.sql"), "got: {err}");
+}
+
+#[test]
+fn backslash_i_with_no_path_is_actionable_error() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\i".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("requires a file path"), "got: {err}");
+}
+
+#[test]
 fn format_unix_secs_utc_pins_the_epoch_anchor() {
     // 1970-01-01T00:00:00Z
     assert_eq!(format_unix_secs_utc(0), "1970-01-01T00:00:00Z");
