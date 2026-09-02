@@ -12,10 +12,26 @@ homepage = "https://github.com/tombaldwin/pgman"
 keywords = ["postgresql", "tui", "database", "cli", "ratatui"]
 categories = ["command-line-utilities", "database"]
 # Keep the published crate to source + the docs cargo needs (README for
-# the crates.io page, CHANGELOG for a build script to read). Everything
-# else here is dev/CI tooling that has no business in a `cargo install`
-# tarball.
-exclude = ["target", "fuzz", ".candor"]
+# the crates.io page, CHANGELOG for a build script to read). An
+# allow-list, not an exclude-list: `exclude` only stops naming things
+# that happen to exist today, so PLAN.md, BACKLOG.md, CLAUDE.md, docs/,
+# the whole test tree and CI config were all shipping in the tarball
+# (verify with `cargo package --list`). `tests/` is dropped entirely —
+# crates.io users don't run the test suite, and it drags in
+# `tests/bin/` shell scripts — not just excluded from an exclude-list
+# that would need updating every time a new top-level dir appears.
+include = [
+    "src/**",
+    "benches/hot_paths.rs",
+    "build.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "demo.gif",
+]
 
 [dependencies]
 ratatui = "0.30"
