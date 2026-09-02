@@ -1,17 +1,16 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 403
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
 ┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
 │> (┌ schema wizard — y yank suggestion · r refresh · q close ──────────────────────────────────────────┐    │
 └───│  SEV    CODE     object                                            title                          │────┘
-┌ re│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or UN│────┐
-│(no│  HIGH   LINT001  public.events                                     table without PRIMARY KEY or UN│    │
-│   │  HIGH   LINT001  public.user                                       table without PRIMARY KEY or UN│    │
-│   │  MED    LINT002  public.OrderItems                                 mixed-case table identifier nee│    │
-│   │  MED    LINT003  public.user                                       table named after a SQL reserve│    │
+┌ re│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or U…│────┐
+│(no│  HIGH   LINT001  public.events                                     table without PRIMARY KEY or U…│    │
+│   │  HIGH   LINT001  public.user                                       table without PRIMARY KEY or U…│    │
+│   │  MED    LINT002  public.OrderItems                                 mixed-case table identifier ne…│    │
+│   │  MED    LINT003  public.user                                       table named after a SQL reserv…│    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
