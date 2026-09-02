@@ -579,6 +579,15 @@ pub fn render_html(snapshot: &ReportSnapshot) -> String {
 /// so a SQL fingerprint or caller frame containing
 /// `<script>` would otherwise render live. Escape
 /// defensively rather than trusting the downstream renderer.
+///
+/// Also drops every other `char::is_control` codepoint (`\n`
+/// and `\t` are the only two let through — `\n` as a space per
+/// the table-row rule above, `\t` verbatim). A tap `caller`
+/// frame or `example_sql` with an embedded ESC (`\x1b`) or BEL
+/// (`\x07`) is otherwise a terminal-escape-sequence injection
+/// the moment someone runs `cat`/`less` on the exported
+/// `report.md` — control characters are exactly as untrusted as
+/// the JVM-supplied text carrying them.
 fn md_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -593,6 +602,8 @@ fn md_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '&' => out.push_str("&amp;"),
             '\n' => out.push(' '),
+            '\t' => out.push(c),
+            _ if c.is_control() => {} // ESC, BEL, \r, ... — dropped, not rendered
             _ => out.push(c),
         }
     }
@@ -602,6 +613,13 @@ fn md_escape(s: &str) -> String {
 /// HTML-escape a cell value. Full `<`/`>`/`&`/`"`/`'`
 /// substitution set — `'` matters when future templates
 /// might end up inside single-quoted attributes.
+///
+/// Also drops every `char::is_control` codepoint besides `\n`
+/// and `\t` — see [`md_escape`]'s doc comment for why. HTML
+/// escaping alone neutralises the browser-facing risk (a
+/// literal ESC byte doesn't do anything to an HTML renderer)
+/// but the same `report.html` is just as reachable by `cat` as
+/// the Markdown twin.
 fn html_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -611,6 +629,8 @@ fn html_escape(s: &str) -> String {
             '&' => out.push_str("&amp;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&#39;"),
+            '\n' | '\t' => out.push(c),
+            _ if c.is_control() => {}
             _ => out.push(c),
         }
     }
@@ -1008,6 +1028,35 @@ mod tests {
     fn html_escape_includes_single_quote() {
         assert_eq!(html_escape("it's"), "it&#39;s");
         assert_eq!(html_escape("<a href='x'>"), "&lt;a href=&#39;x&#39;&gt;");
+    }
+
+    #[test]
+    fn md_escape_drops_terminal_escape_sequences() {
+        // ESC (\x1b) starts an ANSI control sequence — left in
+        // place, `cat report.md` would execute it (e.g. change
+        // the terminal's colours, or worse with a more exotic
+        // sequence). A malicious `example_sql` / `fingerprint`
+        // / `last_caller` from the JVM tap must not survive
+        // into the exported file.
+        assert_eq!(md_escape("\x1b[31mred\x1b[0m"), "[31mred[0m");
+        // BEL (\x07) — audible/visual bell, same "control
+        // character from an untrusted source" class.
+        assert_eq!(md_escape("ding\x07"), "ding");
+        // \r (used for line-overwrite tricks) is dropped too —
+        // only \n and \t are let through.
+        assert_eq!(md_escape("a\rb"), "ab");
+        // \n and \t are NOT control-stripped — \n keeps its
+        // existing "becomes a space" table-safety behaviour,
+        // \t passes through verbatim.
+        assert_eq!(md_escape("a\nb\tc"), "a b\tc");
+    }
+
+    #[test]
+    fn html_escape_drops_terminal_escape_sequences() {
+        assert_eq!(html_escape("\x1b[31mred\x1b[0m"), "[31mred[0m");
+        assert_eq!(html_escape("ding\x07"), "ding");
+        assert_eq!(html_escape("a\rb"), "ab");
+        assert_eq!(html_escape("a\nb\tc"), "a\nb\tc");
     }
 
     #[test]
