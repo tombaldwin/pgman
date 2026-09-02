@@ -98,6 +98,10 @@ this build loads in an older pgman.
 
 ## [0.1.0] — 2026-06-06
 
+**Never tagged or published.** This entry records a version bump and a
+README badge; no tag, GitHub Release, crate, or binary ever existed for
+0.1.0. Everything below shipped for real in 0.2.0, the first release.
+
 First public beta. pgman is pre-1.0; expect rough edges and breaking
 changes before 1.0. Highlights (see `BACKLOG.md` for the full record):
 
