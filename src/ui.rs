@@ -462,6 +462,37 @@ pub(crate) fn footer_badges_with(
     out
 }
 
+/// Fit a ` · `-joined hint string into `width` columns without ever
+/// truncating a hint mid-item. `hints` is treated as an ordered list of
+/// `" · "`-separated items, already written most-important-first; when
+/// the full string doesn't fit, whole trailing items are dropped and
+/// replaced with a single `"N more"` item (so the join reads `"…kept ·
+/// N more"`) telling the operator how many hints were cut. The returned
+/// string is never wider than `width` — if even the first item plus the
+/// marker can't fit, the marker alone is returned; if that doesn't fit
+/// either, an empty string is returned.
+pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
+    const SEP: &str = " · ";
+    if hints.is_empty() || hints.chars().count() <= width {
+        return hints.to_string();
+    }
+    let items: Vec<&str> = hints.split(SEP).collect();
+    // Try keeping progressively fewer leading items, each candidate
+    // capped off with a "N more" marker accounting for the rest.
+    for kept in (0..items.len()).rev() {
+        let remaining = items.len() - kept;
+        let marker = format!("{remaining} more");
+        let mut pieces: Vec<&str> = items[..kept].to_vec();
+        pieces.push(&marker);
+        let candidate = pieces.join(SEP);
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+    }
+    // Not even the marker for every item fits.
+    String::new()
+}
+
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // TxDecision is its own prominent prompt — it pre-empts the normal
@@ -486,6 +517,16 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+    // Badges occupy width before the hints text; compute them up front so
+    // the hints branch below knows how much room it actually has. `line`'s
+    // leading " " (added by every branch) is accounted for separately via
+    // `LEADING_SPACE`, reused for the cursor-position math further down.
+    const LEADING_SPACE: u16 = 1;
+    let badges = footer_badges(app, theme);
+    let badge_width: u16 = badges
+        .iter()
+        .map(|s| s.content.chars().count() as u16)
+        .sum();
     // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
     let line = if let Some(err) = &app.last_error {
         let mut spans = vec![
@@ -618,8 +659,17 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             appended = format!("{hints} · F1 help");
             &appended
         };
+        // Fit whole hints into what's left after the badges and the
+        // leading space — never truncate a hint mid-word. When some are
+        // dropped, `fit_hints` appends a "N more" marker so the operator
+        // knows there's more and roughly how much.
+        let available = area
+            .width
+            .saturating_sub(badge_width)
+            .saturating_sub(LEADING_SPACE) as usize;
+        let fitted = fit_hints(hints, available);
         Line::from(Span::styled(
-            format!(" {hints}"),
+            format!(" {fitted}"),
             Style::default().fg(theme.muted),
         ))
     };
@@ -628,11 +678,6 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // Visible regardless of which footer branch (error / status /
     // hint) is active — TxDecision pre-empted with its own render
     // above, so we don't double up there.
-    let badges = footer_badges(app, theme);
-    let badge_width: u16 = badges
-        .iter()
-        .map(|s| s.content.chars().count() as u16)
-        .sum();
     let mut combined: Vec<Span<'static>> = badges;
     for s in line.spans {
         combined.push(s);
@@ -646,7 +691,6 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // status branch above is accounted for via `LEADING_SPACE`,
     // and any active `[RO]` / `[TX]` badges add their own width on
     // top.
-    const LEADING_SPACE: u16 = 1;
     let cursor_offset: Option<u16> = match app.mode {
         Mode::GridFilter => app.grid_view.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …"; cursor sits just

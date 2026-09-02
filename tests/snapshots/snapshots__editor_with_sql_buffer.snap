@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 82
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -18,4 +17,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · ctrl-e EXPLAIN · tab
+ RO   F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · 5 more
