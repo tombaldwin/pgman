@@ -1,25 +1,37 @@
 # Logs → runnable SQL, in sixty seconds
 
-pgman's wedge: paste a log, get back queries you can actually run — bind
-parameters substituted in, ready for `F5`. This walks through it end to end.
+Paste a log, get back queries you can actually run — bind parameters
+substituted in, ready for `F5`. This walks through it end to end.
 
 ## What it reads
 
-Three input shapes are recognised, all in `src/query/`:
+Three input shapes are recognised:
 
-- **Hibernate application logs** (`src/query/hibernate.rs`) — an
-  `org.hibernate.SQL` logger line opens a statement, followed by the
-  separately-logged bind parameters (`binding parameter [1] as [INTEGER] -
-  [42]` on Hibernate 5, `binding parameter (1:INTEGER) <- [42]` on Hibernate
-  6). Multi-line `hibernate.format_sql=true` output is reassembled.
-- **Postgres / RDS server logs** (`src/query/pglog.rs`) — `LOG:  statement:
-  <sql>` for simple queries, or a `LOG:  duration: … execute <tag>: <sql>`
-  paired with the following `DETAIL:  parameters: $1 = '…'` line for the
-  extended protocol. This is the more reliable source: it needs
-  `log_min_duration_statement` / `log_statement` turned on server-side, no
-  application redeploy.
-- **Pasted JDBC** (`src/query/jdbc.rs`) — no log at all, just a `?`-placeholder
-  statement plus a typed parameter list you already have (a debugger watch, a
+- **Hibernate application logs** — an `org.hibernate.SQL` logger line opens a
+  statement, followed by the separately-logged bind parameters (`binding
+  parameter [1] as [INTEGER] - [42]` on Hibernate 5, `binding parameter
+  (1:INTEGER) <- [42]` on Hibernate 6). Multi-line `hibernate.format_sql=true`
+  output is reassembled.
+
+  The bind-parameter lines are logged at `TRACE` and are usually off in
+  production, so turn them on deliberately. Hibernate 6 logs them under
+  `org.hibernate.orm.jdbc.bind`; Hibernate 5 under
+  `org.hibernate.type.descriptor.sql.BasicBinder`. Logback:
+
+  ```xml
+  <logger name="org.hibernate.orm.jdbc.bind" level="TRACE"/>
+  ```
+
+  (or `org.hibernate.type.descriptor.sql.BasicBinder` on Hibernate 5). Without
+  this, pgman still recovers the statement, just with `?` placeholders instead
+  of substituted values.
+- **Postgres / RDS server logs** — `LOG:  statement: <sql>` for simple
+  queries, or a `LOG:  duration: … execute <tag>: <sql>` paired with the
+  following `DETAIL:  parameters: $1 = '…'` line for the extended protocol.
+  This is the more reliable source: it needs `log_min_duration_statement` /
+  `log_statement` turned on server-side, no application redeploy.
+- **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
+  typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the
   exact shape.
 

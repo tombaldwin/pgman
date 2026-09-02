@@ -4,7 +4,10 @@
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![status: public beta](https://img.shields.io/badge/status-public%20beta-orange.svg)](https://github.com/tombaldwin/pgman/releases)
 
-A k9s-style Postgres TUI aimed at Java / AWS shops. Sibling project to
+A k9s-style Postgres TUI aimed at Java / AWS shops. Where psql, pgcli, and
+DataGrip stop at the database, pgman also turns Hibernate logs, Postgres
+server logs, and pasted JDBC into runnable SQL, offline and with zero
+application changes — with N+1 detection built in. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
 
 > ### ⚠️ Public beta
@@ -25,25 +28,28 @@ At a glance:
   `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a
   committed `.pgman/pgman.toml`.
 - **Logs / pasted code → runnable SQL** — Hibernate logs, Postgres/RDS server
-  logs, and pasted JDBC, with N+1 detection. Paste a log into the editor and
-  press F8 (the start card names it), or launch straight into it with
-  `pgman --log app.log`.
+  logs, and pasted JDBC, with N+1 detection — see "Logs and pasted code →
+  runnable SQL" below.
 - **Safe by default** — read-only connections, `statement_timeout`, and
   per-database guard rails on every statement.
 - **Editor** — syntax highlighting, `pg_format`, history, saved queries
   (`:param` prompts, rename, search), DBUnit fixture apply + capture.
 - **DBA panels** — schema browser, EXPLAIN tree, slow queries, active
   sessions/locks, schema-lint wizard, result diff.
-- **JDBC tap** — live app-side query observability (TCP / UDP / OTLP) with
-  hotspots, per-caller / per-pool rollups, transaction view, and live N+1
-  detection.
+- **JDBC tap** — live app-side query observability via OpenTelemetry (works
+  today, any JVM); a richer route with per-caller / per-pool rollups is in
+  development.
 
-## The wedge
+## Logs and pasted code → runnable SQL
 
 Point it at a Postgres database, then turn logs and pasted code into runnable SQL:
 
 - **Hibernate logs → runnable SQL.** Reconstruct executable statements from
-  `org.hibernate.SQL` lines plus the separately-logged bind parameters.
+  `org.hibernate.SQL` lines plus the separately-logged bind parameters. Needs
+  bind-parameter trace logging turned on (`org.hibernate.orm.jdbc.bind` at
+  `TRACE` on Hibernate 6, `org.hibernate.type.descriptor.sql.BasicBinder` at
+  `TRACE` on Hibernate 5) — without it you still get the statement, just with
+  `?` placeholders instead of substituted values.
 - **Postgres / RDS server logs → runnable SQL.** Reconstruct from `log_statement`
   output plus `DETAIL: parameters: $1 = …` lines (the more reliable source — it
   needs no application redeploy).
@@ -103,15 +109,16 @@ role you connect with.)
 
 Three things worth knowing:
 
-- **A checkout you didn't write is untrusted.** pgman discovers connections
-  from files in the working tree, so nothing it finds there connects without a
-  keypress, `PGPASSWORD` is only used with `--dsn`, and a project's `[safety]`
-  block can only *tighten* your own guard rails — never relax them. Full trust
-  model in
+- **Running pgman inside a checkout you did not write is a trust decision.**
+  pgman discovers connections from files in the working tree, so nothing it
+  finds there connects without a keypress, `PGPASSWORD` is only used with
+  `--dsn`, and a project's `[safety]` block can only *tighten* your own guard
+  rails — never relax them. Full trust model in
   [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
 - **TLS:** `sslmode=require` / `prefer` encrypt the connection but do **not**
   verify the server certificate (matching libpq). Use `sslmode=verify-full` on
-  untrusted networks.
+  untrusted networks. `sslmode=verify-ca` currently verifies the hostname too,
+  which is stricter than libpq.
 - **JDBC tap:** the `--tap-listen` / `--tap-otlp` / `--tap-udp` listeners are
   unauthenticated and bind to `127.0.0.1` by default. Only bind a non-loopback
   address on a trusted/firewalled network.
