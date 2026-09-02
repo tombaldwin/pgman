@@ -17,9 +17,9 @@ cargo test
 The CI gates (see `.github/workflows/ci.yml`) must pass, so run these locally:
 
 ```sh
-cargo fmt --all                 # formatting (CI runs --check)
-cargo clippy --all-targets      # lints
-cargo test                      # unit + render + subprocess + doctests
+cargo fmt --all                          # formatting (CI runs --check)
+cargo clippy --all-targets -- -D warnings # lints
+cargo test                               # unit + render + subprocess + doctests
 ```
 
 For changes that touch live-database behaviour, also run the integration suite:
