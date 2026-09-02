@@ -174,8 +174,18 @@ impl Dsn {
     ///
     /// Defaults: port `5432`, host `localhost`, dbname `postgres`.
     ///
-    /// Known limitation: bracketed IPv6 hosts (`[::1]:5432`) and percent-encoded
-    /// userinfo are not yet handled — see BACKLOG.md M0.
+    /// Userinfo (user/password) is split from the authority with
+    /// [`split_authority`] — see that function for the exact rule that
+    /// lets a password contain `/` or `@` unescaped. `user`/`password`
+    /// are then percent-decoded leniently (a malformed `%XX` escape is
+    /// passed through literally rather than erroring) — this matches
+    /// libpq's URI-connection-string behaviour, and is the only way a
+    /// password can contain a literal `?` or `#` (those can't appear
+    /// raw in the authority; they start the query/fragment). `host`
+    /// and `dbname` are **not** percent-decoded.
+    ///
+    /// Known limitation: bracketed IPv6 hosts (`[::1]:5432`) are not
+    /// yet handled — see BACKLOG.md M0.
     pub fn parse(dsn: &str) -> Result<Dsn, DsnError> {
         let dsn = dsn.trim();
         let (scheme, rest) = dsn.split_once("://").ok_or(DsnError::MissingScheme)?;
@@ -187,22 +197,24 @@ impl Dsn {
             return Err(DsnError::MissingHost);
         }
 
-        let (authority_path, query) = match rest.split_once('?') {
-            Some((a, q)) => (a, Some(q)),
-            None => (rest, None),
-        };
-        let (authority, path) = match authority_path.split_once('/') {
-            Some((a, p)) => (a, p),
-            None => (authority_path, ""),
-        };
-        let (userinfo, hostport) = match authority.rsplit_once('@') {
-            Some((u, h)) => (Some(u), h),
-            None => (None, authority),
+        let (userinfo, hostport, path_and_query) = split_authority(rest);
+        // A `#fragment` isn't meaningful for a postgres DSN — drop it
+        // (and anything after it) before splitting path from query.
+        let path_and_query = path_and_query.split('#').next().unwrap_or("");
+        let (path, query) = match path_and_query.strip_prefix('/') {
+            Some(after_slash) => match after_slash.split_once('?') {
+                Some((p, q)) => (p, Some(q)),
+                None => (after_slash, None),
+            },
+            None => match path_and_query.strip_prefix('?') {
+                Some(q) => ("", Some(q)),
+                None => ("", None),
+            },
         };
         let (user, password) = match userinfo {
             Some(ui) => match ui.split_once(':') {
-                Some((u, p)) => (opt(u), opt(p)),
-                None => (opt(ui), None),
+                Some((u, p)) => (opt(percent_decode(u)), opt(percent_decode(p))),
+                None => (opt(percent_decode(ui)), None),
             },
             None => (None, None),
         };
@@ -306,11 +318,88 @@ impl Dsn {
     }
 }
 
-fn opt(s: &str) -> Option<String> {
+fn opt(s: impl Into<String>) -> Option<String> {
+    let s = s.into();
     if s.is_empty() {
         None
     } else {
-        Some(s.to_string())
+        Some(s)
+    }
+}
+
+/// Split the portion of a connection URL after `scheme://` into
+/// `(userinfo, authority, path_and_query)`.
+///
+/// The naive "authority ends at the first `/`" rule (what both
+/// `Dsn::parse` and `redact_url` used to do) breaks the moment a
+/// password contains `/` or `@` — both are valid, unescaped, in a
+/// postgres/JDBC password. The correct rule, matching how browsers
+/// resolve authority boundaries (RFC 3986 §3.2 in spirit): nothing
+/// past the first `?` or `#` can be part of the authority (those
+/// always start the query/fragment); within what's left, the *last*
+/// `@` is the userinfo/host boundary — so an unescaped `@` inside the
+/// password is absorbed into userinfo rather than mistaken for the
+/// boundary. The authority itself then ends at the first `/`, `?`, or
+/// `#` at-or-after that boundary.
+///
+/// Returns `authority` as `host[:port]` (userinfo already stripped)
+/// and `path_and_query` as everything from the authority's end to the
+/// end of the string (starting with `/`, `?`, `#`, or empty).
+fn split_authority(rest: &str) -> (Option<&str>, &str, &str) {
+    let query_or_fragment = rest.find(['?', '#']);
+    let before_qf = match query_or_fragment {
+        Some(p) => &rest[..p],
+        None => rest,
+    };
+    let last_at = before_qf.rfind('@');
+    let search_start = last_at.map(|p| p + 1).unwrap_or(0);
+    let authority_end = rest[search_start..]
+        .find(['/', '?', '#'])
+        .map(|i| search_start + i)
+        .unwrap_or(rest.len());
+    let userinfo = last_at.map(|p| &rest[..p]);
+    let authority = &rest[search_start..authority_end];
+    let path_and_query = &rest[authority_end..];
+    (userinfo, authority, path_and_query)
+}
+
+/// Percent-decode a URI component leniently: a malformed or truncated
+/// `%XX` escape (bad hex digits, or `%` with fewer than two
+/// characters after it) is copied through literally rather than
+/// erroring. This is credential material from a connection string,
+/// not a strict URI — refusing to connect over one stray `%` would be
+/// worse than leaving it un-decoded. Non-UTF8 byte sequences produced
+/// by decoding (e.g. a raw `%FF`) are replaced per
+/// `String::from_utf8_lossy` rather than panicking.
+fn percent_decode(s: &str) -> String {
+    // Byte-level throughout (no `&s[..]` string slicing) — the input
+    // may be arbitrary bytes reinterpreted as UTF-8 (fuzzed / hostile
+    // input), and a `%` can legitimately sit right before a multibyte
+    // character. Slicing on a computed offset there would land
+    // mid-codepoint and panic; comparing raw bytes never does.
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push(hi * 16 + lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -324,24 +413,24 @@ fn opt(s: &str) -> Option<String> {
 /// Best-effort and conservative. Used only on the logging/error path for
 /// strings that failed to parse; never reconstruct a real DSN from it.
 pub fn redact_url(url: &str) -> String {
-    // 1. Userinfo between "://" and the authority's first '@'.
+    // 1. Userinfo between "://" and the authority — via the same
+    // `split_authority` rule `Dsn::parse` uses, so a password
+    // containing `/` or `@` gets fully masked here too instead of
+    // leaking the part past a naive first-`/`-or-first-`@` cut.
     let mut out = String::with_capacity(url.len());
-    let rest = if let Some(scheme_end) = url.find("://") {
+    let tail = if let Some(scheme_end) = url.find("://") {
         let after = scheme_end + 3;
         out.push_str(&url[..after]);
-        let tail = &url[after..];
-        let authority_end = tail.find('/').unwrap_or(tail.len());
-        match tail[..authority_end].find('@') {
-            Some(at) => {
-                out.push_str("***@");
-                &tail[at + 1..]
-            }
-            None => tail,
+        let (userinfo, authority, path_and_query) = split_authority(&url[after..]);
+        if userinfo.is_some() {
+            out.push_str("***@");
         }
+        out.push_str(authority);
+        path_and_query
     } else {
         url
     };
-    out.push_str(rest);
+    out.push_str(tail);
     // 2. password-bearing query params.
     mask_password_params(out)
 }
@@ -1266,6 +1355,108 @@ mod tests {
         ] {
             assert!(!masked.contains("topsecret"), "leak: {masked}");
         }
+    }
+
+    // --- Security-review repros: passwords containing `/` or `@` ----------
+
+    #[test]
+    fn redact_url_masks_jdbc_password_containing_slash() {
+        // Was: unchanged (LEAK) — the naive "authority ends at the
+        // first '/'" rule cut the authority at the '/' inside the
+        // password, leaving "ss@db.host/app" past the "userinfo" scan
+        // window entirely unmasked.
+        let masked = super::redact_url("jdbc:postgresql://svc:pa/ss@db.host/app");
+        assert_eq!(masked, "jdbc:postgresql://***@db.host/app");
+        assert!(!masked.contains("pa/ss"), "leak: {masked}");
+    }
+
+    #[test]
+    fn redact_url_masks_password_containing_at() {
+        // Was: "postgres://***@ssw0rd@db.host/app" (LEAK) — matching
+        // the FIRST '@' left the rest of the password, "ssw0rd@", in
+        // the output. The fix takes the LAST '@' before the path.
+        let masked = super::redact_url("postgres://svc:p@ssw0rd@db.host/app");
+        assert_eq!(masked, "postgres://***@db.host/app");
+        assert!(!masked.contains("ssw0rd"), "leak: {masked}");
+    }
+
+    #[test]
+    fn parses_password_containing_slash_and_colon() {
+        // Was: host="app:pa", dbname="ss@db.host:5432/orders" — the
+        // authority/path split (on the first '/') ran before the
+        // userinfo split, so a '/' inside the password was mistaken
+        // for the path separator.
+        let d = Dsn::parse("postgres://app:pa:1234/ss@db.host:5432/orders").unwrap();
+        assert_eq!(d.user.as_deref(), Some("app"));
+        assert_eq!(d.password.as_deref(), Some("pa:1234/ss"));
+        assert_eq!(d.host, "db.host");
+        assert_eq!(d.port, 5432);
+        assert_eq!(d.dbname, "orders");
+        let r = d.redacted();
+        assert!(!r.contains("pa:1234/ss"), "leak: {r}");
+        assert!(!r.contains("app:pa"), "leak: {r}");
+    }
+
+    #[test]
+    fn parses_password_containing_embedded_at() {
+        let d = Dsn::parse("postgres://svc:p@ssw0rd@db.host/app").unwrap();
+        assert_eq!(d.user.as_deref(), Some("svc"));
+        assert_eq!(d.password.as_deref(), Some("p@ssw0rd"));
+        assert_eq!(d.host, "db.host");
+        assert_eq!(d.dbname, "app");
+    }
+
+    #[test]
+    fn belt_and_braces_redacted_host_never_carries_colon_or_at() {
+        // However mangled the userinfo, `host` must come out clean —
+        // if it ever picked up a stray ':' or '@' from a misparsed
+        // password, `redacted()` would echo raw credential material.
+        for dsn_str in [
+            "postgres://svc:p@ssw0rd@db.host/app",
+            "postgres://app:pa:1234/ss@db.host:5432/orders",
+            "postgres://user:s3cr3t/with/slashes@db.example.com:5432/orders",
+        ] {
+            let d = Dsn::parse(dsn_str).unwrap();
+            assert!(
+                !d.host.contains(':') && !d.host.contains('@'),
+                "dirty host {:?} from {dsn_str}",
+                d.host
+            );
+            let r = d.redacted();
+            if let Some(pw) = &d.password {
+                assert!(!r.contains(pw.as_str()), "redacted() leaked password: {r}");
+            }
+        }
+    }
+
+    #[test]
+    fn userinfo_is_percent_decoded() {
+        // libpq decodes percent-escapes in a URI's userinfo; pgman
+        // matches that so a password containing `?` or `#` (which
+        // can't appear raw — they start the query/fragment) can still
+        // be expressed by the caller via percent-encoding.
+        let d = Dsn::parse("postgres://al%69ce:p%40ss%3Fw0rd@h:5432/d").unwrap();
+        assert_eq!(d.user.as_deref(), Some("alice"));
+        assert_eq!(d.password.as_deref(), Some("p@ss?w0rd"));
+    }
+
+    #[test]
+    fn percent_decode_is_lenient_about_malformed_escapes() {
+        // A stray '%' or a truncated/non-hex escape passes through
+        // literally rather than erroring the whole DSN.
+        assert_eq!(super::percent_decode("100%"), "100%");
+        assert_eq!(super::percent_decode("100%2"), "100%2");
+        assert_eq!(super::percent_decode("100%zz"), "100%zz");
+        assert_eq!(super::percent_decode("a%20b"), "a b");
+    }
+
+    #[test]
+    fn percent_decode_never_panics_on_percent_before_multibyte_char() {
+        // Regression guard: slicing the hex digits by byte offset
+        // instead of comparing raw bytes would panic here, because
+        // the second "hex" byte lands mid-codepoint of 'é' (2 bytes).
+        let _ = super::percent_decode("%aé");
+        let _ = super::percent_decode("%a\u{1F600}");
     }
 
     #[test]
