@@ -9,10 +9,17 @@ set -e
 for last; do :; done
 file="$last"
 dir=$(dirname "$file")
-# BSD stat (macOS) uses `-f FORMAT`; GNU stat (Linux) uses `-c FORMAT`.
-# Try BSD first, fall back to GNU.
-file_mode=$(stat -f '%Lp' "$file" 2>/dev/null || stat -c '%a' "$file" 2>/dev/null)
-dir_mode=$(stat -f '%Lp' "$dir" 2>/dev/null || stat -c '%a' "$dir" 2>/dev/null)
+# GNU stat (Linux) uses `-c FORMAT`; BSD stat (macOS) uses `-f FORMAT`.
+# On GNU, `-f` means "file-system status" and SUCCEEDS with the wrong
+# output, so "try BSD, fall back to GNU" silently reported garbage on
+# Linux. Detect GNU by `--version` instead.
+if stat --version >/dev/null 2>&1; then
+  file_mode=$(stat -c '%a' "$file")
+  dir_mode=$(stat -c '%a' "$dir")
+else
+  file_mode=$(stat -f '%Lp' "$file")
+  dir_mode=$(stat -f '%Lp' "$dir")
+fi
 content="$(cat "$file")"
 {
   printf '%s' "$content"
