@@ -5089,3 +5089,56 @@ fn paste_of_plain_sql_does_not_set_reconstruct_hint() {
     );
 }
 
+// --- App::preload_log (backs `--log PATH`, src/main.rs) ---
+
+#[test]
+fn preload_log_with_hibernate_sample_enters_log_pick() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let log = "\
+[main] org.hibernate.SQL : select c.id from customer c where c.id=?
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
+[main] org.hibernate.SQL : select * from orders where customer_id=?
+[main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [7]";
+    a.preload_log(log);
+    assert_eq!(a.mode, Mode::LogPick);
+    assert_eq!(a.log_pick.picks.len(), 2);
+    assert!(a.editor.buffer.contains("org.hibernate.SQL"));
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
+}
+
+#[test]
+fn preload_log_with_prose_lands_in_editor_with_no_queries_error() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.preload_log("just some notes, not a log or SQL at all");
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a.log_pick.picks.is_empty());
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("no queries found (paste a Hibernate or Postgres log into the editor first)")
+    );
+    assert!(a.editor.buffer.contains("just some notes"));
+}
+
+#[test]
+fn preload_log_overrides_conn_pick_startup_mode() {
+    // Multiple data sources would normally land on Mode::ConnPick — an
+    // explicit --log wins over that startup picker.
+    let picks = vec![
+        DataSourcePick {
+            name: "a".into(),
+            origin: "project",
+            dsn: Dsn::parse("postgres://localhost/a").unwrap(),
+        },
+        DataSourcePick {
+            name: "b".into(),
+            origin: "project",
+            dsn: Dsn::parse("postgres://localhost/b").unwrap(),
+        },
+    ];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    assert_eq!(a.mode, Mode::ConnPick);
+    a.preload_log("[main] org.hibernate.SQL : select 1");
+    // A pick was found → LogPick; either way the ConnPick startup picker
+    // has been overridden by the explicit --log.
+    assert_eq!(a.mode, Mode::LogPick);
+}

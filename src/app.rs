@@ -2066,6 +2066,23 @@ impl App {
         });
     }
 
+    /// Preload the editor buffer with `text` and immediately run the log
+    /// importer — the same path F8 / ctrl-l take from `Mode::Editor`. Backs
+    /// `--log PATH` (`src/main.rs`): reconstruction needs no database, so
+    /// this runs regardless of whether the connection has resolved yet,
+    /// and lands pgman straight in `Mode::LogPick` once the splash clears.
+    /// If nothing is found, leaves the log in the buffer in `Mode::Editor`
+    /// with `start_log_import`'s "no queries found" error — same result as
+    /// pasting the text and pressing F8 by hand. Either way this overrides
+    /// whatever startup mode `App::new` picked (e.g. `Mode::ConnPick` for
+    /// multiple detected data sources) — an explicit `--log` wins.
+    pub fn preload_log(&mut self, text: &str) {
+        self.editor.buffer = text.to_string();
+        self.editor.cursor = self.editor.buffer.len();
+        self.mode = Mode::Editor;
+        self.start_log_import();
+    }
+
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
     fn start_log_import(&mut self) {

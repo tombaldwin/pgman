@@ -54,6 +54,13 @@ struct Cli {
     #[arg(long)]
     yes: bool,
 
+    /// Preload the editor with a Hibernate or Postgres server log from
+    /// PATH (`-` for stdin) and reconstruct its queries immediately,
+    /// opening straight into the picker — same as pasting the log into
+    /// the editor and pressing ctrl-l / F8.
+    #[arg(long, value_name = "PATH")]
+    log: Option<std::path::PathBuf>,
+
     /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON
     /// events). Use `--tap-listen 127.0.0.1:7432` (or `:7432` for the
     /// same). When set, the listener starts before the TUI loop; events
@@ -236,6 +243,22 @@ async fn main() -> anyhow::Result<()> {
     if let Some(draft) = app::load_draft() {
         application.editor.cursor = draft.len();
         application.editor.buffer = draft;
+    }
+    // `--log PATH`: preload the editor with a log and run the same
+    // importer F8 / ctrl-l use, so pgman opens straight into the
+    // reconstructed-query picker (`Mode::LogPick`) once the splash
+    // clears. Reconstruction needs no database, so this runs regardless
+    // of whether the connection (if any) has resolved yet — and
+    // overrides the just-restored draft above, since an explicit --log
+    // is a stronger signal of intent than a leftover editor session.
+    if let Some(path) = cli.log.as_ref() {
+        match read_log_source(path) {
+            Ok(text) => application.preload_log(&text),
+            Err(e) => {
+                eprintln!("--log {}: {e}", path.display());
+                std::process::exit(2);
+            }
+        }
     }
     // Restore query history (Ctrl-R, Ctrl-P/N) from the last session.
     // Best-effort: a missing or unreadable file means we start with
@@ -671,6 +694,19 @@ async fn run_batch(cli: &Cli) -> i32 {
             eprintln!("connect failed: {e}");
             2
         }
+    }
+}
+
+/// Read `--log PATH`'s target: `-` reads stdin to EOF, otherwise the file
+/// at `path`.
+fn read_log_source(path: &std::path::Path) -> std::io::Result<String> {
+    if path.as_os_str() == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        Ok(buf)
+    } else {
+        std::fs::read_to_string(path)
     }
 }
 
