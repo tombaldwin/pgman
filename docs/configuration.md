@@ -224,10 +224,10 @@ but marked, e.g. `[Spring] app — unresolved ${DB_HOST}`; choosing it
 ${DB_HOST} — export it, or put the connection in .pgman/pgman.toml`
 instead of attempting a connection that would just fail as a
 DNS-shaped lookup on the literal `${DB_HOST}` text. An unresolved
-**password** placeholder alone does *not* mark the pick — `PGPASSWORD`
-/ a project's `password_env` are pgman's own, already-documented ways
-to supply a password it couldn't read from the file (see
-[Environment variables](#environment-variables) below).
+**password** placeholder marks the pick the same way: there is no
+`PGPASSWORD` fallback for a discovered source, so the literal
+`${db.password}` text has nowhere useful to go — and it is never
+stored on the DSN, so it can never be sent to a server as a password.
 
 ## Environment variables
 
