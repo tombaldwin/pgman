@@ -9,7 +9,19 @@
 //! Split from `tap/mod.rs` for code-health; the public
 //! functions are re-exported.
 
-use super::{forward_or_drop, now_unix_micros, parse, TapEvent};
+use super::{forward_or_drop, now_unix_micros, parse, TapEvent, WarnThrottle};
+
+/// Cap on concurrent in-flight connections per listener (TCP,
+/// OTLP). Each accepted connection lives as its own tokio task
+/// until the peer disconnects (TCP) or the request completes
+/// (OTLP); with no cap, an operator running the tap on a
+/// reachable interface can be driven to thousands of idle
+/// tasks + sockets by a client that just opens connections and
+/// never sends anything. Excess connections are closed
+/// immediately (the socket is dropped without being read).
+pub const TAP_MAX_CONCURRENT_CONNS: usize = 64;
+
+static TCP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
 
 // ---------------------------------------------------------
 // UDP listener — opt-in transport, one event per datagram.
@@ -93,6 +105,7 @@ pub async fn run_tcp_listener(
 ) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("tap: TCP listener bound on {addr}");
+    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(TAP_MAX_CONCURRENT_CONNS));
     loop {
         let (sock, peer) = match listener.accept().await {
             Ok(pair) => pair,
@@ -101,8 +114,31 @@ pub async fn run_tcp_listener(
                 continue;
             }
         };
+        // Bound concurrent connections — an owned permit is
+        // moved into the spawned task and released when it
+        // drops (connection closes). A rejected connection is
+        // just dropped here: closing the socket without reading
+        // it is enough signal for a well-behaved client, and we
+        // don't owe a hostile one anything more.
+        let permit = match permits.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                TCP_CONN_LIMIT_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more rejections suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "tap: rejected connection from {peer}: {TAP_MAX_CONCURRENT_CONNS} concurrent connections already open{suffix}"
+                    )
+                });
+                continue;
+            }
+        };
         let tx = tx.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_tcp_conn(sock, &tx).await {
                 tracing::warn!("tap: conn {peer} ended: {e}");
             }

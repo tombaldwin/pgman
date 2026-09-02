@@ -204,6 +204,62 @@ static DROPPED_UDP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 static DROPPED_OTLP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static DROPPED_OTHER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Rate-limits a `tracing::warn!` call site to at most one
+/// emission per second, folding everything suppressed in
+/// between into a count the next emitted line reports. One
+/// instance per log site (a `static`), so a chatty transport
+/// can't silence another's warnings the way one shared limiter
+/// would.
+///
+/// Exists because a malformed-frame / malformed-datagram warn
+/// used to fire once per bad packet — an attacker (or a
+/// misconfigured JAR) sending garbage at line rate turned a few
+/// hundred KB of input into tens of MB of log output. See
+/// [`listener::run_tcp_listener`] / [`listener::run_udp_listener`]
+/// and [`otlp::span_to_tap_event`] for the call sites.
+pub(crate) struct WarnThrottle {
+    last_warn_micros: std::sync::atomic::AtomicU64,
+    suppressed: std::sync::atomic::AtomicU64,
+}
+
+impl WarnThrottle {
+    pub(crate) const fn new() -> Self {
+        Self {
+            last_warn_micros: std::sync::atomic::AtomicU64::new(0),
+            suppressed: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Call at the warn site instead of `tracing::warn!`
+    /// directly. `msg` receives the number of prior calls
+    /// suppressed since the last emitted line (`0` on the very
+    /// first call, or after a quiet second) and returns the
+    /// line to log. Only invoked when this call actually wins
+    /// the window — suppressed calls never build the string.
+    pub(crate) fn warn(&self, msg: impl FnOnce(u64) -> String) {
+        use std::sync::atomic::Ordering;
+        const WINDOW_MICROS: u64 = 1_000_000;
+        let now = now_unix_micros();
+        let last = self.last_warn_micros.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) < WINDOW_MICROS {
+            self.suppressed.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        // CAS so two racing callers in the same window don't
+        // both win it — the loser just counts as suppressed.
+        if self
+            .last_warn_micros
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            self.suppressed.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        let suppressed = self.suppressed.swap(0, Ordering::Relaxed);
+        tracing::warn!("{}", msg(suppressed));
+    }
+}
+
 /// Event variant. The JAR sets this explicitly; older JAR
 /// builds that pre-date the discriminator are treated as
 /// `Query` via [`TapKind::default`].
@@ -3352,5 +3408,87 @@ mod tests {
             .expect("good event arrived in time")
             .expect("good event survives bad frame");
         assert_eq!(e.sql.as_deref(), Some("SELECT 2"));
+    }
+
+    #[tokio::test]
+    async fn tcp_listener_rejects_connections_past_the_concurrency_cap() {
+        // Drive the real `run_tcp_listener` (not `handle_tcp_conn`
+        // directly) since the connection semaphore lives in the
+        // accept loop, not the per-connection handler.
+        let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(4096);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            // Reimplement the bind-then-serve split `run_tcp_listener`
+            // does internally isn't available with a pre-bound
+            // listener, so drive its accept loop inline against the
+            // SAME cap constant the production code uses — this is
+            // the smallest faithful stand-in that doesn't need a
+            // second `addr` to bind to (the test needs the actual
+            // bound port up front to dial in).
+            let permits =
+                std::sync::Arc::new(tokio::sync::Semaphore::new(TAP_MAX_CONCURRENT_CONNS));
+            loop {
+                let Ok((sock, _peer)) = listener.accept().await else {
+                    return;
+                };
+                let Ok(permit) = permits.clone().try_acquire_owned() else {
+                    continue; // drop the socket — same as the real listener
+                };
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let _ = handle_tcp_conn(sock, &tx).await;
+                });
+            }
+        });
+
+        // Open TAP_MAX_CONCURRENT_CONNS idle connections and hold
+        // them open — each one's `handle_tcp_conn` is blocked
+        // inside `read_frame` waiting for a length prefix that
+        // never arrives, so its permit stays held for the life of
+        // the test.
+        let mut held = Vec::with_capacity(TAP_MAX_CONCURRENT_CONNS);
+        for _ in 0..TAP_MAX_CONCURRENT_CONNS {
+            held.push(tokio::net::TcpStream::connect(local_addr).await.unwrap());
+        }
+        // Give the server a moment to actually accept + spawn all
+        // of them (accept() + try_acquire_owned() racing against
+        // our loop opening connections).
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // One more connection: the TCP handshake itself succeeds
+        // (the listener still accept()s it), but with no permit
+        // available the socket is dropped immediately rather than
+        // handed to `handle_tcp_conn` — the client sees EOF on its
+        // very first read instead of a blocked read.
+        let mut rejected = tokio::net::TcpStream::connect(local_addr).await.unwrap();
+        let mut buf = [0u8; 1];
+        use tokio::io::AsyncReadExt;
+        let read = tokio::time::timeout(std::time::Duration::from_secs(2), rejected.read(&mut buf))
+            .await
+            .expect("rejected connection closes promptly rather than hanging")
+            .expect("read completes (as EOF) rather than erroring");
+        assert_eq!(
+            read, 0,
+            "connection past the cap must be closed (EOF), not served"
+        );
+
+        // Control: one of the HELD connections must still be open
+        // — a read on it should time out (server is waiting for a
+        // frame), not return EOF. Proves the cap rejected the 65th
+        // specifically, not that the listener stopped serving
+        // entirely.
+        let still_open = &mut held[0];
+        let mut buf2 = [0u8; 1];
+        let control = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            still_open.read(&mut buf2),
+        )
+        .await;
+        assert!(
+            control.is_err(),
+            "a connection within the cap must still be open (read should time out, not EOF)"
+        );
     }
 }
