@@ -303,7 +303,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     Paragraph::new(Text::from(vec![
                         Line::from("no connection — start pgman with --dsn postgres://…"),
                         Line::from(
-                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and a .pgman directory (pgman.toml) when run inside a project",
+                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
                         ),
                     ]))
                     .style(Style::default().fg(app.theme.muted))
