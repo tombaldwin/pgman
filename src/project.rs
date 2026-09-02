@@ -355,12 +355,16 @@ statement_timeout_ms = 5000
     #[test]
     fn merge_safety_project_database_overrides_global() {
         let mut global = SafetyConfig::default();
-        let mut g_prod = SafetyProfile::default();
-        g_prod.statement_timeout_ms = 99_999;
+        let g_prod = SafetyProfile {
+            statement_timeout_ms: 99_999,
+            ..Default::default()
+        };
         global.databases.insert("prod".into(), g_prod);
 
-        let mut p_prod = SafetyProfile::default();
-        p_prod.statement_timeout_ms = 1_000;
+        let p_prod = SafetyProfile {
+            statement_timeout_ms: 1_000,
+            ..Default::default()
+        };
         let project = ProjectSafety {
             default: None,
             databases: {
@@ -377,8 +381,10 @@ statement_timeout_ms = 5000
     fn merge_safety_project_default_overrides_global_default() {
         let mut global = SafetyConfig::default();
         global.default.statement_timeout_ms = 11_111;
-        let mut p_default = SafetyProfile::default();
-        p_default.statement_timeout_ms = 22_222;
+        let p_default = SafetyProfile {
+            statement_timeout_ms: 22_222,
+            ..Default::default()
+        };
         let project = ProjectSafety {
             default: Some(p_default),
             databases: HashMap::new(),

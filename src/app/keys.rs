@@ -478,7 +478,7 @@ impl App {
     ///     jq-style path of the focused node.
     ///   - Text view: j/k scroll the wrapped value, `y` yanks the
     ///     whole value. Same shortcut, different semantics.
-    /// Esc/q always pops back to the row view.
+    ///     Esc/q always pops back to the row view.
     pub(super) fn on_cell_detail_key(&mut self, key: KeyEvent) {
         if !self.cell_detail.json_rows.is_empty() {
             self.on_cell_detail_json_key(key);

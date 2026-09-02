@@ -902,8 +902,8 @@ pub struct CellDetailUi {
 /// UTF-8 length.
 /// One step in the editor's undo / redo ring. Captures the buffer
 /// + cursor state BEFORE a mutation, plus a `kind` tag so
-/// consecutive char-inserts can be coalesced (otherwise typing
-/// `qwerty` would be six undos).
+///   consecutive char-inserts can be coalesced (otherwise typing
+///   `qwerty` would be six undos).
 #[derive(Debug, Clone)]
 pub struct UndoEntry {
     pub buffer: String,
