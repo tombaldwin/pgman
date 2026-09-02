@@ -5636,3 +5636,20 @@ fn demo_unknown_statement_yields_one_row_notice() {
     assert_eq!(a.grid.rows.len(), 1);
     assert_eq!(a.grid.rows[0][0], "this is --demo mode, no database");
 }
+
+#[test]
+fn demo_confirmed_write_is_answered_synthetically() {
+    // A guarded write in --demo reaches the confirm modal like a live
+    // session; answering `y` must produce a demo result, not the
+    // "not connected" error `spawn_run` gives without a client.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "UPDATE users SET active = false WHERE id = 1");
+    assert_eq!(a.mode, Mode::Confirm, "a guarded write must prompt first");
+    a.on_key(KeyEvent::from(KeyCode::Char('y')));
+    pump_one_demo_msg(&mut a);
+    assert!(a.last_error.is_none(), "got error: {:?}", a.last_error);
+    assert!(
+        !a.grid.columns.is_empty(),
+        "a confirmed demo write must yield a grid"
+    );
+}
