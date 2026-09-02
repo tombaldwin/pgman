@@ -82,11 +82,17 @@
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
 | `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. |
 
-None of these files are written with restricted permissions (no
-`0600`) — they inherit the process umask. If your `~`
-isn't otherwise locked down, treat the files above (history, draft,
-saved queries, reports, fixtures) as no more private than a shell
-history file.
+The five files pgman itself writes — `draft.sql`, `history.log`,
+`saved.toml`, `update_check.json`, and `\report`/`\fixture` output —
+are written `0600` (owner read/write only) regardless of your umask;
+directories pgman creates under `~/.config/pgman/`,
+`~/.local/share/pgman/`, and `~/.cache/pgman/` are `0700`. That's a
+floor, not a substitute for filesystem hygiene: if your `~` itself
+isn't otherwise locked down (shared account, backup that preserves
+world-readable ACLs, etc.), still treat the files above as no more
+private than a shell history file. `safety.toml` and `pgman.toml` are
+yours, not pgman's — it never writes them, so their permissions are
+whatever you set.
 
 **Passwords are never written to disk by pgman.** They live only in
 process memory for the duration of the connection, sourced from

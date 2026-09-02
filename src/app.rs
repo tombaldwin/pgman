@@ -3608,7 +3608,7 @@ pub fn persist_history_to(path: &std::path::Path, entries: &[String]) -> std::io
         text.push_str(&encode_history_line(e));
         text.push('\n');
     }
-    tui_common::util::write_atomic(path, &text)
+    crate::util::write_private(path, &text)
 }
 
 /// Best-effort restore of the editor buffer from the last session.
@@ -3630,9 +3630,9 @@ pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
     }
 }
 
-/// Write the buffer atomically (via `tui_common::util::write_atomic`)
-/// on quit. Empty buffers still get written so a deliberate
-/// Ctrl-U + quit clears the saved draft.
+/// Write the buffer atomically (via `crate::util::write_private`, so
+/// it also lands owner-only) on quit. Empty buffers still get written
+/// so a deliberate Ctrl-U + quit clears the saved draft.
 pub(crate) fn persist_draft(buf: &str) -> std::io::Result<()> {
     persist_draft_to(&draft_path(), buf)
 }
@@ -3641,7 +3641,7 @@ pub(crate) fn persist_draft(buf: &str) -> std::io::Result<()> {
 /// guarantee — a crash mid-write leaves either the old file intact
 /// or the new file complete, never a truncated half-write.
 pub fn persist_draft_to(path: &std::path::Path, buf: &str) -> std::io::Result<()> {
-    tui_common::util::write_atomic(path, buf)
+    crate::util::write_private(path, buf)
 }
 
 /// Split `$EDITOR` into program + initial args by whitespace. Matches

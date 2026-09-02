@@ -211,7 +211,7 @@ fn read_cache_at(path: &Path) -> Option<CacheFile> {
 
 fn write_cache_at(path: &Path, entry: &CacheFile) {
     if let Ok(text) = serde_json::to_string(entry) {
-        if let Err(e) = tui_common::util::write_atomic(path, &text) {
+        if let Err(e) = crate::util::write_private(path, &text) {
             tracing::debug!(
                 "update check: could not write cache {}: {e}",
                 path.display()
