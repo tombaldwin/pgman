@@ -590,3 +590,77 @@ fn fit_title_ellipsises_the_first_segment_when_even_it_does_not_fit() {
 fn fit_title_handles_a_zero_budget() {
     assert_eq!(fit_title("JDBC tap · q close", 0), "");
 }
+
+// ---------------------------------------------------------------
+// Display width, not char count. A Postgres server running with
+// `lc_messages=ja_JP` reports errors in Japanese: every glyph is two
+// terminal columns, so a message that "fits" by char count paints
+// twice as wide and shoves the protected trailing segment off the row.
+// ---------------------------------------------------------------
+
+/// 「重複したキーの値が…」 — 22 chars, 44 display columns.
+const JA: &str = "重複したキーの値が一意性制約に違反しています";
+
+#[test]
+fn display_width_counts_columns_not_chars() {
+    assert_eq!(JA.chars().count(), 22);
+    assert_eq!(display_width(JA), 44);
+    assert_eq!(display_width("abc"), 3);
+    // A combining mark adds no column of its own.
+    assert_eq!(display_width("e\u{301}"), 1);
+}
+
+#[test]
+fn fit_status_keeps_the_protected_tail_within_a_cjk_budget() {
+    let text = format!("{JA} · F2 detail");
+    let got = fit_status(&text, 40);
+    assert!(
+        display_width(&got) <= 40,
+        "fitted line is {} columns wide: {got:?}",
+        display_width(&got)
+    );
+    assert!(
+        got.ends_with("· F2 detail"),
+        "the protected pointer was clipped: {got:?}"
+    );
+}
+
+#[test]
+fn fit_hints_measures_cjk_hints_in_columns() {
+    let hints = format!("{JA} · b · c");
+    let got = fit_hints(&hints, 20);
+    assert!(
+        display_width(&got) <= 20,
+        "fitted hints are {} columns wide: {got:?}",
+        display_width(&got)
+    );
+}
+
+#[test]
+fn middle_ellipsis_never_overruns_a_cjk_budget() {
+    for target in 0..=20 {
+        let got = middle_ellipsis(JA, target);
+        assert!(
+            display_width(&got) <= target.max(1),
+            "target {target}: {got:?} is {} columns",
+            display_width(&got)
+        );
+    }
+    // A double-width glyph that only half fits is dropped, not cut:
+    // budget 4 = marker (1) + 2 front columns + 1 back column, and one
+    // column can't hold a 2-column glyph.
+    assert_eq!(middle_ellipsis("あいうえお", 4), "あ…");
+}
+
+#[test]
+fn end_ellipsis_never_overruns_a_cjk_budget() {
+    for width in 0..=20 {
+        let got = end_ellipsis(JA, width);
+        assert!(
+            display_width(&got) <= width.max(1),
+            "width {width}: {got:?} is {} columns",
+            display_width(&got)
+        );
+    }
+    assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
+}

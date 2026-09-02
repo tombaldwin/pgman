@@ -48,6 +48,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "1"
 serde_json = "1"
 quick-xml = "0.42"
+# Display-column widths for terminal text (`ui::display_width`). ratatui
+# already depends on this exact crate, so it adds no transitive deps —
+# `cargo tree -i unicode-width` shows both as the same node.
+unicode-width = "0.2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
