@@ -226,7 +226,30 @@ What it was:
 4. Tests: channel detection, version comparison, response parsing,
    unreachable → silent.
 
-## Phase 4 — docs and going public (1 day) · behaviour
+## Phase 4 — docs and going public · behaviour · **docs done 2026-09-02, flip pending**
+
+Landed: seven docs pages and ARCHITECTURE.md, the README for the
+binary-install era, the demo re-recorded end to end (start card →
+paste → reconstruct → run → rows, 765 KiB), BACKLOG.md groomed to open
+items (2467 → 649 lines, Done in `docs/backlog/archive.md`), the 0.1.0
+entry annotated. Found and fixed on the way: files were not owner-only
+(now 0600/0700); unresolved Spring placeholders became hostnames (now
+resolved from the environment or refused with a message); the in-app
+help lacked two sections; four house conventions had no guard (now
+`tests/guards.rs`); `--demo` could not run a query; the JDBC paste
+route was dead code the README advertised. History scan: one fixture
+lifted from a real project, neutralised at HEAD.
+
+**Remaining, in order, and all yours:**
+1. Rewrite history (`git filter-repo`, command in the session summary)
+   and force-push. Do it with no agent worktrees present.
+2. `gh secret set CARGO_REGISTRY_TOKEN --repo tombaldwin/pgman`.
+3. Flip the repo public, protect `main`, require the CI jobs.
+4. Hand the product page the hero gif, the install commands and the
+   GitHub link; drop "Coming soon".
+Then Release day below.
+
+What it was:
 
 1. **CHANGELOG**: annotate `[0.1.0]` as "version bump only — never
    tagged or published". First tag is **v0.2.0**.

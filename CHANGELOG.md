@@ -69,6 +69,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **`--demo` answers queries** synthetically, through the same safety
+  guards as a live session, and opens on the start card — so a talk or
+  a recording can go paste-log → reconstruct → run → rows without a
+  database.
+- **Pasted JDBC is a third way in**: a `?` statement, a blank line, and
+  `TYPE:value` parameter lines reconstruct like a log does.
 - **Docs**: `docs/keys.md`, `docs/commands.md`, `docs/configuration.md`,
   `docs/safety-and-privacy.md`, `docs/logs-to-sql.md`,
   `docs/development.md`, and `ARCHITECTURE.md`; a README for the
