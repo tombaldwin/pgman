@@ -781,3 +781,63 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
         );
     }
 }
+
+/// The sessions panel left-aligns its text columns and right-aligns
+/// its numbers. Right-aligned, `alice/psql` and `idle in tx` sat flush
+/// against the column's far edge, nowhere near the header label above
+/// them.
+#[test]
+fn sessions_panel_left_aligns_text_columns_and_right_aligns_numbers() {
+    use pgman::query::sessions::SessionRow;
+    let mut a = settle_app();
+    a.mode = Mode::Sessions;
+    a.sessions.rows = vec![SessionRow {
+        pid: 1234,
+        user: "alice".into(),
+        application: "psql".into(),
+        state: "idle in transaction".into(),
+        wait_event: None,
+        blocked_by: String::new(),
+        query: "BEGIN".into(),
+        age_secs: 12.5,
+    }];
+    a.sessions.cursor = 0;
+    let buf = render(&mut a, 110, 18);
+    let rendered = dump(&buf);
+    let lines: Vec<&str> = rendered.lines().collect();
+    let header = lines
+        .iter()
+        .find(|l| l.contains("user/app"))
+        .expect("sessions header");
+    let row = lines
+        .iter()
+        .find(|l| l.contains("alice/psql"))
+        .expect("sessions row");
+
+    let col_of = |hay: &str, needle: &str| -> usize {
+        let byte = hay.find(needle).expect(needle);
+        hay[..byte].chars().count()
+    };
+    // Text columns: value starts in the same column as its label.
+    assert_eq!(
+        col_of(header, "user/app"),
+        col_of(row, "alice/psql"),
+        "user/app column is not left-aligned:\n{rendered}"
+    );
+    assert_eq!(
+        col_of(header, "state"),
+        col_of(row, "idle in tx"),
+        "state column is not left-aligned:\n{rendered}"
+    );
+    // Numbers: value ENDS in the same column as its label.
+    assert_eq!(
+        col_of(header, "pid") + "pid".chars().count(),
+        col_of(row, "1234") + "1234".chars().count(),
+        "pid column is not right-aligned:\n{rendered}"
+    );
+    assert_eq!(
+        col_of(header, "age(s)") + "age(s)".chars().count(),
+        col_of(row, "12.5") + "12.5".chars().count(),
+        "age(s) column is not right-aligned:\n{rendered}"
+    );
+}
