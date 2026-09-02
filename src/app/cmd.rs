@@ -178,17 +178,13 @@ impl App {
         self.write_export(&path, &body, "\\report", ok);
     }
 
-    /// Shared write path for `\report` / `\fixture`: create the parent
-    /// directory if needed, write atomically, and set the status (on
-    /// success, `ok_status`) or error line. `cmd` names the backslash
-    /// command for the error message.
+    /// Shared write path for `\report` / `\fixture`: write atomically
+    /// and owner-only (`crate::util::write_private`, which also
+    /// creates the parent directory if needed), and set the status
+    /// (on success, `ok_status`) or error line. `cmd` names the
+    /// backslash command for the error message.
     fn write_export(&mut self, path: &std::path::Path, body: &str, cmd: &str, ok_status: String) {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-        }
-        match tui_common::util::write_atomic(path, body) {
+        match crate::util::write_private(path, body) {
             Ok(()) => self.last_status = Some(ok_status),
             Err(e) => {
                 self.last_error = Some(format!("{cmd} failed: {} ({e})", path.display()));

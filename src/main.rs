@@ -726,7 +726,7 @@ fn read_log_source(path: &std::path::Path) -> std::io::Result<String> {
 
 fn init_logging() {
     let dir = util::cache_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = util::create_dir_all_private(&dir);
     let appender = tracing_appender::rolling::never(&dir, "pgman.log");
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));

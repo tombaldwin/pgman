@@ -22,14 +22,19 @@ passwords in the OS keychain rather than `dataSources.xml`.
 | `~/.cache/pgman/report-<ts>-<pid>.md` (or `.html`) | Default `\report` output path when none is given (`src/app.rs::default_report_path`). |
 | `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path (`src/app.rs::default_fixture_path`). |
 
-None of these files are written with restricted permissions — pgman
-never calls `set_permissions`/chmod, so they land with whatever the
-process umask gives (typically `0644`). This matters because
-`safety.toml` and `pgman.toml` carry no secrets by design, but
-`history.log`, `draft.sql`, and `saved.toml` can contain literal
-values from queries you've run (including ones you typed into a
-`WHERE` clause). Treat `~/.local/share/pgman/` as at least as
-sensitive as your shell history.
+Every file pgman itself writes — `draft.sql`, `history.log`,
+`saved.toml`, `update_check.json`, and `\report`/`\fixture` output —
+goes through `util::write_private`, which writes atomically and then
+`chmod`s the file `0600` on unix (a no-op restriction on other
+platforms); directories pgman creates under these paths (e.g. a
+`\report ~/notes/` target that doesn't exist yet) are created `0700`.
+`safety.toml` and `pgman.toml` are yours, not pgman's, so it never
+writes them and their permissions are whatever you gave them. This
+matters because `safety.toml` and `pgman.toml` carry no secrets by
+design, but `history.log`, `draft.sql`, and `saved.toml` can contain
+literal values from queries you've run (including ones you typed into
+a `WHERE` clause) — `0600` keeps them out of reach of other local
+users even under a permissive umask.
 
 ## `~/.config/pgman/safety.toml`
 

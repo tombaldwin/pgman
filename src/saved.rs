@@ -108,12 +108,12 @@ pub fn load_from(path: &Path) -> SavedQueries {
     })
 }
 
-/// Path-parameterised persist. Atomic via the shared
-/// `tui_common::util::write_atomic` helper.
+/// Path-parameterised persist. Atomic and owner-only (`0600` on unix)
+/// via `crate::util::write_private`.
 pub fn save_to(path: &Path, q: &SavedQueries) -> std::io::Result<()> {
     let text = toml::to_string_pretty(q)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-    tui_common::util::write_atomic(path, &text)
+    crate::util::write_private(path, &text)
 }
 
 #[cfg(test)]
