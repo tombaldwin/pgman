@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -34,7 +33,7 @@ expression: dump(&buf)
 │                                                                           │                             ██████           │                                                                           │
 │                                                                           │                                              │                                                                           │
 │                                                                           │        pgman 0.1.0 · beta · 2026-06-06       │                                                                           │
-│                                                                           │      installed via a local git checkout      │                                                                           │
+│                                                                           │       installed via a standalone binary      │                                                                           │
 │                                                                           │   k9s-style Postgres TUI for Java/AWS shops  │                                                                           │
 │                                                                           │                                              │                                                                           │
 │                                                                           │       by Tom Baldwin / Polymorphism Ltd      │                                                                           │
