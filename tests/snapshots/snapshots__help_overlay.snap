@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 181
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -49,6 +48,8 @@ expression: dump(&buf)
 │              │     Y             copy the (filtered) grid to clipboard as CSV     │              │
 │              │     I             yank focused row as INSERT (single-table         │              │
 │              │                   SELECTs)                                         │              │
+│              │     D             pin result as A · run another query, D again to  │              │
+│              │                   diff as B                                        │              │
 │              │     m<a-z>        set bookmark at focused (row, col)               │              │
 │              │     '<a-z>        jump to bookmark                                 │              │
 │              │     j / k  ↑ ↓    move selection                                   │              │
@@ -62,8 +63,9 @@ expression: dump(&buf)
 │              │     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)     │              │
 │              │     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)    │              │
 │              │     ctrl-/         toggle `-- ` line comment on the current line   │              │
-│              │     ( [ {          autoclose — pairs the open with its close;      │              │
-│              │                    cursor between                                  │              │
+│              │     ( [ {  ' " autoclose / skip-over — pairs the open with its     │              │
+│              │            close (cursor between); typing the close (or matching   │              │
+│              │            quote) over it just steps past                          │              │
 │              │     ctrl-r         reverse-incremental history search (ctrl-d in   │              │
 │              │                    there deletes the focused entry)                │              │
 │              │     ctrl-w         \watch — re-run every 2 s; any key stops        │              │
@@ -90,10 +92,7 @@ expression: dump(&buf)
 │              │                   statement                                        │              │
 │              │     n / esc       cancel                                           │              │
 │              │                                                                    │              │
-│              │   tx open                                                          │              │
-│              │     y             commit the transaction                           │              │
-│              │     n / esc       roll back                                        │              │
-│              │ ↓ 131 more below                                                   │              │
+│              │ ↓ 159 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

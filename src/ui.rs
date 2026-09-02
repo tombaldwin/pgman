@@ -1239,6 +1239,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    D             pin result as A · run another query, D again to diff as B"),
+        &mut lines,
+    );
+    push(
         row("    m<a-z>        set bookmark at focused (row, col)"),
         &mut lines,
     );
@@ -1277,7 +1281,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    ( [ {          autoclose — pairs the open with its close; cursor between"),
+        row("    ( [ {  ' \"    autoclose / skip-over — pairs the open with its close (cursor between); typing the close (or matching quote) over it just steps past"),
         &mut lines,
     );
     push(row("    ctrl-r         reverse-incremental history search (ctrl-d in there deletes the focused entry)"), &mut lines);
@@ -1403,7 +1407,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    y             yank value to clipboard"), &mut lines);
-    push(row("    esc / enter   back to row detail"), &mut lines);
+    push(row("    esc / q / enter  back to row detail"), &mut lines);
     push(
         row("  JSON mode (cell parses as object / array):"),
         &mut lines,
@@ -1417,6 +1421,7 @@ pub(crate) fn help_body(
         row("    y             yank the jq-style path (.foo[0].bar)"),
         &mut lines,
     );
+    push(row("    esc / q       back to row detail"), &mut lines);
     push(Line::from(""), &mut lines);
 
     heading("schema browser", &mut lines, &mut anchors);
@@ -1584,6 +1589,14 @@ pub(crate) fn help_body(
         row("    j / k  ↑ ↓    navigate · enter load · d delete · esc / q close"),
         &mut lines,
     );
+    push(
+        row("    r             rename the focused entry"),
+        &mut lines,
+    );
+    push(
+        row("    /             live filter (name + body) · esc restores full list"),
+        &mut lines,
+    );
     push(Line::from(""), &mut lines);
 
     heading("notifications", &mut lines, &mut anchors);
@@ -1605,6 +1618,51 @@ pub(crate) fn help_body(
         row("    (operator subscribes via `LISTEN <channel>` in the editor)"),
         &mut lines,
     );
+    push(Line::from(""), &mut lines);
+
+    heading("jdbc tap", &mut lines, &mut anchors);
+    push(
+        row("    F4            open the JDBC tap monitor (live stream, works from any mode)"),
+        &mut lines,
+    );
+    push(
+        row("    v             cycle view: list → hotspots → callers → txns → pools → N+1 → baseline"),
+        &mut lines,
+    );
+    push(
+        row("    j / k  ↑ ↓    navigate · g / G  first / last · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(
+        row("    s             cycle sort (hotspots / callers views)"),
+        &mut lines,
+    );
+    push(
+        row("    B             capture a baseline snapshot (any view; see it under baseline)"),
+        &mut lines,
+    );
+    push(row("    c             clear the event ring"), &mut lines);
+    push(row("    esc / q       close"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("result diff", &mut lines, &mut anchors);
+    push(
+        row("    D (from grid) pin the current result as A · run another query, D again for B"),
+        &mut lines,
+    );
+    push(
+        row("    j / k  ↑ ↓    navigate diff rows · g / G  first / last · PageUp/Down  by 10"),
+        &mut lines,
+    );
+    push(
+        row("    r             re-pin the current B side as a new A (iterate)"),
+        &mut lines,
+    );
+    push(
+        row("    c             clear the pinned baseline"),
+        &mut lines,
+    );
+    push(row("    esc / q       close"), &mut lines);
     push(Line::from(""), &mut lines);
 
     heading("schema wizard", &mut lines, &mut anchors);

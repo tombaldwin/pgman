@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -34,6 +33,7 @@ expression: dump(&buf)
 │                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
+│                             │     D             pin result as A · run another query, D again to diff as B                                                              │                             │
 │                             │     m<a-z>        set bookmark at focused (row, col)                                                                                     │                             │
 │                             │     '<a-z>        jump to bookmark                                                                                                       │                             │
 │                             │     j / k  ↑ ↓    move selection                                                                                                         │                             │
@@ -41,8 +41,7 @@ expression: dump(&buf)
 │                             │     enter         expand selected row (psql \x style)                                                                                    │                             │
 │                             │                                                                                                                                          │                             │
 │                             │   editor                                                                                                                                 │                             │
-│                             │     F5 / ctrl-↵   run the statement (through safety guards)                                                                              │                             │
-│                             │ ↓ 142 more below                                                                                                                         │                             │
+│                             │ ↓ 163 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │

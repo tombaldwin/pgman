@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 193
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
@@ -25,7 +24,7 @@ expression: dump(&buf)
 │              │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section │              │
 │              │     T             slow queries (pg_stat_statements top-N)          │              │
 │              │     L             active sessions + locks (pg_stat_activity)       │              │
-│              │ ↓ 187 more below                                                   │              │
+│              │ ↓ 215 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
