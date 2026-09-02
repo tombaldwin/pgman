@@ -21,6 +21,35 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Security review before the first release** (five findings, each
+  reproduced, each now pinned by a test):
+  - Anything discovered in the working tree is untrusted. A discovered
+    connection never auto-connects, even when it is the only one; the
+    picker shows host, `sslmode` and any tunnel before you press Enter.
+    `PGPASSWORD` is only applied to a `--dsn`. A `${…}` placeholder
+    never resolves into a URL's host or port, and an unresolved
+    password placeholder marks the pick rather than being sent as the
+    literal string. A project's `[safety]` block can only tighten your
+    own. A discovered `ssh_tunnel` is confirmed before `ssh` runs.
+  - The statement splitter now understands double-quoted identifiers,
+    `$` inside identifiers, `E''` strings and nested comments, refuses a
+    script it cannot verify, and the server executes exactly the
+    statements the classifier saw. `SELECT … INTO` is a write; the
+    read-only setting cannot be flipped from inside a read-only
+    session; `pg_terminate_backend` and friends confirm.
+  - Passwords containing `/` or `@` were parsed wrongly and reached the
+    log unredacted. An unknown or mistyped `sslmode` is now an error
+    instead of a silent downgrade to accept-any-certificate.
+  - Every JDBC-tap event field is bounded at ingest, connections are
+    capped, OTLP bodies are read incrementally, aggregates are memoised
+    (75 ms → 1.3 ms per frame at the cap), malformed-frame warnings are
+    throttled, the log rolls daily, exported reports strip terminal
+    escapes, `--tap-record` is owner-only.
+  - Files are private from the first byte (pgman's own atomic writer),
+    the `$EDITOR` buffer lives in a private temp dir that is always
+    removed, the log and pre-existing directories are repaired to
+    owner-only, `XDG_*` overrides are honoured, `--upgrade` no longer
+    runs cargo inside the checkout's directory.
 - **Everything pgman writes is now owner-only (0600)**: query history,
   the draft, saved queries, report and fixture output, the update-check
   cache; the cache directory is 0700. They were created at the umask
