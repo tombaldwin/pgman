@@ -993,3 +993,48 @@ fn ordinary_editor_buffer_keeps_its_highlighting() {
     assert!(!rendered.contains("large buffer"), "{rendered}");
     assert!(a.editor_highlight_cache.is_some());
 }
+
+/// While the ssh-tunnel confirmation is up, the picker's list keys are
+/// wrong: `enter` does nothing and `q` cancels along with every other
+/// key. The footer said `enter connect · q quit` under a prompt asking
+/// whether to run `ssh` with the operator's keys.
+#[test]
+fn conn_pick_footer_states_the_tunnel_prompt_keys() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let picks = vec![DataSourcePick {
+        name: "via-bastion".into(),
+        origin: "project",
+        dsn: Some(
+            Dsn::parse("postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com")
+                .unwrap(),
+        ),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+
+    // Before: the list keys are the right ones.
+    let before = dump(&render(&mut a, 100, 20));
+    let footer_before = before.lines().last().unwrap().to_string();
+    assert!(footer_before.contains("enter connect"), "{footer_before}");
+
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(a.pending_tunnel.is_some(), "expected the tunnel prompt");
+
+    let after = dump(&render(&mut a, 100, 20));
+    let footer = after.lines().last().unwrap().to_string();
+    assert!(
+        footer.contains("y proceed · any other key cancels"),
+        "footer should state the prompt's keys: {footer:?}"
+    );
+    assert!(
+        !footer.contains("enter connect") && !footer.contains("q quit"),
+        "footer still offers the list keys: {footer:?}"
+    );
+    // No `F1 help` pointer either — F1 is "any other key" here, and it
+    // would cancel rather than open help.
+    assert!(!footer.contains("F1 help"), "{footer:?}");
+}
