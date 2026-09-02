@@ -206,3 +206,20 @@ fn non_tty_launch_prints_the_batch_hint_and_exits_2() {
         "got: {stderr}"
     );
 }
+
+#[test]
+fn help_output_fits_a_screen_and_names_no_rust_types() {
+    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .arg("--help")
+        .output()
+        .expect("spawn pgman");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("::"),
+        "--help must name no Rust types: {stdout}"
+    );
+    // Grouped headings from `help_heading`.
+    assert!(stdout.contains("Batch mode"), "got: {stdout}");
+    assert!(stdout.contains("JDBC tap"), "got: {stdout}");
+}

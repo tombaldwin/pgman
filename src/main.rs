@@ -5,6 +5,9 @@ use pgman::app::{AppMsg, DataSourcePick};
 use pgman::{app, batch, conn, creds, font_probe, project, safety, tap, theme, tui, upgrade, util};
 use std::io::IsTerminal;
 
+/// Full flag documentation lives in `docs/commands.md` — the doc
+/// comments here are what `--help` shows, so they stay to one short,
+/// type-free sentence each.
 #[derive(Parser)]
 #[command(
     name = "pgman",
@@ -20,100 +23,59 @@ struct Cli {
     #[arg(long, default_value = "dark")]
     theme: String,
 
-    /// Upgrade this install in place, then exit. Works for a local git
-    /// checkout (`git pull` + `cargo install --path .`), a `cargo install`
-    /// install, and a Homebrew install; for anything else (a standalone
-    /// binary) it prints the GitHub releases page instead.
+    /// Upgrade this install (checkout, cargo or Homebrew) and exit; a
+    /// standalone binary is pointed at the releases page.
     #[arg(long)]
     upgrade: bool,
 
     /// Skip the startup check for a newer pgman release on crates.io.
-    /// Same effect as setting `PGMAN_NO_UPDATE_CHECK` (any value). Without
-    /// either, pgman makes at most one request to crates.io every six
-    /// hours, sending only the running version and a user-agent string.
     #[arg(long)]
     no_update_check: bool,
 
-    /// Run against a hand-crafted synthetic dataset — no database,
-    /// no network, no disk writes. For screenshots / the README
-    /// demo gif (`vhs demo.tape`) / talks. The frame is identical
-    /// on every launch.
+    /// Run against a synthetic dataset — no database, network, or disk writes.
     #[arg(long)]
     demo: bool,
 
-    /// Batch / pipe mode: run a SQL statement and write the result to
-    /// stdout, then exit. No TUI. Suitable for shell scripts and CI.
-    #[arg(long)]
-    batch: bool,
-
-    /// The SQL statement to run in `--batch` mode. If omitted, stdin
-    /// is read until EOF.
-    #[arg(long)]
-    sql: Option<String>,
-
-    /// Output format for `--batch`: csv (default) | tsv | json | expanded.
-    #[arg(long, default_value = "csv")]
-    format: String,
-
-    /// In `--batch` mode, proceed past statements the safety guard rails
-    /// would normally only *confirm* (e.g. INSERT/UPDATE/DELETE-with-WHERE).
-    /// Statements configured to *block* (DROP, unqualified DELETE/UPDATE, …)
-    /// stay blocked — change the guard to `confirm` in safety.toml to permit
-    /// those. Without this flag, a non-interactive batch refuses any statement
-    /// that would prompt interactively.
-    #[arg(long)]
-    yes: bool,
-
-    /// Preload the editor with a Hibernate or Postgres server log from
-    /// PATH (`-` for stdin) and reconstruct its queries immediately,
-    /// opening straight into the picker — same as pasting the log into
-    /// the editor and pressing ctrl-l / F8.
+    /// Preload the editor with a Hibernate or Postgres log from PATH
+    /// (`-` for stdin) and reconstruct it into the query picker.
     #[arg(long, value_name = "PATH")]
     log: Option<std::path::PathBuf>,
 
-    /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON
-    /// events). Use `--tap-listen 127.0.0.1:7432` (or `:7432` for the
-    /// same). When set, the listener starts before the TUI loop; events
-    /// stream into `Mode::TapMonitor` (F4 from any mode). Omit to skip
-    /// the listener entirely — pgman runs as a normal DB-side TUI.
-    #[arg(long, value_name = "ADDR")]
+    /// Run a SQL statement and write the result to stdout, then exit. No TUI.
+    #[arg(long, help_heading = "Batch mode")]
+    batch: bool,
+
+    /// The statement to run in --batch mode; omit to read stdin until EOF.
+    #[arg(long, help_heading = "Batch mode")]
+    sql: Option<String>,
+
+    /// --batch output format: csv (default) | tsv | json | expanded.
+    #[arg(long, default_value = "csv", help_heading = "Batch mode")]
+    format: String,
+
+    /// In --batch, proceed past statements the safety guard would only confirm.
+    #[arg(long, help_heading = "Batch mode")]
+    yes: bool,
+
+    /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON events).
+    #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_listen: Option<String>,
 
-    /// Bind an OTLP/HTTP listener so any OpenTelemetry-equipped JVM
-    /// can stream Postgres spans straight into pgman without the
-    /// pgman-tap JAR. Accepts `POST /v1/traces` with JSON bodies on
-    /// the default OTLP port 4318. Example:
-    /// `--tap-otlp :4318` then set
-    /// `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318` and
-    /// `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` on the JVM.
-    #[arg(long, value_name = "ADDR")]
+    /// Bind an OTLP/HTTP listener so any OpenTelemetry JVM can stream
+    /// Postgres spans in, no pgman-tap JAR needed.
+    #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_otlp: Option<String>,
 
-    /// Replay a captured tap event stream from a JSONL file (one
-    /// `TapEvent` JSON object per line). Each event is fed into the
-    /// same pipeline the live listeners use, so the TapMonitor /
-    /// hotspots / N+1 views work identically against replayed data.
-    /// Useful for demos and for exercising downstream layers
-    /// (advisor, evidence-handoff) without a live JVM.
-    #[arg(long, value_name = "PATH")]
+    /// Replay a captured tap event stream (JSONL) through the live pipeline.
+    #[arg(long, value_name = "PATH", help_heading = "JDBC tap")]
     tap_replay: Option<std::path::PathBuf>,
 
-    /// Bind a UDP listener for fire-and-forget tap events (one
-    /// `TapEvent` JSON per datagram, no framing). Opt-in
-    /// alternative to `--tap-listen` (TCP) for cases where the
-    /// JVM side must never block on telemetry. UDP is lossy:
-    /// dropped events are silently gone, with no
-    /// `dropped_events_total` accounting on the receive side.
-    #[arg(long, value_name = "ADDR")]
+    /// Bind a UDP listener for fire-and-forget tap events (lossy, unframed).
+    #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_udp: Option<String>,
 
-    /// Append every incoming TapEvent to this JSONL file (one
-    /// event per line). Useful for capturing a real workload
-    /// and replaying it later via `--tap-replay`. Captures
-    /// from any active transport (TCP / UDP / OTLP). The file
-    /// is opened append-only, so multiple sessions stack
-    /// cleanly; rotate manually when it grows.
-    #[arg(long, value_name = "PATH")]
+    /// Append every incoming tap event to PATH as JSONL, for later --tap-replay.
+    #[arg(long, value_name = "PATH", help_heading = "JDBC tap")]
     tap_record: Option<std::path::PathBuf>,
 }
 
