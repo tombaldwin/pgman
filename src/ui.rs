@@ -493,8 +493,9 @@ pub(crate) fn footer_badges_with(
 /// truncating a hint mid-item. `hints` is treated as an ordered list of
 /// `" · "`-separated items, already written most-important-first; when
 /// the full string doesn't fit, whole trailing items are dropped and
-/// replaced with a single `"N more"` item (so the join reads `"…kept ·
-/// N more"`) telling the operator how many hints were cut. The returned
+/// replaced with a single `"F1 +N more"` item (so the join reads `"…kept ·
+/// F1 +N more"`) telling the operator how many hints were cut and that
+/// F1 — help, reachable from every mode — is where they are. The returned
 /// string is never wider than `width` — if even the first item plus the
 /// marker can't fit, the marker alone is returned; if that doesn't fit
 /// either, an empty string is returned.
@@ -505,10 +506,10 @@ pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     }
     let items: Vec<&str> = hints.split(SEP).collect();
     // Try keeping progressively fewer leading items, each candidate
-    // capped off with a "N more" marker accounting for the rest.
+    // capped off with an "F1 +N more" marker accounting for the rest.
     for kept in (0..items.len()).rev() {
         let remaining = items.len() - kept;
-        let marker = format!("{remaining} more");
+        let marker = format!("F1 +{remaining} more");
         let mut pieces: Vec<&str> = items[..kept].to_vec();
         pieces.push(&marker);
         let candidate = pieces.join(SEP);
@@ -688,7 +689,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         };
         // Fit whole hints into what's left after the badges and the
         // leading space — never truncate a hint mid-word. When some are
-        // dropped, `fit_hints` appends a "N more" marker so the operator
+        // dropped, `fit_hints` appends an "F1 +N more" marker so the operator
         // knows there's more and roughly how much.
         let available = area
             .width

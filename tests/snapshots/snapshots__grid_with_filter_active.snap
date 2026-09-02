@@ -15,4 +15,4 @@ expression: dump(&buf)
 │                                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
- RO   q quit · ? help · e editor · S schema · 7 more
+ RO   q quit · ? help · e editor · S schema · F1 +7 more

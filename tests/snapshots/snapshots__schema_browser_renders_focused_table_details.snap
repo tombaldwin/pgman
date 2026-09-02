@@ -25,4 +25,4 @@ expression: dump(&buf)
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · 3 more
+ RO   j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · F1 +3 more
