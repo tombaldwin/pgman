@@ -235,6 +235,21 @@ fn non_test_module_mask(lines: &[&str]) -> Vec<bool> {
     mask
 }
 
+/// `text` with every `#[cfg(test)] mod { … }` body's lines blanked out
+/// — used wherever a scan should ignore known test-fixture content
+/// (e.g. synthetic `/Users/tester` paths in install-channel-detection
+/// tests) while still catching the same needle in production code.
+fn strip_test_module_content(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mask = non_test_module_mask(&lines);
+    lines
+        .iter()
+        .zip(mask.iter())
+        .map(|(line, keep)| if *keep { *line } else { "" })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Every `.rs` file under `src/`, as `(path, contents)` with forward
 /// slashes so string comparisons against `"src/util.rs"` etc. work the
 /// same on any OS. Carries its own sanity floor — a walk that finds
@@ -854,6 +869,127 @@ fn ctrl_guarded_arms_precede_unguarded() {
          or catch-all arm for the same char — move the guarded arm above \
          it:\n{}",
         offenders.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------
+// Guard 5 — cargo package ships only Cargo.toml's include allow-list,
+// and no packaged file's content leaks a machine-specific path
+// ---------------------------------------------------------------------
+
+/// Files `cargo package` adds itself during packaging, outside
+/// Cargo.toml's `include` allow-list: a normalised copy of Cargo.toml
+/// (workspace-inheritance resolved) and a small JSON blob recording the
+/// git commit the package was built from. Neither is a working-tree
+/// file, and neither carries any risk.
+const CARGO_PACKAGE_GENERATED: &[&str] = &["Cargo.toml.orig", ".cargo_vcs_info.json"];
+
+/// Test-only files exempt from the machine-path content grep below, for
+/// the same reason `no_hardcoded_paths` exempts them: their content is
+/// synthetic install-channel fixtures (`/Users/tester`,
+/// `/home/linuxbrew/.linuxbrew/bin/pgman`), not real ones.
+const CONTENT_GREP_EXEMPT_FILES: &[&str] = &["src/app/tests.rs", "src/ui/tests.rs"];
+
+/// True if `path` (a `cargo package --list` entry) matches one of the
+/// banned shapes: backup/reject/stale-snapshot files, OS cruft,
+/// mutation-testing output, or the dev-only docs / test tree / CI
+/// config that Cargo.toml's `include` allow-list exists to keep out.
+fn is_banned_packaged_path(path: &str) -> bool {
+    const BANNED_SUFFIXES: &[&str] = &[".bak", ".orig", ".rej", ".snap.new"];
+    const BANNED_EXACT: &[&str] = &[".DS_Store", "PLAN.md", "BACKLOG.md", "CLAUDE.md"];
+    const BANNED_PREFIXES: &[&str] = &["mutants.out", "docs/", "tests/", ".github/", ".candor/"];
+    BANNED_SUFFIXES.iter().any(|s| path.ends_with(s))
+        || BANNED_EXACT.contains(&path)
+        || BANNED_PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
+/// CLAUDE.md / Cargo.toml: the published crate ships source + the docs
+/// cargo needs, nothing else. Nothing enforced that claim — a widened
+/// `include`, a typo, or cargo's old exclude-list default creeping back
+/// in would silently start shipping PLAN.md / BACKLOG.md / CLAUDE.md /
+/// docs/ / tests/ / .github/ again with no test catching it. Also
+/// checked here: no packaged file's contents leak this build machine's
+/// home directory or hostname.
+///
+/// Skips (with a clear message, not a failure) if `cargo` isn't on
+/// PATH — this guard shells out to `cargo package --list`, unlike every
+/// other guard in this file, which only reads the filesystem.
+#[test]
+fn cargo_package_ships_only_the_allowlist() {
+    let output = match std::process::Command::new("cargo")
+        .args(["package", "--list", "--allow-dirty"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!(
+                "cargo not available ({e}) — skipping \
+                 cargo_package_ships_only_the_allowlist"
+            );
+            return;
+        }
+    };
+    assert!(
+        output.status.success(),
+        "cargo package --list --allow-dirty failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listing = String::from_utf8_lossy(&output.stdout).into_owned();
+    let files: Vec<&str> = listing
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert!(
+        files.len() > 50,
+        "cargo package --list returned only {} files — the listing is \
+         probably broken, and a guard over nothing passes vacuously",
+        files.len()
+    );
+
+    let offenders: Vec<&str> = files
+        .iter()
+        .copied()
+        .filter(|f| !CARGO_PACKAGE_GENERATED.contains(f) && is_banned_packaged_path(f))
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "cargo package would ship a path Cargo.toml's `include` allow-list \
+         should be keeping out:\n{}",
+        offenders.join("\n")
+    );
+
+    // /etc/hostname doesn't exist on macOS (this repo's usual dev
+    // machine) — skip that needle there rather than fail to find it.
+    let hostname = fs::read_to_string("/etc/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut needles: Vec<&str> = vec!["/Users/", "/home/"];
+    if let Some(h) = hostname.as_deref() {
+        needles.push(h);
+    }
+
+    let mut leaks = Vec::new();
+    for f in &files {
+        if CARGO_PACKAGE_GENERATED.contains(f) || CONTENT_GREP_EXEMPT_FILES.contains(f) {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(f) else {
+            continue; // binary (demo.gif) or otherwise unreadable as text
+        };
+        let scoped = strip_test_module_content(&contents);
+        for needle in &needles {
+            if scoped.contains(needle) {
+                leaks.push(format!("{f} contains {needle:?}"));
+            }
+        }
+    }
+    assert!(
+        leaks.is_empty(),
+        "a packaged file's contents leak a machine-specific path — check \
+         for a stray absolute path outside a #[cfg(test)] fixture:\n{}",
+        leaks.join("\n")
     );
 }
 
