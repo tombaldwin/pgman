@@ -5,23 +5,30 @@
 #   cargo install --path . --locked --force   # rebuild the local binary
 #   vhs demo.tape            # produces demo.gif next to this file
 #
-# Flow (~25s) — the wedge: logs/pasted code → runnable SQL:
-#   launch → demo's pre-loaded result grid settles → e (editor) → clear
-#   the demo's canned query → paste a 5-line Hibernate log sample (two
-#   binding-parameter lines, one repeated select) → ctrl-l to reconstruct
-#   (same path as F8 — VHS 0.11 has no function-key command, see below)
-#   → log-pick list (all queries) → `c` for the N+1 cluster view → `c`
-#   back → Enter loads the top query into the editor → quit.
+# Flow (~30s) — the wedge, start to finish: logs/pasted code → runnable
+# SQL → rows:
+#   launch → settle on the start card (F8 / F4 named, no query run yet)
+#   → e (editor) → clear the demo's canned query → paste a 5-line
+#   Hibernate log sample (two binding-parameter lines, one repeated
+#   select) → ctrl-l to reconstruct (same path as F8 — VHS 0.11 has no
+#   function-key command, see below) → log-pick list (all queries) →
+#   `c` for the N+1 cluster view → `c` back → Enter loads the top query
+#   into the editor → ctrl-j to run it (same path as F5 — see below) →
+#   rows land in the grid → quit.
 #
 # Targets `pgman --demo`, the synthetic-data mode baked into the binary,
 # so there's no database and the frame is identical on every render.
-# `--demo` never opens a real connection (`App::client` stays `None`),
-# so running the loaded query (F5) would only produce a "not connected"
-# status — the recording stops once the query is loaded into the editor
-# rather than staging a run that can't complete.
+# `--demo` has no real connection (`App::client` stays `None`), but
+# request_run still runs the statement through the same safety::evaluate
+# guard a live session would, then answers synthetically via
+# demo::answer — a SELECT against a table in the fixture schema gets
+# back plausible rows shaped by that table's real columns, delivered
+# through the exact same AppMsg::QueryOk path a real client uses.
 #
-# VHS doesn't emit function keys, so F8 is driven via its `ctrl-l` alias
-# (`App::start_log_import` — see src/app/editor.rs) instead.
+# VHS doesn't emit function keys or Ctrl+Enter, so F8 is driven via its
+# `ctrl-l` alias and F5 via its `ctrl-j` alias (both documented in
+# `docs/logs-to-sql.md` — see `App::on_editor_key_inner`,
+# src/app/editor.rs).
 
 Output demo.gif
 
@@ -45,11 +52,14 @@ Type "~/.cargo/bin/pgman --demo"
 Sleep 400ms
 Enter
 
-# Splash (minimum 600ms) + a beat to settle on the demo's pre-loaded
-# `users` result grid.
-Sleep 1500ms
+# Splash (minimum 600ms) + a beat to settle on the start card — an
+# empty grid with the databases line and the F8 / F4 hints, the first
+# thing a viewer sees now that --demo opens here instead of on a
+# pre-run result.
+Sleep 2000ms
 
-# `e` focuses the editor — it opens on the demo's canned SELECT.
+# `e` focuses the editor — it still opens on the demo's canned SELECT
+# (only the grid was cleared for the start card, not the draft buffer).
 Type "e"
 Sleep 700ms
 
@@ -84,14 +94,23 @@ Sleep 2000ms
 Type "c"
 Sleep 2000ms
 
-# `c` again back to the all-queries view.
+# `c` again back to the all-queries view (index resets to row 0 — the
+# order lookup, first in the log).
 Type "c"
 Sleep 1000ms
 
-# Enter loads the top (first) reconstructed query into the editor,
-# bind values substituted in.
+# Enter loads the top (first) reconstructed query — the order lookup,
+# against the `orders` table — into the editor, bind values
+# substituted in.
 Enter
-Sleep 2500ms
+Sleep 1000ms
+
+# ctrl-j — same run path as F5 — executes it. `--demo` has no real
+# connection, but the statement still clears safety::evaluate's guard
+# and comes back through demo::answer with the `orders` table's real
+# columns.
+Ctrl+J
+Sleep 2000ms
 
 # Esc back to Normal mode first — `q` inside the editor just types the
 # letter.
