@@ -12,15 +12,18 @@ passwords in the OS keychain rather than `dataSources.xml`.
 
 | Path | Purpose |
 | --- | --- |
-| `~/.config/pgman/safety.toml` | Personal safety guard rails: default profile + per-database overrides (`src/main.rs::load_safety_config`, `src/safety.rs`). |
-| `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd (`src/project.rs`). |
-| `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch (`src/app.rs::draft_path`). |
-| `~/.local/share/pgman/history.log` | Query history, one entry per line, newest kept up to 50 (`src/app.rs::history_path`, `HISTORY_CAP`). |
-| `~/.local/share/pgman/saved.toml` | Named saved queries (`src/saved.rs`). |
-| `~/.cache/pgman/pgman.log` | `tracing` output. Level via `RUST_LOG` (default `info`). Single file, not rotated (`src/main.rs::init_logging`). |
-| `~/.cache/pgman/update_check.json` | Cached result of the crates.io version check, re-checked at most every 6 hours (`src/update_check.rs`). |
-| `~/.cache/pgman/report-<ts>-<pid>.md` (or `.html`) | Default `\report` output path when none is given (`src/app.rs::default_report_path`). |
-| `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path (`src/app.rs::default_fixture_path`). |
+| `~/.config/pgman/safety.toml` | Personal safety guard rails: default profile + per-database overrides. |
+| `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd. |
+| `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch. |
+| `~/.local/share/pgman/history.log` | Query history, one entry per line, newest kept up to the last 50 statements run. |
+| `~/.local/share/pgman/saved.toml` | Named saved queries. |
+| `~/.cache/pgman/pgman.log` | `tracing` output. Level via `RUST_LOG` (default `info`). Single file, not rotated. |
+| `~/.cache/pgman/update_check.json` | Cached result of the crates.io version check, re-checked at most every 6 hours. |
+| `~/.cache/pgman/report-<ts>-<pid>.md` (or `.html`) | Default `\report` output path when none is given. |
+| `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path. |
+
+(For the curious: these are loaded/written by `src/main.rs`, `src/app.rs`,
+`src/safety.rs`, `src/project.rs`, `src/saved.rs`, and `src/update_check.rs`.)
 
 Every `~/.config`, `~/.local/share`, and `~/.cache` path above honours
 `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and `XDG_CACHE_HOME` respectively
@@ -46,14 +49,14 @@ users even under a permissive umask.
 
 Optional. Falls back to hard-coded defaults when absent or when it
 fails to parse (a parse error is logged and defaults are used
-instead of failing startup — `src/main.rs::load_safety_config`).
+instead of failing startup).
 
 ```toml
 # ~/.config/pgman/safety.toml
 #
 # [default] is the profile for any database with no entry of its own.
-# Every field below shows its built-in default (SafetyProfile::default
-# in src/safety.rs) — you only need to write the ones you want to change.
+# Every field below shows its built-in default — you only need to
+# write the ones you want to change.
 
 [default]
 # Open the connection with `default_transaction_read_only = on`. A
@@ -235,7 +238,7 @@ one; use `--dsn` (or a `.pgman/pgman.toml` entry with a
 
 **No auto-pick**: nothing discovered is connected to without you
 choosing it. If `--dsn` was not passed, pgman lands in the interactive
-picker (`Mode::ConnPick`) whatever it found — one candidate or ten —
+connection picker whatever it found — one candidate or ten —
 and connects only on Enter. Everything in that list was read out of the
 working tree, so a checkout you didn't write chooses the host; see
 [Running pgman inside a checkout you did not

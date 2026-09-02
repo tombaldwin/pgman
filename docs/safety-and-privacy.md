@@ -50,13 +50,12 @@
   unqualified `UPDATE`/`DELETE`; everything else that isn't a `SELECT`
   defaults to `Confirm`.
 - **Interactive confirm.** A `Confirm`-guarded statement puts pgman
-  into `Mode::Confirm`: `y`/`Y` runs it, `n`/`N`/`Esc` cancels
-  (`src/app/keys.rs::on_confirm_key`). A `Block`-guarded statement
-  never reaches this prompt — it's refused outright with an error,
-  and the only way past it is to change the guard in `safety.toml`.
-  A multi-statement script takes the *most restrictive* guard across
-  every statement in it, and shows a per-kind summary in the confirm
-  prompt.
+  into the confirm prompt: `y`/`Y` runs it, `n`/`N`/`Esc` cancels.
+  A `Block`-guarded statement never reaches this prompt — it's
+  refused outright with an error, and the only way past it is to
+  change the guard in `safety.toml`. A multi-statement script takes
+  the *most restrictive* guard across every statement in it, and
+  shows a per-kind summary in the confirm prompt.
 - **Statement splitting, and what happens when it can't be trusted.**
   The script is split by one lexer (`safety::scan`), shared by the
   splitter and the comment stripper so the two cannot disagree. It
@@ -75,10 +74,10 @@
 - **Rollback-able writes.** When `auto_tx` is on (default), any write
   is wrapped in an explicit `BEGIN` and left **open** on success — the
   statement runs, but nothing is durable until you decide. pgman then
-  shows a commit/rollback prompt (`Mode::TxDecision`): `y`/`Y` commits,
-  `n`/`N`/`Esc` rolls back (`src/app/keys.rs::on_tx_decision_key`). On
-  a statement error, the transaction is rolled back immediately so the
-  session doesn't sit aborted. `EXPLAIN ANALYZE` on DML is a special
+  shows a commit/rollback prompt: `y`/`Y` commits, `n`/`N`/`Esc` rolls
+  back. On a statement error, the transaction is rolled back
+  immediately so the session doesn't sit aborted. `EXPLAIN ANALYZE`
+  on DML is a special
   case: the inner statement genuinely executes, so it's always wrapped
   in a transaction that is unconditionally rolled back regardless of
   the `auto_tx` setting — the mutation is guaranteed never to land.
@@ -135,7 +134,7 @@ typed choice and behaves as it always has.
 | `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. |
 | `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
-| `~/.cache/pgman/pgman.log` | Application log. Connection strings are always logged in redacted form (`Dsn::redacted()` masks the password; unparseable URLs go through `redact_url()`, which also masks `password=`/`pwd=`/`passwd=` query params). Resolved passwords are never passed to `tracing`. |
+| `~/.cache/pgman/pgman.log` | Application log. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
 | `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. |
 
