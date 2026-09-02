@@ -10,13 +10,13 @@ expression: dump(&buf)
 │  ORDER BY created_at DESC;                                                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
-│id  email                  plan  created_at                                   │
 │┌ log picks · 1/2 ───────────────────────────────────────────────────────────┐│
 ││  2 queries · view: all queries (press `c` to toggle)                       ││
 ││                                                                            ││
 ││▶ [hibernate] select * from users where id = 42                             ││
-││  [    pglog] select * from orders where user_id = 42                       ││
+││  [pglog]     select * from orders where user_id = 42                       ││
 │└────────────────────────────────────────────────────────────────────────────┘│
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
 │                                                                              │
 │                                                                              │
 │                                                                              │

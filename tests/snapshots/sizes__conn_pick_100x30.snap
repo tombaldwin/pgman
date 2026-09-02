@@ -10,16 +10,16 @@ expression: dump(&buf)
 │  ORDER BY created_at DESC;                                                                       │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────┐
-│id  email                  plan  created_at                                                       │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
-│2   linus@example.com      free  2026-01-09 14:48:00+00                                           │
-│3   grace@exampl┌ pick a connection · 1/2 ──────────────────────────────────────┐                 │
-│4   alan@example│▶ [ project] prod     app@prod-db:5432/main  sslmode=default   │                 │
-│5   edsger@examp│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default│                 │
-│6   katherine@ex│                                                               │                 │
-│                │  nothing here connects until you press enter                  │                 │
-│                │  PGPASSWORD is only used with --dsn                           │                 │
-│                └───────────────────────────────────────────────────────────────┘                 │
+│┌ pick a connection · 1/2 ───────────────────────────────────────┐                                │
+││▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                                │
+││  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                                │
+││                                                                │                                │
+││  nothing here connects until you press enter                   │                                │
+││  PGPASSWORD is only used with --dsn                            │                                │
+│└────────────────────────────────────────────────────────────────┘                                │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
