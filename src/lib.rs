@@ -17,6 +17,14 @@ pub use tui_common::font_probe;
 pub mod grid;
 pub mod project;
 pub mod query;
+/// Release metadata derived from `CHANGELOG.md` at build time.
+///
+/// `build.rs` is the real consumer and reaches this file through
+/// `include!`, independently of the module system — so the library
+/// itself compiles it only under `cfg(test)`, where its own tests
+/// exercise the same parser the build script ran.
+#[cfg(test)]
+pub(crate) mod release_meta;
 pub mod report;
 pub mod safety;
 pub mod saved;
@@ -28,3 +36,10 @@ pub mod tunnel;
 pub mod ui;
 pub mod upgrade;
 pub mod util;
+
+/// The current release's date, `YYYY-MM-DD`, parsed by `build.rs` from
+/// `CHANGELOG.md`'s `## [<version>] — <date>` heading for the crate's
+/// version. Empty when the working `CARGO_PKG_VERSION` has no dated
+/// heading yet — callers show the version alone rather than a wrong or
+/// invented date.
+pub const RELEASE_DATE: &str = env!("PGMAN_RELEASE_DATE");

@@ -26,8 +26,17 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line> = art_lines;
     lines.push(Line::from(""));
+    let version_line = if crate::RELEASE_DATE.is_empty() {
+        format!("pgman {} · beta", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!(
+            "pgman {} · beta · {}",
+            env!("CARGO_PKG_VERSION"),
+            crate::RELEASE_DATE
+        )
+    };
     lines.push(Line::from(Span::styled(
-        format!("pgman {} · beta", env!("CARGO_PKG_VERSION")),
+        version_line,
         Style::default()
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
