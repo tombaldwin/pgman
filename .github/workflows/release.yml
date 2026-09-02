@@ -1,0 +1,272 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # `release: published` fires when the maintainer flips the draft
+  # release (created by the tag-push run below) to published. The
+  # crates_io job below is gated on this event so cargo publish only
+  # runs after the maintainer has sanity-checked the GitHub Release
+  # artefacts — once published, crates.io can't be unpublished, so the
+  # human gate matters.
+  release:
+    types: [published]
+  # Manual re-run, e.g. when CARGO_REGISTRY_TOKEN was missing on the
+  # first `release.published` fire and the crates_io job no-op'd.
+  # Run from `main` (which has this trigger), passing the tag to
+  # publish as an input:
+  #   gh workflow run release.yml -f tag=v0.7.0
+  # Build + publish-to-GH-release stay gated on `push` (artefacts
+  # already exist for the tag); only the crates_io job re-fires.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish to crates.io (e.g. v0.7.0)'
+        required: true
+        type: string
+
+# When a new tag like `v0.2.0` is pushed:
+#   1. Build a release binary on each target platform.
+#   2. Tarball it together with README + LICENSE files.
+#   3. Attach the tarballs to a GitHub Release for the tag.
+# Homebrew can then point at the macOS aarch64 / x86_64 tarballs by URL +
+# SHA-256. The workflow uses softprops/action-gh-release which is the
+# de-facto standard for this pattern and re-uses GITHUB_TOKEN.
+#
+# Once the maintainer publishes the draft release, the `crates_io` job
+# runs `cargo publish` so crates.io is kept in sync with the GitHub
+# Release without a manual `cargo publish` step (a gap that bit the
+# sibling ebman project — see its BACKLOG for that history).
+
+# Only `publish` creates the GitHub Release. `build` uploads via
+# `actions/upload-artifact` (job-scoped, no repo write) and `crates_io`
+# authenticates with its own token, so neither needs write on the repo.
+# The default here is read; `publish` opts up.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  # Refuse to build a release from a commit CI never passed.
+  #
+  # Nothing structurally prevented tagging an untested SHA: the build
+  # matrix runs `cargo build --locked --release` and nothing else — no
+  # tests, no clippy, no cargo-deny. A tag pushed to a branch whose CI was
+  # still running, or red, or never triggered, produced signed release
+  # binaries regardless. Every release so far went out from a green
+  # commit by discipline; this makes it structural.
+  ci-green:
+    name: CI passed on this commit
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require a successful CI run for this SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ github.sha }}"
+          echo "checking CI for $sha"
+          # `--repo` is required: this job has no `actions/checkout`, so
+          # `gh` cannot infer the repository from the working directory
+          # and dies with "failed to determine base repo". Caught on this
+          # gate's first real tag, which it blocked.
+          runs=$(gh run list --repo "${{ github.repository }}" \
+                   --workflow=ci.yml --limit 50 \
+                   --json headSha,status,conclusion) || {
+            echo "::error::could not query CI runs — this is the GATE failing, not CI. Not a licence to release."
+            exit 1
+          }
+          # A failed query and a genuinely-red CI must not look the same.
+          # `gh` returning nothing at all means the gate did not run;
+          # treating that as "no green run found" would be correct here by
+          # accident and wrong the moment the failure mode changes.
+          total=$(echo "$runs" | jq 'length')
+          if [ "${total:-0}" -lt 1 ]; then
+            echo "::error::the CI-run query returned no runs at all — the gate is broken, not CI."
+            exit 1
+          fi
+          ok=$(echo "$runs" | jq "[.[] | select(.headSha==\"$sha\" and .status==\"completed\" and .conclusion==\"success\")] | length")
+          if [ "${ok:-0}" -lt 1 ]; then
+            echo "::error::no successful ci.yml run for $sha — refusing to build a release from an unverified commit. Push the branch, let CI go green, then tag."
+            exit 1
+          fi
+          echo "CI is green for $sha ($total runs inspected)"
+
+  build:
+    name: build ${{ matrix.target }}
+    # Only run on tag push — the release.published event reruns the
+    # whole workflow but the build matrix already produced the artefacts
+    # on the original tag-push run. Skipping here saves ~10 min of CI
+    # time per published release.
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.runner }}
+    needs: ci-green
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_ext: tar.gz
+          # Native ARM64 Linux runner (GA for public repos) — avoids the
+          # cross-compile/linker pain of building aarch64 on an x86 host.
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Stage binary + docs
+        run: |
+          set -euo pipefail
+          stage="pgman-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$stage"
+          cp "target/${{ matrix.target }}/release/pgman" "$stage/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$stage/"
+          tar -czf "$stage.tar.gz" "$stage"
+          shasum -a 256 "$stage.tar.gz" | tee "$stage.tar.gz.sha256"
+      - name: Upload as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: pgman-${{ matrix.target }}
+          path: |
+            pgman-*.tar.gz
+            pgman-*.tar.gz.sha256
+          # Default is `warn`. If staging produced nothing, a warning
+          # buried in a green job would let `publish` attach an empty
+          # asset set to a real tag. Fail the build instead.
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: build
+    # Tag-push only. THIS job creates the draft release and attaches
+    # the artefacts `build` uploaded; the `release.published` event
+    # (which fires when the maintainer un-drafts it) must not re-run
+    # it. The old comment said the attach happened in the build phase,
+    # which was never true of this file.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build provenance: a signed, verifiable link from each tarball
+      # back to the workflow run that produced it.
+      #
+      # Normally I'd call this ceremony. Not here, because of what pgman
+      # is — a credentialed database ops tool, distributed as a prebuilt
+      # binary via Homebrew, whose formula SHAs are updated by script. The
+      # sha256 files next to the tarballs prove integrity but say
+      # nothing about origin: they are generated by the same run that
+      # would be compromised.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: pgman-*
+          merge-multiple: true
+      - name: Attest the build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/pgman-*.tar.gz
+      - name: Attach artefacts to release
+        uses: softprops/action-gh-release@v3
+        with:
+          # GITHUB_REF_NAME is the tag, e.g. v0.2.0.
+          tag_name: ${{ github.ref_name }}
+          name: pgman ${{ github.ref_name }}
+          files: |
+            dist/pgman-*.tar.gz
+            dist/pgman-*.tar.gz.sha256
+          # Don't auto-publish a draft — the maintainer can flip the toggle
+          # once they've sanity-checked the artefacts.
+          draft: true
+          generate_release_notes: true
+
+  crates_io:
+    # Publish to crates.io once the maintainer has reviewed the draft
+    # GitHub Release and flipped it to published. Gated on the
+    # `CARGO_REGISTRY_TOKEN` repository secret — when the secret isn't
+    # configured the step is skipped (rather than failing), so forks /
+    # scratch installations that don't own the crate don't fail loudly.
+    #
+    # This is the last job in the workflow (pgman has no MCP registry
+    # publish step — that's an ebman-specific job, not ported here). The
+    # release.published trigger keeps the maintainer in the loop —
+    # crates.io can't be unpublished, so the human gate matters.
+    name: publish to crates.io
+    if: (github.event_name == 'release' || github.event_name == 'workflow_dispatch') && !github.event.repository.fork
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The release event payload's `tag_name` is what was published;
+          # workflow_dispatch passes the tag via `inputs.tag`. Either
+          # way we check out exactly that ref so cargo publishes the
+          # released code, not whatever HEAD happens to be at workflow-
+          # fire time.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN not set — skipping crates.io publish"
+            exit 0
+          fi
+          # pgman depends on the shared `tb-tui-common` crate, which
+          # lives in its own repo (tombaldwin/tb-tui-common) and
+          # publishes from there, so it's already on crates.io by the
+          # time pgman resolves it.
+          #
+          # A manual re-run is the documented use of the workflow_dispatch
+          # trigger above, and for anything but a first publish the version
+          # is already up. `cargo publish` exits non-zero on that, which
+          # would fail this job for no reason on a routine re-run.
+          #
+          # Asking crates.io first rather than pattern-matching the error:
+          # a grep for "already uploaded" swallows whatever else cargo
+          # might say, and this job is the last gate before a release is
+          # public.
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          VERSION="${TAG#v}"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: pgman-release-workflow' \
+            "https://crates.io/api/v1/crates/pgman/$VERSION")
+          if [ "$code" = "200" ]; then
+            echo "pgman $VERSION is already on crates.io — nothing to publish."
+            echo "Later jobs still run: this is the re-run path."
+            exit 0
+          fi
+          if [ "$code" != "404" ]; then
+            echo "crates.io returned HTTP $code for pgman/$VERSION; refusing"
+            echo "to guess whether it is published."
+            exit 1
+          fi
+          # `--locked` matches the build matrix's lockfile pinning so a
+          # workflow that built clean from Cargo.lock publishes the same
+          # resolved dependency graph.
+          cargo publish --locked
