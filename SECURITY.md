@@ -35,8 +35,21 @@ class:
   non-loopback address (e.g. `0.0.0.0`) on a trusted/firewalled network — doing
   so exposes an open ingest endpoint.
 - **Destructive SQL is gated client-side** by the per-database safety profile
-  (`safety.rs`). This is a guard rail, not a substitute for least-privilege
-  database roles — run pgman with a role scoped to what you actually need.
+  (`safety.rs`). Every statement in a script is classified and guarded, and
+  what reaches the server is the re-joined statements that were checked — not
+  the original buffer. A script the splitter cannot verify (an unterminated
+  literal, identifier, dollar-quote, or block comment) is **refused**, because
+  guards computed from guessed statement boundaries approve the wrong
+  statements. `SELECT … INTO`, and a `SELECT` calling one of a short list of
+  destructive functions (`pg_terminate_backend`, `pg_read_file`, `lo_import`,
+  `dblink`, …), are treated as writes rather than reads. This is a guard rail,
+  not a substitute for least-privilege database roles — run pgman with a role
+  scoped to what you actually need.
+- **A read-only profile cannot be turned off from inside the session.**
+  `read_only = true` is applied as `SET default_transaction_read_only = on`,
+  but that setting is an ordinary session GUC any role may change, so Postgres
+  does not defend it. pgman refuses the statements that would lift it —
+  including under `--batch --yes`.
 
 ## Supported versions
 
