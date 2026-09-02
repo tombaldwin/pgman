@@ -173,7 +173,18 @@ What it was:
    one line each) and that the F2 detail overlay is discoverable from
    the footer when there is an error.
 
-## Phase 2 — release machinery (1 day) · mechanical, port from ebman
+## Phase 2 — release machinery · mechanical · **done 2026-09-02**
+
+Ported from ebman in six commits: `release.yml` (CI-green gate, four
+targets, attestation, draft release, crates.io on publish, minus the
+MCP registry job), `Formula/pgman.rb` with placeholder shas,
+`scripts/update-formula.sh` (creates the tap entry on first run),
+`panic = "abort"` and a crate `exclude`, `build.rs` reading the release
+date out of CHANGELOG.md into the About overlay, `docs/development.md`.
+The crate packages at 276 files / 600 KiB. **Not yet done, needs you:**
+`gh secret set CARGO_REGISTRY_TOKEN` on the pgman repo (ebman has one).
+
+What it was:
 
 1. `.github/workflows/release.yml` from ebman, `s/ebman/pgman/`, minus
    the `mcp_registry` job. Keep: `ci-green` gate, 4 targets, provenance

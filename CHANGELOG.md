@@ -58,6 +58,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **Release machinery**, ported from ebman: a tag-triggered workflow
+  that refuses to build from a commit CI never passed, builds four
+  targets with build provenance, drafts the GitHub Release, and
+  publishes to crates.io when the draft is published; a Homebrew
+  formula and the script that bumps it; the release date in the About
+  overlay, read from this file at build time.
 - **A start card on connect** instead of a grid of database names.
   Connection, databases and sizes, the six main keys, and the two
   things nothing else does: `F8` logs → SQL and `F4` JDBC tap.
