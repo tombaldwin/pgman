@@ -4,9 +4,24 @@ impl App {
     /// Spawn the connect + bootstrap-query task. The result returns as an
     /// `AppMsg` tagged with the current generation.
     pub(super) fn start_connect(&mut self) {
+        // `--demo` promises "no database, no network". Every other
+        // connect path is gated at the key handler, but `\c <name>`
+        // reaches here directly — in a demo session that opened a real
+        // TCP connection to whatever the fixture DSN names.
+        if self.demo {
+            self.last_status =
+                Some("--demo has no server — restart without --demo to connect".into());
+            return;
+        }
         let Some(dsn) = self.dsn.clone() else {
             return;
         };
+        // The database list belongs to the connection we're leaving.
+        // Without this, a failed reconnect leaves `\l` (and the start
+        // card's `databases` line) listing the *previous* server's
+        // databases as if they were the new one's. Repopulated by the
+        // bootstrap query on a successful connect.
+        self.databases.clear();
         // Bump the generation so a late Booted/BootFailed from a prior
         // attempt can't clobber this one's state. The `on_msg` filter
         // already drops messages whose generation doesn't match; we just

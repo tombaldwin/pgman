@@ -4729,6 +4729,86 @@ fn backslash_c_with_no_arg_opens_picker() {
     assert_eq!(a.mode, Mode::ConnPick);
 }
 
+#[test]
+fn demo_mode_never_opens_a_connection_via_backslash_c() {
+    // `--demo` promises no database and no network. `\c <name>` used to
+    // walk straight past that into a real TCP connect (which is also
+    // why this test can run without a tokio runtime: reaching
+    // `start_connect`'s spawn would panic).
+    let mut a = crate::demo::launch_app(Theme::default());
+    a.conn_pick.picks.push(DataSourcePick {
+        name: "staging".into(),
+        origin: "project",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db.example.com/x").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    });
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c staging".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        !matches!(a.conn_state, ConnState::Connecting),
+        "--demo must not start a connection"
+    );
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("--demo has no server"), "got: {status}");
+}
+
+#[tokio::test]
+async fn reconnect_clears_the_previous_servers_database_list() {
+    let mut a = App::new(
+        Theme::default(),
+        Some(crate::conn::Dsn::parse("postgres://app@old-host/app").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.databases = vec![crate::app::DatabaseInfo {
+        name: "from_old_server".into(),
+        size: "1 GB".into(),
+    }];
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c other_db".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        a.databases.is_empty(),
+        "the old server's databases must not survive a reconnect: {:?}",
+        a.databases
+    );
+}
+
+#[test]
+fn backslash_l_with_no_databases_leaves_the_start_card_alone() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    assert!(a.grid.columns.is_empty(), "start card state");
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\l".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        a.grid.columns.is_empty(),
+        "a header-only grid would replace the start card permanently"
+    );
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("no databases"), "got: {status}");
+}
+
+#[test]
+fn backslash_l_with_databases_still_renders_the_grid() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.databases = vec![crate::app::DatabaseInfo {
+        name: "app".into(),
+        size: "1 GB".into(),
+    }];
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\l".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(a.grid.columns, vec!["database".to_string(), "size".into()]);
+    assert_eq!(a.grid.rows.len(), 1);
+}
+
 /// A discovered pick carrying an `ssh_tunnel`.
 fn tunnel_pick() -> DataSourcePick {
     DataSourcePick {
