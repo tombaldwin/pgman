@@ -247,7 +247,19 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     let max_preview = 80usize;
     // One-line triage summary above the picker rows. Surfaces N+1
     // hotspots that the per-row list buries.
-    let summary = crate::query::nplus1::summarize(&app.log_pick.picks);
+    //
+    // Built from `log_pick.clusters` — the cache written when the
+    // picks were set and on every view toggle — rather than by calling
+    // `nplus1::summarize`, which re-fingerprints and re-clusters every
+    // query in the import. That ran on EVERY frame, including the ~9fps
+    // animation ticks, for a list that cannot have changed.
+    let clusters = &app.log_pick.clusters;
+    let summary = crate::query::nplus1::SessionSummary {
+        total_queries: app.log_pick.picks.len(),
+        cluster_count: clusters.len(),
+        repeated_queries: clusters.iter().map(|c| c.count).sum(),
+        top_cluster: clusters.first().cloned(),
+    };
     let mut lines: Vec<Line> = Vec::new();
     let view_label = match app.log_pick.view {
         LogPickView::AllQueries => "all queries",
@@ -360,8 +372,6 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             })
             .collect(),
     };
-    lines.extend(row_lines);
-
     let total = app.log_pick_visible_len();
     let title = format!(
         " log picks · {}/{} ",
@@ -372,9 +382,20 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
         },
         total,
     );
-    let h = (lines.len() as u16 + 2).max(3);
+    // Scroll the ROWS (not the header lines) to follow the cursor.
+    // Without this only the first screenful of picks was ever drawn,
+    // while `j` / `G` walked the index — and the title's `n/total` —
+    // off the bottom of a popup that never moved. An imported log
+    // routinely holds hundreds of queries.
+    let header_len = lines.len();
     let w = 100u16.min(area.width.saturating_sub(2));
+    let h = ((header_len + row_lines.len()) as u16 + 2)
+        .min(area.height.saturating_sub(2))
+        .max(3);
     let popup = floated_in_panel(area, w, h);
+    let visible_rows = (popup.height.saturating_sub(2) as usize).saturating_sub(header_len);
+    let scroll = scroll_offset(app.log_pick.index, visible_rows);
+    lines.extend(row_lines.into_iter().skip(scroll).take(visible_rows));
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
