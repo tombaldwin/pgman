@@ -977,7 +977,9 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
     // `unresolved`. Either way the literal `${NAME}` text is left in
     // place (so the pick still parses to *some* DSN and stays visible
     // for inspection) and `refuse_if_unresolved` stops it being
-    // connected to.
+    // connected to. The password is the exception to "left in place":
+    // an unresolved one is never stored on the DSN at all, so the
+    // literal text can't be sent to a server as a password.
     let mut emit = |label: &str, block: &[SpringDatasourcePartial]| {
         for p in block {
             let Some(raw_url) = p.url.as_deref() else {
@@ -1001,8 +1003,18 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
             }
             if let Some(pw) = &p.password {
                 if !pw.is_empty() {
-                    let (resolved_pw, _pw_missing) = resolve_spring_value(pw);
-                    dsn.password = Some(resolved_pw);
+                    let (resolved_pw, pw_missing) = resolve_spring_value(pw);
+                    if pw_missing.is_empty() {
+                        dsn.password = Some(resolved_pw);
+                    } else {
+                        // An unresolved password placeholder used to be
+                        // dropped on the floor and the literal
+                        // `${DB_PASSWORD}` text sent to the server as
+                        // the password. Mark the pick instead — with no
+                        // `PGPASSWORD` fallback for discovered sources
+                        // there is nothing else this could have meant.
+                        unresolved.extend(pw_missing);
+                    }
                 }
             }
             // Provenance only — never the raw password (CLAUDE.md).
@@ -1275,10 +1287,11 @@ mod main_tests {
     }
 
     #[test]
-    fn discover_spring_datasources_password_only_unresolved_is_not_marked() {
-        // PGPASSWORD / password_env already cover supplying a password
-        // pgman couldn't read from the file — an unresolved password
-        // placeholder alone must not block the pick.
+    fn discover_spring_datasources_marks_an_unresolved_password_and_never_sends_the_literal() {
+        // The literal `${…}` text used to be stored as the password and
+        // sent to the server on the wire. With no `PGPASSWORD` fallback
+        // for discovered sources there is nothing else it could have
+        // meant, so it marks the pick like any other placeholder.
         let base = spring_project_with(
             "pw-only",
             "spring.datasource.url=jdbc:postgresql://h:5432/orders\n\
@@ -1293,12 +1306,45 @@ mod main_tests {
         let _ = std::fs::remove_dir_all(&base);
 
         assert_eq!(picks.len(), 1);
-        assert!(
-            picks[0].unresolved.is_empty(),
-            "password-only unresolved must not mark the pick: {:?}",
-            picks[0].unresolved
+        assert_eq!(
+            picks[0].unresolved,
+            vec!["PGMAN_TEST_MAIN_DB_PW_C".to_string()]
         );
-        assert!(!picks[0].name.contains("unresolved"));
+        assert_eq!(
+            picks[0].dsn.password, None,
+            "the literal placeholder text must never become the password"
+        );
+        assert!(
+            picks[0]
+                .name
+                .contains("unresolved ${PGMAN_TEST_MAIN_DB_PW_C}"),
+            "picker label should surface it: {}",
+            picks[0].name
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_uses_a_resolved_password() {
+        let base = spring_project_with(
+            "pw-set",
+            "spring.datasource.url=jdbc:postgresql://h:5432/orders\n\
+             spring.datasource.username=svc\n\
+             spring.datasource.password=${PGMAN_TEST_MAIN_DB_PW_D}\n",
+        );
+        // SAFETY: unique var name, not touched by any other test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_DB_PW_D", "s3cret");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_PW_D");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert!(picks[0].unresolved.is_empty());
+        assert_eq!(picks[0].dsn.password.as_deref(), Some("s3cret"));
     }
 
     #[cfg(unix)]
