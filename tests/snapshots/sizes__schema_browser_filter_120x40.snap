@@ -1,0 +1,44 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                  │
+│  FROM users                                                                                                          │
+│  WHER┌ schema browser — q / esc close ───────────────────────────────────────────────────────────────────────┐       │
+│  ORDE│▼ public  (3)                            schema: public                                                │       │
+└──────│  ▼ orders  (5 col, 1 cons)                                                                            │───────┘
+┌ resul│      · user_id : bigint NOT NULL        3 table(s)                                                    │───────┐
+│id  em│      · status : varchar(20) NOT NULL                                                                  │       │
+│1   ad│  ▼ users  (4 col, 1 cons)               enter to expand — then arrow / j/k into the tables            │       │
+│2   li│      ◆ users_pkey                                                                                     │       │
+│3   gr│                                                                                                       │       │
+│4   al│                                                                                                       │       │
+│5   ed│                                                                                                       │       │
+│6   ka│                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      │                                                                                                       │       │
+│      └───────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   filter: /us  · 6 row(s) · enter accept · esc clear

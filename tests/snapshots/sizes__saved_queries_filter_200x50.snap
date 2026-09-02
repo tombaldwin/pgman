@@ -1,0 +1,54 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                                                                                                                                  │
+│  FROM users                                                                                                                                                                                          │
+│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│  ORDER BY ┌ saved queries — /d  (3/3 shown) · enter load · esc clear ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
+└───────────│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │───────────┘
+┌ result · 6│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │───────────┐
+│id  email  │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │           │
+│1   ada@exa│                                                                                                                                                                              │           │
+│2   linus@e│                                                                                                                                                                              │           │
+│3   grace@e│                                                                                                                                                                              │           │
+│4   alan@ex│                                                                                                                                                                              │           │
+│5   edsger@│                                                                                                                                                                              │           │
+│6   katheri│                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │  pro-users                                                                                                                                                                   │           │
+│           │  SELECT id, email, created_at                                                                                                                                                │           │
+│           │  FROM users                                                                                                                                                                  │           │
+│           │  WHERE plan = 'pro'                                                                                                                                                          │           │
+│           │  ORDER BY created_at DESC;                                                                                                                                                   │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                                                                                                                                              │           │
+│           └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘           │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   filter saved queries · type to narrow

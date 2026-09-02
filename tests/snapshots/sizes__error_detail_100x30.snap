@@ -1,0 +1,34 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  FROM users                                                                                      │
+│  WHER┌ error detail — F2 / esc / q close ────────────────────────────────────────────────┐       │
+│  ORDE│ ERROR · SQLSTATE 23505                                                            │       │
+└──────│                                                                                   │───────┘
+┌ resul│    message: duplicate key value violates unique constraint "users_email_key"      │───────┐
+│id  em│     detail: Key (email)=(ada@example.com) already exists.                         │       │
+│1   ad│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"       │       │
+│2   li│                                                                                   │       │
+│3   gr│affected object:                                                                   │       │
+│4   al│     schema: public                                                                │       │
+│5   ed│      table: users                                                                 │       │
+│6   ka│ constraint: users_email_key                                                       │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      │                                                                                   │       │
+│      └───────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   ⚠ duplicate key value violates unique constraint "users_email_key"  · F2 detail

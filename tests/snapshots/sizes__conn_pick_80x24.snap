@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                          │
+│  FROM users                                                                  │
+│  WHERE plan = 'pro'                                                          │
+│  ORDER BY created_at DESC;                                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
+│id  email                  plan  created_at                                   │
+│1   ada@example.com        pro   2026-01-04 09:12:00+00                       │
+│┌ pick a connection · 1/2 ───────────────────────────────────────────────────┐│
+││▶ [ project] prod                     postgres://app@prod-db:5432/main      ││
+││  [IntelliJ] staging                  postgres://app@staging-db:5432/main   ││
+│└────────────────────────────────────────────────────────────────────────────┘│
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter connect · q quit · F1 help

@@ -1,0 +1,28 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> ┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ─┐   │
+│  │    total ms    mean ms     calls      rows  query                     │   │
+│  │    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE │   │
+│  │      800.00       3.20       250       250  UPDATE orders SET status =│   │
+└──│                                                                       │───┘
+┌ r│                                                                       │───┐
+│id│                                                                       │   │
+│1 │                                                                       │   │
+│2 │                                                                       │   │
+│3 │                                                                       │   │
+│4 │───────────────────────────────────────────────────────────────────────│   │
+│5 │SELECT * FROM users WHERE active = true                                │   │
+│6 │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  │                                                                       │   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · enter copy · r refresh · R auto-refresh · q
