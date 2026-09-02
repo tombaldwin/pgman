@@ -161,9 +161,12 @@ async fn main() -> anyhow::Result<()> {
         return result;
     }
 
-    let mut dsn = match cli.dsn.as_deref() {
+    let dsn = match cli.dsn.as_deref() {
         Some(raw) => match conn::Dsn::parse(raw) {
-            Ok(d) => Some(d),
+            Ok(mut d) => {
+                apply_pgpassword(&mut d);
+                Some(d)
+            }
             Err(e) => {
                 eprintln!("invalid --dsn: {e}");
                 std::process::exit(2);
@@ -171,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         },
         None => None,
     };
-    let mut dsn_origin: Option<String> = if cli.dsn.is_some() {
+    let dsn_origin: Option<String> = if cli.dsn.is_some() {
         Some("--dsn flag".to_string())
     } else {
         None
@@ -224,38 +227,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Auto-pick when the operator didn't pass --dsn and there's exactly one
-    // candidate — UNLESS that candidate still has an unresolved Spring
-    // `${...}` placeholder in its url/username, in which case
-    // auto-connecting would hand `connect_and_bootstrap` a literal
-    // `${NAME}` hostname (a DNS-shaped failure with no hint of the real
-    // cause). Leave it in `data_source_picks` instead so the operator can
-    // open the picker (`c`) or `\c <name>` and get the real error.
-    // Multiple candidates → leave them in `data_source_picks` and let the
-    // TUI render the picker (Mode::ConnPick).
-    if dsn.is_none()
-        && data_source_picks.len() == 1
-        && data_source_picks[0].unresolved.is_empty()
-        && data_source_picks[0].unresolved_host.is_empty()
-    {
-        // Clone — keep the pick in the list so the connection-failure
-        // screen can re-open the picker for a manual retry. The
-        // Mode::ConnPick gate is `>= 2`, so a single entry won't pop the
-        // picker at startup.
-        let pick = &data_source_picks[0];
-        if let Some(d) = pick.dsn.clone() {
-            tracing::info!(
-                "auto-selecting {} data source '{}' → {}",
-                pick.origin,
-                pick.name,
-                d.redacted()
-            );
-            dsn_origin = Some(format!(
-                "auto-picked {} data source '{}'",
-                pick.origin, pick.name
-            ));
-            dsn = Some(d);
-        }
+    // NO auto-connect from discovery. Everything in `data_source_picks`
+    // came out of the working tree — `.pgman/pgman.toml`,
+    // `application*.yml`, `.idea/dataSources.xml` — so a checkout the
+    // operator didn't write chooses the host. pgman used to connect
+    // straight to a lone candidate, which meant `git clone && cd && pgman`
+    // opened a connection to a host the repo author picked. Now a
+    // discovered pick always waits for a keypress in `Mode::ConnPick`
+    // (see `App::new`), however many there are. `--dsn` is the operator's
+    // own and still connects immediately.
+    if dsn.is_none() && !data_source_picks.is_empty() {
+        tracing::info!(
+            "{} discovered data source(s); waiting for the operator to choose one",
+            data_source_picks.len()
+        );
     }
 
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
@@ -635,7 +620,9 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
 /// with `--dsn`.
 fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     if let Some(raw) = cli.dsn.as_deref() {
-        return conn::Dsn::parse(raw).map_err(|e| format!("invalid --dsn: {e}"));
+        let mut dsn = conn::Dsn::parse(raw).map_err(|e| format!("invalid --dsn: {e}"))?;
+        apply_pgpassword(&mut dsn);
+        return Ok(dsn);
     }
     let mut picks: Vec<DataSourcePick> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -1090,6 +1077,27 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
     }
 }
 
+/// Fill in a password from `$PGPASSWORD` when the DSN doesn't carry one.
+///
+/// **Only ever applied to a `--dsn` the operator typed.** A DSN that came
+/// out of the working tree (`.pgman/pgman.toml`, `application*.yml`,
+/// `.idea/dataSources.xml`) names a host the repo author chose, so
+/// lending it the operator's `$PGPASSWORD` would send that password to
+/// that host — the whole point of the discovered-is-untrusted rule. A
+/// project connection gets its password from its own `password_env`
+/// instead; a Spring block from the file's own `password` key.
+fn apply_pgpassword(dsn: &mut conn::Dsn) {
+    if dsn.password.is_some() {
+        return;
+    }
+    // Empty is treated as unset so `PGPASSWORD=` doesn't blank out a
+    // password the DSN already carried (it can't have — checked above)
+    // or read as a deliberate empty password.
+    if let Some(pw) = std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty()) {
+        dsn.password = Some(pw);
+    }
+}
+
 /// The `[safety]` block of the project config found by walking up from
 /// `start`, if any. Split out from the TUI's inline discovery so
 /// `--batch` can apply exactly the same overrides — the merge itself is
@@ -1192,6 +1200,39 @@ mod main_tests {
             safety::Guard::Block,
             "project can't relax drop"
         );
+    }
+
+    #[test]
+    fn apply_pgpassword_fills_an_empty_password_and_never_overwrites_one() {
+        // `--dsn` is the operator's own choice of host, so PGPASSWORD
+        // still applies there — it's the one place it does.
+        // SAFETY: PGPASSWORD is set only by this test in this binary.
+        unsafe {
+            std::env::set_var("PGPASSWORD", "from-env");
+        }
+        let mut bare = conn::Dsn::parse("postgres://app@db/main").unwrap();
+        apply_pgpassword(&mut bare);
+        let mut explicit = conn::Dsn::parse("postgres://app:in-url@db/main").unwrap();
+        apply_pgpassword(&mut explicit);
+        unsafe {
+            std::env::set_var("PGPASSWORD", "");
+        }
+        let mut with_empty_env = conn::Dsn::parse("postgres://app@db/main").unwrap();
+        apply_pgpassword(&mut with_empty_env);
+        unsafe {
+            std::env::remove_var("PGPASSWORD");
+        }
+        let mut unset = conn::Dsn::parse("postgres://app@db/main").unwrap();
+        apply_pgpassword(&mut unset);
+
+        assert_eq!(bare.password.as_deref(), Some("from-env"));
+        assert_eq!(
+            explicit.password.as_deref(),
+            Some("in-url"),
+            "a password already in the DSN wins"
+        );
+        assert_eq!(with_empty_env.password, None, "empty means unset");
+        assert_eq!(unset.password, None);
     }
 
     #[test]

@@ -10,13 +10,13 @@ expression: dump(&buf)
 │  ORDER BY created_at DESC;                                                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
-│id  email                  plan  created_at                                   │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                       │
-│┌ pick a connection · 1/2 ───────────────────────────────────────────────────┐│
-││▶ [ project] prod                     postgres://app@prod-db:5432/main      ││
-││  [IntelliJ] staging                  postgres://app@staging-db:5432/main   ││
-│└────────────────────────────────────────────────────────────────────────────┘│
-│6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
+│id  em┌ pick a connection · 1/2 ──────────────────────────────────────┐       │
+│1   ad│▶ [ project] prod     app@prod-db:5432/main  sslmode=default   │       │
+│2   li│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default│       │
+│3   gr│                                                               │       │
+│4   al│  nothing here connects until you press enter                  │       │
+│5   ed│  PGPASSWORD is only used with --dsn                           │       │
+│6   ka└───────────────────────────────────────────────────────────────┘       │
 │                                                                              │
 │                                                                              │
 │                                                                              │

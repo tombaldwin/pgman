@@ -514,6 +514,51 @@ fn connection_picker_with_two_entries() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// The picker is the only thing standing between a checkout the
+/// operator didn't write and a connection to a host it chose, so the row
+/// has to show everything that decides what "enter" does: where it
+/// goes, how it's encrypted, and whether an `ssh` session is opened
+/// first. Rendered wide so nothing is truncated (`tests/sizes.rs` covers
+/// the narrow terminals).
+#[test]
+fn connection_picker_row_shows_target_sslmode_and_tunnel() {
+    let theme = Theme::default();
+    let picks = vec![
+        DataSourcePick {
+            name: "prod".into(),
+            origin: "project",
+            dsn: Some(Dsn::parse("postgres://app@prod-db:5432/main?sslmode=verify-full").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "via-bastion".into(),
+            origin: "project",
+            dsn: Some(
+                Dsn::parse(
+                    "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+                )
+                .unwrap(),
+            ),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "spring.datasource (application) — unresolved ${DB_HOST}".into(),
+            origin: "Spring",
+            dsn: None,
+            unresolved: Vec::new(),
+            unresolved_host: vec!["DB_HOST".into()],
+        },
+    ];
+    let mut a = App::new(theme, None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    let buf = render(&mut a, 120, 18);
+    insta::assert_snapshot!(dump(&buf));
+}
+
 #[test]
 fn schema_wizard_renders_findings_sorted_by_severity() {
     let mut a = settle_app();

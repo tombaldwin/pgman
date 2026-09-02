@@ -1,0 +1,22 @@
+---
+source: tests/snapshots.rs
+expression: dump(&buf)
+---
+ pgman │ —  disconnected
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> (empty — press e to focus)                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ pgman ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌ pick a connection · 1/3 ────────────────────────────────────────────────────────────────────────────────────────┐  │
+│ │▶ [project] prod                     app@prod-db:5432/main  sslmode=verify-full                                  │  │
+│ │  [project] via-bastion              app@db.internal:5432/main  sslmode=default  tunnel → tom@bastion.example.com│  │
+│ │  [ Spring] spring.datasource (application) — unresolved ${DB_HOST} (no usable connection URL)                   │  │
+│ │                                                                                                                 │  │
+│ │  nothing here connects until you press enter                                                                    │  │
+│ │  PGPASSWORD is only used with --dsn                                                                             │  │
+│ └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   ↑↓ / j/k navigate · enter connect · q quit · F1 help

@@ -201,6 +201,35 @@ fn change_connection_opens_picker_when_picks_exist() {
     assert_eq!(a.mode, Mode::ConnPick);
 }
 
+/// The clone-a-repo case. One discovered candidate used to be connected
+/// to before the TUI drew a frame, so `git clone && cd && pgman` opened
+/// a connection to a host the repo author chose. A lone pick now waits
+/// in the picker like any other.
+#[test]
+fn a_single_discovered_pick_lands_in_the_picker_and_does_not_connect() {
+    let pick = DataSourcePick {
+        name: "theirs".into(),
+        origin: "project",
+        dsn: Some(Dsn::parse("postgres://app@db.example.com/x").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    };
+    let a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    assert_eq!(
+        a.mode,
+        Mode::ConnPick,
+        "a lone discovered pick must still wait for the operator"
+    );
+    assert!(
+        matches!(a.conn_state, ConnState::Disconnected),
+        "nothing discovered may connect before a keypress"
+    );
+    assert!(a.dsn.is_none(), "no DSN may be adopted from discovery");
+    // (Enter on the pick is what starts the connect — that path needs a
+    // tokio runtime, so it lives in
+    // `app::tests::conn_pick_enter_on_a_lone_pick_connects`.)
+}
+
 #[test]
 fn grid_sort_cycle_through_three_states() {
     let mut a = settle_app();

@@ -1093,7 +1093,7 @@ impl App {
         let statement_timeout_ms = profile.statement_timeout_ms;
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
         // When the operator hasn't pre-selected a DSN and we discovered
-        // multiple candidates, the post-splash mode is the picker — that's
+        // *any* candidates, the post-splash mode is the picker — that's
         // the "lovely discovery" surface. Splash shows first, but never
         // beyond `SPLASH_MIN` (`splash_until` sets that deadline); a picker
         // landing dismisses it straight away — `conn_state` stays
@@ -1101,7 +1101,15 @@ impl App {
         // confirmed), so the fast-resolve early-dismiss branch would
         // otherwise never fire and the operator would sit through the full
         // minimum before reaching the surface they actually need.
-        let show_picker = dsn.is_none() && data_source_picks.len() >= 2;
+        //
+        // One candidate lands here too, and that is the point: everything
+        // in `data_source_picks` was read out of the working tree, so a
+        // repo the operator didn't write chose the host. A lone candidate
+        // used to be auto-connected before the TUI even drew, which made
+        // `git clone && cd && pgman` enough to open a connection (and,
+        // before the sibling fixes, to hand over `$PGPASSWORD`). Nothing
+        // discovered connects without a keypress now.
+        let show_picker = dsn.is_none() && !data_source_picks.is_empty();
         let mode = if show_picker {
             Mode::ConnPick
         } else {
