@@ -86,7 +86,7 @@ All three paths run through the same picker.
 
 ## The pick list
 
-pgman opens `Mode::LogPick` with a one-line triage summary up top:
+pgman opens the pick list with a one-line triage summary up top:
 
 ```
 3 queries · 1 N+1 cluster (2 of 3 repeated) · view: all queries (press `c` to toggle)
@@ -120,12 +120,13 @@ among near-identical rows in a longer log:
 ## Load it and run it
 
 `Enter` loads the highlighted query's runnable SQL into the editor, cursor at
-the end, and drops you back into `Mode::Editor` with a `loaded query · N
+the end, and drops you back into the editor with a `loaded query · N
 char(s)` status. From there it's an ordinary pgman query: `F5` runs it (or
-`ctrl-Enter` / `ctrl-J`) through the normal `safety.rs` guard — same
-read-only defaults, same per-database rules — and the result lands in the
-grid like any other statement. `Esc` or `q` from the picker cancels back to
-the editor without loading anything.
+`ctrl-Enter` / `ctrl-J`) through the normal safety guard (see
+[docs/safety-and-privacy.md](safety-and-privacy.md)) — same read-only
+defaults, same per-database rules — and the result lands in the grid like any
+other statement. `Esc` or `q` from the picker cancels back to the editor
+without loading anything.
 
 ## N+1 detection
 
