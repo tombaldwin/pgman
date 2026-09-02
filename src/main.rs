@@ -797,14 +797,24 @@ fn init_logging() {
     let _ = util::ensure_private_dir(&dir);
     let _ = util::ensure_private_dir(&util::data_dir());
     let _ = util::ensure_private_dir(&util::config_dir());
-    let appender = tracing_appender::rolling::never(&dir, "pgman.log");
-    // The appender opens/creates `pgman.log` at construction, at
+    // Daily rolling files (`pgman.log.YYYY-MM-DD`) instead of one
+    // ever-growing file — the tap listeners can log at a bounded but
+    // non-trivial rate (throttled malformed-frame warnings, drop
+    // notices), and an unrolled log is the one place that volume
+    // still accumulates forever.
+    let appender = tracing_appender::rolling::daily(&dir, "pgman.log");
+    // The appender opens/creates today's file at construction, at
     // whatever mode the platform default (umask) gives a new file —
-    // it doesn't know this file must stay owner-only. Repair it here,
-    // and again defensively: a pre-existing log file from before this
-    // hardening landed must also end up `0600`, not just a freshly
-    // created one.
-    chmod_owner_only_if_exists(&dir.join("pgman.log"));
+    // it doesn't know this file must stay owner-only. Repair every
+    // `pgman.log*` in the directory: today's, and any earlier one
+    // from before this hardening landed.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("pgman.log") {
+                chmod_owner_only_if_exists(&entry.path());
+            }
+        }
+    }
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     tracing_subscriber::fmt()
