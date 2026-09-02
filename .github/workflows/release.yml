@@ -215,19 +215,41 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/pgman-*.tar.gz
+      - name: Extract this version's changelog section for the release body
+        run: |
+          set -euo pipefail
+          # `generate_release_notes: true` (the default for
+          # action-gh-release) builds the body from the commit list —
+          # which puts things like "PLAN.md + CHANGELOG: Phase 4 docs
+          # done" on the public release page. The changelog's own
+          # `## [<version>] — <date>` section is the actual release
+          # notes; ci-green already guaranteed it exists for this tag.
+          v="${GITHUB_REF_NAME#v}"
+          awk -v ver="$v" '
+            index($0, "## [" ver "]") == 1 { grab=1; next }
+            grab && index($0, "## ") == 1 { exit }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::extracted an empty changelog section for $v"
+            exit 1
+          fi
       - name: Attach artefacts to release
         uses: softprops/action-gh-release@v3
         with:
           # GITHUB_REF_NAME is the tag, e.g. v0.2.0.
           tag_name: ${{ github.ref_name }}
           name: pgman ${{ github.ref_name }}
+          body_path: release-notes.md
           files: |
             dist/pgman-*.tar.gz
             dist/pgman-*.tar.gz.sha256
           # Don't auto-publish a draft — the maintainer can flip the toggle
           # once they've sanity-checked the artefacts.
           draft: true
-          generate_release_notes: true
+          # Notes come from the changelog section above, not the commit
+          # list — see the extraction step's comment.
+          generate_release_notes: false
 
   crates_io:
     # Publish to crates.io once the maintainer has reviewed the draft
