@@ -6,7 +6,7 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ JDBC tap — 8 query · 0 heartbeat · view: callers · sort: total time · v cycle · Shift-B b┐   │
+│  W┌ JDBC tap — 8 queries · 0 heartbeats · view: callers · sort: total time · v cycle · … ────┐   │
 │  O│   calls    err        p50        p95   fps  caller · last fingerprint                    │   │
 └───│       6      0      450µs      495µs     1  OrderService.loadItem… · select * from order_│───┘
 ┌ re│       1      0      1.8ms      1.8ms     1  OrderService.listOpen… · select id, user_id, │───┐

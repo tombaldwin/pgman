@@ -7,7 +7,7 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
-│  OR┌ JDBC tap — 8 query · 0 heartbeat · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q close ────┐    │
+│  OR┌ JDBC tap — 8 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q close ─┐    │
 └────│   calls        span  txn / conn          caller · fingerprint                                              │────┘
 ┌ res│       6     125.0ms  conn-7#42           OrderService.loadItems:88 · select * from order_items where order…│────┐
 │id  │                                                                                                            │    │

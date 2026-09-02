@@ -7,7 +7,7 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
-│  OR┌ JDBC tap — 8 query · 0 heartbeat · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ───┐    │
+│  OR┌ JDBC tap — 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ┐    │
 └────│    duration       rows  app                   sql / kind                                                   │────┘
 ┌ res│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?      │────┐
 │id  │       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │

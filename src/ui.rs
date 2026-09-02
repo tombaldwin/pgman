@@ -555,6 +555,37 @@ pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     String::new()
 }
 
+/// `"1 query"` / `"8 queries"` — a count and its noun, pluralised.
+/// The crate's other count labels use the `row(s)` idiom; that reads
+/// badly in a panel title next to a second count, so titles use this
+/// instead — but consistently, every count in the title or none.
+/// Pure / testable.
+pub(crate) fn count_label(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Fit a ` · `-joined panel title into `width` columns by dropping
+/// whole trailing segments, marking the cut with a trailing `…`
+/// segment. A title left to the border gets cut mid-word instead
+/// (`… Shift-B base┐`), which reads as a rendering fault rather than
+/// as "there is more here". The first segment — the panel's identity
+/// and its counts — is kept even when it alone has to be ellipsised.
+/// Pure / testable.
+pub(crate) fn fit_title(title: &str, width: usize) -> String {
+    const SEP: &str = " · ";
+    if title.chars().count() <= width {
+        return title.to_string();
+    }
+    let items: Vec<&str> = title.split(SEP).collect();
+    for kept in (1..items.len()).rev() {
+        let candidate = format!("{}{SEP}…", items[..kept].join(SEP));
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+    }
+    crate::grid::truncate_cell(items[0], width)
+}
+
 /// Middle-ellipsise `s` down to `target_len` chars, keeping both ends —
 /// `"abc…xyz"` — since for a quoted SQL statement the tail matters as
 /// much as the head (a `WHERE` clause, a trailing `;`). `target_len` is
@@ -1813,24 +1844,18 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
             code,
         )),
         Line::from(""),
-        // Route 2 — pgman-tap (richer context; JAR ships separately)
+        // Route 2 — pgman-tap. Not shipped: no coordinate here, since
+        // the one that used to be printed
+        // (`co.polymorphism:pgman-tap-spring-boot-starter:0.1.0`)
+        // resolves to nothing, and a build file edited to use it fails
+        // six lines before the note saying the JAR is in development.
+        Line::from(Span::styled("Route 2: pgman-tap — not yet released", title)),
         Line::from(Span::styled(
-            "Route 2: pgman-tap (richer context — caller / pool / txn)",
-            title,
-        )),
-        Line::from(Span::styled("  add to build.gradle:", muted)),
-        Line::from(Span::styled(
-            "    implementation 'co.polymorphism:pgman-tap-spring-boot-starter:0.1.0'",
-            code,
-        )),
-        Line::from(Span::styled("  add to application.yml:", muted)),
-        Line::from(Span::styled("    pgman.tap.enabled: true", code)),
-        Line::from(Span::styled(
-            "    pgman.tap.endpoint: tcp://localhost:7432",
-            code,
+            "  will add caller, pool and transaction context to each",
+            muted,
         )),
         Line::from(Span::styled(
-            "  (the JAR is in development — Route 1 works today)",
+            "  query. Nothing to install yet — use Route 1 today.",
             muted,
         )),
         Line::from(""),

@@ -32,13 +32,21 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
         String::new()
     };
     let title = format!(
-        " JDBC tap — {} query · {} heartbeat{dropped_suffix} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close ",
-        app.tap_health.query_count, app.tap_health.heartbeat_count,
+        "JDBC tap — {} · {}{dropped_suffix} · view: {view_label}{sort_suffix} · v cycle · Shift-B baseline · s sort · c clear · q close",
+        count_label(app.tap_health.query_count, "query", "queries"),
+        count_label(app.tap_health.heartbeat_count, "heartbeat", "heartbeats"),
     );
+    // Room between the block's two corner glyphs, less the space on
+    // either side of the title text. Without this the border cut the
+    // title mid-word (`… Shift-B base┐`).
+    let title_budget = (popup.width.saturating_sub(4)) as usize;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(title, Style::default().fg(theme.title)));
+        .title(Span::styled(
+            format!(" {} ", fit_title(&title, title_budget)),
+            Style::default().fg(theme.title),
+        ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
