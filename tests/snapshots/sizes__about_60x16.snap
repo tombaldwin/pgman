@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ edit┌ about ───────────────────────────────────────┐─────┐
+│> SEL│                                              │     │
+│  FRO│                                              │     │
+│  WHE│        pgman 0.1.0 · beta · 2026-06-06       │     │
+│  ORD│      installed via a local git checkout      │     │
+└─────│   k9s-style Postgres TUI for Java/AWS shops  │─────┘
+┌ resu│                                              │─────┐
+│id  e│       by Tom Baldwin / Polymorphism Ltd      │     │
+│1   a│          license: MIT OR Apache-2.0          │00   │
+│2   l│                                              │00   │
+│3   g│           esc / enter / A to close           │00   │
+│4   a│                                              │00   │
+│5   e└──────────────────────────────────────────────┘00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   esc / enter / A close · F1 help

@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│>┌ Result diff — A: public.users (6 rows) vs B: public.┐  │
+│ │+1 added   -1 removed   ~1 changed   =4 unchanged    │  │
+│ │                                                     │  │
+│ │  - 2 | linus@example.com | free | 2026-01-09 14:48:…│  │
+└─│  ~ [1] email: ada@example.com → ada+updated@examp…  │──┘
+┌ │  + 7 | nathan@example.com | free | 2026-04-01 00:00…│──┐
+│i│                                                     │  │
+│1│                                                     │0 │
+│3│                                                     │0 │
+│4│                                                     │0 │
+│5└─────────────────────────────────────────────────────┘0 │
+│6   katherine@example.com    pro   2026-03-21 16:40:00+00 │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   diff · +1 -1 ~1 =4

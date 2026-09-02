@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> S┌ schema browser — q / esc close ──────────────────┐   │
+│  F│▼ public  (3)               schema: public        │   │
+│  W│  ▼ order_items  (5 col, 1…                       │   │
+│  O│      · id : bigint NOT NU… 3 table(s)            │   │
+└───│      · order_id : bigint …                       │───┘
+┌ re│      · sku : varchar(40) … enter to expand — the…│───┐
+│id │      · qty : integer NOT …                       │   │
+│1  │      · price_cents : inte…                       │   │
+│2  │      ◆ order_items_pkey                          │   │
+│3  │  ▼ orders  (5 col, 1 cons)                       │   │
+│4  └──────────────────────────────────────────────────┘   │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   expanded all

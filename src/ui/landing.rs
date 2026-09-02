@@ -103,7 +103,11 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
 
     // --- height budget: decide what survives -------------------------
     let key_lines_floor = if two_col { 3 } else { 6 }; // core only
-    let key_lines_with_f8f4 = key_lines_floor + 1; // + F8/F4 row
+                                                       // F8 and F4 share one row in two columns but take one row EACH in
+                                                       // one — budgeting a single row for both meant a 60x16 card drew F8
+                                                       // with F4 clipped off, and 60x17 clipped the `?` line.
+    let f8f4_lines = if two_col { 1 } else { 2 };
+    let key_lines_with_f8f4 = key_lines_floor + f8f4_lines;
     let key_lines_with_help = key_lines_with_f8f4 + 1; // + `?` line
     let recent_len = if app.history.is_empty() {
         0
@@ -139,6 +143,18 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         }
     }
     lines.push(Line::from(""));
+
+    // The card is still up while the FIRST query is in flight (the
+    // grid has no columns yet), and `e write a query` is not what to
+    // do next when a query is already running — nor is any other key
+    // hint on the card. Say what's happening instead.
+    if app.query_running {
+        lines.push(Line::from(vec![
+            Span::raw(HINT_INDENT),
+            Span::styled("running …", muted_style),
+        ]));
+        return lines;
+    }
 
     if two_col {
         // Shared left-column width: indent + key field + widest LEFT
@@ -312,6 +328,12 @@ pub(crate) fn format_databases_line(
         } else {
             break;
         }
+    }
+    if shown == 0 {
+        // Not even one entry fits: `" databases   · +3 more"` is both
+        // wider than the budget it was given and empty of information.
+        // No line at all is the honest answer.
+        return None;
     }
     let not_shown = entries.len() - shown;
     if not_shown > 0 {
@@ -533,6 +555,81 @@ mod tests {
                 "missing {key}: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn one_column_budget_counts_f8_and_f4_as_two_rows() {
+        // 60 columns is one-column layout, where F8 and F4 take a row
+        // each. The budget used to book one row for the pair, so a
+        // 60x16 card drew F8 with F4 clipped off the bottom, and 60x17
+        // clipped the `?` line the same way.
+        let a = app();
+        // Inner height of a 60x16 terminal's start card: header(2) +
+        // six core keys(6) + F8/F4(2) = 10, `?` needs an 11th.
+        for h in [10u16, 11, 12] {
+            let lines = landing_lines(&a, 58, h);
+            let text = plain(&lines);
+            let has_f8 = text.iter().any(|l| l.contains("F8"));
+            let has_f4 = text.iter().any(|l| l.contains("F4"));
+            assert_eq!(
+                has_f8, has_f4,
+                "F8 shown without F4 at height {h}: {text:?}"
+            );
+            assert!(
+                lines.len() <= h as usize,
+                "card is {} rows at height {h}: {text:?}",
+                lines.len()
+            );
+        }
+        // One row short of the pair, both go.
+        let text = plain(&landing_lines(&a, 58, 9));
+        assert!(!text.iter().any(|l| l.contains("F8")), "{text:?}");
+        assert!(!text.iter().any(|l| l.contains("F4")), "{text:?}");
+    }
+
+    #[test]
+    fn format_databases_line_returns_none_when_nothing_fits() {
+        // A budget too small for even the first entry used to yield
+        // `" databases   · +3 more"` — wider than the budget it was
+        // given, and with no database named in it.
+        let dbs = vec![
+            DatabaseInfo {
+                name: "main".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "analytics".into(),
+                size: "300 MB".into(),
+            },
+        ];
+        assert_eq!(format_databases_line(&dbs, "main", 20), None);
+        // And whenever it does return a line, that line fits.
+        for width in 0..60 {
+            if let Some(line) = format_databases_line(&dbs, "main", width) {
+                assert!(
+                    line.chars().count() <= width,
+                    "width {width}: {line:?} is {} chars",
+                    line.chars().count()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn running_query_replaces_the_key_hints() {
+        // The card is still up while the first query is in flight;
+        // `e write a query` is not what to do next then.
+        let mut a = app();
+        a.query_running = true;
+        let text = plain(&landing_lines(&a, 80, 20));
+        assert!(
+            text.iter().any(|l| l.contains("running …")),
+            "expected a running line: {text:?}"
+        );
+        assert!(
+            !text.iter().any(|l| l.contains("write a query")),
+            "key hints should be replaced while a query runs: {text:?}"
+        );
     }
 
     #[test]

@@ -70,7 +70,10 @@ fn dump(buf: &Buffer) -> String {
 // Sizes swept for every screen.
 // ---------------------------------------------------------------
 
-const SIZES: &[(u16, u16)] = &[(80, 24), (100, 30), (120, 40), (200, 50)];
+// 60x16 is the smallest size swept: it is the only one narrow enough
+// to put the start card into its ONE-column layout, which is where its
+// height budget was wrong, and short enough to squeeze every overlay.
+const SIZES: &[(u16, u16)] = &[(60, 16), (80, 24), (100, 30), (120, 40), (200, 50)];
 
 // ---------------------------------------------------------------
 // Generic layout invariants, checked on every render before the
@@ -251,6 +254,23 @@ fn scr_normal_grid() -> App {
     let mut a = base();
     a.mode = Mode::Normal;
     a.grid_state.select(Some(0));
+    a
+}
+
+/// The start card: connected, nothing run yet. `draw_body` picks it
+/// when the grid has never had columns, so the demo grid is cleared.
+fn scr_landing() -> App {
+    let mut a = base();
+    a.mode = Mode::Normal;
+    a.grid = Grid::default();
+    a.grid_view.visible_rows = Vec::new();
+    a.grid_state.select(None);
+    a.last_error = None;
+    // Nothing has been typed either — this is the first screen after
+    // connecting, and the editor's height is what the card has left to
+    // lay itself out in.
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
     a
 }
 
@@ -668,6 +688,11 @@ fn scr_tap_baseline() -> App {
 #[test]
 fn normal_grid() {
     run_sizes("normal_grid", scr_normal_grid);
+}
+
+#[test]
+fn landing() {
+    run_sizes("landing", scr_landing);
 }
 
 #[test]

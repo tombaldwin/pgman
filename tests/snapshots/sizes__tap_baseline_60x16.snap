@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│>┌ JDBC tap — 8 queries · 0 heartbeats · … ────────────┐  │
+│ │baseline captured 0s ago · 3 fingerprint(s) · 8 event│  │
+│ │current ring: 8 event(s) · 0 changed fingerprint(s) (│  │
+│ │                                                     │  │
+└─│no changes since baseline — nothing new, no regressio│──┘
+┌ │                                                     │──┐
+│i│                                                     │  │
+│1│                                                     │  │
+│2│                                                     │  │
+│3│                                                     │  │
+│4└─────────────────────────────────────────────────────┘  │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   tap base…aptured · 3 fingerprint(s) · 8 event(s)

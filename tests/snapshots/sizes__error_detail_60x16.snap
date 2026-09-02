@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                      │
+│  F┌ error detail — F2 / esc / q close ──────────────┐    │
+│  W│ ERROR · SQLSTATE 23505                          │    │
+│  O│                                                 │    │
+└───│    message: duplicate key value violates uniqu  │────┘
+┌ re│             e constraint "users_email_key"      │────┐
+│id │     detail: Key (email)=(ada@example.com) alre  │    │
+│1  │             ady exists.                         │0   │
+│2  │      where: SQL statement "INSERT INTO users (  │0   │
+│3  └─────────────────────────────────────────────────┘0   │
+│4   alan@example.com       team  2026-02-17 19:05:00+00   │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   ⚠ duplicate ke…s_email_key" · F2 detail
