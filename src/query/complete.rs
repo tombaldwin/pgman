@@ -23,8 +23,15 @@ use crate::query::schema::SchemaCache;
 use crate::query::vocabulary::{
     continuations, AGGREGATE_FUNCTIONS, DROP_CONTINUATIONS, EXPLAIN_OPTIONS, GUC_PARAMETERS,
     GUC_VALUES, JOIN_VARIANTS, PREDICATE_OPERATORS, SCALAR_FUNCTIONS, STATEMENT_KEYWORDS,
-    TYPE_NAMES, VACUUM_OPTIONS, WINDOW_FUNCTIONS,
+    TOP_LEVEL_KEYWORDS, TYPE_NAMES, VACUUM_OPTIONS, WINDOW_FUNCTIONS,
 };
+
+/// Keyword candidates require at least this many prefix characters —
+/// below it, virtually every keyword in the vocabulary starts with the
+/// same one or two letters and the popup would be noise rather than
+/// help. Identifiers (columns/tables/aliases) have no such floor; this
+/// only gates [`CandidateKind::Keyword`] output.
+const MIN_KEYWORD_PREFIX_CHARS: usize = 2;
 
 /// The partial identifier the cursor is inside (or immediately after).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,7 +398,7 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
     let stmt = current_statement(buf, cursor);
     let select_aliases = crate::query::select_list::resolve_select_columns(stmt, schema);
 
-    let cands = candidates_for_in_context(
+    let mut cands = candidates_for_in_context(
         &id,
         &classification.ctx,
         classification.write_target.as_ref(),
@@ -400,6 +407,48 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
         &select_aliases,
         schema,
     );
+    // Generic top-level keyword layer. Offers the flat "muscle memory"
+    // SQL vocabulary (SELECT/FROM/WHERE/…, common functions) whenever
+    // the operator is typing an unqualified word of at least
+    // `MIN_KEYWORD_PREFIX_CHARS` characters at a position the clause
+    // grammar doesn't specially recognise (`StatementStart` — the
+    // common case, buffer start or right after `;` — and `Unknown`,
+    // its fallback for syntax the grammar can't classify). Deliberately
+    // NOT applied inside the grammar's other, narrower contexts —
+    // `DropTarget` and friends intentionally omit clause words like
+    // WHERE/JOIN because they don't apply there, and this layer must
+    // not leak them back in. Always appended AFTER whatever
+    // identifier/context candidates already matched, so a real schema
+    // object (e.g. a table literally named `selections`) outranks the
+    // SELECT keyword for prefix `sel`. Never offered once a `.`
+    // qualifier is in play — `u.sel` is asking for a column, not a
+    // keyword.
+    if id.qualifier.is_none()
+        && id.prefix.chars().count() >= MIN_KEYWORD_PREFIX_CHARS
+        && matches!(
+            classification.ctx,
+            ClauseContext::StatementStart | ClauseContext::Unknown
+        )
+    {
+        let mut seen: std::collections::BTreeSet<String> = cands
+            .iter()
+            .map(|c| c.display.to_ascii_uppercase())
+            .collect();
+        for kw in TOP_LEVEL_KEYWORDS
+            .iter()
+            .filter(|kw| starts_with_ci(kw, &id.prefix))
+        {
+            if seen.insert(kw.to_ascii_uppercase()) {
+                let text = case_match(kw, &id.prefix);
+                cands.push(Candidate {
+                    display: text.clone(),
+                    insert: text,
+                    kind: CandidateKind::Keyword,
+                    context: None,
+                });
+            }
+        }
+    }
     if !cands.is_empty() {
         return cands;
     }
@@ -892,12 +941,28 @@ fn candidates_for_in_context(
             out
         }
 
-        // Top of statement — operator is typing a verb. Offer SQL
-        // keywords; the unusual `schema.|` case at statement start
-        // still routes through the qualified path so it's not dead.
+        // Top of statement — operator is typing a verb (or, just as
+        // often, the start of a table/schema name they intend to
+        // qualify shortly). Identifiers come first — a real table
+        // named e.g. `selections` should outrank the SELECT keyword
+        // for prefix `sel` — then SQL keywords. Skipped for an EMPTY
+        // prefix (bare Tab on a blank buffer): that's the operator
+        // asking "show me everything I can start with", which stays
+        // keywords-only exactly as before — dumping every table name
+        // in the schema on the very first Tab would bury it. The
+        // unusual `schema.|` case at statement start still routes
+        // through the qualified path so it's not dead.
         ClauseContext::StatementStart => match id.qualifier.as_deref() {
             Some(q) => candidates_for_qualified(q, &id.prefix, in_scope, schema),
-            None => candidates_keywords(&id.prefix),
+            None => {
+                let mut out = if id.prefix.is_empty() {
+                    Vec::new()
+                } else {
+                    candidates_tables_and_schemas(&id.prefix, schema)
+                };
+                out.extend(candidates_keywords(&id.prefix));
+                out
+            }
         },
 
         // Table-reference position (FROM / JOIN / INSERT INTO target /
@@ -1023,6 +1088,17 @@ fn columns_of(table: &QualifiedTable, prefix: &str, schema: &SchemaCache) -> Vec
 }
 
 fn candidates_keywords(prefix: &str) -> Vec<Candidate> {
+    // Below the floor — but NOT an empty prefix, which is the
+    // operator hitting Tab on a blank buffer to browse the whole verb
+    // list, a deliberate "show me everything" gesture that predates
+    // (and is orthogonal to) this floor. A single stray character
+    // (`s`) is different: every DDL/DML verb is still in the running
+    // (SELECT, SET, SHOW, SAVEPOINT, …) so the popup would be all
+    // noise. See `MIN_KEYWORD_PREFIX_CHARS`.
+    let n = prefix.chars().count();
+    if n > 0 && n < MIN_KEYWORD_PREFIX_CHARS {
+        return Vec::new();
+    }
     STATEMENT_KEYWORDS
         .iter()
         .filter(|kw| starts_with_ci(kw, prefix))
@@ -1738,6 +1814,118 @@ mod tests {
         let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
         assert!(labels.contains(&"SELECT"), "got: {labels:?}");
         assert!(cands.iter().all(|c| c.kind == CandidateKind::Keyword));
+    }
+
+    // -- top-level keyword layer (query::vocabulary::TOP_LEVEL_KEYWORDS) --
+
+    #[test]
+    fn sel_offers_select_keyword() {
+        let cache = build_cache();
+        let cands = candidates_for("sel", 3, &cache);
+        assert!(
+            cands
+                .iter()
+                .any(|c| c.display.eq_ignore_ascii_case("SELECT")),
+            "got: {cands:?}"
+        );
+    }
+
+    #[test]
+    fn lowercase_sel_yields_lowercase_select() {
+        let cache = build_cache();
+        let cands = candidates_for("sel", 3, &cache);
+        let labels: Vec<&str> = cands.iter().map(|c| c.display.as_str()).collect();
+        assert!(labels.contains(&"select"), "got: {labels:?}");
+        assert!(!labels.contains(&"SELECT"), "got: {labels:?}");
+    }
+
+    #[test]
+    fn qualified_prefix_never_offers_keywords() {
+        let cache = build_cache();
+        // `u.` — a `.` qualifier is in play, so no keyword should ever
+        // surface here even though the columns offered (id/email/name)
+        // don't collide with any keyword text.
+        let cands = candidates_for("SELECT u. FROM users u", 9, &cache);
+        assert!(!cands.is_empty(), "expected columns of users");
+        assert!(
+            cands.iter().all(|c| c.kind != CandidateKind::Keyword),
+            "got: {cands:?}"
+        );
+    }
+
+    #[test]
+    fn single_char_prefix_offers_no_keywords() {
+        let cache = build_cache();
+        // `s` alone — below the 2-char floor. `build_cache()` has no
+        // table/column starting with `s` either, so nothing should
+        // surface at all.
+        let cands = candidates_for("s", 1, &cache);
+        assert!(cands.is_empty(), "got: {cands:?}");
+    }
+
+    #[test]
+    fn table_named_selections_outranks_select_keyword() {
+        let mut cache = build_cache();
+        cache.tables.push(TableMeta {
+            schema: "public".into(),
+            name: "selections".into(),
+        });
+        let cands = candidates_for("sel", 3, &cache);
+        let table_pos = cands
+            .iter()
+            .position(|c| c.kind == CandidateKind::Table && c.display == "selections")
+            .expect("selections table candidate");
+        let keyword_pos = cands
+            .iter()
+            .position(|c| {
+                c.kind == CandidateKind::Keyword && c.display.eq_ignore_ascii_case("SELECT")
+            })
+            .expect("SELECT keyword candidate");
+        assert!(
+            table_pos < keyword_pos,
+            "expected identifier before keyword, got: {cands:?}"
+        );
+    }
+
+    #[test]
+    fn top_level_keyword_min_two_chars_before_offering() {
+        let cache = build_cache();
+        // `WHERE` isn't in `STATEMENT_KEYWORDS` (the narrow
+        // statement-start list) — it only comes from the new flat
+        // `TOP_LEVEL_KEYWORDS` layer, so this exercises that layer
+        // specifically, including its length floor.
+        let one_char = candidates_for("w", 1, &cache);
+        assert!(
+            !one_char
+                .iter()
+                .any(|c| c.display.eq_ignore_ascii_case("WHERE")),
+            "got: {one_char:?}"
+        );
+        let two_chars = candidates_for("wh", 2, &cache);
+        assert!(
+            two_chars
+                .iter()
+                .any(|c| c.display.eq_ignore_ascii_case("WHERE")),
+            "got: {two_chars:?}"
+        );
+    }
+
+    #[test]
+    fn top_level_keyword_layer_offers_clause_words_not_in_statement_keywords() {
+        let cache = build_cache();
+        // JOIN / GROUP BY / TABLE / INDEX are all in TOP_LEVEL_KEYWORDS
+        // but absent from STATEMENT_KEYWORDS — proves the new flat
+        // layer, not the pre-existing statement-start list, is what's
+        // surfacing them.
+        let cands = candidates_for("JO", 2, &cache);
+        assert!(cands.iter().any(|c| c.display == "JOIN"), "got: {cands:?}");
+        let cands = candidates_for("GR", 2, &cache);
+        assert!(
+            cands.iter().any(|c| c.display == "GROUP BY"),
+            "got: {cands:?}"
+        );
+        let cands = candidates_for("TAB", 3, &cache);
+        assert!(cands.iter().any(|c| c.display == "TABLE"), "got: {cands:?}");
     }
 
     #[test]

@@ -499,6 +499,87 @@ pub mod continuations {
     pub const AFTER_VALUES: &[&str] = &["RETURNING", "ON CONFLICT"];
 }
 
+/// Flat "muscle memory" keyword list for [`crate::query::complete`]'s
+/// generic top-level completion layer — the SQL keywords, clauses, and
+/// a handful of common functions an operator reaches for constantly,
+/// offered as `CandidateKind::Keyword` regardless of the fine-grained
+/// clause classification. This is deliberately independent of (and
+/// overlaps with) the narrower per-clause lists above: those give
+/// precise, grammar-aware suggestions in their own position; this one
+/// is the pgcli/psql-style catch-all so `sel|` always offers `SELECT`
+/// even in a spot the clause grammar doesn't specially recognise.
+///
+/// Applied only to unqualified prefixes of 2+ characters, and always
+/// ranked after whatever schema-derived candidates already matched —
+/// see `query::complete::candidates_for`.
+pub const TOP_LEVEL_KEYWORDS: &[&str] = &[
+    // Query verbs / clauses
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "JOIN",
+    "LEFT",
+    "INNER",
+    "ON",
+    "GROUP BY",
+    "ORDER BY",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "INSERT INTO",
+    "VALUES",
+    "UPDATE",
+    "SET",
+    "DELETE",
+    "RETURNING",
+    "WITH",
+    "AS",
+    // Predicate connectives
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "IS",
+    "NULL",
+    "LIKE",
+    "ILIKE",
+    "BETWEEN",
+    "DISTINCT",
+    "UNION",
+    // CASE expression
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+    // Plan / transaction / DDL
+    "EXPLAIN",
+    "ANALYZE",
+    "BEGIN",
+    "COMMIT",
+    "ROLLBACK",
+    "CREATE",
+    "TABLE",
+    "INDEX",
+    "ALTER",
+    "DROP",
+    "TRUNCATE",
+    // Common functions
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+    "NOW",
+    "COALESCE",
+    "NULLIF",
+    "LOWER",
+    "UPPER",
+    "LENGTH",
+    "DATE_TRUNC",
+    "EXTRACT",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +610,7 @@ mod tests {
             continuations::AFTER_ORDER_OR_GROUP,
             continuations::AFTER_UPDATE_ASSIGN,
             continuations::AFTER_VALUES,
+            TOP_LEVEL_KEYWORDS,
         ];
         for table in uppercase_tables {
             for word in *table {
@@ -593,6 +675,7 @@ mod tests {
             ("AFTER_ORDER_OR_GROUP", continuations::AFTER_ORDER_OR_GROUP),
             ("AFTER_UPDATE_ASSIGN", continuations::AFTER_UPDATE_ASSIGN),
             ("AFTER_VALUES", continuations::AFTER_VALUES),
+            ("TOP_LEVEL_KEYWORDS", TOP_LEVEL_KEYWORDS),
         ];
         for (label, table) in labelled {
             let mut seen = std::collections::BTreeSet::new();
