@@ -53,9 +53,10 @@
   into the confirm prompt: `y`/`Y` runs it, `n`/`N`/`Esc` cancels.
   A `Block`-guarded statement never reaches this prompt — it's
   refused outright with an error, and the only way past it is to
-  change the guard in `safety.toml`. A multi-statement script takes
-  the *most restrictive* guard across every statement in it, and
-  shows a per-kind summary in the confirm prompt.
+  change the guard in `~/.config/pgman/safety.toml` (see "Changing a
+  guard" below). A multi-statement script takes the *most
+  restrictive* guard across every statement in it, and shows a
+  per-kind summary in the confirm prompt.
 - **Statement splitting, and what happens when it can't be trusted.**
   The script is split by one lexer (`safety::scan`), shared by the
   splitter and the comment stripper so the two cannot disagree. It
@@ -90,8 +91,9 @@
   proceeds. `Guard::Confirm` is refused unless `--yes` is passed.
   `Guard::Block` is refused **regardless of `--yes`** — the only way
   to permit a blocked statement in batch mode is to change its guard
-  to `confirm` in `safety.toml` first. A safe leading statement does
-  not excuse a later one in the same script; the first refusal wins.
+  to `confirm` in `~/.config/pgman/safety.toml` first (see "Changing
+  a guard" below). A safe leading statement does not excuse a later
+  one in the same script; the first refusal wins.
   The same split-verification and run-what-was-checked rules apply here
   as in the editor.
 - **Optional pre-flight cost preview.** When
@@ -102,6 +104,32 @@
 - **This is a client-side guard rail, not a substitute for
   least-privilege database roles** — see `SECURITY.md`, which this
   document defers to for the vulnerability-reporting process.
+
+### Changing a guard
+
+Your personal guard rails live in `~/.config/pgman/safety.toml`
+(honouring `XDG_CONFIG_HOME` — see
+[docs/configuration.md](configuration.md)). It doesn't exist by
+default; create it to change any guard from its built-in value.
+
+For example, an unqualified `DELETE` (no `WHERE`) is `block`ed by
+default — nothing gets past the block, `--yes` included. To allow it
+past a confirm prompt instead, for every database:
+
+```toml
+[default.guards]
+delete_without_where = "confirm"
+```
+
+Or for one database only, leaving your personal default alone:
+
+```toml
+[databases.production.guards]
+delete_without_where = "confirm"
+```
+
+See [docs/configuration.md](configuration.md#configpgmansafetytoml)
+for every field and its built-in default.
 
 ## Running pgman inside a checkout you did not write
 
