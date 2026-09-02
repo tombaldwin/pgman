@@ -2005,14 +2005,14 @@ fn conn_pick_esc_is_a_noop_does_not_quit() {
         DataSourcePick {
             name: "a".into(),
             origin: "test",
-            dsn: dsn.clone(),
+            dsn: Some(dsn.clone()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         },
         DataSourcePick {
             name: "b".into(),
             origin: "test",
-            dsn,
+            dsn: Some(dsn),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         },
@@ -2033,7 +2033,7 @@ fn conn_pick_enter_refuses_a_pick_with_an_unresolved_placeholder() {
     let pick = DataSourcePick {
         name: "spring.datasource (application) — unresolved ${DB_USER}".into(),
         origin: "Spring",
-        dsn: Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap(),
+        dsn: Some(Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap()),
         unresolved: vec!["DB_USER".to_string()],
         unresolved_host: Vec::new(),
     };
@@ -2066,7 +2066,7 @@ fn conn_pick_enter_refuses_a_placeholder_in_the_host_with_its_own_message() {
     let pick = DataSourcePick {
         name: "spring.datasource (application) — unresolved ${DB_HOST}".into(),
         origin: "Spring",
-        dsn: Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap(),
+        dsn: Some(Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: vec!["DB_HOST".to_string()],
     };
@@ -2088,11 +2088,33 @@ fn conn_pick_enter_refuses_a_placeholder_in_the_host_with_its_own_message() {
 }
 
 #[test]
+fn conn_pick_enter_refuses_a_pick_with_no_usable_dsn() {
+    // Discovery keeps a pick whose URL wouldn't parse (a placeholder in
+    // the port, say) so the operator can see it. Enter on it must
+    // explain itself, not silently do nothing.
+    let pick = DataSourcePick {
+        name: "spring.datasource (application)".into(),
+        origin: "Spring",
+        dsn: None,
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    a.mode = Mode::ConnPick;
+    a.conn_pick.index = 0;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::ConnPick);
+    assert!(matches!(a.conn_state, ConnState::Disconnected));
+    let err = a.last_error.as_deref().expect("refusal message");
+    assert!(err.contains("no usable connection URL"), "got: {err}");
+}
+
+#[test]
 fn backslash_c_by_name_refuses_a_pick_with_an_unresolved_placeholder() {
     let pick = DataSourcePick {
         name: "staging".into(),
         origin: "Spring",
-        dsn: Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap(),
+        dsn: Some(Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap()),
         unresolved: vec!["DB_USER".to_string()],
         unresolved_host: Vec::new(),
     };
@@ -4695,7 +4717,7 @@ fn backslash_c_with_no_arg_opens_picker() {
     let pick = DataSourcePick {
         name: "primary".into(),
         origin: "test",
-        dsn: crate::conn::Dsn::parse("postgres://app@db/x").unwrap(),
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     };
@@ -4712,7 +4734,7 @@ async fn backslash_c_with_matching_name_connects_to_that_pick() {
     let pick = DataSourcePick {
         name: "staging".into(),
         origin: "test",
-        dsn: crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap(),
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     };
@@ -5100,7 +5122,7 @@ fn start_connection_change_with_picks_opens_picker() {
     let pick = DataSourcePick {
         name: "primary".into(),
         origin: "test",
-        dsn: Dsn::parse("postgres://app@db/x").unwrap(),
+        dsn: Some(Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     };
@@ -5437,14 +5459,14 @@ fn preload_log_overrides_conn_pick_startup_mode() {
         DataSourcePick {
             name: "a".into(),
             origin: "project",
-            dsn: Dsn::parse("postgres://localhost/a").unwrap(),
+            dsn: Some(Dsn::parse("postgres://localhost/a").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         },
         DataSourcePick {
             name: "b".into(),
             origin: "project",
-            dsn: Dsn::parse("postgres://localhost/b").unwrap(),
+            dsn: Some(Dsn::parse("postgres://localhost/b").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
         },
@@ -5492,7 +5514,7 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
     a.conn_pick.picks.push(DataSourcePick {
         name: "prod".into(),
         origin: "project",
-        dsn: crate::conn::Dsn::parse("postgres://app@prod-db:5432/main").unwrap(),
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@prod-db:5432/main").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     });

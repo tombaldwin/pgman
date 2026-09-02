@@ -383,7 +383,11 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
                 origin = pick.origin,
                 w = origin_width,
                 name = pick.name,
-                dsn = pick.dsn.redacted(),
+                dsn = pick
+                    .dsn
+                    .as_ref()
+                    .map(|d| d.redacted())
+                    .unwrap_or_else(|| "(no usable connection URL)".to_string()),
             );
             Line::from(Span::styled(body, style))
         })

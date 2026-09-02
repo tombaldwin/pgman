@@ -600,7 +600,13 @@ pub struct DataSourcePick {
     /// Spring pick with entries in `unresolved`, the url/username may
     /// still carry the literal `${NAME}` text — connecting is refused
     /// before this DSN is used (see `App::refuse_if_unresolved`).
-    pub dsn: Dsn,
+    ///
+    /// `None` when the discovered URL couldn't be parsed into a DSN at
+    /// all — an unresolved placeholder standing where the port or the
+    /// whole URL should be (`url: ${SPRING_DATASOURCE_URL}`). The pick
+    /// is still listed, marked, so the operator sees what was found and
+    /// why it can't be used; it used to vanish with no message.
+    pub dsn: Option<Dsn>,
     /// `${NAME}` placeholder bodies that discovery couldn't resolve
     /// from the environment. Non-empty means this pick must not be
     /// connected to as-is (`App::refuse_if_unresolved`).

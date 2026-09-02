@@ -565,10 +565,15 @@ impl App {
                     if self.refuse_if_unresolved(&pick) {
                         return;
                     }
+                    // `refuse_if_unresolved` already rejected a pick with
+                    // no DSN, so this is always `Some`.
+                    let Some(dsn) = pick.dsn.clone() else {
+                        return;
+                    };
                     // Re-resolve safety profile against the *picked* db name
                     // — the placeholder in App::new used the empty default.
                     let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
-                    self.connect_to_pick(pick.dsn, origin);
+                    self.connect_to_pick(dsn, origin);
                 }
             }
             _ => {}
