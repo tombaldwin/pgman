@@ -19,6 +19,7 @@ pub mod highlight;
 pub mod jdbc;
 pub mod json_cell;
 pub mod lint;
+pub mod logdetect;
 pub mod nplus1;
 pub mod params;
 pub mod pglog;

@@ -5065,3 +5065,27 @@ fn bootstrap_result_populates_databases_and_leaves_grid_empty() {
     );
     assert!(a.grid.rows.is_empty());
 }
+// --- Pasted-log detection: on_paste status hint ---
+
+#[test]
+fn paste_of_hibernate_log_sets_reconstruct_hint_status() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.on_paste("[main] org.hibernate.SQL : select 1".to_string());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("looks like a hibernate log · ctrl-l / F8 to reconstruct queries")
+    );
+}
+
+#[test]
+fn paste_of_plain_sql_does_not_set_reconstruct_hint() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.on_paste("select * from users where id = $1".to_string());
+    assert_ne!(
+        a.last_status.as_deref(),
+        Some("looks like a pglog log · ctrl-l / F8 to reconstruct queries")
+    );
+}
+
