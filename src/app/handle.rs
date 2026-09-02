@@ -6,7 +6,9 @@ impl App {
     /// at startup and lives independently of the DB connection,
     /// so events arriving across a reconnect are still meaningful.
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
-        if !matches!(msg, AppMsg::TapEvent { .. }) && msg.generation() != self.generation {
+        if !matches!(msg, AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_))
+            && msg.generation() != self.generation
+        {
             tracing::debug!(
                 "dropping stale message from generation {}",
                 msg.generation()
@@ -412,6 +414,10 @@ impl App {
                 }
             }
             AppMsg::TapEvent { event } => self.on_tap_event(event),
+            AppMsg::UpdateCheck(latest) => {
+                self.update_check_done = true;
+                self.update_available = latest;
+            }
         }
     }
 

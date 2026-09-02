@@ -363,4 +363,23 @@ impl App {
             let _ = tx.send(AppMsg::SessionsLoaded { generation, result });
         });
     }
+
+    /// Fire the crates.io update check. Production spawns a real
+    /// `tokio::spawn` awaiting `update_check::check_async()`; when a
+    /// test has injected `update_check_spawn`, that hook runs
+    /// instead — synchronously if the test wants it to be, so
+    /// `run_with`'s ordering (spawn strictly after the first draw)
+    /// is directly observable without touching the network.
+    pub(super) fn spawn_update_check(&self) {
+        let tx = self.msg_tx.clone();
+        match &self.update_check_spawn {
+            Some(hook) => hook(tx),
+            None => {
+                tokio::spawn(async move {
+                    let latest = crate::update_check::check_async().await;
+                    let _ = tx.send(AppMsg::UpdateCheck(latest));
+                });
+            }
+        }
+    }
 }

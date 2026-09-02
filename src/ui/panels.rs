@@ -41,6 +41,35 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )));
+    // Install channel + update-availability detail. The channel is
+    // always known (pure, path-based detection); the update line
+    // only appears once the crates.io check has actually landed —
+    // "up to date" needs a completed check to say honestly, and
+    // showing nothing beforehand is more honest than a guess.
+    let channel = crate::update_check::detect_install_channel();
+    lines.push(Line::from(Span::styled(
+        format!("installed via {}", channel.label()),
+        Style::default().fg(theme.muted),
+    )));
+    match (&app.update_available, app.update_check_done) {
+        (Some(update), _) => {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "update available: {} — {}",
+                    update.version,
+                    channel.upgrade_command()
+                ),
+                Style::default().fg(theme.accent),
+            )));
+        }
+        (None, true) => {
+            lines.push(Line::from(Span::styled(
+                "up to date",
+                Style::default().fg(theme.muted),
+            )));
+        }
+        (None, false) => {}
+    }
     lines.push(Line::from(Span::styled(
         env!("CARGO_PKG_DESCRIPTION"),
         Style::default().fg(theme.text),
@@ -62,10 +91,14 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
             .add_modifier(Modifier::ITALIC),
     )));
 
-    // Card sized to fit the elephant art width plus a comfortable border /
-    // padding budget, and tall enough for all the text lines below it.
+    // Card sized to fit the elephant art width (or the longest text
+    // line — the update-command line can run past the art width,
+    // especially for a Checkout install's `git … && cargo …` line)
+    // plus a comfortable border / padding budget, tall enough for
+    // every line below it.
     let _ = rows_n; // sprite already accounted for inside `lines`
-    let width = (art_w + 4).max(48).min(area.width);
+    let text_w = lines.iter().map(Line::width).max().unwrap_or(0) as u16;
+    let width = (art_w.max(text_w) + 4).max(48).min(area.width);
     let height = (lines.len() as u16 + 4).min(area.height);
     let popup = centered(area, width, height);
     f.render_widget(Clear, popup);

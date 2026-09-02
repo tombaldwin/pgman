@@ -19,10 +19,19 @@ struct Cli {
     #[arg(long, default_value = "dark")]
     theme: String,
 
-    /// Pull the source repo and reinstall via cargo, then exit. Requires that
-    /// pgman was installed from a local path (`cargo install --path …`).
+    /// Upgrade this install in place, then exit. Works for a local git
+    /// checkout (`git pull` + `cargo install --path .`), a `cargo install`
+    /// install, and a Homebrew install; for anything else (a standalone
+    /// binary) it prints the GitHub releases page instead.
     #[arg(long)]
     upgrade: bool,
+
+    /// Skip the startup check for a newer pgman release on crates.io.
+    /// Same effect as setting `PGMAN_NO_UPDATE_CHECK` (any value). Without
+    /// either, pgman makes at most one request to crates.io every six
+    /// hours, sending only the running version and a user-agent string.
+    #[arg(long)]
+    no_update_check: bool,
 
     /// Run against a hand-crafted synthetic dataset — no database,
     /// no network, no disk writes. For screenshots / the README
@@ -238,6 +247,11 @@ async fn main() -> anyhow::Result<()> {
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
     let mut application = app::App::new(theme, dsn, data_source_picks, safety_config);
     application.dsn_origin = dsn_origin;
+    // Update check: opt-out via --no-update-check or the env var.
+    // (--demo and --batch never reach here — --demo builds its own
+    // App with the check disabled, --batch exits before the TUI.)
+    application.update_check_enabled =
+        !cli.no_update_check && std::env::var_os("PGMAN_NO_UPDATE_CHECK").is_none();
     // Restore the editor draft from the last session (best-effort).
     // Cursor lands at the end so the operator can keep typing.
     if let Some(draft) = app::load_draft() {

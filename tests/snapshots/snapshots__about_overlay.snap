@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 206
 expression: dump(&buf)
 ---
  pgman │ test  connected ·┌ about ───────────────────────────────────────┐
@@ -24,9 +25,11 @@ expression: dump(&buf)
 │                         │                             ██████           │                         │
 │                         │                                              │                         │
 │                         │        pgman 0.1.0 · beta · 2026-06-06       │                         │
+│                         │      installed via a local git checkout      │                         │
 │                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
 │                         │                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
+│                         │                                              │                         │
 └─────────────────────────│                                              │─────────────────────────┘
  RO   esc / enter / A clos└──────────────────────────────────────────────┘

@@ -30,6 +30,10 @@ pub fn app(theme: Theme) -> App {
     let dsn = Dsn::parse("postgres://demo@localhost:5432/shop").ok();
     let mut a = App::new(theme, dsn, Vec::new(), SafetyConfig::default());
     a.demo = true;
+    // Demo runs are for screenshots / the README gif — no network,
+    // no disk writes, and every frame identical. An update check
+    // would violate all three.
+    a.update_check_enabled = false;
     a.dsn_origin = Some("--demo (synthetic data)".into());
     a.conn_state = ConnState::Connected {
         server_version: "16.2 (demo)".into(),

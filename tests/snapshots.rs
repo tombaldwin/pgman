@@ -99,6 +99,19 @@ fn landing_after_connect() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// The header shows a `⬆ <version>` badge, after the connection
+/// state, when `update_available` is set.
+#[test]
+fn header_shows_update_badge_when_available() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.update_available = Some(pgman::update_check::LatestRelease {
+        version: "0.3.0".into(),
+    });
+    let buf = render(&mut a, 80, 16);
+    insta::assert_snapshot!(dump(&buf));
+}
+
 /// A query that legitimately returns zero rows must still show
 /// `(no rows)`, not the start card — `Grid.columns` being non-empty is
 /// what tells "ran a query, got nothing" apart from "nothing run yet".
@@ -185,7 +198,11 @@ fn help_overlay() {
 fn about_overlay() {
     let mut a = settle_app();
     a.mode = Mode::About;
-    let buf = render(&mut a, 100, 28);
+    // One row taller than the old 100x28: the overlay now carries an
+    // "installed via …" line under the version, and this height is
+    // exactly tall enough to show it without clipping the license
+    // line below it.
+    let buf = render(&mut a, 100, 30);
     insta::assert_snapshot!(dump(&buf));
 }
 

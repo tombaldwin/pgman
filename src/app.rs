@@ -1037,6 +1037,32 @@ pub struct App {
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
+
+    /// Whether an update check may run this session at all.
+    /// Defaults to `false` — `App::new` alone (as every test harness
+    /// and `--demo` use it) must never make a real network call.
+    /// `main.rs` opts the real interactive run in explicitly, unless
+    /// `--no-update-check` or `PGMAN_NO_UPDATE_CHECK` says otherwise;
+    /// `--batch` never reaches the run loop at all.
+    pub update_check_enabled: bool,
+    /// Result of the crates.io check, once it lands. `None` until
+    /// then, and stays `None` when there's no newer release —
+    /// `update_check_done` is what distinguishes "no update" from
+    /// "haven't checked yet".
+    pub update_available: Option<crate::update_check::LatestRelease>,
+    /// Set once `AppMsg::UpdateCheck` has landed, so the About
+    /// overlay can say "up to date" instead of staying silent.
+    pub update_check_done: bool,
+    /// Injectable spawn hook for the update check. `None` (the
+    /// production default) spawns a real `tokio::spawn` that awaits
+    /// `update_check::check_async()` and reports the result back via
+    /// `msg_tx`. Tests substitute a synchronous recorder so
+    /// `run_with` can prove the check is spawned strictly after the
+    /// first draw without touching the network.
+    update_check_spawn: Option<Box<dyn Fn(UnboundedSender<AppMsg>) + Send + Sync>>,
+    /// Set once the update check has been spawned for this run, so a
+    /// later loop iteration doesn't fire it again.
+    update_check_spawned: bool,
 }
 
 impl App {
@@ -1156,6 +1182,11 @@ impl App {
             statement_timeout_ms,
             msg_tx,
             msg_rx: Some(msg_rx),
+            update_check_enabled: false,
+            update_available: None,
+            update_check_done: false,
+            update_check_spawn: None,
+            update_check_spawned: false,
         }
     }
 
@@ -1207,6 +1238,14 @@ impl App {
         while !self.should_quit {
             self.tick_splash();
             tui.draw(self)?;
+            // Never block the first frame on a network round-trip:
+            // the update check is spawned as its own task right
+            // after the FIRST draw lands, and only once per session
+            // (`update_check_spawned` guards every later iteration).
+            if self.update_check_enabled && !self.update_check_spawned {
+                self.update_check_spawned = true;
+                self.spawn_update_check();
+            }
             let animate = self.wants_animation();
             tokio::select! {
                 ev = events.recv() => {
