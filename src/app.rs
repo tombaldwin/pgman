@@ -863,6 +863,11 @@ pub struct App {
     pub query_running: bool,
     /// Connection-picker state (candidate data sources + selected index).
     pub conn_pick: ConnPickUi,
+    /// A discovered pick that carries an `ssh_tunnel`, waiting on an
+    /// explicit `y`. Set by `connect_to_discovered_pick`, consumed by
+    /// `on_conn_pick_key`; `Some` means the picker draws the tunnel
+    /// confirmation in place of the candidate list.
+    pub pending_tunnel: Option<PendingTunnel>,
 
     /// Help-overlay state (scroll, origin mode, max scroll).
     pub help: HelpUi,
@@ -1190,6 +1195,7 @@ impl App {
                 picks: data_source_picks,
                 index: 0,
             },
+            pending_tunnel: None,
             client: None,
             cancel_dispatcher: None,
             tunnel: None,

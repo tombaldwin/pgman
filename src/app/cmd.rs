@@ -131,7 +131,10 @@ impl App {
                 return;
             };
             let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
-            self.connect_to_pick(dsn, origin);
+            // Same tunnel confirmation as the picker's Enter — naming a
+            // discovered pick is not the same as authorising an `ssh`
+            // session to the bastion it carries.
+            self.connect_to_discovered_pick(dsn, origin);
             return;
         }
         let Some(mut dsn) = self.dsn.clone() else {

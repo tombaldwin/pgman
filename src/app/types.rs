@@ -620,6 +620,23 @@ pub struct DataSourcePick {
     pub unresolved_host: Vec<String>,
 }
 
+/// A discovered connection whose `ssh_tunnel` is waiting on an explicit
+/// confirmation.
+///
+/// Connecting to it means `pgman` shells out to the system `ssh` binary,
+/// with the operator's keys, agent and `~/.ssh/config`, to a bastion
+/// named by a file in the working tree — and it happens *before* any
+/// Postgres traffic, so a connection failure is no protection. The
+/// sibling of `PendingRun`: same y/anything-else shape, different
+/// question. Rendered by the picker (`draw_conn_pick`) rather than
+/// `Mode::Confirm`, since the picker is where the operator already is.
+#[derive(Debug, Clone)]
+pub struct PendingTunnel {
+    pub dsn: Dsn,
+    /// Provenance string for `dsn_origin` once confirmed.
+    pub origin: String,
+}
+
 /// A run waiting on user confirmation (the safety guard returned `Confirm`).
 #[derive(Debug, Clone)]
 pub struct PendingRun {

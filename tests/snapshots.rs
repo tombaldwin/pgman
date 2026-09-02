@@ -12,6 +12,7 @@
 //! layout, not colour. Colour invariants live in
 //! `tests/render.rs` which inspects specific cells.
 
+use crossterm::event::{KeyCode, KeyEvent};
 use pgman::app::{
     compute_visible_rows, App, CompletionCycle, ConnState, DataSourcePick, DatabaseInfo,
     HistorySearchState, Mode, PendingRun, RunKind, WatchState,
@@ -556,6 +557,31 @@ fn connection_picker_row_shows_target_sslmode_and_tunnel() {
     a.splash_until = None;
     a.mode = Mode::ConnPick;
     let buf = render(&mut a, 120, 18);
+    insta::assert_snapshot!(dump(&buf));
+}
+
+/// The tunnel confirmation replaces the candidate list: `y` here is
+/// what spawns `ssh` to a bastion a committed file named.
+#[test]
+fn connection_picker_confirms_a_discovered_ssh_tunnel() {
+    let theme = Theme::default();
+    let picks = vec![DataSourcePick {
+        name: "via-bastion".into(),
+        origin: "project",
+        dsn: Some(
+            Dsn::parse("postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com")
+                .unwrap(),
+        ),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let mut a = App::new(theme, None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(a.pending_tunnel.is_some(), "expected the tunnel prompt");
+    let buf = render(&mut a, 90, 18);
     insta::assert_snapshot!(dump(&buf));
 }
 
