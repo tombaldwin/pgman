@@ -6,7 +6,7 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ JDBC tap — 8 query · 0 heartbeat · view: list · v cycle · Shift-B baseline · s sort · c c┐   │
+│  W┌ JDBC tap — 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · … ───────┐   │
 │  O│    duration       rows  app                   sql / kind                                 │   │
 └───│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHE…│───┘
 ┌ re│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───┐

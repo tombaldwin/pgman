@@ -5,7 +5,7 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ JDBC tap — 8 query · 0 heartbeat · view: baseline · v cycle · Shift-B ┐   │
+│  ┌ JDBC tap — 8 queries · 0 heartbeats · view: baseline · v cycle · … ───┐   │
 │  │baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture    │   │
 │  │current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures│   │
 └──│                                                                       │───┘

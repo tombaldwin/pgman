@@ -500,9 +500,23 @@ fn tap_monitor_empty_state_renders_setup_hint_with_both_routes() {
         rendered.contains("--tap-otlp :4318"),
         "expected pgman flag hint; full render:\n{rendered}"
     );
+    // Route 2's heading must say what it is — unreleased — and must
+    // NOT print a Gradle coordinate: the one that used to be here
+    // (`co.polymorphism:pgman-tap-spring-boot-starter:0.1.0`) resolves
+    // to nothing, so a build file edited to use it fails.
     assert!(
-        rendered.contains("pgman-tap-spring-boot-starter"),
-        "expected Spring Boot starter snippet; full render:\n{rendered}"
+        rendered.contains("Route 2: pgman-tap — not yet released"),
+        "expected the unreleased Route 2 heading; full render:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("pgman-tap-spring-boot-starter"),
+        "a version-pinned coordinate that resolves to nothing was \
+         printed as if it were installable; full render:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("pgman.tap.endpoint"),
+        "an application.yml snippet for an unreleased JAR was printed; \
+         full render:\n{rendered}"
     );
 }
 

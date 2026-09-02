@@ -6,7 +6,7 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shift-B baseline · s so┐   │
+│  W┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · v cycle · … ──────────────────┐   │
 │  O│  state        stmts    fps        span     db-time  pool          txn / conn · last sql  │   │
 └───│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * f…│───┘
 ┌ re│  open             1      1         0µs       1.8ms  primary       (autocommi… · select id│───┐

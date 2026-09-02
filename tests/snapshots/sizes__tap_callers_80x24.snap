@@ -5,7 +5,7 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ JDBC tap — 8 query · 0 heartbeat · view: callers · sort: total time · ┐   │
+│  ┌ JDBC tap — 8 queries · 0 heartbeats · view: callers · … ──────────────┐   │
 │  │   calls    err        p50        p95   fps  caller · last fingerprint │   │
 │  │       6      0      450µs      495µs     1  OrderService… · select * f│   │
 └──│       1      0      1.8ms      1.8ms     1  OrderService… · select id,│───┘

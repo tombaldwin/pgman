@@ -8,7 +8,7 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────┌ JDBC tap — 8 query · 0 heartbeat · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────┐───────┘
+└───────┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────────────────────────┐───────┘
 ┌ result│  state        stmts    fps        span     db-time  pool          txn / conn · last sql                                                                                              │───────┐
 │id  ema│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * from order_items where order_id = ?                                                           │       │
 │1   ada│  open             1      1         0µs       1.8ms  primary       (autocommit · select-orders) · select id, user_id, status from orders where status = ?                             │       │

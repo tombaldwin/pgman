@@ -451,16 +451,29 @@ fn tap_setup_hint_includes_otel_and_pgman_tap_routes() {
         "got:\n{dump}"
     );
     assert!(dump.contains("OTEL_EXPORTER_OTLP_PROTOCOL"), "got:\n{dump}");
-    // Spring Boot starter snippet.
+    // Route 2 is not shipped, so it prints no install instructions at
+    // all: the coordinate that used to be here resolved to nothing,
+    // and an application.yml snippet for a JAR that cannot be fetched
+    // is six lines of work that ends in a build failure.
     assert!(
-        dump.contains("pgman-tap-spring-boot-starter"),
+        dump.contains("Route 2: pgman-tap — not yet released"),
         "got:\n{dump}"
     );
-    assert!(dump.contains("pgman.tap.enabled"), "got:\n{dump}");
-    // Honest about the JAR still being in development.
     assert!(
-        dump.contains("Route 1 works today"),
-        "expected an honest note that Route 2 isn't shipped yet; got:\n{dump}"
+        !dump.contains("pgman-tap-spring-boot-starter"),
+        "a coordinate that resolves to nothing was printed as if it \
+         were installable; got:\n{dump}"
+    );
+    assert!(!dump.contains("pgman.tap.enabled"), "got:\n{dump}");
+    assert!(!dump.contains("pgman.tap.endpoint"), "got:\n{dump}");
+    // Says what it will add, and points at the route that works.
+    assert!(
+        dump.contains("caller, pool and transaction context"),
+        "got:\n{dump}"
+    );
+    assert!(
+        dump.contains("use Route 1 today"),
+        "expected a pointer at the route that works today; got:\n{dump}"
     );
 }
 
@@ -536,4 +549,44 @@ fn short_server_version_cuts_at_the_first_paren_only() {
     // A parenthesis with no leading space is part of the version and
     // stays: nothing is cut that wasn't clearly a build annotation.
     assert_eq!(short_server_version("16.2(demo)"), "16.2(demo)");
+}
+
+#[test]
+fn count_label_pluralises_everything_but_one() {
+    assert_eq!(count_label(0, "query", "queries"), "0 queries");
+    assert_eq!(count_label(1, "query", "queries"), "1 query");
+    assert_eq!(count_label(8, "query", "queries"), "8 queries");
+    assert_eq!(count_label(1, "heartbeat", "heartbeats"), "1 heartbeat");
+}
+
+#[test]
+fn fit_title_returns_a_title_that_already_fits() {
+    assert_eq!(fit_title("JDBC tap · q close", 40), "JDBC tap · q close");
+    // Exactly the budget is a fit, not a cut.
+    assert_eq!(fit_title("abcde", 5), "abcde");
+}
+
+#[test]
+fn fit_title_drops_whole_trailing_segments_and_marks_the_cut() {
+    let title = "JDBC tap — 8 queries · view: list · v cycle · Shift-B baseline · q close";
+    let got = fit_title(title, 40);
+    assert!(got.chars().count() <= 40, "{got:?}");
+    assert!(got.starts_with("JDBC tap — 8 queries"), "{got:?}");
+    assert!(got.ends_with(" · …"), "{got:?}");
+    // Never a word cut in half: every kept segment is intact.
+    assert!(!got.contains("Shift-B base"), "{got:?}");
+}
+
+#[test]
+fn fit_title_ellipsises_the_first_segment_when_even_it_does_not_fit() {
+    // No whole-segment prefix fits — the panel's identity is kept and
+    // ellipsised rather than the title vanishing.
+    let got = fit_title("JDBC tap — 8 queries · q close", 12);
+    assert_eq!(got, "JDBC tap — …");
+    assert!(got.chars().count() <= 12);
+}
+
+#[test]
+fn fit_title_handles_a_zero_budget() {
+    assert_eq!(fit_title("JDBC tap · q close", 0), "");
 }
