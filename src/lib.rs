@@ -34,6 +34,7 @@ pub mod theme;
 pub mod tui;
 pub mod tunnel;
 pub mod ui;
+pub mod update_check;
 pub mod upgrade;
 pub mod util;
 

@@ -37,6 +37,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 arboard = "3"
+# Update check (`src/update_check.rs`): a single crates.io GET, cached
+# and rate-limited to at most once every six hours. rustls-tls keeps
+# it on the same TLS stack as the Postgres connection path (no extra
+# OpenSSL dependency).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # Shared TUI helpers (font/Powerline probe, atomic-write, theme
 # contrast, overlay sizing) — also depended on by ebman so fixes
 # flow between both. Local copies of these used to live under
