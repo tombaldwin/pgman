@@ -160,15 +160,30 @@ impl App {
     }
 
     /// Guard for the connection picker's Enter key and `\c <name>`:
-    /// a pick whose url/username still carries an unresolved
+    /// a pick whose url/username/password still carries an unresolved
     /// `${NAME}` (see `DataSourcePick::unresolved`) would otherwise
     /// hand `connect_and_bootstrap` a DSN with a literal `${NAME}`
     /// hostname — a DNS-shaped failure with no hint that the real
-    /// cause was an unresolved Spring placeholder. Refuse up front
-    /// instead, with a message naming a fix. Returns `true` (and sets
-    /// `last_error`) when the pick was refused; `false` means the
-    /// caller should proceed to `connect_to_pick`.
+    /// cause was an unresolved Spring placeholder — or send the literal
+    /// text as the password. Refuse up front instead, with a message
+    /// naming a fix.
+    ///
+    /// `unresolved_host` is refused first and separately: a `${…}` in
+    /// the host or port is never resolved at all, so "export it" would
+    /// be wrong advice.
+    ///
+    /// Returns `true` (and sets `last_error`) when the pick was
+    /// refused; `false` means the caller should proceed to
+    /// `connect_to_pick`.
     pub(super) fn refuse_if_unresolved(&mut self, pick: &DataSourcePick) -> bool {
+        if let Some(name) = pick.unresolved_host.first() {
+            self.last_error = Some(format!(
+                "${{{name}}} sits in the host of this connection — pgman never resolves \
+                 a placeholder into a hostname (the value would leave the machine as a \
+                 DNS lookup). Put a literal host in .pgman/pgman.toml"
+            ));
+            return true;
+        }
         let Some(name) = pick.unresolved.first() else {
             return false;
         };
