@@ -347,9 +347,42 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// What a picker row says about one candidate, beyond its origin and
+/// name: where it would connect, how it would be encrypted, and whether
+/// an SSH tunnel would be opened first. Pure so it can be unit-tested
+/// without a terminal — nothing discovered connects without the operator
+/// reading this line, so it has to be complete.
+pub(crate) fn conn_pick_target(pick: &crate::app::DataSourcePick) -> String {
+    let Some(d) = pick.dsn.as_ref() else {
+        return "(no usable connection URL)".to_string();
+    };
+    let user = d.user.as_deref().unwrap_or("(no user)");
+    // `sslmode` is a plain query param; libpq's default when it's absent
+    // is `prefer` — say "default" rather than guessing on its behalf.
+    let sslmode = d
+        .params
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("sslmode"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("default");
+    let mut out = format!(
+        "{user}@{host}:{port}/{db}  sslmode={sslmode}",
+        host = d.host,
+        port = d.port,
+        db = d.dbname
+    );
+    if let Some(t) = &d.ssh_tunnel {
+        // The bastion is the machine that gets an `ssh` session with the
+        // operator's keys, so it belongs on the row, not just in the
+        // confirmation that follows.
+        out.push_str(&format!("  tunnel → {}", t.to_display()));
+    }
+    out
+}
+
 pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    // Find the widest origin tag so the DSN column lines up.
+    // Find the widest origin tag and name so the columns line up.
     let origin_width = app
         .conn_pick
         .picks
@@ -357,7 +390,19 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         .map(|p| p.origin.len())
         .max()
         .unwrap_or(0);
-    let lines: Vec<Line> = app
+    // Cap the name column so one long label (a Spring pick carries its
+    // "— unresolved ${…}" note in the name) doesn't push every other
+    // row's target off the right edge. A name over the cap overflows
+    // its own row only.
+    let name_width = app
+        .conn_pick
+        .picks
+        .iter()
+        .map(|p| p.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .clamp(8, 24);
+    let mut lines: Vec<Line> = app
         .conn_pick
         .picks
         .iter()
@@ -376,22 +421,34 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(theme.text)
             };
-            // Trailing space pads the row to the popup width so the row
-            // background fills the line for the selected entry.
             let body = format!(
-                "{prefix}[{origin:>w$}] {name:<24} {dsn}",
+                "{prefix}[{origin:>w$}] {name:<nw$} {target}",
                 origin = pick.origin,
                 w = origin_width,
                 name = pick.name,
-                dsn = pick
-                    .dsn
-                    .as_ref()
-                    .map(|d| d.redacted())
-                    .unwrap_or_else(|| "(no usable connection URL)".to_string()),
+                nw = name_width,
+                target = conn_pick_target(pick),
             );
             Line::from(Span::styled(body, style))
         })
         .collect();
+
+    // Footer. Nothing here was chosen by the operator — it was read out
+    // of the working tree — so the popup states the two rules that
+    // decide what a keypress here actually does.
+    // Two lines rather than one joined by a separator: at an 80-column
+    // terminal the joined form is cut mid-word, and "--ds" is not a
+    // rule anyone can act on.
+    lines.push(Line::from(""));
+    for note in [
+        "  nothing here connects until you press enter",
+        "  PGPASSWORD is only used with --dsn",
+    ] {
+        lines.push(Line::from(Span::styled(
+            note,
+            Style::default().fg(theme.muted),
+        )));
+    }
 
     let title = format!(
         " pick a connection · {}/{} ",
@@ -401,7 +458,17 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let h = (lines.len() as u16 + 2)
         .min(area.height.saturating_sub(2))
         .max(3);
-    let w = 100u16.min(area.width.saturating_sub(2));
+    // Width follows the content (plus borders) rather than a flat 100:
+    // the row now carries the target, sslmode and any tunnel, and a
+    // truncated bastion hostname is exactly the detail the operator is
+    // being asked to check. Still bounded by the terminal.
+    let w = lines
+        .iter()
+        .map(|l| l.width() as u16)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(2)
+        .clamp(40, area.width.saturating_sub(2));
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
     f.render_widget(
@@ -1451,6 +1518,59 @@ fn push_kv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pick built from `url`, with everything resolved.
+    fn pick(url: &str) -> crate::app::DataSourcePick {
+        crate::app::DataSourcePick {
+            name: "x".into(),
+            origin: "project",
+            dsn: Some(crate::conn::Dsn::parse(url).unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn conn_pick_target_shows_user_host_port_db_and_sslmode() {
+        assert_eq!(
+            conn_pick_target(&pick("postgres://app@prod-db:5432/main")),
+            "app@prod-db:5432/main  sslmode=default"
+        );
+        assert_eq!(
+            conn_pick_target(&pick(
+                "postgres://app@prod-db:6432/main?sslmode=verify-full"
+            )),
+            "app@prod-db:6432/main  sslmode=verify-full"
+        );
+    }
+
+    #[test]
+    fn conn_pick_target_names_the_bastion_when_a_tunnel_is_set() {
+        let got = conn_pick_target(&pick(
+            "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+        ));
+        assert!(
+            got.ends_with("tunnel → tom@bastion.example.com"),
+            "the bastion is what gets an ssh session — it belongs on the row: {got}"
+        );
+    }
+
+    #[test]
+    fn conn_pick_target_says_so_when_there_is_no_user_or_no_dsn() {
+        assert!(conn_pick_target(&pick("postgres://db/main")).starts_with("(no user)@"));
+        let mut p = pick("postgres://db/main");
+        p.dsn = None;
+        assert_eq!(conn_pick_target(&p), "(no usable connection URL)");
+    }
+
+    #[test]
+    fn conn_pick_target_never_shows_a_password() {
+        let got = conn_pick_target(&pick("postgres://app:s3cret@db:5432/main"));
+        assert!(
+            !got.contains("s3cret"),
+            "password leaked into the row: {got}"
+        );
+    }
 
     #[test]
     fn wrap_hanging_line_that_fits_is_unchanged() {

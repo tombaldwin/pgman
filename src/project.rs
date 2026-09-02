@@ -2,8 +2,9 @@
 //!
 //! This file is intended to be committed to git, so a team shares the same
 //! list of known data sources and per-database safety rules. Passwords are
-//! deliberately not stored here — they come from `PGPASSWORD`, a
-//! per-connection `password_env`, or IntelliJ's keychain.
+//! deliberately not stored here — they come from the variable a connection's
+//! `password_env` names. `$PGPASSWORD` is *not* consulted for anything
+//! discovered from the working tree; see `connection_to_dsn`.
 //!
 //! Discovery walks up from the current directory looking for a `.pgman/`
 //! folder, so `pgman` can be launched from any subdirectory of the project.
@@ -30,9 +31,9 @@ pub struct ProjectConfig {
 }
 
 /// One project-level connection. `url` is a `postgres://` DSN string (no
-/// `jdbc:` prefix — pgman is Postgres-only). Passwords are sourced from
-/// `password_env` (env var name), falling back to `PGPASSWORD` if neither
-/// is set.
+/// `jdbc:` prefix — pgman is Postgres-only). The password comes from the
+/// variable `password_env` names, or from the URL; there is no
+/// `PGPASSWORD` fallback (see `connection_to_dsn`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct Connection {
     pub name: String,
@@ -41,8 +42,9 @@ pub struct Connection {
     /// each teammate logs in as themselves.
     #[serde(default)]
     pub user: Option<String>,
-    /// Name of an environment variable holding the password. When unset,
-    /// pgman falls back to `PGPASSWORD`.
+    /// Name of an environment variable holding the password. When unset
+    /// (or the variable is empty) the connection uses whatever password
+    /// the URL carries, and otherwise none at all.
     #[serde(default)]
     pub password_env: Option<String>,
     /// Optional bastion target — `[user@]host[:port]`. When set, pgman
@@ -93,9 +95,19 @@ pub fn parse(toml_text: &str) -> Result<ProjectConfig, String> {
 ///
 /// Merge rules (most-specific wins):
 /// - User: `connection.user` overrides anything in the URL.
-/// - Password: `password_env` env var overrides `PGPASSWORD`, which in turn
-///   overrides anything in the URL. Empty env vars are treated as unset so
-///   `unset FOO` doesn't accidentally blank out a URL-provided password.
+/// - Password: the variable named by `password_env` overrides anything in
+///   the URL. An empty env var is treated as unset so `unset FOO` doesn't
+///   accidentally blank out a URL-provided password.
+///
+/// **`$PGPASSWORD` is deliberately not consulted here.** This URL came
+/// out of a file in the working tree, so whoever wrote the checkout
+/// chose the host; lending it the operator's `$PGPASSWORD` sends that
+/// password to that host. Cloning a repo and running pgman in it was
+/// enough to do exactly that. `PGPASSWORD` is now only applied to a
+/// `--dsn` the operator typed (`main.rs::apply_pgpassword`). A project
+/// connection with no `password_env` and no password in the URL simply
+/// connects without one — trust/peer auth accepts that, and anything
+/// else fails with the existing "server demands a password" hint.
 pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
     let mut dsn = Dsn::parse(&c.url).ok()?;
     if let Some(u) = &c.user {
@@ -103,19 +115,15 @@ pub fn connection_to_dsn(c: &Connection) -> Option<Dsn> {
             dsn.user = Some(u.clone());
         }
     }
-    // Precedence (most → least specific): connection.password_env env
-    // var, then $PGPASSWORD, then any password embedded in the URL.
-    // The env vars beat the URL so an operator can rotate credentials
-    // without editing the committed `pgman.toml`.
+    // `password_env` names a variable the *project file* chose, but the
+    // operator has to have exported it — an explicit act naming this
+    // connection — so it stays honoured.
     let env_pw = c
         .password_env
         .as_deref()
         .and_then(|var| std::env::var(var).ok())
         .filter(|s| !s.is_empty());
-    let pg_pw = std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty());
     if let Some(pw) = env_pw {
-        dsn.password = Some(pw);
-    } else if let Some(pw) = pg_pw {
         dsn.password = Some(pw);
     }
     // SSH tunnel: project-config field wins over a URL `ssh_tunnel=`
@@ -429,6 +437,70 @@ statement_timeout_ms = 5000
         };
         let dsn = connection_to_dsn(&c).unwrap();
         assert_eq!(dsn.user.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn connection_to_dsn_never_borrows_pgpassword() {
+        // The repro from the security review: a committed pgman.toml
+        // names a host, the operator happens to have PGPASSWORD
+        // exported, and pgman used to send it there.
+        // SAFETY: the lib test binary reads PGPASSWORD only here and in
+        // the sibling test below, and tests in one binary that touch it
+        // are all in this module.
+        unsafe {
+            std::env::set_var("PGPASSWORD", "operator-secret");
+        }
+        let c = Connection {
+            name: "theirs".into(),
+            url: "postgres://app@db.example.com/main".into(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: None,
+        };
+        let dsn = connection_to_dsn(&c).unwrap();
+        unsafe {
+            std::env::remove_var("PGPASSWORD");
+        }
+        assert_eq!(
+            dsn.password, None,
+            "a project-file connection must never borrow $PGPASSWORD"
+        );
+    }
+
+    #[test]
+    fn connection_to_dsn_uses_password_env_when_set() {
+        // SAFETY: unique var name, not touched by any other test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_PROJECT_PW", "from-password-env");
+        }
+        let c = Connection {
+            name: "staging".into(),
+            url: "postgres://app@db.example.com/main".into(),
+            user: None,
+            password_env: Some("PGMAN_TEST_PROJECT_PW".into()),
+            ssh_tunnel: None,
+        };
+        let dsn = connection_to_dsn(&c).unwrap();
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_PROJECT_PW");
+        }
+        assert_eq!(dsn.password.as_deref(), Some("from-password-env"));
+    }
+
+    #[test]
+    fn connection_to_dsn_with_no_password_source_connects_without_one() {
+        let c = Connection {
+            name: "local".into(),
+            url: "postgres://postgres@localhost:5432/myapp".into(),
+            user: None,
+            password_env: Some("PGMAN_TEST_PROJECT_PW_UNSET".into()),
+            ssh_tunnel: None,
+        };
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_PROJECT_PW_UNSET");
+        }
+        let dsn = connection_to_dsn(&c).unwrap();
+        assert_eq!(dsn.password, None);
     }
 
     #[test]

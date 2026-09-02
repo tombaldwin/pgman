@@ -209,10 +209,12 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
 /// when the driver isn't Postgres or the URL is unparseable.
 ///
 /// Merges in the `<user-name>` from the XML when the URL itself didn't
-/// carry one, and falls back to the `PGPASSWORD` environment variable for
-/// the password — passwords aren't stored in `dataSources.xml` (they live
-/// in IntelliJ's keychain), so `PGPASSWORD` is the no-magic way to supply
-/// one without re-typing the DSN.
+/// carry one. The password can only come from the URL: passwords aren't
+/// stored in `dataSources.xml` (they live in IntelliJ's keychain), and
+/// `$PGPASSWORD` is **not** borrowed for a discovered source — the file
+/// is in the working tree, so whoever wrote the checkout chose the host
+/// the password would be sent to. Use `--dsn` when you want
+/// `$PGPASSWORD` applied.
 /// Expand an `IntellijDataSource` (plus its local-file metadata, when
 /// present) into one connectable `Dsn` per known database.
 ///
@@ -225,7 +227,7 @@ pub fn parse_local(xml: &str) -> HashMap<String, IntellijLocalMeta> {
 ///   default (`postgres`).
 ///
 /// Username merge order (most-specific wins): URL → committed `<user-name>`
-/// → local `<user-name>`. Password: URL → `PGPASSWORD`.
+/// → local `<user-name>`. Password: the URL's, or none.
 pub fn expand_to_dsns(
     source: &IntellijDataSource,
     local: Option<&IntellijLocalMeta>,
@@ -248,11 +250,9 @@ pub fn expand_to_dsns(
         .or_else(|| source.user.clone().filter(|s| !s.is_empty()))
         .or_else(|| local.and_then(|m| m.user.clone()).filter(|s| !s.is_empty()));
 
-    // Effective password: URL > PGPASSWORD
-    let effective_password = base
-        .password
-        .clone()
-        .or_else(|| std::env::var("PGPASSWORD").ok().filter(|s| !s.is_empty()));
+    // Effective password: the URL's, or none. `$PGPASSWORD` is not
+    // borrowed for a discovered source — see the doc comment.
+    let effective_password = base.password.clone();
 
     let databases: Vec<Option<String>> = if url_has_dbname {
         // Trust the URL — one entry, dbname pulled from base.
@@ -310,13 +310,7 @@ pub fn to_dsn(source: &IntellijDataSource) -> Option<crate::conn::Dsn> {
             }
         }
     }
-    if dsn.password.is_none() {
-        if let Ok(pw) = std::env::var("PGPASSWORD") {
-            if !pw.is_empty() {
-                dsn.password = Some(pw);
-            }
-        }
-    }
+    // No `$PGPASSWORD` fallback: this URL came out of the working tree.
     Some(dsn)
 }
 
@@ -447,6 +441,45 @@ mod tests {
         };
         let dsn = to_dsn(&src).expect("postgres URL → Dsn");
         assert_eq!(dsn.user.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn discovered_intellij_sources_never_borrow_pgpassword() {
+        // `.idea/dataSources.xml` is in the working tree, so the repo
+        // chooses the host — the operator's $PGPASSWORD must not follow
+        // the pick there. Covers both entry points.
+        // SAFETY: PGPASSWORD is set only here in this test binary.
+        unsafe {
+            std::env::set_var("PGPASSWORD", "operator-secret");
+        }
+        let src = IntellijDataSource {
+            name: "prod".into(),
+            uuid: "u1".into(),
+            jdbc_url: Some("jdbc:postgresql://db.example.com:5432/myapp".into()),
+            user: Some("alice".into()),
+        };
+        let single = to_dsn(&src).expect("postgres URL → Dsn");
+        let expanded = expand_to_dsns(&src, None);
+        unsafe {
+            std::env::remove_var("PGPASSWORD");
+        }
+        assert_eq!(single.password, None);
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].1.password, None);
+    }
+
+    #[test]
+    fn expand_to_dsns_keeps_a_password_embedded_in_the_url() {
+        // The URL's own password still applies — it's the file's, aimed
+        // at the file's own host, and pgman isn't lending anything.
+        let src = IntellijDataSource {
+            name: "prod".into(),
+            uuid: "u1".into(),
+            jdbc_url: Some("jdbc:postgresql://bob:in-url@db/myapp".into()),
+            user: None,
+        };
+        let expanded = expand_to_dsns(&src, None);
+        assert_eq!(expanded[0].1.password.as_deref(), Some("in-url"));
     }
 
     #[test]

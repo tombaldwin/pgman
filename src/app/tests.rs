@@ -4729,6 +4729,29 @@ fn backslash_c_with_no_arg_opens_picker() {
     assert_eq!(a.mode, Mode::ConnPick);
 }
 
+/// The other half of "a lone discovered pick doesn't auto-connect"
+/// (`tests/journeys.rs`): it is still one keypress away, so the rule
+/// costs the operator a keystroke and nothing else.
+#[tokio::test]
+async fn conn_pick_enter_on_a_lone_pick_connects() {
+    let pick = DataSourcePick {
+        name: "theirs".into(),
+        origin: "project",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db.example.com/x").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    assert_eq!(a.mode, Mode::ConnPick, "lands in the picker, not connected");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        a.dsn.as_ref().map(|d| d.host.as_str()),
+        Some("db.example.com")
+    );
+    assert!(matches!(a.conn_state, ConnState::Connecting));
+    assert_eq!(a.mode, Mode::Normal);
+}
+
 #[tokio::test]
 async fn backslash_c_with_matching_name_connects_to_that_pick() {
     let pick = DataSourcePick {

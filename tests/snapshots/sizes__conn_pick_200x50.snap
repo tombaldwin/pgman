@@ -23,13 +23,13 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
-│                                                 ┌ pick a connection · 1/2 ─────────────────────────────────────────────────────────────────────────┐                                                 │
-│                                                 │▶ [ project] prod                     postgres://app@prod-db:5432/main                            │                                                 │
-│                                                 │  [IntelliJ] staging                  postgres://app@staging-db:5432/main                         │                                                 │
-│                                                 └──────────────────────────────────────────────────────────────────────────────────────────────────┘                                                 │
-│                                                                                                                                                                                                      │
+│                                                                  ┌ pick a connection · 1/2 ──────────────────────────────────────┐                                                                   │
+│                                                                  │▶ [ project] prod     app@prod-db:5432/main  sslmode=default   │                                                                   │
+│                                                                  │  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default│                                                                   │
+│                                                                  │                                                               │                                                                   │
+│                                                                  │  nothing here connects until you press enter                  │                                                                   │
+│                                                                  │  PGPASSWORD is only used with --dsn                           │                                                                   │
+│                                                                  └───────────────────────────────────────────────────────────────┘                                                                   │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
