@@ -840,12 +840,18 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(pending) = self.pending_run.take() {
-                    self.spawn_run(
-                        pending.sql,
-                        pending.kind,
-                        pending.decision,
-                        pending.is_batch,
-                    );
+                    // --demo has no client; a confirmed write is answered
+                    // synthetically, the same as an allowed one.
+                    if self.demo && self.client.is_none() {
+                        self.spawn_run_demo(pending.sql, pending.kind);
+                    } else {
+                        self.spawn_run(
+                            pending.sql,
+                            pending.kind,
+                            pending.decision,
+                            pending.is_batch,
+                        );
+                    }
                 }
                 self.mode = Mode::Editor;
             }
