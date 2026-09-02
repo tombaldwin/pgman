@@ -24,30 +24,30 @@ expression: dump(&buf)
 │              │                                                                    │              │
 │              │   grid                                                             │              │
 │              │     q             quit (esc here is a no-op so a reflex press      │              │
-│              │ doesn't lose the session)                                          │              │
+│              │                   doesn't lose the session)                        │              │
 │              │     ? / F1        toggle this help                                 │              │
 │              │     A             about pgman (version, credits)                   │              │
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │
 │              │     S             schema browser (psql `\d` equivalent)            │              │
 │              │     W             schema wizard / lint (missing PK, mixed-case,    │              │
-│              │ reserved words …)                                                  │              │
+│              │                   reserved words …)                                │              │
 │              │     Q             saved queries (named, persisted)                 │              │
 │              │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section │              │
 │              │     T             slow queries (pg_stat_statements top-N)          │              │
 │              │     L             active sessions + locks (pg_stat_activity)       │              │
 │              │     F3            LISTEN/NOTIFY arrivals panel (also reachable     │              │
-│              │ from any mode)                                                     │              │
+│              │                   from any mode)                                   │              │
 │              │     h / l  ← →    move column cursor                               │              │
 │              │     s             cycle sort on focused column (off → ASC → DESC)  │              │
 │              │     /             live row filter (HIDES non-matching rows)        │              │
 │              │     f             find within grid (HIGHLIGHTS / jumps; n/N step   │              │
-│              │ matches)                                                           │              │
+│              │                   matches)                                         │              │
 │              │     F             follow FK on focused cell → new tab with SELECT  │              │
-│              │ * FROM parent WHERE pk=value                                       │              │
+│              │                   * FROM parent WHERE pk=value                     │              │
 │              │     Y             copy the (filtered) grid to clipboard as CSV     │              │
 │              │     I             yank focused row as INSERT (single-table         │              │
-│              │ SELECTs)                                                           │              │
+│              │                   SELECTs)                                         │              │
 │              │     m<a-z>        set bookmark at focused (row, col)               │              │
 │              │     '<a-z>        jump to bookmark                                 │              │
 │              │     j / k  ↑ ↓    move selection                                   │              │
@@ -56,16 +56,15 @@ expression: dump(&buf)
 │              │                                                                    │              │
 │              │   editor                                                           │              │
 │              │     F5 / ctrl-↵   run the statement (through safety guards)        │              │
-│              │     ctrl-z         undo last edit         ctrl-y / ctrl-shift-z    │              │
-│              │ redo                                                               │              │
+│              │     ctrl-z         undo last edit ctrl-y / ctrl-shift-z redo       │              │
 │              │     ctrl-c         cancel the running query (while in-flight)      │              │
 │              │     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)     │              │
 │              │     ctrl-a / F7   EXPLAIN ANALYZE  (DML wrapped in rollback tx)    │              │
 │              │     ctrl-/         toggle `-- ` line comment on the current line   │              │
 │              │     ( [ {          autoclose — pairs the open with its close;      │              │
-│              │ cursor between                                                     │              │
+│              │                    cursor between                                  │              │
 │              │     ctrl-r         reverse-incremental history search (ctrl-d in   │              │
-│              │ there deletes the focused entry)                                   │              │
+│              │                    there deletes the focused entry)                │              │
 │              │     ctrl-w         \watch — re-run every 2 s; any key stops        │              │
 │              │     ctrl-x         open the buffer in $EDITOR (\e)                 │              │
 │              │     ctrl-s         save the current buffer as a named saved query  │              │
@@ -73,7 +72,7 @@ expression: dump(&buf)
 │              │     ctrl-f         pg_format the buffer (requires pgformatter)     │              │
 │              │     ctrl-l / F8   parse buffer as log → pick a reconstructed query │              │
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
-│              │ script                                                             │              │
+│              │                   script                                           │              │
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
@@ -81,18 +80,19 @@ expression: dump(&buf)
 │              │     ↑ ↓ ← →       move cursor (col remembered across lines)        │              │
 │              │     home / end    start / end of current line                      │              │
 │              │     ctrl-p / -n   prev / next history entry (history persists      │              │
-│              │ across restarts)                                                   │              │
+│              │                   across restarts)                                 │              │
 │              │     ctrl-u        clear the buffer                                 │              │
 │              │     esc           back to grid                                     │              │
 │              │                                                                    │              │
 │              │   confirm                                                          │              │
 │              │     y             run the guarded (or pre-flight-flagged)          │              │
-│              │ statement                                                          │              │
+│              │                   statement                                        │              │
 │              │     n / esc       cancel                                           │              │
 │              │                                                                    │              │
 │              │   tx open                                                          │              │
 │              │     y             commit the transaction                           │              │
-│              │ ↓ 96 more below                                                    │              │
+│              │     n / esc       roll back                                        │              │
+│              │ ↓ 126 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
