@@ -310,13 +310,16 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(theme.text)
         };
-        let object = if finding.object.chars().count() > 48 {
-            let mut s: String = finding.object.chars().take(47).collect();
-            s.push('…');
-            s
-        } else {
-            finding.object.clone()
-        };
+        // `object` is a fixed 48-column field; `title` takes whatever's
+        // left of the row. Both get cut with `…` (via the same
+        // truncator the grid uses) rather than a raw character clip —
+        // a cut with no marker reads as if the text just ends there.
+        let object = crate::grid::truncate_cell(&finding.object, 48);
+        // Fixed prefix width before `title` starts: "  " (2) + sev (5)
+        // + "  {code:<7}  " (11) + "{object:<48}  " (50).
+        const PREFIX_WIDTH: usize = 2 + 5 + 11 + 50;
+        let title_width = (top.width as usize).saturating_sub(PREFIX_WIDTH);
+        let title = crate::grid::truncate_cell(&finding.title, title_width);
         let spans = vec![
             Span::styled("  ", base_style),
             Span::styled(
@@ -325,7 +328,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
             ),
             Span::styled(format!("  {:<7}  ", finding.code), base_style),
             Span::styled(format!("{:<48}  ", object), base_style),
-            Span::styled(finding.title.clone(), base_style),
+            Span::styled(title, base_style),
         ];
         lines.push(Line::from(spans));
     }
