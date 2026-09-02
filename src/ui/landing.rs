@@ -236,7 +236,7 @@ fn header_line(app: &App, muted_style: Style) -> Line<'static> {
         .map(|d| format!("{}:{}", d.host, d.port))
         .unwrap_or_else(|| "?".to_string());
     let version = match &app.conn_state {
-        ConnState::Connected { server_version } => server_version.as_str(),
+        ConnState::Connected { server_version } => super::short_server_version(server_version),
         _ => "?",
     };
     let mut spans = vec![Span::styled(
@@ -391,6 +391,20 @@ mod tests {
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
             .collect()
+    }
+
+    #[test]
+    fn header_line_shows_the_short_server_version() {
+        // The packager's build detail (`(Debian 16.15-1.pgdg13+2)`)
+        // belongs in the About overlay, not restated on the start card.
+        let mut a = app();
+        a.conn_state = ConnState::Connected {
+            server_version: "16.15 (Debian 16.15-1.pgdg13+2)".into(),
+        };
+        let lines = landing_lines(&a, 80, 30);
+        let first = &plain(&lines)[0];
+        assert!(first.contains("pg 16.15"), "{first}");
+        assert!(!first.contains("Debian"), "{first}");
     }
 
     #[test]

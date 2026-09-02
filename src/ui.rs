@@ -247,7 +247,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
             )
         }
         ConnState::Connected { server_version } => (
-            format!("connected · pg {server_version}"),
+            format!("connected · pg {}", short_server_version(server_version)),
             Style::default().fg(theme.health_green),
         ),
         ConnState::Failed(_) => (
@@ -1850,6 +1850,21 @@ fn format_duration(micros: u64) -> String {
         format!("{:.1}ms", micros as f64 / 1_000.0)
     } else {
         format!("{:.2}s", micros as f64 / 1_000_000.0)
+    }
+}
+
+/// The release number out of a `server_version` string, dropping the
+/// packager's parenthesised build detail: `"16.15 (Debian
+/// 16.15-1.pgdg13+2)"` → `"16.15"`. The header and the start card both
+/// state the version in passing, where the Debian build id is noise
+/// twice over; the full string stays in the About overlay, which is
+/// where someone chasing a packaging difference would look. Cut at the
+/// first `" ("` so a version with no build detail passes through
+/// unchanged. Pure / testable.
+pub(crate) fn short_server_version(v: &str) -> &str {
+    match v.find(" (") {
+        Some(i) => v[..i].trim_end(),
+        None => v,
     }
 }
 
