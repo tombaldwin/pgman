@@ -627,6 +627,14 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let inner_width = popup.width.saturating_sub(4) as usize;
     let (raw_lines, raw_anchors) = help_body(theme);
     let (lines, anchors) = wrap_help_lines(raw_lines, raw_anchors, inner_width);
+    // Body height = popup height minus borders (top + bottom) minus padding
+    // (uniform(1) — top + bottom). That's the visible row budget for clamping
+    // the scroll offset. Computed BEFORE the anchor pass below, which
+    // has to clamp against it.
+    let total_lines = lines.len() as u16;
+    let inner_height = popup.height.saturating_sub(4);
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    app.help.max_scroll = max_scroll;
     // If we have a captured help_origin, pre-scroll to the matching
     // section the first time draw runs (`help_scroll` is reset to 0
     // by `open_help_from`; we detect that as "anchor not applied
@@ -635,7 +643,14 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         if app.help.scroll == 0 {
             if let Some(anchor) = App::help_anchor_for(origin) {
                 if let Some(&row) = anchors.get(anchor) {
-                    app.help.scroll = row;
+                    // Clamp on the way IN, not only on the way out:
+                    // an anchor near the end of the document stored a
+                    // scroll past `max_scroll`, the render clamped it
+                    // for display only, and the first few `k` presses
+                    // then walked the stored value back down through
+                    // the range that renders identically — the
+                    // overlay looked frozen.
+                    app.help.scroll = row.min(max_scroll);
                 }
             }
         }
@@ -645,13 +660,6 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         app.help.origin = None;
     }
     f.render_widget(Clear, popup);
-    // Body height = popup height minus borders (top + bottom) minus padding
-    // (uniform(1) — top + bottom). That's the visible row budget for clamping
-    // the scroll offset.
-    let total_lines = lines.len() as u16;
-    let inner_height = popup.height.saturating_sub(4);
-    let max_scroll = total_lines.saturating_sub(inner_height);
-    app.help.max_scroll = max_scroll;
     let effective_scroll = app.help.scroll.min(max_scroll);
 
     let help = Paragraph::new(lines)
@@ -1582,6 +1590,17 @@ fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usiz
     if words.is_empty() {
         return vec![String::new()];
     }
+    // A hanging indent wider than the line it hangs inside is not an
+    // indent, it's a left margin with nothing left over: the budget
+    // below floors at 1 column, so every continuation became one word
+    // per row pushed off to the right, and the whole help body drifted
+    // out of alignment below ~43 inner columns. Under four columns of
+    // room, drop the indent and wrap flush left instead.
+    let cont_indent = if cont_indent + 4 >= width {
+        0
+    } else {
+        cont_indent
+    };
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     for word in words {
@@ -1801,10 +1820,53 @@ mod tests {
 
     #[test]
     fn wrap_hanging_continuation_carries_the_indent() {
-        let got = wrap_hanging("one two three four five", 0, 6, 10);
+        // Indent 6 of 20 columns leaves 14 to wrap into — a real
+        // hanging indent, so continuations carry it.
+        let got = wrap_hanging("one two three four five six seven eight", 0, 6, 20);
         assert!(got.len() > 1);
         for line in &got[1..] {
             assert!(line.starts_with("      "), "line {line:?} missing indent");
+        }
+    }
+
+    #[test]
+    fn wrap_hanging_drops_an_indent_that_leaves_no_room() {
+        // Indent 6 of 10 columns leaves 4 — the budget floors at 1 and
+        // every continuation became a single word pushed off to the
+        // right, drifting the whole help body out of alignment. Below
+        // four columns of room the indent is dropped and text wraps
+        // flush left instead.
+        let got = wrap_hanging("one two three four five", 0, 6, 10);
+        assert!(got.len() > 1);
+        for line in &got[1..] {
+            assert!(
+                !line.starts_with(' '),
+                "line {line:?} kept an indent with no room to hang from"
+            );
+        }
+        // Still wrapping to the full width, not one word per row.
+        assert_eq!(got[0], "one two");
+    }
+
+    #[test]
+    fn wrap_hanging_keeps_the_help_body_aligned_at_inner_width_31() {
+        // The help overlay is 70% of the body wide, so a 45-column
+        // terminal gives ~31 inner columns. `description_split` puts
+        // the description column at 18 there; 18 + 4 <= 31, so the
+        // indent survives and every continuation lines up under it.
+        let (prefix, desc) = description_split("    q             quit the overlay now").unwrap();
+        let col = prefix.chars().count();
+        let got = wrap_hanging(&desc, col, col, 31);
+        assert!(got.len() > 1, "expected a wrap at 31 columns: {got:?}");
+        for line in &got[1..] {
+            assert!(
+                line.starts_with(&" ".repeat(col)),
+                "continuation {line:?} is not under the description column"
+            );
+            assert!(
+                line.chars().count() <= 31,
+                "continuation {line:?} overruns 31 columns"
+            );
         }
     }
 

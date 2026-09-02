@@ -841,3 +841,34 @@ fn sessions_panel_left_aligns_text_columns_and_right_aligns_numbers() {
         "age(s) column is not right-aligned:\n{rendered}"
     );
 }
+
+/// `draw_help` pre-scrolls to the section matching the mode help was
+/// opened from. It used to STORE that anchor row unclamped and only
+/// clamp it for display, so an anchor near the end of the document
+/// left `help.scroll` above `help.max_scroll` — and the first few `k`
+/// presses walked the stored value back down through a range that all
+/// renders identically, so the overlay looked frozen.
+#[test]
+fn help_anchor_is_clamped_when_stored_not_only_when_rendered() {
+    // "schema wizard" is the last anchored section in `help_body`, so
+    // its row is past `max_scroll` at any realistic overlay height.
+    // A tall terminal makes the viewport big enough that the last
+    // section's row sits past the end of the scroll range — exactly
+    // the case the unclamped store got wrong.
+    let mut a = settle_app();
+    a.open_help_from(Mode::SchemaLint);
+    let _ = render(&mut a, 200, 80);
+    assert!(a.help.max_scroll > 0, "help body should be scrollable");
+    assert!(
+        a.help.scroll <= a.help.max_scroll,
+        "anchor stored an unclamped scroll: {} > max {}",
+        a.help.scroll,
+        a.help.max_scroll
+    );
+    // And it really did anchor somewhere near the end, rather than
+    // passing by accident because it never scrolled at all.
+    assert_eq!(
+        a.help.scroll, a.help.max_scroll,
+        "expected the last section to anchor at the bottom of the range"
+    );
+}
