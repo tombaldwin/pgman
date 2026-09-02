@@ -550,7 +550,12 @@ impl App {
     }
 
     /// Connection picker (startup): j/k navigate, Enter selects + connects,
-    /// Esc/q quits since there's nothing else to do without a connection.
+    /// q quits since there's nothing else to do without a connection (Esc
+    /// is a no-op so a reflex press can't abandon it).
+    ///
+    /// While a tunnel confirmation is pending (`pending_tunnel`), that
+    /// question owns every key instead: `y` proceeds, anything else —
+    /// `q` included — cancels it and returns to the list.
     pub(super) fn on_conn_pick_key(&mut self, key: KeyEvent) {
         // A pending ssh-tunnel confirmation owns every key while it is
         // up: `y` proceeds, anything else cancels. Checked before the
