@@ -26,7 +26,7 @@ on:
         required: true
         type: string
 
-# When a new tag like `v0.2.0` is pushed:
+# When a new tag like `v0.1.0` is pushed:
 #   1. Build a release binary on each target platform.
 #   2. Tarball it together with README + LICENSE files.
 #   3. Attach the tarballs to a GitHub Release for the tag.
@@ -237,7 +237,7 @@ jobs:
       - name: Attach artefacts to release
         uses: softprops/action-gh-release@v3
         with:
-          # GITHUB_REF_NAME is the tag, e.g. v0.2.0.
+          # GITHUB_REF_NAME is the tag, e.g. v0.1.0.
           tag_name: ${{ github.ref_name }}
           name: pgman ${{ github.ref_name }}
           body_path: release-notes.md

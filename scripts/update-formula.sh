@@ -2,8 +2,8 @@
 # Bump Homebrew formulae for a new pgman release.
 #
 # Usage:
-#   scripts/update-formula.sh v0.2.0
-#   scripts/update-formula.sh --dry-run v0.2.0
+#   scripts/update-formula.sh v0.1.0
+#   scripts/update-formula.sh --dry-run v0.1.0
 #
 # For the given tag, downloads the four release tarballs published by
 # .github/workflows/release.yml from the matching GitHub Release, computes
