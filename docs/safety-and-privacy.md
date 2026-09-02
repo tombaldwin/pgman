@@ -118,15 +118,18 @@
 
 The five files pgman itself writes — `draft.sql`, `history.log`,
 `saved.toml`, `update_check.json`, and `\report`/`\fixture` output —
-are written `0600` (owner read/write only) regardless of your umask;
-directories pgman creates under `~/.config/pgman/`,
-`~/.local/share/pgman/`, and `~/.cache/pgman/` are `0700`. That's a
-floor, not a substitute for filesystem hygiene: if your `~` itself
-isn't otherwise locked down (shared account, backup that preserves
-world-readable ACLs, etc.), still treat the files above as no more
-private than a shell history file. `safety.toml` and `pgman.toml` are
-yours, not pgman's — it never writes them, so their permissions are
-whatever you set.
+are written `0600` (owner read/write only) regardless of your umask,
+via pgman's own atomic writer (`util::write_private`), which opens
+the file `0600` from the moment it's created rather than writing at a
+looser default mode and `chmod`ing afterward — there is no window
+where a half-written temp file is world-readable. Directories pgman
+creates under `~/.config/pgman/`, `~/.local/share/pgman/`, and
+`~/.cache/pgman/` are `0700`. That's a floor, not a substitute for
+filesystem hygiene: if your `~` itself isn't otherwise locked down
+(shared account, backup that preserves world-readable ACLs, etc.),
+still treat the files above as no more private than a shell history
+file. `safety.toml` and `pgman.toml` are yours, not pgman's — it
+never writes them, so their permissions are whatever you set.
 
 **Passwords are never written to disk by pgman.** They live only in
 process memory for the duration of the connection, sourced from
