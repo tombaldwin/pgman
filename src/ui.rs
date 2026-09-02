@@ -303,7 +303,7 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                     Paragraph::new(Text::from(vec![
                         Line::from("no connection — start pgman with --dsn postgres://…"),
                         Line::from(
-                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
+                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and a .pgman directory (pgman.toml) when run inside a project",
                         ),
                     ]))
                     .style(Style::default().fg(app.theme.muted))
@@ -406,7 +406,10 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     if app.conn_pick.picks.len() >= 2 {
         actions.push_str(" · p change connection");
     }
-    actions.push_str(" · q quit · logs in ~/.cache/pgman/pgman.log");
+    // Resolved through `util::cache_dir()` (not hand-typed) so this
+    // stays correct if the cache location ever moves.
+    let log_path = crate::util::cache_dir().join("pgman.log");
+    actions.push_str(&format!(" · q quit · logs in {}", log_path.display()));
     lines.push(Line::from(Span::styled(actions, label)));
 
     f.render_widget(

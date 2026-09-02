@@ -645,7 +645,7 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     }
     match picks.len() {
         0 => Err(
-            "no DSN — pass --dsn or run from a project with .pgman/pgman.toml / dataSources.xml"
+            "no DSN — pass --dsn or run from a project with a .pgman directory (pgman.toml) / dataSources.xml"
                 .into(),
         ),
         1 => Ok(picks.into_iter().next().unwrap().dsn),
