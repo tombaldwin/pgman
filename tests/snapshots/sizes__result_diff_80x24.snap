@@ -4,13 +4,13 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> ┌ Result diff — A: public.users (6 rows) vs B: public.users (6 rows) · k┐   │
+│> SELECT id, email, plan, created_at                                          │
+│  ┌ Result diff — A: public.users (6 rows) vs B: public.users (6 rows) · k┐   │
 │  │+1 added   -1 removed   ~1 changed   =4 unchanged                      │   │
 │  │                                                                       │   │
-│  │  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00              │   │
-└──│  ~ [1] email: ada@example.com → ada+updated@example.com               │───┘
-┌ r│  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00             │───┐
-│id│                                                                       │   │
+└──│  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00              │───┘
+┌ r│  ~ [1] email: ada@example.com → ada+updated@example.com               │───┐
+│id│  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00             │   │
 │1 │                                                                       │   │
 │3 │                                                                       │   │
 │4 │                                                                       │   │
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
-│  │                                                                       │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   diff · +1 -1 ~1 =4

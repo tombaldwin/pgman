@@ -5,13 +5,13 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
-│  F┌ Result diff — A: public.users (6 rows) vs B: public.users (6 rows) · key: id · r re-pin ·┐   │
-│  W│+1 added   -1 removed   ~1 changed   =4 unchanged                                         │   │
-│  O│                                                                                          │   │
-└───│  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00                                 │───┘
-┌ re│  ~ [1] email: ada@example.com → ada+updated@example.com                                  │───┐
-│id │  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00                                │   │
-│1  │                                                                                          │   │
+│  FROM users                                                                                      │
+│  W┌ Result diff — A: public.users (6 rows) vs B: public.users (6 rows) · key: id · r re-pin ·┐   │
+│  O│+1 added   -1 removed   ~1 changed   =4 unchanged                                         │   │
+└───│                                                                                          │───┘
+┌ re│  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00                                 │───┐
+│id │  ~ [1] email: ada@example.com → ada+updated@example.com                                  │   │
+│1  │  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00                                │   │
 │3  │                                                                                          │   │
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
@@ -27,8 +27,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
 │   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   diff · +1 -1 ~1 =4

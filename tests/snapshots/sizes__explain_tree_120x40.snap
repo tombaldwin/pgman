@@ -6,13 +6,13 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHER┌ EXPLAIN plan — q / esc close ─────────────────────────────────────────────────────────────────────────┐       │
-│  ORDE│▼ Hash Join · 50.00ms · 4500 rows                                                                      │       │
-└──────│    Hash Cond: (o.user_id = u.id)                                                                      │───────┘
-┌ resul│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                       │───────┐
-│id  em│  ▼ Hash · 5.00ms                                                                                      │       │
-│1   ad│    · Seq Scan on users u · 4.00ms                                                                     │       │
-│2   li│                                                                                                       │       │
+│  WHERE plan = 'pro'                                                                                                  │
+│  ORDE┌ EXPLAIN plan — q / esc close ─────────────────────────────────────────────────────────────────────────┐       │
+└──────│▼ Hash Join · 50.00ms · 4500 rows                                                                      │───────┘
+┌ resul│    Hash Cond: (o.user_id = u.id)                                                                      │───────┐
+│id  em│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                       │       │
+│1   ad│  ▼ Hash · 5.00ms                                                                                      │       │
+│2   li│    · Seq Scan on users u · 4.00ms                                                                     │       │
 │3   gr│                                                                                                       │       │
 │4   al│                                                                                                       │       │
 │5   ed│                                                                                                       │       │
@@ -36,8 +36,8 @@ expression: dump(&buf)
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
-│      │                                                                                                       │       │
 │      └───────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

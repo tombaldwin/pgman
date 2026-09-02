@@ -4,10 +4,11 @@ expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
-│> (em┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
-└─────│▶ audit  (1)                      public.users                                        │─────┘
-┌ resu│▼ public  (2)                                                                         │─────┐
-│(no r│  ▶ orders  (0 col, 0 cons)       columns (3)                                         │     │
+│> (empty — press e to focus)                                                                      │
+└─────┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐─────┘
+┌ resu│▶ audit  (1)                      public.users                                        │─────┐
+│(no r│▼ public  (2)                                                                         │     │
+│     │  ▶ orders  (0 col, 0 cons)       columns (3)                                         │     │
 │     │  ▶ users  (3 col, 1 cons)          · id                                              │     │
 │     │                                    · email                                           │     │
 │     │                                    · active                                          │     │
@@ -20,9 +21,8 @@ expression: dump(&buf)
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
-│     │                                                                                      │     │
-│     │                                                                                      │     │
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · F1 +3 more

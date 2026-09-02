@@ -7,18 +7,17 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER┌ JDBC tap — 8 query · 0 heartbeat · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────────────┐       │
-└───────│    duration       rows  app                   sql / kind                                                                                                                             │───────┘
-┌ result│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?                                                                                │───────┐
-│id  ema│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│1   ada│       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│2   lin│       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│3   gra│       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│4   ala│       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│5   eds│       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│6   kat│       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id = ?                                                                                         │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────┌ JDBC tap — 8 query · 0 heartbeat · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────────────┐───────┘
+┌ result│    duration       rows  app                   sql / kind                                                                                                                             │───────┐
+│id  ema│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?                                                                                │       │
+│1   ada│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│2   lin│       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│3   gra│       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│4   ala│       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│5   eds│       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│6   kat│       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
+│       │       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id = ?                                                                                         │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
@@ -47,6 +46,7 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

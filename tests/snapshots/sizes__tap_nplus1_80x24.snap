@@ -4,10 +4,10 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> ┌ JDBC tap — 8 query · 0 heartbeat · view: N+1 · v cycle · Shift-B basel┐   │
+│> SELECT id, email, plan, created_at                                          │
+│  ┌ JDBC tap — 8 query · 0 heartbeat · view: N+1 · v cycle · Shift-B basel┐   │
 │  │   calls        span  txn / conn          caller · fingerprint         │   │
 │  │       6     125.0ms  conn-7#42           OrderService.loadItems:88 · …│   │
-│  │                                                                       │   │
 └──│                                                                       │───┘
 ┌ r│                                                                       │───┐
 │id│                                                                       │   │
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
-│  │                                                                       │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · F1 +4 more

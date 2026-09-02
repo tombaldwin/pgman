@@ -7,9 +7,9 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
-└───────│no findings — schema looks clean                                                                                                                                                      │───────┘
-┌ result│                                                                                                                                                                                      │───────┐
+│  ORDER BY created_at DESC;                                                                                                                                                                           │
+└───────┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────┘
+┌ result│no findings — schema looks clean                                                                                                                                                      │───────┐
 │id  ema│                                                                                                                                                                                      │       │
 │1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
@@ -45,8 +45,8 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

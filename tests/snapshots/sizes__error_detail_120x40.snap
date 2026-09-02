@@ -8,15 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                           │
-└────────┌ error detail — F2 / esc / q close ─────────────────────────────────────────────────────────────────┐────────┘
-┌ result │ ERROR · SQLSTATE 23505                                                                             │────────┐
-│id  emai│                                                                                                    │        │
-│1   ada@│    message: duplicate key value violates unique constraint "users_email_key"                       │        │
-│2   linu│     detail: Key (email)=(ada@example.com) already exists.                                          │        │
-│3   grac│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                        │        │
-│4   alan│                                                                                                    │        │
-│5   edsg│affected object:                                                                                    │        │
-│6   kath│     schema: public                                                                                 │        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ result ┌ error detail — F2 / esc / q close ─────────────────────────────────────────────────────────────────┐────────┐
+│id  emai│ ERROR · SQLSTATE 23505                                                                             │        │
+│1   ada@│                                                                                                    │        │
+│2   linu│    message: duplicate key value violates unique constraint "users_email_key"                       │        │
+│3   grac│     detail: Key (email)=(ada@example.com) already exists.                                          │        │
+│4   alan│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                        │        │
+│5   edsg│                                                                                                    │        │
+│6   kath│affected object:                                                                                    │        │
+│        │     schema: public                                                                                 │        │
 │        │      table: users                                                                                  │        │
 │        │ constraint: users_email_key                                                                        │        │
 │        │                                                                                                    │        │
@@ -33,9 +34,8 @@ expression: dump(&buf)
 │        │                                                                                                    │        │
 │        │                                                                                                    │        │
 │        │                                                                                                    │        │
-│        │                                                                                                    │        │
-│        │                                                                                                    │        │
 │        └────────────────────────────────────────────────────────────────────────────────────────────────────┘        │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

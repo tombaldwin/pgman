@@ -18,6 +18,7 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
+│                                                                                                  │
 │              ┌────────────────────────────────────────────────────────────────────┐              │
 │              │                                                                    │              │
 │              │ pgman — keys (F1 help · F2 error detail · F3 notify · ? from grid) │              │
@@ -90,11 +91,10 @@ expression: dump(&buf)
 │              │   confirm                                                          │              │
 │              │     y             run the guarded (or pre-flight-flagged)          │              │
 │              │                   statement                                        │              │
-│              │     n / esc       cancel                                           │              │
-│              │                                                                    │              │
-│              │ ↓ 159 more below                                                   │              │
+│              │ ↓ 161 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
+│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

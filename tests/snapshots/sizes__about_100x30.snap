@@ -2,33 +2,33 @@
 source: tests/sizes.rs
 expression: dump(&buf)
 ---
- pgman │ shop  connected ·┌ about ───────────────────────────────────────┐
-┌ editor (e to focus) ────│                                              │─────────────────────────┐
-│> SELECT id, email, plan,│           ██████                  ██████     │                         │
-│  FROM users             │         ████████████████████████████████     │                         │
-│  WHERE plan = 'pro'     │      ████████████████████████████████████    │                         │
-│  ORDER BY created_at DES│   ████████████████████████████████████████   │                         │
-└─────────────────────────│   ████████████████████████████████████████   │─────────────────────────┘
-┌ result · 6 row(s) ──────│   ████████████████████████████████████████   │─────────────────────────┐
-│id  email                │   ████████████████████████████████████████   │                         │
-│1   ada@example.com      │   ████████████████████████████████████████   │                         │
-│2   linus@example.com    │   ████████████████████████████████████████   │                         │
-│3   grace@example.com    │      ████████████████████████████████████    │                         │
-│4   alan@example.com     │         ████████████████████████████████     │                         │
-│5   edsger@example.com   │            ████████████████████████████      │                         │
-│6   katherine@example.com│                     ████████████████         │                         │
-│                         │                     ████████████████         │                         │
-│                         │                     ██  ████████  ██         │                         │
-│                         │                           ████████           │                         │
-│                         │                          ██████████          │                         │
-│                         │                             ██████           │                         │
-│                         │                                              │                         │
-│                         │        pgman 0.1.0 · beta · 2026-06-06       │                         │
-│                         │       installed via a standalone binary      │                         │
-│                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
-│                         │                                              │                         │
+ pgman │ shop  connected · pg 16.2 (demo)
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                                              │
+│  FROM users                                                                                      │
+│  WHERE plan = 'pro'                                                                              │
+│  ORDER BY created_at DESC;                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────┐
+│id  email                ┌ about ───────────────────────────────────────┐                         │
+│1   ada@example.com      │                                              │                         │
+│2   linus@example.com    │                                              │                         │
+│3   grace@example.com    │        pgman 0.1.0 · beta · 2026-06-06       │                         │
+│4   alan@example.com     │      installed via a local git checkout      │                         │
+│5   edsger@example.com   │   k9s-style Postgres TUI for Java/AWS shops  │                         │
+│6   katherine@example.com│                                              │                         │
 │                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
 │                         │                                              │                         │
-└─────────────────────────│                                              │─────────────────────────┘
- RO   TAP   N+1 ×1   esc /└──────────────────────────────────────────────┘
+│                         │           esc / enter / A to close           │                         │
+│                         │                                              │                         │
+│                         └──────────────────────────────────────────────┘                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   esc / enter / A close · F1 help

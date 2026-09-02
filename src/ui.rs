@@ -61,6 +61,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_editor(f, chunks[2], app);
     draw_body(f, chunks[3], app);
     draw_footer(f, chunks[4], app);
+    // Every overlay below is centred inside the BODY, not the whole
+    // terminal: the header carries the connection state and the footer
+    // carries the mode's only close hint, and a popup tall enough to
+    // reach either row used to paint its own border over it (the About
+    // card at 80x24 replaced the footer with `└────┘`). One rect,
+    // computed once, so no overlay can drift back out of it.
+    let area = body_area(area);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -1839,6 +1846,23 @@ fn format_duration(micros: u64) -> String {
         format!("{:.1}ms", micros as f64 / 1_000.0)
     } else {
         format!("{:.2}s", micros as f64 / 1_000_000.0)
+    }
+}
+
+/// The body rect of a full-terminal `area`: everything between the
+/// one-row header and the one-row footer. Overlays are centred inside
+/// this rather than the whole terminal, so a popup can never paint
+/// over the connection state above or the close hint below. Degrades
+/// to the input rect when there aren't two rows to give up.
+fn body_area(area: Rect) -> Rect {
+    if area.height < 3 {
+        return area;
+    }
+    Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: area.height - 2,
     }
 }
 

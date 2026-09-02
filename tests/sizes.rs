@@ -153,6 +153,31 @@ fn footer_defect(footer: &str) -> Option<String> {
     None
 }
 
+/// Box-drawing glyphs an overlay's border is made of. None of them
+/// may appear on the footer row.
+const BOX_GLYPHS: &[char] = &[
+    '─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '═', '║',
+];
+
+/// The footer row belongs to `draw_footer` alone. Every screen in this
+/// sweep runs the read-only demo fixture, so the row opens with the
+/// `RO` badge — except `TxDecision`, which pre-empts the whole footer
+/// with its own `TX OPEN` pill. Anything else means an overlay grew
+/// tall enough to paint over the row that carries the mode's only
+/// close hint (the About card at 80x24 used to end the screen with
+/// `└──────┘`).
+fn footer_overlay_defect(footer: &str) -> Option<String> {
+    if let Some(bad) = footer.chars().find(|c| BOX_GLYPHS.contains(c)) {
+        return Some(format!(
+            "an overlay border glyph {bad:?} landed on the footer row"
+        ));
+    }
+    if !(footer.starts_with(" RO") || footer.starts_with(" TX OPEN")) {
+        return Some("footer does not start with the badge prefix \" RO\"".to_string());
+    }
+    None
+}
+
 fn check_invariants(screen: &str, w: u16, h: u16, buf: &Buffer) {
     let key = format!("{screen}_{w}x{h}");
     let allowed = KNOWN_DEFECTS.contains(&key.as_str());
@@ -174,6 +199,14 @@ fn check_invariants(screen: &str, w: u16, h: u16, buf: &Buffer) {
     }
 
     let footer = footer_line(buf);
+    if let Some(reason) = footer_overlay_defect(&footer) {
+        let msg = format!("{screen} at {w}x{h}: {reason} (footer: {footer:?})");
+        if allowed {
+            eprintln!("KNOWN_DEFECTS (not failing): {msg}");
+            return;
+        }
+        panic!("{msg}");
+    }
     if let Some(reason) = footer_defect(&footer) {
         let msg = format!("{screen} at {w}x{h}: {reason} (footer: {footer:?})");
         if allowed {

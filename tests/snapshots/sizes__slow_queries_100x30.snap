@@ -5,11 +5,11 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
-│  F┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ────────────────────┐   │
-│  W│    total ms    mean ms     calls      rows  query                                        │   │
-│  O│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true      │   │
-└───│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2  │───┘
-┌ re│                                                                                          │───┐
+│  FROM users                                                                                      │
+│  W┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ────────────────────┐   │
+│  O│    total ms    mean ms     calls      rows  query                                        │   │
+└───│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true      │───┘
+┌ re│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2  │───┐
 │id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
@@ -17,7 +17,6 @@ expression: dump(&buf)
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   ├──────────────────────────────────────────────────────────────────────────────────────────┤   │
@@ -29,6 +28,7 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · enter copy · r refresh · R auto-refresh · F1 +2 more

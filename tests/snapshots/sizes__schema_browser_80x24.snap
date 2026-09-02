@@ -4,25 +4,25 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> SE┌ schema browser — q / esc close ────────────────────────────────────┐    │
-│  FR│▼ public  (3)               schema: public                          │    │
-│  WH│  ▼ order_items  (5 col, 1…                                         │    │
-│  OR│      · id : bigint NOT NU… 3 table(s)                              │    │
-└────│      · order_id : bigint …                                         │────┘
-┌ res│      · sku : varchar(40) … enter to expand — then arrow / j/k into…│────┐
-│id  │      · qty : integer NOT …                                         │    │
-│1   │      · price_cents : inte…                                         │    │
-│2   │      ◆ order_items_pkey                                            │    │
-│3   │  ▼ orders  (5 col, 1 cons)                                         │    │
-│4   │      · id : bigint NOT NU…                                         │    │
-│5   │      · user_id : bigint N…                                         │    │
-│6   │      · status : varchar(2…                                         │    │
+│> SELECT id, email, plan, created_at                                          │
+│  FR┌ schema browser — q / esc close ────────────────────────────────────┐    │
+│  WH│▼ public  (3)               schema: public                          │    │
+│  OR│  ▼ order_items  (5 col, 1…                                         │    │
+└────│      · id : bigint NOT NU… 3 table(s)                              │────┘
+┌ res│      · order_id : bigint …                                         │────┐
+│id  │      · sku : varchar(40) … enter to expand — then arrow / j/k into…│    │
+│1   │      · qty : integer NOT …                                         │    │
+│2   │      · price_cents : inte…                                         │    │
+│3   │      ◆ order_items_pkey                                            │    │
+│4   │  ▼ orders  (5 col, 1 cons)                                         │    │
+│5   │      · id : bigint NOT NU…                                         │    │
+│6   │      · user_id : bigint N…                                         │    │
+│    │      · status : varchar(2…                                         │    │
 │    │      · total_cents : inte…                                         │    │
 │    │      · created_at : times…                                         │    │
 │    │      ◆ orders_pkey                                                 │    │
-│    │  ▼ users  (4 col, 1 cons)                                          │    │
-│    │      · id : bigint NOT NU…                                         │    │
 │    └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   expanded all

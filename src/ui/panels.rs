@@ -24,7 +24,7 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
         art_lines.push(Line::from(spans));
     }
 
-    let mut lines: Vec<Line> = art_lines;
+    let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
     let version_line = if crate::RELEASE_DATE.is_empty() {
         format!("pgman {} · beta", env!("CARGO_PKG_VERSION"))
@@ -91,15 +91,39 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
             .add_modifier(Modifier::ITALIC),
     )));
 
-    // Card sized to fit the elephant art width (or the longest text
-    // line — the update-command line can run past the art width,
-    // especially for a Checkout install's `git … && cargo …` line)
-    // plus a comfortable border / padding budget, tall enough for
-    // every line below it.
-    let _ = rows_n; // sprite already accounted for inside `lines`
+    // The sprite is decoration; the version, channel and close hint
+    // are the content. Now that the card is clamped to the body (see
+    // `ui::body_area`) a short terminal can't hold both, so drop the
+    // sprite wholesale rather than clip the text off the bottom — a
+    // half-drawn elephant reads as a rendering bug, and the text is
+    // what the operator opened the card for.
+    let _ = rows_n; // sprite rows are counted through `art_lines`
+    let art_h = art_lines.len() as u16;
+    let text_h = lines.len() as u16;
+    // Two rows of vertical padding go before the sprite does: a card
+    // that keeps the elephant by sitting flush against its own border
+    // still reads as the About card, whereas one that keeps the
+    // padding and loses the elephant doesn't.
+    let (with_art, pad) = if art_h + text_h + 4 <= area.height {
+        (true, Padding::uniform(1))
+    } else if art_h + text_h + 2 <= area.height {
+        (true, Padding::horizontal(1))
+    } else if text_h + 4 <= area.height {
+        (false, Padding::uniform(1))
+    } else {
+        (false, Padding::horizontal(1))
+    };
+    let v_pad: u16 = if pad.top + pad.bottom > 0 { 2 } else { 0 };
+    let lines = if with_art {
+        let mut all = art_lines;
+        all.extend(lines);
+        all
+    } else {
+        lines
+    };
     let text_w = lines.iter().map(Line::width).max().unwrap_or(0) as u16;
     let width = (art_w.max(text_w) + 4).max(48).min(area.width);
-    let height = (lines.len() as u16 + 4).min(area.height);
+    let height = (lines.len() as u16 + 2 + v_pad).min(area.height);
     let popup = centered(area, width, height);
     f.render_widget(Clear, popup);
     f.render_widget(
@@ -109,7 +133,7 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.border_active))
-                    .padding(Padding::uniform(1))
+                    .padding(pad)
                     .title(Span::styled(" about ", Style::default().fg(theme.title))),
             ),
         popup,

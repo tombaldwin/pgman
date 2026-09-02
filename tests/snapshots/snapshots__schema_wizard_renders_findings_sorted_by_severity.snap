@@ -4,15 +4,14 @@ expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
 ┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
-│> (┌ schema wizard — y yank suggestion · r refresh · q close ──────────────────────────────────────────┐    │
-└───│  SEV    CODE     object                                            title                          │────┘
-┌ re│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or U…│────┐
-│(no│  HIGH   LINT001  public.events                                     table without PRIMARY KEY or U…│    │
+│> (empty — press e to focus)                                                                                │
+└───┌ schema wizard — y yank suggestion · r refresh · q close ──────────────────────────────────────────┐────┘
+┌ re│  SEV    CODE     object                                            title                          │────┐
+│(no│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or U…│    │
+│   │  HIGH   LINT001  public.events                                     table without PRIMARY KEY or U…│    │
 │   │  HIGH   LINT001  public.user                                       table without PRIMARY KEY or U…│    │
 │   │  MED    LINT002  public.OrderItems                                 mixed-case table identifier ne…│    │
 │   │  MED    LINT003  public.user                                       table named after a SQL reserv…│    │
-│   │                                                                                                   │    │
-│   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                         │    │
@@ -23,6 +22,7 @@ expression: dump(&buf)
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   └───────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                            │
 │                                                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help

@@ -4,11 +4,11 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
-│> S┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────┐   │
-│  F│  channel                  pid  payload                               │   │
-│  W│  orders_channel          4321  order:9001 shipped                    │   │
-│  O│  cache_invalidate        4322  users                                 │   │
-└───│                                                                      │───┘
+│> SELECT id, email, plan, created_at                                          │
+│  F┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────┐   │
+│  W│  channel                  pid  payload                               │   │
+│  O│  orders_channel          4321  order:9001 shipped                    │   │
+└───│  cache_invalidate        4322  users                                 │───┘
 ┌ re│                                                                      │───┐
 │id │                                                                      │   │
 │1  │                                                                      │   │
@@ -21,8 +21,8 @@ expression: dump(&buf)
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
-│   │                                                                      │   │
 │   └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · F1 +2 more

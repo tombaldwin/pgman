@@ -1,14 +1,14 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 326
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
-│> (em┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────┐     │
-└─────│▼ Hash Join · 50.00ms · 4500 rows                                                     │─────┘
-┌ resu│    Hash Cond: (o.user_id = u.id)                                                     │─────┐
-│(no r│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │     │
+│> (empty — press e to focus)                                                                      │
+└─────┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────┐─────┘
+┌ resu│▼ Hash Join · 50.00ms · 4500 rows                                                     │─────┐
+│(no r│    Hash Cond: (o.user_id = u.id)                                                     │     │
+│     │  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │     │
 │     │  ▼ Hash · 5.00ms                                                                     │     │
 │     │    · Seq Scan on users u · 4.00ms                                                    │     │
 │     │                                                                                      │     │
@@ -21,9 +21,8 @@ expression: dump(&buf)
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
-│     │                                                                                      │     │
-│     │                                                                                      │     │
 │     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close · F1 help

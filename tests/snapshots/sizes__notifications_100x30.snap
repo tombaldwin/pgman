@@ -5,11 +5,11 @@ expression: dump(&buf)
  pgman │ shop  connected · pg 16.2 (demo)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
-│  FR┌ NOTIFY arrivals — j/k · y yank · c clear · q close ────────────────────────────────────┐    │
-│  WH│  channel                  pid  payload                                                 │    │
-│  OR│  orders_channel          4321  order:9001 shipped                                      │    │
-└────│  cache_invalidate        4322  users                                                   │────┘
-┌ res│                                                                                        │────┐
+│  FROM users                                                                                      │
+│  WH┌ NOTIFY arrivals — j/k · y yank · c clear · q close ────────────────────────────────────┐    │
+│  OR│  channel                  pid  payload                                                 │    │
+└────│  orders_channel          4321  order:9001 shipped                                      │────┘
+┌ res│  cache_invalidate        4322  users                                                   │────┐
 │id  │                                                                                        │    │
 │1   │                                                                                        │    │
 │2   │                                                                                        │    │
@@ -27,8 +27,8 @@ expression: dump(&buf)
 │    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │
-│    │                                                                                        │    │
 │    └────────────────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · q / esc close · F1 help
