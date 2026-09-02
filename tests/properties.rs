@@ -7,7 +7,7 @@
 use proptest::prelude::*;
 
 use pgman::app::{compute_visible_rows, history_search_next, next_sort_state};
-use pgman::conn::Dsn;
+use pgman::conn::{redact_url, Dsn};
 use pgman::grid::{cmp_cells, Grid};
 use pgman::query::highlight::{tokenize, TokenClass};
 use pgman::safety::{classify, split_statements, StatementKind};
@@ -96,6 +96,85 @@ proptest! {
         prop_assert_eq!(dsn.port, port);
         prop_assert_eq!(dsn.dbname, db);
     }
+
+    /// Security-review regression: a user/password drawn from *any*
+    /// printable ASCII — including the URL-structural characters
+    /// `/ @ : ? #` — must round-trip through `Dsn::parse` once the
+    /// caller percent-encodes it (pgman decodes userinfo, matching
+    /// libpq), and `redact_url` on the same string must never leak
+    /// any fragment of it. Before the fix, a raw (unencoded) `/` or
+    /// `@` in the password broke both the authority/path split and
+    /// the userinfo-masking scan — this property pins the fix, not
+    /// just the reproduction cases.
+    #[test]
+    fn dsn_userinfo_round_trips_through_percent_encoding(
+        user in "[\\x20-\\x7e]{1,24}",
+        password in "[\\x20-\\x7e]{1,24}",
+    ) {
+        let dsn_str = format!(
+            "postgres://{}:{}@h:5432/d",
+            pct_encode(&user),
+            pct_encode(&password),
+        );
+        let dsn = Dsn::parse(&dsn_str).expect("well-formed");
+        prop_assert_eq!(dsn.user.as_deref(), Some(user.as_str()));
+        prop_assert_eq!(dsn.password.as_deref(), Some(password.as_str()));
+
+        // The authority/path (`h:5432/d`) never contains a raw '@',
+        // '/', '?' or '#' introduced by the userinfo — so a correct
+        // redactor must mask the ENTIRE userinfo down to a fixed,
+        // password-independent string. Any leftover fragment of the
+        // password here is a leak.
+        let masked = redact_url(&dsn_str);
+        prop_assert_eq!(masked, "postgres://***@h:5432/d");
+    }
+
+    /// The same round-trip, but with `/`, `@`, and `:` embedded *raw*
+    /// (unescaped) rather than percent-encoded — this is what the
+    /// security-review reproductions actually looked like, and it's
+    /// the case the percent-encoded property above can't catch: with
+    /// full encoding there's only ever one literal '@' in the string
+    /// (the delimiter), so a "first '@'" bug and a "last '@'" fix
+    /// behave identically. `:` is excluded from `user` (an unescaped
+    /// `:` there is a genuine, unavoidable URI ambiguity — the first
+    /// `:` in userinfo IS the user/password separator by definition);
+    /// `?`/`#` are excluded from both (they always start the
+    /// query/fragment, so a raw one can't be part of the authority at
+    /// all — that's not a bug, it's what percent-encoding is for). `%`
+    /// is also excluded from both: since `Dsn::parse` now decodes
+    /// percent-escapes (see `userinfo_is_percent_decoded`), a raw `%`
+    /// followed by two hex digits is — correctly — itself an escape,
+    /// not literal text; representing a literal `%` requires the
+    /// caller to encode it as `%25`, same as `?`/`#`.
+    #[test]
+    fn dsn_userinfo_round_trips_with_raw_slash_and_at(
+        user in "[\\x20-\\x22\\x24\\x26-\\x39\\x3b-\\x3e\\x40-\\x7e]{1,20}",
+        password in "[\\x20-\\x22\\x24\\x26-\\x3e\\x40-\\x7e]{1,20}",
+    ) {
+        let dsn_str = format!("postgres://{user}:{password}@h:5432/d");
+        let dsn = Dsn::parse(&dsn_str).expect("well-formed");
+        prop_assert_eq!(dsn.user.as_deref(), Some(user.as_str()));
+        prop_assert_eq!(dsn.password.as_deref(), Some(password.as_str()));
+
+        let masked = redact_url(&dsn_str);
+        prop_assert_eq!(masked, "postgres://***@h:5432/d");
+    }
+}
+
+/// Percent-encode every byte outside RFC 3986's "unreserved" set —
+/// test-fixture support only. `Dsn::parse`'s decoder (the pure logic
+/// actually under test) is exercised by feeding it this URL.
+fn pct_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 // ----- Safety classifier -----------------------------------------------------

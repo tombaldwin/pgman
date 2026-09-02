@@ -172,6 +172,21 @@ pure redactors (`src/conn.rs`):
   (`user:pass@` → `***@`) and any `password=`/`pwd=`/`passwd=` query
   parameter, case-insensitively.
 
+Both redactors — and `Dsn::parse` itself — split the authority using
+the *last* `@` before the first `?`/`#`, not the first. A password may
+contain `/` or `@` unescaped (common with generated cloud-provider
+credentials); using the first `@` as the userinfo boundary used to
+both mis-parse the DSN and let the tail of such a password leak past
+`redact_url`'s masking.
+
+**Percent-encoding.** `Dsn::parse` percent-decodes `user` and
+`password` (leniently — a malformed `%XX` escape is kept literal
+rather than erroring), matching libpq's URI-connection-string
+behaviour. This is the only way a password can contain a literal `?`
+or `#`, since those characters always start the query/fragment and
+can't appear raw in the authority. `host` and `dbname` are **not**
+percent-decoded.
+
 Discovery logging (project connections, Spring picks, IntelliJ picks)
 always goes through one of these before hitting `tracing::info!`, so
 `~/.cache/pgman/pgman.log` never carries a resolved password — see
