@@ -1,0 +1,111 @@
+# Logs → runnable SQL, in sixty seconds
+
+pgman's wedge: paste a log, get back queries you can actually run — bind
+parameters substituted in, ready for `F5`. This walks through it end to end.
+
+## What it reads
+
+Two input shapes are recognised, both in `src/query/`:
+
+- **Hibernate application logs** (`src/query/hibernate.rs`) — an
+  `org.hibernate.SQL` logger line opens a statement, followed by the
+  separately-logged bind parameters (`binding parameter [1] as [INTEGER] -
+  [42]` on Hibernate 5, `binding parameter (1:INTEGER) <- [42]` on Hibernate
+  6). Multi-line `hibernate.format_sql=true` output is reassembled.
+- **Postgres / RDS server logs** (`src/query/pglog.rs`) — `LOG:  statement:
+  <sql>` for simple queries, or a `LOG:  duration: … execute <tag>: <sql>`
+  paired with the following `DETAIL:  parameters: $1 = '…'` line for the
+  extended protocol. This is the more reliable source: it needs
+  `log_min_duration_statement` / `log_statement` turned on server-side, no
+  application redeploy.
+
+A third parser, `src/query/jdbc.rs`, substitutes `?` placeholders in a pasted
+JDBC statement given a separate list of typed parameters — but it isn't wired
+into the editor's import path yet, so there's no way to reach it from the UI
+today. Left out of this walkthrough for that reason.
+
+## The sample
+
+Paste this into the editor (it's lifted straight from the parser's own
+tests):
+
+```
+2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total from orders o where o.customer_id=?
+2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
+2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?
+2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]
+2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?
+2024-01-15 10:00:00.121 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [102]
+```
+
+That `item` select fires twice for two different `order_id`s in the same
+burst — a classic N+1: an order lookup followed by a per-row item lookup
+that should have been a join.
+
+## Two ways in
+
+- **Paste it.** Press `e` to focus the editor, paste the lines above, then
+  press `F8` (or `ctrl-l` — same binding, for terminals that eat function
+  keys). pgman recognises the shape of what landed in the buffer and hints
+  at this in the status line: `looks like a hibernate log · ctrl-l / F8 to
+  reconstruct queries`.
+- **Skip the paste.** `pgman --log app.log` (or `--log -` to read stdin)
+  loads the file straight into the editor and runs the same reconstruction
+  immediately — you land straight in the picker below, no keypress needed.
+
+Both paths run the buffer through the same parsers and land you in the same
+picker.
+
+## The pick list
+
+pgman opens `Mode::LogPick` with a one-line triage summary up top:
+
+```
+3 queries · 1 N+1 cluster (2 of 3 repeated) · view: all queries (press `c` to toggle)
+leader (×2): select i.id, i.sku from item i where i.order_id=?
+```
+
+(The leader line and the cluster view below both show the raw, unsubstituted
+SQL — that's the *shape* a cluster groups by. The per-row list underneath
+shows the runnable, substituted form.)
+
+Below it, one row per reconstructed query, tagged by source and showing the
+runnable SQL with bind values substituted in:
+
+```
+▶ [hibernate] select o.id, o.total from orders o where o.customer_id=42
+  [hibernate] select i.id, i.sku from item i where i.order_id=101
+  [hibernate] select i.id, i.sku from item i where i.order_id=102
+```
+
+Press `c` to flip to the cluster view — the same queries grouped by shape,
+most-repeated first, so a loop-driven select stands out instead of hiding
+among near-identical rows in a longer log:
+
+```
+▶ ×2   select i.id, i.sku from item i where i.order_id=?
+```
+
+`c` again toggles back. `j`/`k` (or the arrow keys) move the selection,
+`g`/`G` jump to the first/last row.
+
+## Load it and run it
+
+`Enter` loads the highlighted query's runnable SQL into the editor, cursor at
+the end, and drops you back into `Mode::Editor` with a `loaded query · N
+char(s)` status. From there it's an ordinary pgman query: `F5` runs it (or
+`ctrl-Enter` / `ctrl-J`) through the normal `safety.rs` guard — same
+read-only defaults, same per-database rules — and the result lands in the
+grid like any other statement. `Esc` or `q` from the picker cancels back to
+the editor without loading anything.
+
+## N+1 detection
+
+The clustering behind both the summary line and the cluster view is
+`src/query/nplus1.rs`: it fingerprints each statement (lowercased,
+whitespace collapsed, string/numeric literals and placeholders all reduced
+to `?`) and groups by that shape. Any fingerprint that fires **twice or
+more** becomes a cluster, sorted most-repeated first. Two structurally
+different one-off queries never cluster; two copies of the same query with
+different literals always do — which is exactly the loop-driven-select
+signature this is built to catch.
