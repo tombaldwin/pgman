@@ -9,15 +9,15 @@ expression: dump(&buf)
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
 └──────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6 row(s┌ confirm ─────────────────────────────────┐─────────────────┐
-│id  email        │Confirm                                   │                 │
-│1   ada@example.c│                                          │                 │
-│2   linus@example│run (DELETE without WHERE) · will wrap in │                 │
-│3   grace@example│transaction                               │                 │
-│4   alan@example.│                                          │                 │
-│5   edsger@exampl│DELETE FROM orders                        │                 │
-│6   katherine@exa│                                          │                 │
-│                 └──────────────────────────────────────────┘                 │
+┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
+│id  email  ┌ confirm ─────────────────────────────────────────────┐           │
+│1   ada@exa│run (DELETE without WHERE) · will wrap in transaction │           │
+│2   linus@e│                                                      │           │
+│3   grace@e│DELETE FROM orders                                    │           │
+│4   alan@ex│                                                      │           │
+│5   edsger@│y = run · n / esc = cancel                            │           │
+│6   katheri└──────────────────────────────────────────────────────┘           │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

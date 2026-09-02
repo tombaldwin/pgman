@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 216
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -10,15 +9,15 @@ expression: dump(&buf)
 ┌ result ──────────────────────────────────────────────────────────────────────┐
 │(no rows)                                                                     │
 │                                                                              │
-│                 ┌ confirm ─────────────────────────────────┐                 │
-│                 │Confirm                                   │                 │
-│                 │                                          │                 │
-│                 │run (DELETE without WHERE) · will wrap in │                 │
-│                 │transaction                               │                 │
-│                 │                                          │                 │
-│                 │DELETE FROM orders                        │                 │
-│                 │                                          │                 │
-│                 └──────────────────────────────────────────┘                 │
+│                                                                              │
+│           ┌ confirm ─────────────────────────────────────────────┐           │
+│           │run (DELETE without WHERE) · will wrap in transaction │           │
+│           │                                                      │           │
+│           │DELETE FROM orders                                    │           │
+│           │                                                      │           │
+│           │y = run · n / esc = cancel                            │           │
+│           └──────────────────────────────────────────────────────┘           │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
