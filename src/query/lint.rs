@@ -700,8 +700,10 @@ mod tests {
     use crate::query::schema::{ConstraintMeta, SchemaCache, TableMeta};
 
     fn cache_with(tables: Vec<(&str, &str)>) -> SchemaCache {
-        let mut c = SchemaCache::default();
-        c.schemas = tables.iter().map(|(s, _)| s.to_string()).collect();
+        let mut c = SchemaCache {
+            schemas: tables.iter().map(|(s, _)| s.to_string()).collect(),
+            ..Default::default()
+        };
         c.schemas.sort();
         c.schemas.dedup();
         c.tables = tables

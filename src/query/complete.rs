@@ -114,9 +114,9 @@ pub struct NextvalLiteral {
 ///   - the opening `'` is preceded by `(` (possibly via whitespace),
 ///   - which is preceded by the bare word `nextval` (case-insensitive,
 ///     not part of a longer identifier like `not_nextval`).
-/// This is a fallback used by completion; it ignores escape sequences
-/// inside the string — a sequence name with a `'` in it would be
-/// pathological and is out of scope.
+///     This is a fallback used by completion; it ignores escape sequences
+///     inside the string — a sequence name with a `'` in it would be
+///     pathological and is out of scope.
 pub fn detect_nextval_literal(buf: &str, cursor: usize) -> Option<NextvalLiteral> {
     let cursor = cursor.min(buf.len());
     if !buf.is_char_boundary(cursor) {
@@ -1456,22 +1456,24 @@ mod tests {
     use crate::query::schema::{SchemaCache, TableMeta};
 
     fn build_cache() -> SchemaCache {
-        let mut c = SchemaCache::default();
-        c.schemas = vec!["audit".into(), "public".into()];
-        c.tables = vec![
-            TableMeta {
-                schema: "public".into(),
-                name: "orders".into(),
-            },
-            TableMeta {
-                schema: "public".into(),
-                name: "users".into(),
-            },
-            TableMeta {
-                schema: "audit".into(),
-                name: "events".into(),
-            },
-        ];
+        let mut c = SchemaCache {
+            schemas: vec!["audit".into(), "public".into()],
+            tables: vec![
+                TableMeta {
+                    schema: "public".into(),
+                    name: "orders".into(),
+                },
+                TableMeta {
+                    schema: "public".into(),
+                    name: "users".into(),
+                },
+                TableMeta {
+                    schema: "audit".into(),
+                    name: "events".into(),
+                },
+            ],
+            ..Default::default()
+        };
         c.columns_by_table.insert(
             ("public".into(), "users".into()),
             vec!["id".into(), "email".into(), "name".into()],
@@ -2059,18 +2061,20 @@ mod tests {
         // build_cache has BOTH public.users (id, email, name) and
         // audit.users would NOT exist — but build_cache only has the
         // 3 tables listed. Let me construct a richer cache here.
-        let mut cache = SchemaCache::default();
-        cache.schemas = vec!["audit".into(), "public".into()];
-        cache.tables = vec![
-            crate::query::schema::TableMeta {
-                schema: "public".into(),
-                name: "users".into(),
-            },
-            crate::query::schema::TableMeta {
-                schema: "audit".into(),
-                name: "users".into(),
-            },
-        ];
+        let mut cache = SchemaCache {
+            schemas: vec!["audit".into(), "public".into()],
+            tables: vec![
+                crate::query::schema::TableMeta {
+                    schema: "public".into(),
+                    name: "users".into(),
+                },
+                crate::query::schema::TableMeta {
+                    schema: "audit".into(),
+                    name: "users".into(),
+                },
+            ],
+            ..Default::default()
+        };
         cache.columns_by_table.insert(
             ("public".into(), "users".into()),
             vec!["id".into(), "email".into()],

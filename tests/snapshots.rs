@@ -270,22 +270,24 @@ fn sessions_renders_blocked_then_idle() {
 fn schema_browser_renders_focused_table_details() {
     use pgman::query::schema::{ConstraintMeta, SchemaCache, TableMeta};
     let mut a = settle_app();
-    let mut cache = SchemaCache::default();
-    cache.schemas = vec!["audit".into(), "public".into()];
-    cache.tables = vec![
-        TableMeta {
-            schema: "public".into(),
-            name: "users".into(),
-        },
-        TableMeta {
-            schema: "public".into(),
-            name: "orders".into(),
-        },
-        TableMeta {
-            schema: "audit".into(),
-            name: "events".into(),
-        },
-    ];
+    let mut cache = SchemaCache {
+        schemas: vec!["audit".into(), "public".into()],
+        tables: vec![
+            TableMeta {
+                schema: "public".into(),
+                name: "users".into(),
+            },
+            TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+            TableMeta {
+                schema: "audit".into(),
+                name: "events".into(),
+            },
+        ],
+        ..Default::default()
+    };
     cache.columns_by_table.insert(
         ("public".into(), "users".into()),
         vec!["id".into(), "email".into(), "active".into()],
@@ -385,26 +387,28 @@ fn connection_picker_with_two_entries() {
 #[test]
 fn schema_wizard_renders_findings_sorted_by_severity() {
     let mut a = settle_app();
-    let mut cache = pgman::query::schema::SchemaCache::default();
-    cache.schemas = vec!["public".into()];
-    cache.tables = vec![
-        // events → no constraints (LINT001 High)
-        pgman::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "events".into(),
-        },
-        // OrderItems → mixed-case (LINT002 Med) AND in a schema
-        // that mixes naming with `events` (LINT004 Low).
-        pgman::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "OrderItems".into(),
-        },
-        // user → reserved keyword (LINT003 Med)
-        pgman::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "user".into(),
-        },
-    ];
+    let cache = pgman::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![
+            // events → no constraints (LINT001 High)
+            pgman::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "events".into(),
+            },
+            // OrderItems → mixed-case (LINT002 Med) AND in a schema
+            // that mixes naming with `events` (LINT004 Low).
+            pgman::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "OrderItems".into(),
+            },
+            // user → reserved keyword (LINT003 Med)
+            pgman::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "user".into(),
+            },
+        ],
+        ..Default::default()
+    };
     a.schema_cache = cache;
     a.schema_lint.findings = pgman::query::lint::run_all(&a.schema_cache);
     a.schema_lint.cursor = 0;

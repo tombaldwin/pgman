@@ -35,7 +35,7 @@ pub fn record_line(event: &TapEvent) -> Result<String, String> {
 /// Stream `path`'s JSONL events into `tx`. Each line is one
 /// `TapEvent`; blank lines skipped, malformed lines logged
 /// + dropped (the replay continues so one bad line doesn't
-/// take out the demo).
+///   take out the demo).
 ///
 /// `received_at_unix_micros` is stamped at replay time so the
 /// downstream pipeline can't tell a replayed event from a

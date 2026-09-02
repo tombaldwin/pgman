@@ -2160,22 +2160,24 @@ fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
 
 fn app_with_schemas() -> App {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let mut cache = crate::query::schema::SchemaCache::default();
-    cache.schemas = vec!["audit".into(), "public".into()];
-    cache.tables = vec![
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "users".into(),
-        },
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "orders".into(),
-        },
-        crate::query::schema::TableMeta {
-            schema: "audit".into(),
-            name: "events".into(),
-        },
-    ];
+    let mut cache = crate::query::schema::SchemaCache {
+        schemas: vec!["audit".into(), "public".into()],
+        tables: vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "users".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "audit".into(),
+                name: "events".into(),
+            },
+        ],
+        ..Default::default()
+    };
     cache.columns_by_table.insert(
         ("public".into(), "users".into()),
         vec!["id".into(), "email".into()],
@@ -2893,19 +2895,21 @@ fn start_schema_lint_with_empty_cache_surfaces_hint() {
 #[test]
 fn start_schema_lint_with_findings_opens_panel_and_summarises() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let mut cache = crate::query::schema::SchemaCache::default();
-    cache.schemas = vec!["public".into()];
-    // Two LINT001s (no constraints), one LINT002 (mixed-case).
-    cache.tables = vec![
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "events".into(),
-        },
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "OrderItems".into(),
-        },
-    ];
+    let cache = crate::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        // Two LINT001s (no constraints), one LINT002 (mixed-case).
+        tables: vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "events".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "OrderItems".into(),
+            },
+        ],
+        ..Default::default()
+    };
     a.schema_cache = cache;
     a.start_schema_lint();
     assert_eq!(a.mode, Mode::SchemaLint);
@@ -4499,18 +4503,20 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
 #[test]
 fn schema_lint_jk_navigation_clamps_to_findings() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let mut cache = crate::query::schema::SchemaCache::default();
-    cache.schemas = vec!["public".into()];
-    cache.tables = vec![
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "a".into(),
-        },
-        crate::query::schema::TableMeta {
-            schema: "public".into(),
-            name: "b".into(),
-        },
-    ];
+    let cache = crate::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "a".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "b".into(),
+            },
+        ],
+        ..Default::default()
+    };
     a.schema_cache = cache;
     a.start_schema_lint();
     let n = a.schema_lint.findings.len();

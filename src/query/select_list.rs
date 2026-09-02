@@ -46,9 +46,9 @@ pub enum SelectItem {
 /// - `SELECT id, COUNT(*) AS n FROM t`  → `["id", "n"]`
 /// - `SELECT 1 + 1 FROM t`              → `[]` (no name)
 /// - `SELECT *`                         → `[]` (caller can expand)
-/// Convenience: just the named items. `*` and `tab.*` shapes are
-/// dropped. Use [`extract_select_items`] + [`resolve_select_columns`]
-/// when you want `*` expansion against a schema cache.
+///   Convenience: just the named items. `*` and `tab.*` shapes are
+///   dropped. Use [`extract_select_items`] + [`resolve_select_columns`]
+///   when you want `*` expansion against a schema cache.
 pub fn extract_select_columns(sql: &str) -> Vec<String> {
     extract_select_items(sql)
         .into_iter()

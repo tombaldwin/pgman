@@ -1463,61 +1463,56 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
         .fg(theme.title)
         .add_modifier(Modifier::BOLD);
     let code = Style::default().fg(theme.text);
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled("no tap events yet", muted)));
-    lines.push(Line::from(""));
-
-    // Route 1 — OTLP (works today)
-    lines.push(Line::from(Span::styled(
-        "Route 1: OpenTelemetry (works today, any JVM)",
-        title,
-    )));
-    lines.push(Line::from(Span::styled("  start pgman with:", muted)));
-    lines.push(Line::from(Span::styled("    pgman --tap-otlp :4318", code)));
-    lines.push(Line::from(Span::styled("  on the JVM side:", muted)));
-    lines.push(Line::from(Span::styled(
-        "    -javaagent:opentelemetry-javaagent.jar",
-        code,
-    )));
-    lines.push(Line::from(Span::styled(
-        "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
-        code,
-    )));
-    lines.push(Line::from(Span::styled(
-        "    OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
-        code,
-    )));
-    lines.push(Line::from(""));
-
-    // Route 2 — pgman-tap (richer context; JAR ships separately)
-    lines.push(Line::from(Span::styled(
-        "Route 2: pgman-tap (richer context — caller / pool / txn)",
-        title,
-    )));
-    lines.push(Line::from(Span::styled("  add to build.gradle:", muted)));
-    lines.push(Line::from(Span::styled(
-        "    implementation 'co.polymorphism:pgman-tap-spring-boot-starter:0.1.0'",
-        code,
-    )));
-    lines.push(Line::from(Span::styled("  add to application.yml:", muted)));
-    lines.push(Line::from(Span::styled(
-        "    pgman.tap.enabled: true",
-        code,
-    )));
-    lines.push(Line::from(Span::styled(
-        "    pgman.tap.endpoint: tcp://localhost:7432",
-        code,
-    )));
-    lines.push(Line::from(Span::styled(
-        "  (the JAR is in development — Route 1 works today)",
-        muted,
-    )));
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Once events arrive: j/k navigate · v cycle views · s sort · F1 help",
-        muted,
-    )));
-    lines
+    vec![
+        Line::from(Span::styled("no tap events yet", muted)),
+        Line::from(""),
+        // Route 1 — OTLP (works today)
+        Line::from(Span::styled(
+            "Route 1: OpenTelemetry (works today, any JVM)",
+            title,
+        )),
+        Line::from(Span::styled("  start pgman with:", muted)),
+        Line::from(Span::styled("    pgman --tap-otlp :4318", code)),
+        Line::from(Span::styled("  on the JVM side:", muted)),
+        Line::from(Span::styled(
+            "    -javaagent:opentelemetry-javaagent.jar",
+            code,
+        )),
+        Line::from(Span::styled(
+            "    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318",
+            code,
+        )),
+        Line::from(Span::styled(
+            "    OTEL_EXPORTER_OTLP_PROTOCOL=http/json",
+            code,
+        )),
+        Line::from(""),
+        // Route 2 — pgman-tap (richer context; JAR ships separately)
+        Line::from(Span::styled(
+            "Route 2: pgman-tap (richer context — caller / pool / txn)",
+            title,
+        )),
+        Line::from(Span::styled("  add to build.gradle:", muted)),
+        Line::from(Span::styled(
+            "    implementation 'co.polymorphism:pgman-tap-spring-boot-starter:0.1.0'",
+            code,
+        )),
+        Line::from(Span::styled("  add to application.yml:", muted)),
+        Line::from(Span::styled("    pgman.tap.enabled: true", code)),
+        Line::from(Span::styled(
+            "    pgman.tap.endpoint: tcp://localhost:7432",
+            code,
+        )),
+        Line::from(Span::styled(
+            "  (the JAR is in development — Route 1 works today)",
+            muted,
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Once events arrive: j/k navigate · v cycle views · s sort · F1 help",
+            muted,
+        )),
+    ]
 }
 
 /// Render a duration in microseconds as a compact

@@ -763,7 +763,7 @@ mod tests {
     #[test]
     fn group_hotspots_collapses_literals_into_one_bucket() {
         // Same shape, different literals → one fingerprint → one bucket.
-        let events = vec![
+        let events = [
             q(
                 "SELECT * FROM users WHERE id = 1",
                 100,
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn group_hotspots_tracks_distinct_callers_and_last_seen() {
-        let events = vec![
+        let events = [
             q("SELECT 1", 1, false, Some("a.x:1"), "x"),
             q("SELECT 1", 1, false, Some("b.y:2"), "x"),
             q("SELECT 1", 1, false, Some("a.x:1"), "x"),
@@ -2143,7 +2143,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_open_transactions_sort_before_closed() {
-        let events = vec![
+        let events = [
             // Closed txn — 1 stmt, will be ranked last.
             q_in_txn("SELECT done", 100, 10, Some("c-1#done"), "c-1"),
             boundary(200, "c-1#done", "c-1", TxnOutcome::Commit),
@@ -2158,7 +2158,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_open_transactions_sort_by_span_desc() {
-        let events = vec![
+        let events = [
             // Long open
             q_in_txn("SELECT 1", 100, 10, Some("c-1#long"), "c-1"),
             q_in_txn("SELECT 2", 10_100, 10, Some("c-1#long"), "c-1"),
@@ -2253,7 +2253,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_tracks_distinct_fingerprints_and_last_seen() {
-        let events = vec![
+        let events = [
             q_in_txn("SELECT a FROM t1", 1, 1, Some("c-1#1"), "c-1"),
             q_in_txn("SELECT b FROM t2", 2, 1, Some("c-1#1"), "c-1"),
             // Same shape as the first — fingerprint dedup'd.
@@ -2266,7 +2266,7 @@ mod tests {
 
     #[test]
     fn group_by_txn_carries_pool_from_first_event_that_has_one() {
-        let events = vec![
+        let events = [
             // First event in the bucket has no pool.
             q_in_txn_with_pool("SELECT 1", 1, 1, Some("c-1#1"), "c-1", None),
             // Later event in the same bucket DOES set pool.
@@ -2282,7 +2282,7 @@ mod tests {
         // Different txns on different pools — each surfaces its
         // own pool name. The diagnostic question this answers:
         // "is my write hitting the replica pool?"
-        let events = vec![
+        let events = [
             q_in_txn_with_pool(
                 "INSERT INTO orders VALUES (1)",
                 1,
@@ -2472,7 +2472,7 @@ mod tests {
     fn group_by_caller_tracks_distinct_fingerprints() {
         // Same caller fired four DIFFERENT queries — distinct
         // fingerprint count surfaces the variety.
-        let events = vec![
+        let events = [
             q("SELECT a FROM t1", 1, false, Some("Svc.method:1"), "svc"),
             q("SELECT b FROM t2", 1, false, Some("Svc.method:1"), "svc"),
             q("SELECT c FROM t3", 1, false, Some("Svc.method:1"), "svc"),
@@ -2694,7 +2694,7 @@ mod tests {
     fn group_by_pool_counts_errors_and_distinct_conns() {
         let mut err = q_pool(Some("primary"), "p-1", 0, 10);
         err.error = Some(vec!["boom".into()]);
-        let events = vec![
+        let events = [
             err,
             q_pool(Some("primary"), "p-1", 20, 10), // same conn reused
             q_pool(Some("primary"), "p-2", 40, 10),
