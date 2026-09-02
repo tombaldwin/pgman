@@ -166,7 +166,7 @@ the *more restrictive* of the two values for every field:
 
 | Field | Merged value |
 | --- | --- |
-| `read_only`, `auto_tx` | personal `||` project — on is stricter |
+| `read_only`, `auto_tx` | personal OR project — on is stricter |
 | `statement_timeout_ms`, `cost_preview_threshold_rows` | the smaller **non-zero** value (`0` means "no limit", the weakest) |
 | every guard | the stricter of `allow` < `confirm` < `block` |
 | `clean_mode` | yours — it isn't a guard rail and isn't orderable, so a project override is ignored |
@@ -249,9 +249,13 @@ A candidate with a tunnel asks a second time before pgman spawns `ssh`.
 
 In `--batch` mode there's no picker to fall back on, so a single
 discovered candidate is still used; zero or more-than-one is a hard
-error asking for `--dsn` (`src/main.rs::resolve_batch_dsn`). Batch
+error asking for `--dsn` (`src/main.rs::batch_dsn_from_picks`). Batch
 inherits the same password and placeholder rules — it has no
-`PGPASSWORD` fallback for a discovered source either.
+`PGPASSWORD` fallback for a discovered source either — and every
+question the TUI would ask becomes a refusal rather than a silent yes:
+a discovered candidate carrying an `ssh_tunnel` is refused outright,
+since batch has nobody to confirm the bastion with. Pass `--dsn` when
+that tunnel is the one you meant.
 
 **Unresolved `${...}` placeholders**: Spring config files commonly use
 `${DB_HOST}` / `${db.password}`-style placeholders meant to be
