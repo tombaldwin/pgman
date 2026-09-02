@@ -1,6 +1,6 @@
 # cargo-deny configuration — keeps the dependency tree permissive-licensed
 # and advisory-clean. Run locally with `cargo deny check` (cargo install
-# cargo-deny). Wired into CI as a non-blocking-to-start check.
+# cargo-deny). Wired into CI as a blocking check (docs/development.md).
 
 [advisories]
 version = 2
@@ -21,8 +21,6 @@ allow = [
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "MPL-2.0",
     "CC0-1.0",
     # Boost Software License — OSI-approved, FSF Free/Libre, permissive
     # (no attribution required for binaries). Via arboard → clipboard-win.
