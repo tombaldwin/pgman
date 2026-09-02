@@ -16,6 +16,7 @@
 //! `None` — this is a courtesy notice, never a hard dependency.
 
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -118,10 +119,34 @@ fn detect_resolved(exe: &Path, manifest_is_git_tree: bool) -> InstallChannel {
     InstallChannel::detect(&resolved, manifest_is_git_tree)
 }
 
+fn channel_override() -> &'static Mutex<Option<InstallChannel>> {
+    static OVERRIDE: OnceLock<Mutex<Option<InstallChannel>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+/// Test-only injection point: force [`detect_install_channel`] to
+/// return a fixed channel instead of inspecting `current_exe()` /
+/// `CARGO_MANIFEST_DIR/.git`. Snapshot and size-sweep tests for the
+/// About overlay use this to pin `Standalone` — the honest default
+/// for a downloaded binary — so the rendered text doesn't depend on
+/// whether the tree the tests happen to run from still has a `.git`
+/// directory (a real checkout does; `git archive`'s exported tree
+/// does not).
+///
+/// Not `#[cfg(test)]`-gated: integration tests under `tests/` link
+/// against the compiled library, not a `cfg(test)` build of it, so a
+/// `cfg(test)`-only function here would be invisible to them.
+pub fn set_channel_override_for_tests(channel: Option<InstallChannel>) {
+    *channel_override().lock().unwrap() = channel;
+}
+
 /// Impure wrapper around [`InstallChannel::detect`] — resolves the
 /// running binary's path (symlinks and all) and whether the
 /// compiled-in manifest dir is still a git working tree.
 pub fn detect_install_channel() -> InstallChannel {
+    if let Some(channel) = *channel_override().lock().unwrap() {
+        return channel;
+    }
     let exe = std::env::current_exe().unwrap_or_default();
     let manifest_is_git_tree = Path::new(crate::upgrade::SOURCE_PATH).join(".git").exists();
     detect_resolved(&exe, manifest_is_git_tree)
@@ -422,6 +447,17 @@ mod tests {
     fn detect_maps_cargo_bin() {
         let p = Path::new("/Users/tom/.cargo/bin/pgman");
         assert_eq!(InstallChannel::detect(p, false), InstallChannel::Cargo);
+    }
+
+    #[test]
+    fn channel_override_short_circuits_detection() {
+        set_channel_override_for_tests(Some(InstallChannel::Homebrew));
+        assert_eq!(detect_install_channel(), InstallChannel::Homebrew);
+        set_channel_override_for_tests(None);
+        // With the override cleared, real detection runs again — just
+        // assert it doesn't panic and returns *a* channel; the exact
+        // value depends on the machine running the test.
+        let _ = detect_install_channel();
     }
 
     #[test]

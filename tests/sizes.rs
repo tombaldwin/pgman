@@ -243,6 +243,12 @@ fn scr_help() -> App {
 }
 
 fn scr_about() -> App {
+    // Pin the install channel so the snapshot doesn't depend on
+    // whether `.git` exists in the tree these tests run from — see
+    // `tests/snapshots.rs::about_overlay` for the full rationale.
+    pgman::update_check::set_channel_override_for_tests(Some(
+        pgman::update_check::InstallChannel::Standalone,
+    ));
     let mut a = base();
     a.mode = Mode::About;
     a

@@ -199,11 +199,21 @@ fn help_overlay() {
 fn about_overlay() {
     let mut a = settle_app();
     a.mode = Mode::About;
+    // Pin the install channel rather than let `draw_about` detect it
+    // from `CARGO_MANIFEST_DIR/.git` — that would bake "installed via
+    // a local git checkout" into the snapshot, which is only true when
+    // tests run from a live checkout and false from an exported tree
+    // (`git archive`). `Standalone` is the honest default for a
+    // downloaded binary, so pin that instead.
+    pgman::update_check::set_channel_override_for_tests(Some(
+        pgman::update_check::InstallChannel::Standalone,
+    ));
     // One row taller than the old 100x28: the overlay now carries an
     // "installed via …" line under the version, and this height is
     // exactly tall enough to show it without clipping the license
     // line below it.
     let buf = render(&mut a, 100, 30);
+    pgman::update_check::set_channel_override_for_tests(None);
     insta::assert_snapshot!(dump(&buf));
 }
 
