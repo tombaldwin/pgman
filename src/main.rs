@@ -646,17 +646,25 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
             discover_intellij_datasources(&cwd, &mut picks);
         }
     }
+    batch_dsn_from_picks(picks)
+}
+
+/// Reduce the discovered candidate list to the one DSN `--batch` may
+/// use, or the reason it may not. Pure — the tree-walking that produced
+/// `picks` happens in `resolve_batch_dsn`.
+///
+/// Batch has no picker and nobody to prompt, so every question the TUI
+/// would ask becomes a refusal here rather than a silent yes.
+fn batch_dsn_from_picks(picks: Vec<DataSourcePick>) -> Result<conn::Dsn, String> {
     match picks.len() {
         0 => Err(
             "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
                 .into(),
         ),
         1 => {
-            let pick = picks.into_iter().next().unwrap();
-            // Batch mode can't fall back on the interactive picker, so
-            // an unresolved Spring placeholder must fail loudly here
-            // rather than handing connect_and_bootstrap a literal
-            // `${NAME}` hostname.
+            let pick = picks.into_iter().next().expect("len checked");
+            // An unresolved placeholder must fail loudly rather than
+            // handing `connect_and_bootstrap` a literal `${NAME}`.
             if let Some(name) = pick.unresolved_host.first() {
                 return Err(format!(
                     "${{{name}}} sits in the host of '{}' — pgman never resolves a \
@@ -669,12 +677,27 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
                     "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
                 ));
             }
-            pick.dsn.ok_or_else(|| {
+            let dsn = pick.dsn.ok_or_else(|| {
                 format!(
                     "'{}' has no usable connection URL — check the discovered config",
                     pick.name
                 )
-            })
+            })?;
+            // The TUI asks before spawning `ssh` to a bastion a
+            // committed file named (`App::connect_to_discovered_pick`).
+            // "Non-interactive" is not a reason to skip the question —
+            // so refuse, and point at the one form that is the
+            // operator's own choice.
+            if let Some(t) = &dsn.ssh_tunnel {
+                return Err(format!(
+                    "'{}' opens an ssh tunnel to {} — pgman won't spawn ssh for a \
+                     discovered connection without confirmation, and --batch can't ask. \
+                     Pass --dsn if that's what you want.",
+                    pick.name,
+                    t.to_display()
+                ));
+            }
+            Ok(dsn)
         }
         n => Err(format!(
             "found {n} candidate data sources — pass --dsn to disambiguate in batch mode"
@@ -1200,6 +1223,67 @@ mod main_tests {
             safety::Guard::Block,
             "project can't relax drop"
         );
+    }
+
+    /// A discovered pick for the `batch_dsn_from_picks` tests.
+    fn batch_pick(name: &str, url: &str) -> DataSourcePick {
+        DataSourcePick {
+            name: name.into(),
+            origin: "project",
+            dsn: conn::Dsn::parse(url).ok(),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn batch_uses_a_single_clean_discovered_pick() {
+        let got = batch_dsn_from_picks(vec![batch_pick("only", "postgres://app@db/main")]).unwrap();
+        assert_eq!(got.host, "db");
+    }
+
+    #[test]
+    fn batch_refuses_a_discovered_ssh_tunnel() {
+        // The TUI asks before spawning ssh; batch has nobody to ask, and
+        // that is a reason to refuse, not to proceed quietly.
+        let err = batch_dsn_from_picks(vec![batch_pick(
+            "via-bastion",
+            "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+        )])
+        .unwrap_err();
+        assert!(err.contains("tom@bastion.example.com"), "got: {err}");
+        assert!(err.contains("--dsn"), "should name the way forward: {err}");
+    }
+
+    #[test]
+    fn batch_refuses_unresolved_placeholders_and_says_which_kind() {
+        let mut host = batch_pick("app", "postgres://app@db/main");
+        host.unresolved_host = vec!["DB_HOST".into()];
+        let err = batch_dsn_from_picks(vec![host]).unwrap_err();
+        assert!(err.starts_with("${DB_HOST} sits in the host"), "got: {err}");
+
+        let mut user = batch_pick("app", "postgres://app@db/main");
+        user.unresolved = vec!["DB_USER".into()];
+        let err = batch_dsn_from_picks(vec![user]).unwrap_err();
+        assert!(err.contains("export it"), "got: {err}");
+
+        let mut broken = batch_pick("app", "postgres://app@db/main");
+        broken.dsn = None;
+        let err = batch_dsn_from_picks(vec![broken]).unwrap_err();
+        assert!(err.contains("no usable connection URL"), "got: {err}");
+    }
+
+    #[test]
+    fn batch_refuses_zero_or_ambiguous_candidates() {
+        assert!(batch_dsn_from_picks(Vec::new())
+            .unwrap_err()
+            .contains("no DSN"));
+        let err = batch_dsn_from_picks(vec![
+            batch_pick("a", "postgres://app@a/main"),
+            batch_pick("b", "postgres://app@b/main"),
+        ])
+        .unwrap_err();
+        assert!(err.contains("--dsn to disambiguate"), "got: {err}");
     }
 
     #[test]
