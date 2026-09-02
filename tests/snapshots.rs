@@ -494,11 +494,13 @@ fn connection_picker_with_two_entries() {
             name: "prod".into(),
             origin: "project",
             dsn: Dsn::parse("postgres://app@prod-db/main").unwrap(),
+            unresolved: Vec::new(),
         },
         DataSourcePick {
             name: "staging".into(),
             origin: "IntelliJ",
             dsn: Dsn::parse("postgres://app@staging-db/main").unwrap(),
+            unresolved: Vec::new(),
         },
     ];
     let mut a = App::new(theme, None, picks, SafetyConfig::default());

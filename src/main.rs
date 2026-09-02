@@ -202,6 +202,7 @@ async fn main() -> anyhow::Result<()> {
                             name: c.name.clone(),
                             origin: "project",
                             dsn: d,
+                            unresolved: Vec::new(),
                         });
                     }
                     None => tracing::warn!(
@@ -223,9 +224,15 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Auto-pick when the operator didn't pass --dsn and there's exactly one
-    // candidate. Multiple candidates → leave them in `data_source_picks` and
-    // let the TUI render the picker (Mode::ConnPick).
-    if dsn.is_none() && data_source_picks.len() == 1 {
+    // candidate — UNLESS that candidate still has an unresolved Spring
+    // `${...}` placeholder in its url/username, in which case
+    // auto-connecting would hand `connect_and_bootstrap` a literal
+    // `${NAME}` hostname (a DNS-shaped failure with no hint of the real
+    // cause). Leave it in `data_source_picks` instead so the operator can
+    // open the picker (`c`) or `\c <name>` and get the real error.
+    // Multiple candidates → leave them in `data_source_picks` and let the
+    // TUI render the picker (Mode::ConnPick).
+    if dsn.is_none() && data_source_picks.len() == 1 && data_source_picks[0].unresolved.is_empty() {
         // Clone — keep the pick in the list so the connection-failure
         // screen can re-open the picker for a manual retry. The
         // Mode::ConnPick gate is `>= 2`, so a single entry won't pop the
@@ -632,6 +639,7 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
                         name: c.name.clone(),
                         origin: "project",
                         dsn: d,
+                        unresolved: Vec::new(),
                     });
                 }
             }
@@ -648,7 +656,19 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
             "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
                 .into(),
         ),
-        1 => Ok(picks.into_iter().next().unwrap().dsn),
+        1 => {
+            let pick = picks.into_iter().next().unwrap();
+            // Batch mode can't fall back on the interactive picker, so
+            // an unresolved Spring placeholder must fail loudly here
+            // rather than handing connect_and_bootstrap a literal
+            // `${NAME}` hostname.
+            if let Some(name) = pick.unresolved.first() {
+                return Err(format!(
+                    "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
+                ));
+            }
+            Ok(pick.dsn)
+        }
         n => Err(format!(
             "found {n} candidate data sources — pass --dsn to disambiguate in batch mode"
         )),
@@ -789,8 +809,23 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
                 name: label,
                 origin: "IntelliJ",
                 dsn,
+                unresolved: Vec::new(),
             });
         }
+    }
+}
+
+/// Resolve `${NAME}` / `${NAME:default}` placeholders in a Spring
+/// config value against the process environment. On success, returns
+/// the resolved value with an empty missing-name list. On failure
+/// (an unset name with no default, or a nested/malformed
+/// placeholder), returns the *original, unresolved* value — so a
+/// caller building a DSN out of it still gets a parseable (if
+/// useless) string — alongside the names that couldn't be resolved.
+fn resolve_spring_value(value: &str) -> (String, Vec<String>) {
+    match creds::spring::resolve_placeholders(value, |name| std::env::var(name).ok()) {
+        Ok(resolved) => (resolved, Vec::new()),
+        Err(missing) => (value.to_string(), missing),
     }
 }
 
@@ -885,12 +920,23 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
     // Resolve a partial block into picks under `label`. A prefix
     // contributes a pick only when it has a usable jdbc:postgresql
     // URL; username / password from the block win over URL creds.
+    //
+    // `${NAME}` / `${NAME:default}` placeholders in the url/username are
+    // resolved from the environment (`resolve_spring_value`); a name
+    // that can't be resolved is left as the literal `${NAME}` text (so
+    // the pick still parses to *some* DSN and stays available for
+    // inspection) but recorded in `unresolved` — `refuse_if_unresolved`
+    // stops the pick from actually being connected to. An unresolved
+    // password is deliberately NOT recorded: `PGPASSWORD` / a project's
+    // `password_env` already cover supplying a password pgman couldn't
+    // read from the file.
     let mut emit = |label: &str, block: &[SpringDatasourcePartial]| {
         for p in block {
-            let Some(url) = p.url.as_deref() else {
+            let Some(raw_url) = p.url.as_deref() else {
                 continue;
             };
-            let Some(raw) = creds::intellij::jdbc_to_dsn(url) else {
+            let (resolved_url, mut unresolved) = resolve_spring_value(raw_url);
+            let Some(raw) = creds::intellij::jdbc_to_dsn(&resolved_url) else {
                 continue;
             };
             let Ok(mut dsn) = conn::Dsn::parse(&raw) else {
@@ -898,20 +944,33 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
             };
             if let Some(u) = &p.username {
                 if !u.is_empty() {
-                    dsn.user = Some(u.clone());
+                    let (resolved_user, user_missing) = resolve_spring_value(u);
+                    dsn.user = Some(resolved_user);
+                    unresolved.extend(user_missing);
                 }
             }
             if let Some(pw) = &p.password {
                 if !pw.is_empty() {
-                    dsn.password = Some(pw.clone());
+                    let (resolved_pw, _pw_missing) = resolve_spring_value(pw);
+                    dsn.password = Some(resolved_pw);
                 }
             }
             // Provenance only — never the raw password (CLAUDE.md).
             tracing::info!("  → pick {}.{} = {}", label, p.prefix, dsn.redacted());
+            let mut name = format!("{} ({})", p.prefix, label);
+            if !unresolved.is_empty() {
+                let list = unresolved
+                    .iter()
+                    .map(|n| format!("${{{n}}}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                name = format!("{name} — unresolved {list}");
+            }
             picks.push(DataSourcePick {
-                name: format!("{} ({})", p.prefix, label),
+                name,
                 origin: "Spring",
                 dsn,
+                unresolved,
             });
         }
     };
@@ -981,5 +1040,108 @@ mod main_tests {
     fn parse_tap_addr_rejects_oversize_port() {
         let err = parse_tap_addr(":99999").unwrap_err();
         assert!(err.contains("port"), "expected port-range error: {err}");
+    }
+
+    /// Unique-per-test scratch project dir under the OS temp dir, with
+    /// `src/main/resources/application.properties` seeded from
+    /// `properties_body`. Cleaned up by the caller.
+    fn spring_project_with(name: &str, properties_body: &str) -> std::path::PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("pgman-main-spring-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let resources = base.join("src/main/resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        std::fs::write(resources.join("application.properties"), properties_body).unwrap();
+        base
+    }
+
+    #[test]
+    fn discover_spring_datasources_resolves_url_placeholder_from_env() {
+        let base = spring_project_with(
+            "resolves",
+            "spring.datasource.url=jdbc:postgresql://${PGMAN_TEST_MAIN_DB_HOST_A}:5432/orders\n\
+             spring.datasource.username=svc\n",
+        );
+        // SAFETY: unique var name, not touched by any other test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_DB_HOST_A", "db.internal");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_HOST_A");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert!(
+            picks[0].unresolved.is_empty(),
+            "unexpected unresolved: {:?}",
+            picks[0].unresolved
+        );
+        assert_eq!(picks[0].dsn.host, "db.internal");
+        assert!(
+            !picks[0].name.contains("unresolved"),
+            "resolved pick's name shouldn't mention unresolved: {}",
+            picks[0].name
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_marks_pick_when_url_placeholder_unset() {
+        let base = spring_project_with(
+            "unset",
+            "spring.datasource.url=jdbc:postgresql://${PGMAN_TEST_MAIN_DB_HOST_B}:5432/orders\n\
+             spring.datasource.username=svc\n",
+        );
+        // Deliberately not set — this is the "unresolved" case.
+        // SAFETY: unique var name; a stray leftover from a previous
+        // run (there shouldn't be one) is removed defensively.
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_HOST_B");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert_eq!(
+            picks[0].unresolved,
+            vec!["PGMAN_TEST_MAIN_DB_HOST_B".to_string()]
+        );
+        assert!(
+            picks[0]
+                .name
+                .contains("unresolved ${PGMAN_TEST_MAIN_DB_HOST_B}"),
+            "picker label should surface the unresolved name: {}",
+            picks[0].name
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_password_only_unresolved_is_not_marked() {
+        // PGPASSWORD / password_env already cover supplying a password
+        // pgman couldn't read from the file — an unresolved password
+        // placeholder alone must not block the pick.
+        let base = spring_project_with(
+            "pw-only",
+            "spring.datasource.url=jdbc:postgresql://h:5432/orders\n\
+             spring.datasource.username=svc\n\
+             spring.datasource.password=${PGMAN_TEST_MAIN_DB_PW_C}\n",
+        );
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_MAIN_DB_PW_C");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1);
+        assert!(
+            picks[0].unresolved.is_empty(),
+            "password-only unresolved must not mark the pick: {:?}",
+            picks[0].unresolved
+        );
+        assert!(!picks[0].name.contains("unresolved"));
     }
 }

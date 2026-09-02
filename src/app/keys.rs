@@ -562,6 +562,9 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.conn_pick.select_last(),
             KeyCode::Enter => {
                 if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index).cloned() {
+                    if self.refuse_if_unresolved(&pick) {
+                        return;
+                    }
                     // Re-resolve safety profile against the *picked* db name
                     // — the placeholder in App::new used the empty default.
                     let origin = format!("picked {} data source '{}'", pick.origin, pick.name);

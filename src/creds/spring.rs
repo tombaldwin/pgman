@@ -1,55 +1,19 @@
 //! Discover datasource settings from a Spring project's configuration.
 //!
-//! `parse_properties` handles `application.properties`. `application.yml`
-//! parsing (`parse_yaml`) is M1.5 — it needs `serde_yaml` and the real Spring
-//! profile / `${}` placeholder mechanics verified first (see BACKLOG.md).
+//! `application.properties` parsing lives in [`parse_properties_partials`] /
+//! [`parse_properties_all`]; `application.yml` in [`parse_yaml_partials`] /
+//! [`parse_yaml_all`] (via [`flatten_yaml`]). [`resolve_placeholders`]
+//! resolves the `${NAME}` / `${NAME:default}` placeholders those parsers
+//! leave untouched, against a caller-supplied lookup (`main.rs` wires
+//! `std::env::var`).
 
 use std::path::Path;
-
-/// Datasource settings discovered from a Spring config file. Any field may be
-/// an unresolved `${...}` placeholder — see `placeholders`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SpringDatasource {
-    pub url: Option<String>,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    /// `${...}` placeholder bodies referenced by the values above, in the
-    /// order encountered. Resolving them is v2 (`creds::ssm` etc.).
-    pub placeholders: Vec<String>,
-}
 
 /// True if `dir` looks like a Java project root (Maven or Gradle).
 pub fn detect_java_project(dir: &Path) -> bool {
     ["pom.xml", "build.gradle", "build.gradle.kts"]
         .iter()
         .any(|f| dir.join(f).is_file())
-}
-
-/// Parse `spring.datasource.{url,username,password}` out of the body of an
-/// `application.properties` file.
-///
-/// Known limitation: backslash line-continuations are not joined — M1.5.
-pub fn parse_properties(text: &str) -> SpringDatasource {
-    let mut ds = SpringDatasource::default();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
-            continue;
-        }
-        let Some(sep) = line.find(['=', ':']) else {
-            continue;
-        };
-        let key = line[..sep].trim();
-        let value = line[sep + 1..].trim();
-        match key {
-            "spring.datasource.url" => ds.url = Some(value.to_string()),
-            "spring.datasource.username" => ds.username = Some(value.to_string()),
-            "spring.datasource.password" => ds.password = Some(value.to_string()),
-            _ => continue,
-        }
-        extract_placeholders(value, &mut ds.placeholders);
-    }
-    ds
 }
 
 /// One datasource discovered in a Spring `.properties` file, identified by
@@ -236,13 +200,6 @@ pub fn format_precedence_rank(filename: &str) -> u8 {
     }
 }
 
-/// Parse `spring.datasource.*` out of an `application.yml` body.
-///
-/// Stub — M1.5 (see BACKLOG.md).
-pub fn parse_yaml(_text: &str) -> SpringDatasource {
-    SpringDatasource::default()
-}
-
 /// Flatten a Spring-style `application.yml` to dot-notation property
 /// lines, then run it through `parse_properties_all`. Same output type
 /// so `discover_spring_datasources` can treat both file types uniformly.
@@ -395,19 +352,90 @@ fn unquote_yaml_scalar(s: &str) -> &str {
     s
 }
 
-/// Append the body of each `${...}` placeholder found in `value` to `into`.
-fn extract_placeholders(value: &str, into: &mut Vec<String>) {
+/// Resolve `${NAME}` and `${NAME:default}` placeholders in `value`
+/// against `lookup` (e.g. `std::env::var(name).ok()`). `${NAME}`
+/// resolves via `lookup(NAME)`; `${NAME:default}` uses `lookup(NAME)`
+/// when set, else falls back to `default` (so it never fails — a
+/// default always resolves). A `value` with no `${...}` at all comes
+/// back unchanged.
+///
+/// `Err` carries one entry per placeholder that couldn't be resolved:
+/// an unset `${NAME}` with no default, or a nested/malformed
+/// `${...}` (e.g. `${OUTER:${INNER}}` — Spring supports resolving the
+/// default itself as a placeholder; this parser does not attempt
+/// that, and flags it instead of guessing).
+pub fn resolve_placeholders(
+    value: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<String, Vec<String>> {
+    let mut out = String::new();
+    let mut missing: Vec<String> = Vec::new();
     let mut rest = value;
-    while let Some(start) = rest.find("${") {
-        let after = &rest[start + 2..];
-        match after.find('}') {
-            Some(end) => {
-                into.push(after[..end].to_string());
-                rest = &after[end + 1..];
+    loop {
+        let Some(start) = rest.find("${") else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let body_start = start + 2;
+        match find_matching_close(&rest[body_start..]) {
+            None => {
+                // Unterminated `${` — nothing sensible to resolve;
+                // flag the rest verbatim and stop scanning.
+                missing.push(rest[start..].to_string());
+                break;
             }
-            None => break, // unterminated — stop scanning
+            Some(len) => {
+                let body = &rest[body_start..body_start + len];
+                if body.contains("${") {
+                    // Nested placeholder in the name/default — not
+                    // attempted, just flagged.
+                    missing.push(format!("${{{body}}}"));
+                } else {
+                    match body.split_once(':') {
+                        Some((name, default)) => match lookup(name) {
+                            Some(v) => out.push_str(&v),
+                            None => out.push_str(default),
+                        },
+                        None => match lookup(body) {
+                            Some(v) => out.push_str(&v),
+                            None => missing.push(body.to_string()),
+                        },
+                    }
+                }
+                rest = &rest[body_start + len + 1..];
+            }
         }
     }
+    if missing.is_empty() {
+        Ok(out)
+    } else {
+        Err(missing)
+    }
+}
+
+/// Find the index (relative to `s`, the text right after an opening
+/// `${`) of the `}` that closes it, treating any nested `${` as one
+/// level of depth. `None` when `s` has no matching close.
+fn find_matching_close(s: &str) -> Option<usize> {
+    let mut depth = 0u32;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c == '$' {
+            if let Some(&(_, '{')) = chars.peek() {
+                chars.next();
+                depth += 1;
+                continue;
+            }
+        }
+        if c == '}' {
+            if depth == 0 {
+                return Some(i);
+            }
+            depth -= 1;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -434,40 +462,6 @@ mod tests {
         assert!(!detect_java_project(&plain));
 
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn parses_datasource_properties() {
-        let text = "\
-# database
-spring.datasource.url=jdbc:postgresql://db:5432/orders
-spring.datasource.username = svc_orders
-spring.application.name=orders-api
-";
-        let ds = parse_properties(text);
-        assert_eq!(ds.url.as_deref(), Some("jdbc:postgresql://db:5432/orders"));
-        assert_eq!(ds.username.as_deref(), Some("svc_orders"));
-        assert!(ds.password.is_none());
-    }
-
-    #[test]
-    fn collects_placeholders() {
-        let text = "spring.datasource.password=${db.password}\n\
-                     spring.datasource.url=${DB_HOST:localhost}/app";
-        let ds = parse_properties(text);
-        assert_eq!(ds.placeholders, vec!["db.password", "DB_HOST:localhost"]);
-    }
-
-    #[test]
-    fn accepts_colon_separated_keys_and_skips_comments() {
-        let text = "! a comment\nspring.datasource.password: secret123";
-        let ds = parse_properties(text);
-        assert_eq!(ds.password.as_deref(), Some("secret123"));
-    }
-
-    #[test]
-    fn empty_input_yields_empty_datasource() {
-        assert_eq!(parse_properties(""), SpringDatasource::default());
     }
 
     #[test]
@@ -827,5 +821,91 @@ dataSource:
         assert_eq!(ds.url.as_deref(), Some("jdbc:postgresql://db/orders"));
         assert_eq!(ds.username.as_deref(), Some("app"));
         assert_eq!(ds.password.as_deref(), Some("prod-secret"));
+    }
+
+    #[test]
+    fn resolve_placeholders_no_placeholders_is_unchanged() {
+        let got = resolve_placeholders("jdbc:postgresql://h:5432/app", |_| None);
+        assert_eq!(got, Ok("jdbc:postgresql://h:5432/app".to_string()));
+    }
+
+    #[test]
+    fn resolve_placeholders_plain_name_resolves_from_lookup() {
+        let got = resolve_placeholders("${DB_HOST}", |n| {
+            (n == "DB_HOST").then(|| "db.internal".to_string())
+        });
+        assert_eq!(got, Ok("db.internal".to_string()));
+    }
+
+    #[test]
+    fn resolve_placeholders_embeds_resolved_value_in_surrounding_text() {
+        let got = resolve_placeholders("jdbc:postgresql://${DB_HOST}:5432/app", |n| {
+            (n == "DB_HOST").then(|| "db.internal".to_string())
+        });
+        assert_eq!(
+            got,
+            Ok("jdbc:postgresql://db.internal:5432/app".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_placeholders_name_with_default_prefers_lookup() {
+        let got = resolve_placeholders("${DB_HOST:localhost}", |n| {
+            (n == "DB_HOST").then(|| "db.internal".to_string())
+        });
+        assert_eq!(got, Ok("db.internal".to_string()));
+    }
+
+    #[test]
+    fn resolve_placeholders_name_with_default_falls_back_when_unset() {
+        let got = resolve_placeholders("${DB_HOST:localhost}", |_| None);
+        assert_eq!(got, Ok("localhost".to_string()));
+    }
+
+    #[test]
+    fn resolve_placeholders_unset_no_default_is_an_error() {
+        let got = resolve_placeholders("${DB_HOST}", |_| None);
+        assert_eq!(got, Err(vec!["DB_HOST".to_string()]));
+    }
+
+    #[test]
+    fn resolve_placeholders_collects_every_unresolved_name() {
+        let got = resolve_placeholders("${DB_HOST}/${DB_NAME}", |_| None);
+        assert_eq!(got, Err(vec!["DB_HOST".to_string(), "DB_NAME".to_string()]));
+    }
+
+    #[test]
+    fn resolve_placeholders_nested_placeholder_is_an_error() {
+        // Spring itself can resolve a placeholder's default as another
+        // placeholder; this parser doesn't attempt that and flags it
+        // instead of guessing.
+        let got = resolve_placeholders("${DB_HOST:${FALLBACK_HOST}}", |_| None);
+        assert!(got.is_err(), "expected nested placeholder to be flagged");
+    }
+
+    #[test]
+    fn resolve_placeholders_unterminated_is_an_error() {
+        let got = resolve_placeholders("jdbc:postgresql://${DB_HOST", |_| None);
+        assert!(
+            got.is_err(),
+            "expected unterminated placeholder to be flagged"
+        );
+    }
+
+    #[test]
+    fn resolve_placeholders_env_round_trip() {
+        // Exercises the real intended lookup — std::env::var — with a
+        // properties file's raw placeholder value.
+        // SAFETY: this test doesn't run concurrently with another
+        // test reading/writing the same var name; the name is unique
+        // to this test.
+        unsafe {
+            std::env::set_var("PGMAN_TEST_RESOLVE_DB_HOST", "db.example.test");
+        }
+        let got = resolve_placeholders("${PGMAN_TEST_RESOLVE_DB_HOST}", |n| std::env::var(n).ok());
+        unsafe {
+            std::env::remove_var("PGMAN_TEST_RESOLVE_DB_HOST");
+        }
+        assert_eq!(got, Ok("db.example.test".to_string()));
     }
 }

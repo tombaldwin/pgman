@@ -122,6 +122,9 @@ impl App {
             .find(|p| p.name.eq_ignore_ascii_case(&name))
             .cloned()
         {
+            if self.refuse_if_unresolved(&pick) {
+                return;
+            }
             let origin = format!("picked {} data source '{}'", pick.origin, pick.name);
             self.connect_to_pick(pick.dsn, origin);
             return;
