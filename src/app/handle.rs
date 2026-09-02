@@ -49,7 +49,8 @@ impl App {
                 // Schema changed → editor highlight (keyed on buffer only)
                 // must be recomputed against the new cache.
                 self.editor_highlight_cache = None;
-                // Splash stays up — `tick_splash` honours the 3s minimum.
+                // Splash stays up — `tick_splash` honours the `SPLASH_MIN`
+                // floor before dismissing on a resolved connection.
             }
             AppMsg::BootFailed { error, .. } => {
                 self.conn_state = ConnState::Failed(error);

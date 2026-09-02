@@ -674,35 +674,52 @@ pub fn build_insert_template(schema: &str, table: &str, columns: &[String]) -> S
     )
 }
 
+/// The splash's minimum hold: long enough that the elephant isn't a
+/// flash, short enough that it isn't a wait. Startup sets `splash_until`
+/// to `Instant::now() + SPLASH_MIN`; nothing holds the splash past this
+/// deadline regardless of connection state or landing mode.
+pub const SPLASH_MIN: Duration = Duration::from_millis(600);
+
 /// Pure decision: should the splash dismiss at `now`? `until` is
-/// the absolute deadline set at App start (3s after launch);
-/// `conn_resolved` reflects whether the connection is no longer in
-/// the Connecting state (any other state lets us drop the splash
-/// early so a fast failure isn't hidden behind the elephant).
+/// the absolute deadline set at App start (`SPLASH_MIN` after
+/// launch). `conn_resolved` reflects whether the connection is no
+/// longer in the Connecting state (any other state lets us drop the
+/// splash early so a fast failure isn't hidden behind the elephant).
+/// `is_picker` reflects whether the landing mode is the connection
+/// picker (`Mode::ConnPick`) — there, `conn_resolved` never fires
+/// (no connect attempt is made until a pick is confirmed, so
+/// `conn_state` sits at `Disconnected` indefinitely), and the picker
+/// is what the operator actually needs to see, so it must not wait
+/// beyond the minimum either.
 ///
 /// ```
 /// use std::time::{Duration, Instant};
-/// use pgman::app::splash_should_dismiss;
+/// use pgman::app::{splash_should_dismiss, SPLASH_MIN};
 /// let t0 = Instant::now();
-/// let until = Some(t0 + Duration::from_secs(3));
+/// let until = Some(t0 + SPLASH_MIN);
 /// // Invisible → never dismisses (nothing to do).
-/// assert!(!splash_should_dismiss(false, until, false, t0));
+/// assert!(!splash_should_dismiss(false, until, false, false, t0));
 /// // Past deadline → dismiss.
-/// assert!(splash_should_dismiss(true, until, false, t0 + Duration::from_secs(4)));
+/// assert!(splash_should_dismiss(true, until, false, false, t0 + SPLASH_MIN));
 /// // Connection resolved before deadline → dismiss anyway.
-/// assert!(splash_should_dismiss(true, until, true, t0));
+/// assert!(splash_should_dismiss(true, until, true, false, t0));
+/// // Landing on the picker → dismiss anyway, even while Disconnected.
+/// assert!(splash_should_dismiss(true, until, false, true, t0));
+/// // Still connecting, not the picker, before deadline → hold.
+/// assert!(!splash_should_dismiss(true, until, false, false, t0));
 /// ```
 pub fn splash_should_dismiss(
     visible: bool,
     until: Option<std::time::Instant>,
     conn_resolved: bool,
+    is_picker: bool,
     now: std::time::Instant,
 ) -> bool {
     if !visible {
         return false;
     }
     match until {
-        Some(deadline) => now >= deadline || conn_resolved,
+        Some(deadline) => now >= deadline || conn_resolved || is_picker,
         None => false,
     }
 }
@@ -779,10 +796,11 @@ pub struct App {
     pub grid: Grid,
     pub grid_state: TableState,
     pub splash_visible: bool,
-    /// Earliest moment at which the splash may auto-dismiss. The splash
-    /// always shows for at least this long at startup, regardless of how
-    /// quickly the connection completes — so the elephant gets its moment
-    /// even on a fast local DB. A keypress still dismisses immediately.
+    /// Deadline set at startup, `SPLASH_MIN` after launch: `tick_splash`
+    /// never holds the splash past it. A fast-resolving connection or a
+    /// picker landing (see [`splash_should_dismiss`]) can dismiss the
+    /// splash earlier than this; a keypress dismisses it immediately,
+    /// bypassing this deadline entirely.
     pub splash_until: Option<Instant>,
     pub anim_tick: usize,
     pub generation: u64,
@@ -1000,9 +1018,13 @@ impl App {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
         // When the operator hasn't pre-selected a DSN and we discovered
         // multiple candidates, the post-splash mode is the picker — that's
-        // the "lovely discovery" surface. Splash always shows first
-        // (`splash_until` keeps it visible for ~3s minimum); when it
-        // dismisses the user lands on either the picker or Normal mode.
+        // the "lovely discovery" surface. Splash shows first, but never
+        // beyond `SPLASH_MIN` (`splash_until` sets that deadline); a picker
+        // landing dismisses it straight away — `conn_state` stays
+        // `Disconnected` there (no connect attempt is made until a pick is
+        // confirmed), so the fast-resolve early-dismiss branch would
+        // otherwise never fire and the operator would sit through the full
+        // minimum before reaching the surface they actually need.
         let show_picker = dsn.is_none() && data_source_picks.len() >= 2;
         let mode = if show_picker {
             Mode::ConnPick
@@ -1019,7 +1041,7 @@ impl App {
             grid: Grid::default(),
             grid_state: TableState::default(),
             splash_visible: true,
-            splash_until: Some(Instant::now() + Duration::from_secs(3)),
+            splash_until: Some(Instant::now() + SPLASH_MIN),
             anim_tick: 0,
             generation: 0,
             should_quit: false,
@@ -1252,13 +1274,15 @@ impl App {
         }
     }
 
-    /// Auto-dismiss the splash either when its 3-second minimum has
-    /// elapsed OR as soon as the connection resolves (Connected or
+    /// Auto-dismiss the splash as soon as any of: its `SPLASH_MIN`
+    /// minimum has elapsed; the connection resolves (Connected or
     /// Failed) — otherwise a fast failure / fast bootstrap would be
-    /// hidden behind the elephant for up to 3s. The picker / disconnected
-    /// idle state still gets its full 3s of splash because `conn_state`
-    /// is `Disconnected` there, so the early-dismiss branch doesn't fire.
-    /// Cheap to call every loop iteration — a single `Instant::now`.
+    /// hidden behind the elephant for the full minimum; or the
+    /// landing mode is the connection picker, which the operator
+    /// needs to see and which never resolves a connection on its own
+    /// (`conn_state` sits at `Disconnected` there, so the
+    /// connection-resolved branch alone would never fire). Cheap to
+    /// call every loop iteration — a single `Instant::now`.
     fn tick_splash(&mut self) {
         if !self.splash_visible {
             return;
@@ -1267,10 +1291,12 @@ impl App {
             self.conn_state,
             ConnState::Connected { .. } | ConnState::Failed(_)
         );
+        let is_picker = matches!(self.mode, Mode::ConnPick);
         if splash_should_dismiss(
             self.splash_visible,
             self.splash_until,
             connection_resolved,
+            is_picker,
             Instant::now(),
         ) {
             self.splash_visible = false;
