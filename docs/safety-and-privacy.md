@@ -5,9 +5,16 @@
 - **Read-only by default.** Every `SafetyProfile` defaults to
   `read_only = true` (`src/safety.rs`), which opens the connection
   with `SET default_transaction_read_only = on` (`src/conn.rs::connect_inner`).
-  A write attempted on such a session is rejected by Postgres itself,
-  independent of the client-side guards below. `statement_timeout_ms`
-  (default 30000) is applied the same way.
+  A *write* attempted on such a session is rejected by Postgres itself,
+  independent of the client-side guards below. The *setting*, however,
+  is a plain session GUC that any role may change, so Postgres does not
+  protect it: a script could simply turn it off first. pgman blocks that
+  — `SET default_transaction_read_only = off`, `RESET` of it, `RESET
+  ALL` / `DISCARD ALL`, and the `READ WRITE` transaction modes on
+  `SET` / `BEGIN` / `START` are all refused while the profile says
+  read-only, `--yes` included
+  (`safety::attempts_read_only_escape`). `statement_timeout_ms`
+  (default 30000) is applied the same way as the read-only flag.
 - **Every statement is classified before it runs.** `safety::classify`
   is pure and heuristic: it strips comments, looks at the leading
   keyword, and checks whether the statement carries a `WHERE`. It is
@@ -21,6 +28,17 @@
   `MERGE` (PG15+) has no dedicated classification; it maps to `Other`,
   which is always treated as a write and guarded (`Confirm` by
   default) rather than allowed through as if it were a `SELECT`.
+  Two more things that look like reads and aren't, and are classified
+  `Other` for the same reason: `SELECT … INTO newtable …`, which
+  creates and fills a table; and a `SELECT` calling one of a short list
+  of functions whose *call* is the destructive act —
+  `pg_terminate_backend`, `pg_cancel_backend`, `pg_reload_conf`,
+  `lo_import`, `lo_export`, `pg_read_file`, `pg_read_binary_file`,
+  `pg_ls_dir`, `dblink`, `dblink_exec`. (`COPY … TO/FROM PROGRAM` was
+  already `Other`, being neither a `SELECT` nor recognised DDL.)
+  Keywords count only where Postgres would read them as keywords:
+  the token scan skips string literals, quoted identifiers,
+  dollar-quoted bodies, and comments.
 - **Guards.** Each statement category (`insert`, `update`,
   `update_without_where`, `delete`, `delete_without_where`,
   `truncate`, `drop`, `ddl`, `other`) maps to `Allow` / `Confirm` /
@@ -35,10 +53,24 @@
   (`src/app/keys.rs::on_confirm_key`). A `Block`-guarded statement
   never reaches this prompt — it's refused outright with an error,
   and the only way past it is to change the guard in `safety.toml`.
-  A multi-statement script (`;`-separated, dollar-quoting and string
-  literals respected by `safety::split_statements`) takes the
-  *most restrictive* guard across every statement in it, and shows a
-  per-kind summary in the confirm prompt.
+  A multi-statement script takes the *most restrictive* guard across
+  every statement in it, and shows a per-kind summary in the confirm
+  prompt.
+- **Statement splitting, and what happens when it can't be trusted.**
+  The script is split by one lexer (`safety::scan`), shared by the
+  splitter and the comment stripper so the two cannot disagree. It
+  tracks string literals (`''` escapes), `E'…'` escape strings
+  (backslash escapes), `"…"` quoted identifiers (`""` escapes),
+  dollar-quoted bodies — where a `$` following an identifier character
+  is an identifier character, not a quote opener — and `--` / nested
+  `/* … */` comments. `safety::split_verified` then checks the result:
+  every construct must close, and re-joining the pieces must reproduce
+  the input. **A script the splitter cannot verify is refused outright**
+  ("could not split this script safely — run the statements one at a
+  time"), because a guard computed from guessed statement boundaries
+  approves the wrong statements. What is sent to the server is the
+  re-joined verified statements, not the original buffer, so the server
+  executes exactly the text the classifier saw.
 - **Rollback-able writes.** When `auto_tx` is on (default), any write
   is wrapped in an explicit `BEGIN` and left **open** on success — the
   statement runs, but nothing is durable until you decide. pgman then
@@ -60,6 +92,8 @@
   to permit a blocked statement in batch mode is to change its guard
   to `confirm` in `safety.toml` first. A safe leading statement does
   not excuse a later one in the same script; the first refusal wins.
+  The same split-verification and run-what-was-checked rules apply here
+  as in the editor.
 - **Optional pre-flight cost preview.** When
   `cost_preview_threshold_rows` is set above 0 for a database, a plain
   `SELECT` (via the normal Run, not `EXPLAIN`) first runs an
