@@ -239,6 +239,7 @@ fn confirm_modal_names_the_statement_not_the_enum_variant() {
             guard: Guard::Confirm,
             wrap_in_tx: true,
             blocked_by_read_only: false,
+            read_only_escape: false,
         },
         is_batch: false,
         summary: None,

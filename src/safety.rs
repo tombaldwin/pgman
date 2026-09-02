@@ -174,6 +174,10 @@ pub struct Decision {
     pub wrap_in_tx: bool,
     /// The connection is read-only; the server will reject this write outright.
     pub blocked_by_read_only: bool,
+    /// The statement would turn the session's read-only property OFF. Forces
+    /// `guard` to `Block` and carries its own message
+    /// ([`READ_ONLY_ESCAPE_REFUSAL`]) — the category guard is not the reason.
+    pub read_only_escape: bool,
 }
 
 /// Classify a single SQL statement. Pure and heuristic — see the module docs.
@@ -185,9 +189,12 @@ pub fn classify(sql: &str) -> StatementKind {
         .take_while(|c| c.is_ascii_alphabetic())
         .collect::<String>()
         .to_ascii_lowercase();
-    let has_where = word_present(&stripped, "where");
+    // Keywords are only keywords in code. `UPDATE t SET note = 'where'` has no
+    // WHERE clause, and reading one there would downgrade the guard from
+    // `update_without_where` (Block) to `update` (Confirm).
+    let has_where = word_present_in_code(&stripped, "where");
 
-    match first.as_str() {
+    let kind = match first.as_str() {
         "select" | "table" | "values" | "show" => StatementKind::Select,
         "insert" => StatementKind::Insert,
         "update" => StatementKind::Update { has_where },
@@ -210,19 +217,119 @@ pub fn classify(sql: &str) -> StatementKind {
         "with" => classify_cte(&stripped, has_where),
         "" => StatementKind::Other,
         _ => StatementKind::Other,
+    };
+
+    // Two things that look like a read but aren't. Both can only *raise* the
+    // classification off `Select`, never lower anything.
+    if matches!(kind, StatementKind::Select) {
+        // `SELECT … INTO newtable …` creates a table and fills it. It is a
+        // write, and `Allow`ing it because the statement starts `SELECT` is
+        // exactly the mistake this guard exists to prevent.
+        if word_present_in_code(&stripped, "into") {
+            return StatementKind::Other;
+        }
+        // A `SELECT` whose payload is a side effect: killing sessions,
+        // reloading config, reading or writing server-side files.
+        if mentions_destructive_function(&stripped) {
+            return StatementKind::Other;
+        }
     }
+    kind
+}
+
+/// Server-side functions whose *call* is the destructive act, so a statement
+/// carrying one is never a plain read however it starts. Short and explicit
+/// rather than a pattern: a false positive here only costs a keypress, and an
+/// unlisted function is no worse off than before.
+const DESTRUCTIVE_FUNCTIONS: &[&str] = &[
+    "pg_terminate_backend",
+    "pg_cancel_backend",
+    "pg_reload_conf",
+    "lo_import",
+    "lo_export",
+    "pg_read_file",
+    "pg_read_binary_file",
+    "pg_ls_dir",
+    "dblink",
+    "dblink_exec",
+];
+
+/// `true` if `sql`'s code (not its string literals) calls one of
+/// [`DESTRUCTIVE_FUNCTIONS`].
+fn mentions_destructive_function(sql: &str) -> bool {
+    let toks = code_tokens(sql);
+    toks.iter()
+        .any(|t| DESTRUCTIVE_FUNCTIONS.contains(&t.as_str()))
 }
 
 fn classify_cte(stripped: &str, has_where: bool) -> StatementKind {
-    if word_present(stripped, "delete") {
+    if word_present_in_code(stripped, "delete") {
         StatementKind::Delete { has_where }
-    } else if word_present(stripped, "update") {
+    } else if word_present_in_code(stripped, "update") {
         StatementKind::Update { has_where }
-    } else if word_present(stripped, "insert") {
+    } else if word_present_in_code(stripped, "insert") {
         StatementKind::Insert
     } else {
         StatementKind::Select
     }
+}
+
+/// The message shown when a statement would turn the session's read-only
+/// property off. Read-only is the profile's decision, not the script's.
+pub const READ_ONLY_ESCAPE_REFUSAL: &str =
+    "this session is read-only by safety.toml; the setting cannot be changed from inside it";
+
+/// `true` if `sql` would lift the read-only property the profile asked for.
+///
+/// `read_only = true` is applied at connect as
+/// `SET default_transaction_read_only = on`, and the docs claim a write on
+/// such a session is "rejected by Postgres itself". That is true of writes —
+/// and useless if the script can simply turn the setting off first. Postgres
+/// does not reject *that*: `default_transaction_read_only` is a plain session
+/// GUC any role may change. So the client has to.
+///
+/// Covers the ways back out: assigning the GUC anything but a truthy value,
+/// `RESET`ting it (or `RESET ALL` / `DISCARD ALL`, which take it with them),
+/// and the `READ WRITE` transaction modes on `SET`/`BEGIN`/`START`.
+pub fn attempts_read_only_escape(sql: &str) -> bool {
+    const READ_ONLY_GUCS: &[&str] = &["default_transaction_read_only", "transaction_read_only"];
+    let stripped = strip_sql_comments(sql);
+    let toks = code_tokens(&stripped);
+    let Some(first) = toks.first().map(String::as_str) else {
+        return false;
+    };
+    if !matches!(first, "set" | "reset" | "begin" | "start" | "discard") {
+        return false;
+    }
+    // `SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE`,
+    // `SET TRANSACTION READ WRITE`, `BEGIN READ WRITE`,
+    // `START TRANSACTION READ WRITE`.
+    if toks.windows(2).any(|w| w[0] == "read" && w[1] == "write") {
+        return true;
+    }
+    // `RESET ALL` / `DISCARD ALL` put every session GUC back to its default,
+    // read-only included.
+    if matches!(first, "reset" | "discard") && toks.get(1).map(String::as_str) == Some("all") {
+        return true;
+    }
+    let Some(pos) = toks
+        .iter()
+        .position(|t| READ_ONLY_GUCS.contains(&t.as_str()))
+    else {
+        return false;
+    };
+    if first == "reset" {
+        return true;
+    }
+    // `SET <guc> [=|TO] <value>` — the punctuation is not tokenised, so skip a
+    // literal `TO` and look at what follows. Anything that isn't plainly
+    // truthy counts as an escape: a value we can't read is not a value we can
+    // vouch for.
+    let mut value = toks.get(pos + 1).map(String::as_str);
+    if value == Some("to") {
+        value = toks.get(pos + 2).map(String::as_str);
+    }
+    !matches!(value, Some("on" | "true" | "1"))
 }
 
 /// The guard for `kind` under `profile`.
@@ -257,11 +364,19 @@ pub fn changes_schema(sql: &str) -> bool {
 pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     let profile = config.profile_for(db);
     let kind = classify(sql);
+    let read_only_escape = profile.read_only && attempts_read_only_escape(sql);
     Decision {
         kind,
-        guard: guard_for(profile, kind),
+        // The escape overrides the category guard: whatever `other` is set to,
+        // a read-only profile is not negotiable from inside the session.
+        guard: if read_only_escape {
+            Guard::Block
+        } else {
+            guard_for(profile, kind)
+        },
         wrap_in_tx: profile.auto_tx && kind.is_write(),
         blocked_by_read_only: profile.read_only && kind.is_write(),
+        read_only_escape,
     }
 }
 
@@ -731,6 +846,35 @@ pub(crate) fn word_present(haystack: &str, word: &str) -> bool {
         .any(|tok| tok.eq_ignore_ascii_case(word))
 }
 
+/// `true` if `word` appears as a whole token in the *code* of `sql` — ignoring
+/// string literals, quoted identifiers, dollar-quoted bodies, and comments.
+/// `SELECT * FROM t WHERE note = 'into the woods'` does not mention `INTO`.
+pub(crate) fn word_present_in_code(sql: &str, word: &str) -> bool {
+    scan(sql)
+        .into_iter()
+        .filter(|s| s.kind == SpanKind::Code)
+        .any(|s| word_present(&sql[s.start..s.end], word))
+}
+
+/// The lower-cased identifier-ish tokens of `sql`'s code spans, in order.
+/// Quoted text and comments contribute nothing, so a keyword only counts where
+/// Postgres would read it as one.
+pub(crate) fn code_tokens(sql: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for span in scan(sql) {
+        if span.kind != SpanKind::Code {
+            continue;
+        }
+        out.extend(
+            sql[span.start..span.end]
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .filter(|t| !t.is_empty())
+                .map(|t| t.to_ascii_lowercase()),
+        );
+    }
+    out
+}
+
 /// Given a string starting with `EXPLAIN`, return the inner statement — the
 /// slice from the first statement keyword onward. Falls back to the slice after
 /// the `EXPLAIN` token so recursion in `classify` always makes progress.
@@ -1148,6 +1292,146 @@ mod tests {
                 "SELECT 3".to_string()
             ]
         );
+    }
+
+    // --- classifier gaps the security review found -----------------------
+
+    #[test]
+    fn select_into_is_a_write_not_a_read() {
+        // `SELECT … INTO t2 …` creates and fills a table. Allowing it because
+        // the statement starts `SELECT` is the whole failure mode.
+        for sql in [
+            "SELECT * INTO new_users FROM users",
+            "select id, email into temp_dump from users where id < 100",
+            "WITH x AS (SELECT 1) SELECT * INTO dump FROM x",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+            assert!(classify(sql).is_write(), "{sql}");
+        }
+        // …and the default guard says Confirm + rollback-able transaction.
+        let cfg = SafetyConfig::default();
+        let d = evaluate(&cfg, "db", "SELECT * INTO new_users FROM users");
+        assert_eq!(d.guard, Guard::Confirm);
+        assert!(d.wrap_in_tx);
+    }
+
+    #[test]
+    fn into_inside_a_literal_does_not_make_a_select_a_write() {
+        // The keyword only counts where Postgres would read it as one.
+        assert_eq!(
+            classify("SELECT * FROM t WHERE note = 'into the woods'"),
+            StatementKind::Select
+        );
+        assert_eq!(classify(r#"SELECT * FROM "into""#), StatementKind::Select);
+    }
+
+    #[test]
+    fn destructive_functions_are_not_plain_selects() {
+        for sql in [
+            "SELECT pg_terminate_backend(1234)",
+            "select pg_cancel_backend(pid) from pg_stat_activity",
+            "SELECT pg_reload_conf()",
+            "SELECT lo_import('/etc/passwd')",
+            "SELECT lo_export(1, '/tmp/out')",
+            "SELECT pg_read_file('/etc/passwd')",
+            "SELECT pg_ls_dir('/')",
+            "SELECT * FROM dblink('dbname=x', 'select 1') AS t(a int)",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+        }
+        // Confirm, not Allow — the guard table's `other`.
+        let cfg = SafetyConfig::default();
+        assert_eq!(
+            evaluate(&cfg, "db", "SELECT pg_terminate_backend(1)").guard,
+            Guard::Confirm
+        );
+        // A column merely *named* like one, in a literal, is still a read.
+        assert_eq!(
+            classify("SELECT * FROM audit WHERE fn = 'pg_terminate_backend'"),
+            StatementKind::Select
+        );
+    }
+
+    #[test]
+    fn copy_to_program_is_a_write() {
+        // Already covered by the `_ => Other` arm, pinned here because it is
+        // arbitrary shell execution and must never drift into Select.
+        for sql in [
+            "COPY t TO PROGRAM 'sh -c \"rm -rf /\"'",
+            "COPY t FROM PROGRAM 'curl evil'",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+            assert!(classify(sql).is_write(), "{sql}");
+        }
+    }
+
+    // --- read-only cannot be turned off from inside the session -----------
+
+    #[test]
+    fn read_only_cannot_be_flipped_from_inside_the_session() {
+        let cfg = SafetyConfig::default();
+        assert!(cfg.default.read_only, "the default profile is read-only");
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "set default_transaction_read_only to false",
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
+            "SET TRANSACTION READ WRITE",
+            "RESET default_transaction_read_only",
+            "RESET ALL",
+            "DISCARD ALL",
+            "BEGIN READ WRITE",
+            "START TRANSACTION READ WRITE",
+        ] {
+            let d = evaluate(&cfg, "db", sql);
+            assert!(d.read_only_escape, "{sql} should be an escape attempt");
+            assert_eq!(d.guard, Guard::Block, "{sql} must be blocked");
+        }
+    }
+
+    #[test]
+    fn tightening_or_reading_the_setting_is_not_an_escape() {
+        for sql in [
+            "SET default_transaction_read_only = on",
+            "SET default_transaction_read_only TO true",
+            "BEGIN READ ONLY",
+            "BEGIN",
+            "SET statement_timeout = 5000",
+            "SHOW default_transaction_read_only",
+        ] {
+            assert!(
+                !attempts_read_only_escape(sql),
+                "{sql} should not count as an escape"
+            );
+        }
+    }
+
+    #[test]
+    fn the_escape_guard_only_applies_while_the_profile_is_read_only() {
+        // On a writable profile there is nothing to protect: the statement
+        // falls back to its ordinary category guard.
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        let d = evaluate(&cfg, "db", "SET default_transaction_read_only = off");
+        assert!(!d.read_only_escape);
+        assert_eq!(d.guard, Guard::Confirm, "the `other` guard, as before");
+    }
+
+    #[test]
+    fn an_escape_hidden_mid_script_still_blocks_the_batch() {
+        // The batch path takes the most restrictive guard across statements,
+        // so a `SET … = off` tucked between two reads blocks the whole script.
+        let cfg = SafetyConfig::default();
+        let sql = "SELECT 1; SET default_transaction_read_only = off; SELECT 2";
+        let worst = split_verified(sql)
+            .unwrap()
+            .iter()
+            .map(|s| evaluate(&cfg, "db", s).guard)
+            .max_by_key(|g| match g {
+                Guard::Allow => 0,
+                Guard::Confirm => 1,
+                Guard::Block => 2,
+            });
+        assert_eq!(worst, Some(Guard::Block));
     }
 
     #[test]

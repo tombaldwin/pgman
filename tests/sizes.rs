@@ -275,6 +275,7 @@ fn scr_confirm() -> App {
         guard: Guard::Confirm,
         wrap_in_tx: true,
         blocked_by_read_only: false,
+        read_only_escape: false,
     };
     a.pending_run = Some(PendingRun {
         sql: "DELETE FROM orders".into(),
