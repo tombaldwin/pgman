@@ -6248,6 +6248,70 @@ fn command_readonly_moves_the_flag_when_the_profile_does_not_pin_it() {
     assert_eq!(a.last_error.as_deref(), Some("usage: :readonly on|off"));
 }
 
+#[tokio::test]
+async fn command_readonly_on_survives_the_next_connect() {
+    // `connect_to_pick` recomputes `read_only` from the picked
+    // database's safety profile. Without a sticky override that threw
+    // a session `:readonly on` away silently, and the next statement
+    // ran writable against a database the operator had just protected.
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let picks = vec![DataSourcePick {
+        name: "dataSource (application)".into(),
+        origin: "Spring",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, cfg);
+    assert!(!a.read_only, "fixture check: the profile does not pin it");
+
+    run_command(&mut a, "readonly on");
+    assert!(a.read_only);
+
+    run_command(&mut a, "connect dataSource");
+    assert_eq!(
+        a.dsn.as_ref().map(|d| d.dbname.as_str()),
+        Some("app_db"),
+        "fixture check: the connect actually happened: {:?}",
+        a.last_error
+    );
+    assert!(
+        a.read_only,
+        "`:readonly on` must survive the reconnect it was set before"
+    );
+}
+
+#[tokio::test]
+async fn command_readonly_off_does_not_survive_into_a_pinned_database() {
+    // The override can only tighten. `:readonly off` against an
+    // unpinned database must not carry into one whose profile pins
+    // read-only.
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    cfg.databases.insert("locked_db".into(), {
+        let mut p = cfg.default.clone();
+        p.read_only = true;
+        p
+    });
+    let picks = vec![DataSourcePick {
+        name: "locked".into(),
+        origin: "Spring",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db/locked_db").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, cfg);
+    run_command(&mut a, "readonly off");
+    assert!(!a.read_only);
+
+    run_command(&mut a, "connect locked");
+    assert!(
+        a.read_only,
+        "the target database's profile is the floor the override can't dig under"
+    );
+}
+
 #[test]
 fn command_bar_tab_completes_a_unique_name_and_lists_ambiguous_ones() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

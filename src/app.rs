@@ -1055,6 +1055,20 @@ pub struct App {
     tunnel: Option<crate::tunnel::SshTunnel>,
     safety_config: SafetyConfig,
     pub read_only: bool,
+    /// What `:readonly on|off` last said, or `None` if the operator
+    /// never said anything. Sticky across reconnects: `read_only`
+    /// itself is recomputed from the new database's safety profile at
+    /// every connect (`App::connect_to_pick`), which silently threw a
+    /// `:readonly on` away the moment the operator switched data
+    /// source — the opposite of what a safety toggle should do.
+    ///
+    /// It can only ever *tighten*: the effective flag is
+    /// `profile.read_only || override == Some(true)`. `Some(false)`
+    /// therefore means "no session opinion", not "force writable" —
+    /// a profile that pins the database read-only stays read-only,
+    /// and `:readonly off` against such a profile is refused outright
+    /// before it gets set (`dispatch_read_only`).
+    pub read_only_override: Option<bool>,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
@@ -1210,6 +1224,7 @@ impl App {
             tunnel: None,
             safety_config,
             read_only,
+            read_only_override: None,
             statement_timeout_ms,
             msg_tx,
             msg_rx: Some(msg_rx),

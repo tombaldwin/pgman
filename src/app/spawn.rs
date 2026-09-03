@@ -251,7 +251,12 @@ impl App {
     /// database swap). Callers must check `refuse_if_unresolved` first.
     pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
         let profile = self.safety_config.profile_for(&dsn.dbname);
-        self.read_only = profile.read_only;
+        // The new database's profile decides the floor; a session
+        // `:readonly on` still applies on top of it. Without the
+        // override the toggle lasted exactly until the next connect
+        // and then vanished with no message — see
+        // `App::read_only_override`.
+        self.read_only = profile.read_only || self.read_only_override == Some(true);
         self.statement_timeout_ms = profile.statement_timeout_ms;
         self.dsn = Some(dsn);
         self.dsn_origin = Some(origin);

@@ -277,6 +277,10 @@ impl App {
             return;
         }
         self.read_only = want;
+        // Sticky: `connect_to_pick` recomputes `read_only` from the
+        // picked database's profile, which used to discard this the
+        // moment the operator reconnected.
+        self.read_only_override = Some(want);
         let state = if want { "on" } else { "off" };
         self.last_status = Some(if matches!(self.conn_state, ConnState::Connected { .. }) {
             format!("read-only {state} · applies at the next connect (:connect); this session keeps what it opened with")
