@@ -53,10 +53,15 @@ and breaking changes.
   the `\d` family, `\timing`.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
-- **Layout you control** — Alt-Z zooms the editor or the results to the
-  whole screen and back; Alt-= / Alt-- / Alt-0 size the editor; a
-  tab bar that is always there, labelled by each tab's query, with
-  Ctrl-T, Ctrl-W, Alt-N / Alt-P and Alt-1..9.
+- **Layout you control** — `z` zooms the results and `Z` the editor to
+  the whole screen and back; `+` `-` `0` size the editor; a tab bar
+  that is always there, labelled by each tab's query, switched with
+  `]` `[` and the digits, `ctrl-t` / `ctrl-w` to open and close, and
+  `ctrl-]` from inside the editor. Every one of these is a key a Mac
+  terminal actually delivers; the Alt chords remain as secondaries.
+- **Row detail steps rows** — `J` / `K` (or PageDown / PageUp) move to
+  the next and previous row without leaving the view, keeping the
+  field you had highlighted, and the grid selection follows.
 - **JDBC tap** — live app-side query observability via OpenTelemetry
   (TCP and UDP listeners for the forthcoming `pgman-tap` JAR), hotspots,
   per-caller and per-pool rollups, transaction view, baseline diff,
