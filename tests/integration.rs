@@ -509,3 +509,33 @@ fn batch_connect_failure_carries_the_same_hint_the_tui_shows() {
         "the batch path should carry the same hint conn::connect_hint gives the TUI: {stderr}"
     );
 }
+
+#[test]
+fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
+    // Distinct from `batch_refuses_to_turn_the_read_only_session_writable`
+    // above: there, pgman's own client-side guard refuses a GUC-escape
+    // attempt before anything reaches the server. Here the guard rails
+    // let the statement through (`ddl` defaults to `confirm`, `--yes`
+    // clears that) and it's Postgres itself that refuses — SQLSTATE
+    // 25006 — because the session is `default_transaction_read_only =
+    // on`. That refusal should carry the same "where does this come
+    // from" hint.
+    let home = scratch_home("readonly-server-refusal", "[default]\nread_only = true\n");
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", "CREATE TABLE pgman_ro_hint_test (id int)"],
+    );
+    assert!(!out.status.success(), "the write must be refused");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.to_lowercase().contains("read-only transaction"),
+        "the server's own message should show: {stderr}"
+    );
+    assert!(
+        stderr.contains("hint:")
+            && stderr.contains("safety.toml")
+            && stderr.contains("read_only")
+            && stderr.contains("docs/configuration.md"),
+        "got: {stderr}"
+    );
+}

@@ -80,7 +80,7 @@ than the raw crossterm error a bare terminal probe used to surface.
 | `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. |
 | `--sql <SQL>` | The statement to run in `--batch` mode; omit to read stdin until EOF. |
 | `--format <FORMAT>` | `--batch` output format: `csv` (default) \| `tsv` \| `json` \| `expanded`. `json` is typed: SQL `NULL` → JSON `null` (never confused with an empty string), `int2`/`int4`/`int8`/`float4`/`float8`/`numeric` → a JSON number (numeric falls back to a quoted string only for the non-numeric spellings `NaN`/`Infinity`/`-Infinity`), `bool` → JSON `true`/`false`, everything else → a string. `csv`/`tsv`/`expanded` render every value as text, unchanged. |
-| `--yes` | In `--batch` mode, proceed past statements the safety guard would otherwise only *confirm* (e.g. `INSERT`/`UPDATE`/`DELETE`-with-`WHERE`). Statements configured to *block* (`DROP`, unqualified `DELETE`/`UPDATE`, …) stay blocked regardless. Without this flag, a non-interactive batch refuses anything that would have prompted interactively. |
+| `--yes` | In `--batch` mode, proceed past statements the safety guard would otherwise only *confirm* (e.g. `INSERT`/`UPDATE`/`DELETE`-with-`WHERE`). Statements configured to *block* (`DROP`, unqualified `DELETE`/`UPDATE`, …) stay blocked regardless, and it does not lift `read_only` — a write on a read-only connection is still refused by Postgres itself. Without this flag, a non-interactive batch refuses anything that would have prompted interactively. |
 | `--tap-listen <ADDR>` | Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON events); `:PORT` or bare `PORT` binds `127.0.0.1`. Events stream into the JDBC tap monitor (`F4`). Auto-enabled on `127.0.0.1:7432` when a Java project is detected in the cwd and this flag isn't passed. |
 | `--tap-otlp <ADDR>` | Bind an OTLP/HTTP listener (`POST /v1/traces`, JSON) so any OpenTelemetry-equipped JVM can stream Postgres spans without the pgman-tap JAR. Opt-in only — never auto-enabled, since its usual port (4318) collides with a standard OTel collector. |
 | `--tap-udp <ADDR>` | Bind a UDP listener for fire-and-forget tap events (one tap event as JSON per datagram, no framing). Lossy — dropped events are silently gone. |
@@ -92,7 +92,9 @@ than the raw crossterm error a bare terminal probe used to surface.
 A `--batch --dsn` connect failure prints the driver/server message, then a
 `hint: …` line when `conn::connect_hint` recognises it (wrong password,
 nothing listening, unknown host, …) — the same hint the TUI shows on a
-failed connection.
+failed connection. A write refused because the session is read-only
+(`safety.toml`'s `read_only = true`) carries its own hint pointing at the
+file and key — see [Configuration](configuration.md).
 
 ### `--batch` example
 

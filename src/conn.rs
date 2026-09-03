@@ -158,15 +158,45 @@ impl From<tokio_postgres::Error> for QueryErr {
         // When DbError carries a message itself, prefer it (no `db
         // error: ERROR:` wrapping) so the message line is clean.
         // Fall through to the default Display for non-server errors.
-        let msg = db
+        let mut msg = db
             .map(|d| d.message().to_string())
             .unwrap_or_else(|| e.to_string());
+        // A write bounced off `default_transaction_read_only = on`
+        // (SQLSTATE 25006) reads as a bare server refusal with no clue
+        // *why* the session is read-only — append the same hint both
+        // the TUI (`last_error` is this `.msg`) and `--batch` (which
+        // prints it to stderr) end up showing, so neither path has to
+        // ask separately.
+        if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg) {
+            msg.push('\n');
+            msg.push_str("hint: ");
+            msg.push_str(&hint);
+        }
         Self {
             msg,
             position,
             detail,
         }
     }
+}
+
+/// Hint for a read-only-transaction refusal (SQLSTATE `25006`):
+/// `read_only = true` in `safety.toml` set `default_transaction_read_only
+/// = on` at connect, and Postgres itself — not a client-side guard —
+/// rejected the write. Points at the file and key rather than leaving the
+/// operator to guess why. Pure — pattern-matched on the SQLSTATE code,
+/// falling back to the message text when the server didn't populate
+/// `detail` (e.g. a `simple_query` error path that skips it).
+fn read_only_refusal_hint(detail: Option<&QueryErrDetail>, msg: &str) -> Option<String> {
+    let is_read_only_refusal = detail.and_then(|d| d.code.as_deref()) == Some("25006")
+        || msg.to_ascii_lowercase().contains("read-only transaction");
+    if !is_read_only_refusal {
+        return None;
+    }
+    Some(format!(
+        "this connection is read-only by safety.toml ({}, read_only) — see docs/configuration.md",
+        crate::util::config_file("safety.toml").display()
+    ))
 }
 
 impl std::fmt::Display for QueryErr {
@@ -1848,5 +1878,42 @@ mod tests {
             h.contains("ssh -v"),
             "hint should suggest manual verify: {h}"
         );
+    }
+
+    #[test]
+    fn read_only_refusal_hint_recognises_the_sqlstate() {
+        let detail = QueryErrDetail {
+            code: Some("25006".to_string()),
+            ..Default::default()
+        };
+        let h = read_only_refusal_hint(
+            Some(&detail),
+            "cannot execute UPDATE in a read-only transaction",
+        )
+        .expect("25006 should map to a hint");
+        assert!(h.contains("safety.toml"), "got: {h}");
+        assert!(h.contains("read_only"), "got: {h}");
+        assert!(h.contains("docs/configuration.md"), "got: {h}");
+    }
+
+    #[test]
+    fn read_only_refusal_hint_falls_back_to_message_text_without_detail() {
+        // `simple_query`'s error path doesn't always populate `detail`;
+        // the message text alone must still be recognised.
+        let h = read_only_refusal_hint(None, "cannot execute INSERT in a read-only transaction")
+            .expect("message text alone should map to a hint");
+        assert!(h.contains("safety.toml"), "got: {h}");
+    }
+
+    #[test]
+    fn read_only_refusal_hint_none_for_unrelated_errors() {
+        let detail = QueryErrDetail {
+            code: Some("42601".to_string()), // syntax_error
+            ..Default::default()
+        };
+        assert!(
+            read_only_refusal_hint(Some(&detail), "syntax error at or near \"FROM\"").is_none()
+        );
+        assert!(read_only_refusal_hint(None, "relation \"t\" does not exist").is_none());
     }
 }
