@@ -1068,6 +1068,11 @@ pub struct App {
     /// own `saved.toml`. Nothing is written under `--demo` regardless
     /// (see `persist_saved_queries`).
     pub saved_queries_file: std::path::PathBuf,
+    /// Where the editor draft and the query history are persisted.
+    /// Injectable so a run-loop test never touches the operator's real
+    /// files (one did, and left an empty `saved.toml` behind).
+    pub draft_file: std::path::PathBuf,
+    pub history_file: std::path::PathBuf,
     /// Modal/interaction state for the saved-queries panel.
     pub saved_ui: SavedQueriesUi,
     /// Saved state for the non-active tabs. The active tab's
@@ -1312,6 +1317,8 @@ impl App {
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
             saved_queries_file: saved_queries_path(),
+            draft_file: draft_path(),
+            history_file: history_path(),
             saved_ui: SavedQueriesUi::default(),
             // Start with a single tab whose state IS the per-
             // session fields. The Vec entry is a placeholder that
@@ -1465,7 +1472,7 @@ impl App {
                     Duration::from_millis(500),
                 )
             {
-                let _ = persist_draft(&self.editor.buffer);
+                let _ = persist_draft_to(&self.draft_file, &self.editor.buffer);
                 self.draft_last_save = Some(Instant::now());
                 self.draft_dirty = false;
             }
@@ -1477,12 +1484,12 @@ impl App {
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
             // logs and moves on — the loop is already finishing.
-            if let Err(e) = persist_draft(&self.editor.buffer) {
+            if let Err(e) = persist_draft_to(&self.draft_file, &self.editor.buffer) {
                 tracing::warn!("could not save editor draft: {e}");
             }
             // Persist the query history ring too. Same best-effort
             // stance — history is a convenience, not source of truth.
-            if let Err(e) = persist_history(&self.history) {
+            if let Err(e) = persist_history_to(&self.history_file, &self.history) {
                 tracing::warn!("could not save query history: {e}");
             }
             if let Err(e) = crate::saved::save_to(&self.saved_queries_file, &self.saved_queries) {
@@ -4036,11 +4043,6 @@ pub fn load_history_from(path: &std::path::Path) -> Vec<String> {
 /// Persist the history ring atomically. Each entry on one line,
 /// multi-line SQL escaped. Empty input still rewrites the file (as
 /// empty) so deliberate clearing survives.
-pub(crate) fn persist_history(entries: &[String]) -> std::io::Result<()> {
-    persist_history_to(&history_path(), entries)
-}
-
-/// Path-parameterised core of [`persist_history`].
 ///
 /// Keep the LAST `HISTORY_CAP` entries (newest), symmetric with
 /// `load_history_from` which drops from the head. Today the
@@ -4078,12 +4080,7 @@ pub fn load_draft_from(path: &std::path::Path) -> Option<String> {
 
 /// Write the buffer atomically (via `crate::util::write_private`, so
 /// it also lands owner-only) on quit. Empty buffers still get written
-/// so a deliberate Ctrl-U + quit clears the saved draft.
-pub(crate) fn persist_draft(buf: &str) -> std::io::Result<()> {
-    persist_draft_to(&draft_path(), buf)
-}
-
-/// Path-parameterised core of [`persist_draft`]. Same atomic-rename
+/// so a deliberate Ctrl-U + quit clears the saved draft. Same atomic-rename
 /// guarantee — a crash mid-write leaves either the old file intact
 /// or the new file complete, never a truncated half-write.
 pub fn persist_draft_to(path: &std::path::Path, buf: &str) -> std::io::Result<()> {
