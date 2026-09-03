@@ -138,9 +138,9 @@ proptest! {
     /// behave identically. `:` is excluded from `user` (an unescaped
     /// `:` there is a genuine, unavoidable URI ambiguity — the first
     /// `:` in userinfo IS the user/password separator by definition);
-    /// `?`/`#` are excluded from both (they always start the
-    /// query/fragment, so a raw one can't be part of the authority at
-    /// all — that's not a bug, it's what percent-encoding is for). `%`
+    /// `?`/`#` are excluded from both *here* and covered by the two
+    /// properties below instead, because a password holding one of
+    /// them alongside a `/` is genuinely un-splittable. `%`
     /// is also excluded from both: since `Dsn::parse` now decodes
     /// percent-escapes (see `userinfo_is_percent_decoded`), a raw `%`
     /// followed by two hex digits is — correctly — itself an escape,
@@ -158,6 +158,47 @@ proptest! {
 
         let masked = redact_url(&dsn_str);
         prop_assert_eq!(masked, "postgres://***@h:5432/d");
+    }
+
+    /// Security-review regression: `?` and `#` are as legal in a raw
+    /// password as `/` and `@`, and the userinfo scan used to cut the
+    /// string at the first one of them *anywhere* — landing before the
+    /// real `@`, so `postgres://u:p?ss@h/d` parsed `p` as the port and
+    /// redacted to itself.
+    ///
+    /// `/` is excluded from the password here (and only here): a `?`
+    /// after a `/` inside a password is indistinguishable from the
+    /// query separator of a real path, so that one combination cannot
+    /// round-trip. The redaction property below covers it anyway,
+    /// which is the half that matters for a log.
+    #[test]
+    fn dsn_password_with_query_or_fragment_round_trips(
+        password in "[\\x20-\\x24\\x26-\\x2e\\x30-\\x7e]{1,20}",
+    ) {
+        let dsn_str = format!("postgres://u:{password}@h:5432/d");
+        let dsn = Dsn::parse(&dsn_str).expect("well-formed");
+        prop_assert_eq!(dsn.user.as_deref(), Some("u"));
+        prop_assert_eq!(dsn.password.as_deref(), Some(password.as_str()));
+        prop_assert_eq!(dsn.host.as_str(), "h");
+        prop_assert_eq!(dsn.port, 5432);
+        prop_assert_eq!(dsn.dbname.as_str(), "d");
+
+        prop_assert_eq!(redact_url(&dsn_str), "postgres://***@h:5432/d");
+    }
+
+    /// The unconditional half, and the one that decides whether a
+    /// password reaches a log file: whatever printable ASCII the
+    /// password is made of — `/`, `?`, `#`, `@`, `:` in any mixture,
+    /// including the combinations `Dsn::parse` cannot take apart —
+    /// `redact_url` masks all of it. `redact_url` is what runs on a
+    /// DSN that *failed* to parse, so "unparseable" must never mean
+    /// "printed verbatim".
+    #[test]
+    fn redact_url_never_leaks_any_raw_password(
+        password in "[\\x20-\\x24\\x26-\\x7e]{1,24}",
+    ) {
+        let dsn_str = format!("postgres://u:{password}@h:5432/d");
+        prop_assert_eq!(redact_url(&dsn_str), "postgres://***@h:5432/d");
     }
 }
 

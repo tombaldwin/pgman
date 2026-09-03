@@ -5,3 +5,6 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc b4ee7aa5f46d11f3a1f85971a97af7d2e8513e388253c0440e0a37c2cf4a531b # shrinks to events = [KeyEvent { code: Enter, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }, KeyEvent { code: Tab, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }, KeyEvent { code: Backspace, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }, KeyEvent { code: Esc, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }]
+cc fdfcd4f0bd3e013dbcfa17567f484accef8d648f4f74c249a76c1be4ac91f420 # shrinks to password = "?"
+cc 7dd2170f319ad84685c473e83040d782ccaacbe6cdcae551a0b16ba283a807a9 # shrinks to password = "@#"
+cc a62f6936b723538bff0eca6e0d802a157d302f467bd576ddd466b1b2e1189541 # shrinks to password = "@/?"
