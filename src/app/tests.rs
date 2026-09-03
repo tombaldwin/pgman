@@ -8297,3 +8297,145 @@ fn log_pick_enter_loads_a_terminated_statement() {
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert!(reached_request_run(&a), "last_error = {:?}", a.last_error);
 }
+
+// ----- Ctrl-F: built-in formatter, pg_format when installed ---------------
+
+/// A `PATH` holding only `tests/bin/` — where `fake_pg_format` lives.
+fn stub_path() -> std::ffi::OsString {
+    format!("{}/tests/bin", env!("CARGO_MANIFEST_DIR")).into()
+}
+
+/// A `PATH` with nothing on it.
+fn empty_path() -> std::ffi::OsString {
+    std::env::temp_dir().into()
+}
+
+/// A throwaway directory holding an executable actually named
+/// `pg_format` (a copy of `tests/bin/fake_pg_format`), so a
+/// `PATH` of just this directory is "pg_format is installed".
+/// Removed on drop.
+struct PgFormatDir(std::path::PathBuf);
+
+impl PgFormatDir {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("pgman-pgfmt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // `fs::copy` carries the stub's executable bit across.
+        std::fs::copy(
+            format!("{}/tests/bin/fake_pg_format", env!("CARGO_MANIFEST_DIR")),
+            dir.join("pg_format"),
+        )
+        .unwrap();
+        Self(dir)
+    }
+
+    fn path_var(&self) -> std::ffi::OsString {
+        self.0.clone().into()
+    }
+}
+
+impl Drop for PgFormatDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn ctrl_f_without_pg_format_uses_the_built_in_formatter() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select a, b from t where x = 'select'");
+    a.reformat_buffer_with_path(Some(&empty_path()));
+    assert_eq!(
+        a.editor.buffer,
+        "SELECT\n  a,\n  b\nFROM\n  t\nWHERE\n  x = 'select'"
+    );
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.starts_with("formatted (built-in)"),
+        "got: {status:?}"
+    );
+    assert!(a.last_error.is_none(), "last_error = {:?}", a.last_error);
+    assert!(a.draft_dirty);
+}
+
+#[test]
+fn ctrl_f_with_pg_format_on_path_prefers_it() {
+    let installed = PgFormatDir::new("prefers");
+    let mut a = editor_app();
+    set_editor(&mut a, "select 1");
+    a.reformat_buffer_with_path(Some(&installed.path_var()));
+    assert_eq!(a.editor.buffer, "-- FORMATTED BY FAKE PG_FORMAT\nselect 1");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.starts_with("formatted via pg_format"),
+        "got: {status:?}"
+    );
+}
+
+#[test]
+fn ctrl_f_honours_the_editor_knobs() {
+    let mut a = editor_app();
+    a.format_opts = crate::query::format::FormatOptions {
+        indent: 4,
+        keywords: crate::query::format::KeywordCase::Lower,
+    };
+    set_editor(&mut a, "SELECT a FROM t");
+    a.reformat_buffer_with_path(Some(&empty_path()));
+    assert_eq!(a.editor.buffer, "select\n    a\nfrom\n    t");
+}
+
+#[test]
+fn ctrl_f_leaves_a_dollar_quoted_buffer_alone_and_says_so() {
+    let mut a = editor_app();
+    let sql = "create function f() returns int as $$\n  select   1;\n$$ language sql";
+    set_editor(&mut a, sql);
+    a.reformat_buffer_with_path(Some(&empty_path()));
+    assert_eq!(a.editor.buffer, sql);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("formatting skipped: dollar-quoted body")
+    );
+    assert!(a.last_error.is_none());
+}
+
+#[test]
+fn ctrl_f_on_an_empty_buffer_is_a_status_not_a_format() {
+    let mut a = editor_app();
+    set_editor(&mut a, "   \n");
+    a.reformat_buffer_with_path(Some(&empty_path()));
+    assert_eq!(a.editor.buffer, "   \n");
+    assert_eq!(a.last_status.as_deref(), Some("nothing to format"));
+}
+
+/// The key path: Ctrl-F goes through `on_editor_key`, whose undo
+/// snapshot wraps it, so Ctrl-Z brings the pre-format text back.
+#[test]
+fn ctrl_f_then_undo_restores_the_unformatted_buffer() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select a from t");
+    a.on_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+    assert_ne!(
+        a.editor.buffer, "select a from t",
+        "Ctrl-F should have reformatted"
+    );
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.starts_with("formatted"), "got: {status:?}");
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    assert_eq!(a.editor.buffer, "select a from t");
+    a.on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_ne!(a.editor.buffer, "select a from t", "redo should re-apply");
+}
+
+#[test]
+fn find_on_path_in_finds_an_executable_stub_and_nothing_else() {
+    assert!(find_on_path_in("fake_pg_format", &stub_path()).is_some());
+    assert!(find_on_path_in("fake_pg_format", &empty_path()).is_none());
+    assert!(find_on_path_in("definitely_not_a_real_binary_xyz", &stub_path()).is_none());
+    // An empty PATH entry is not "the current directory": the stub is
+    // reachable relative to the crate root (where unit tests run),
+    // and must still not be found through an empty entry.
+    assert!(std::path::Path::new("tests/bin/fake_pg_format").exists());
+    assert!(find_on_path_in("tests/bin/fake_pg_format", std::ffi::OsStr::new("")).is_none());
+}

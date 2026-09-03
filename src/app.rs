@@ -972,6 +972,11 @@ pub struct App {
     /// editor buffer and the operator has not typed over yet — the
     /// only ones typing the closer skips. See [`editor::AutoClosers`].
     pub auto_closers: editor::AutoClosers,
+    /// Indent width and keyword case for Ctrl-F's built-in formatter,
+    /// and the indent width auto-indent on Enter uses. From the
+    /// project's `[editor]` block (`project::load_editor_options`),
+    /// defaults otherwise.
+    pub format_opts: query::format::FormatOptions,
     /// The mode F2 was pressed in; `Mode::ErrorDetail` closes back
     /// into it. `None` outside the overlay.
     pub error_detail_return_to: Option<Mode>,
@@ -1333,6 +1338,13 @@ impl App {
             timing_on: false,
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
+            // Read here rather than threaded in from `main` — the
+            // project file is already discovered from the cwd there,
+            // and this is the one consumer of its `[editor]` block.
+            // A missing or unreadable cwd is the defaults.
+            format_opts: std::env::current_dir()
+                .map(|cwd| crate::project::load_editor_options(&cwd))
+                .unwrap_or_default(),
             error_detail_return_to: None,
             command_bar_completions: None,
             last_error_detail: None,
@@ -2615,28 +2627,56 @@ impl App {
     /// operator hits any other key. Refused when a query is in
     /// flight or an auto_tx is open: piling up runs against a
     /// half-committed session would be a footgun.
-    /// Ctrl-F → run `pg_format` over the editor buffer and replace
-    /// the contents with its prettyprinted output. `pg_format` is a
-    /// widely-deployed Perl tool (`brew install pgformatter`, `apt
-    /// install pgformatter`); a missing binary surfaces an
-    /// actionable error rather than a silent no-op.
+    /// Ctrl-F → reformat the editor buffer in place. `pg_format` (the
+    /// widely-deployed Perl `pgformatter`) is used when it is on
+    /// `PATH`; otherwise the built-in `query::format` — same two
+    /// knobs (`[editor]` in `pgman.toml`), and a refusal rather than
+    /// a changed statement when it cannot keep every literal intact.
+    /// The status line says which ran. This is the only place
+    /// formatting happens: never on run, never on paste.
     ///
-    /// Done inline — `pg_format` is sub-second on any realistic
-    /// buffer; the alternative (`spawn_blocking` + message round-
-    /// trip) adds more plumbing than the operation deserves.
+    /// Done inline — both are sub-second on any realistic buffer; the
+    /// alternative (`spawn_blocking` + message round-trip) adds more
+    /// plumbing than the operation deserves. The undo entry is pushed
+    /// by `on_editor_key` around this call, so Ctrl-Z restores the
+    /// pre-format buffer.
     fn reformat_buffer(&mut self) {
+        let path = std::env::var_os("PATH");
+        self.reformat_buffer_with_path(path.as_deref());
+    }
+
+    /// [`Self::reformat_buffer`] with the `PATH` to look `pg_format`
+    /// up on passed in, so tests can point it at a directory holding
+    /// a stub `pg_format` (installed) or an empty one (absent)
+    /// without touching the process environment.
+    pub fn reformat_buffer_with_path(&mut self, path_var: Option<&std::ffi::OsStr>) {
         if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("nothing to format".into());
             return;
         }
-        match pg_format_via(&self.editor.buffer, "pg_format") {
-            Ok(formatted) => {
+        let pg_format = path_var.and_then(|p| find_on_path_in("pg_format", p));
+        let result = match &pg_format {
+            Some(binary) => pg_format_via(&self.editor.buffer, &binary.to_string_lossy())
+                .map(|s| (s, "formatted via pg_format")),
+            None => match query::format::format_sql(&self.editor.buffer, &self.format_opts) {
+                Ok(s) => Ok((s, "formatted (built-in)")),
+                // A refusal, not a failure: the buffer is left alone
+                // and the footer says why.
+                Err(skipped) => {
+                    self.last_status = Some(skipped.to_string());
+                    return;
+                }
+            },
+        };
+        match result {
+            Ok((formatted, how)) => {
                 let chars = formatted.len();
                 self.editor.buffer = formatted;
                 self.editor.cursor = self.editor.buffer.len();
                 self.editor.preferred_col = None;
                 self.history_pos = None;
-                self.last_status = Some(format!("formatted via pg_format · {chars} char(s)"));
+                self.draft_dirty = true;
+                self.last_status = Some(format!("{how} · {chars} char(s)"));
             }
             Err(e) => self.last_error = Some(e),
         }
@@ -3840,6 +3880,35 @@ pub fn pg_format_via(input: &str, binary: &str) -> Result<String, String> {
     let formatted =
         String::from_utf8(output.stdout).map_err(|e| format!("{binary} produced non-UTF8: {e}"))?;
     Ok(formatted.trim_end_matches('\n').to_string())
+}
+
+/// The first executable file named `name` in the `PATH`-shaped
+/// `path_var` (`:`-separated on unix), or `None`. What `which` does,
+/// with the search list passed in so a test can stub a binary
+/// present or absent without rebinding the process's `$PATH`.
+pub fn find_on_path_in(name: &str, path_var: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path_var)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 /// RAII guard for the `$EDITOR` scratch directory: removes the whole

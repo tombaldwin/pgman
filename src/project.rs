@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::conn::Dsn;
+use crate::query::format::{FormatOptions, KeywordCase};
 use crate::safety::{Guard, Guards, SafetyConfig, SafetyProfile};
 
 /// Top-level shape of `.pgman/pgman.toml`.
@@ -28,6 +29,46 @@ pub struct ProjectConfig {
     #[serde(rename = "connections", default)]
     pub connections: Vec<Connection>,
     pub safety: Option<ProjectSafety>,
+    pub editor: Option<ProjectEditor>,
+}
+
+/// The `[editor]` block: how Ctrl-F lays a statement out, and the
+/// indent width auto-indent on Enter uses. Two knobs, deliberately —
+/// formatting only ever happens on Ctrl-F (never on run, never on
+/// paste), so there is nothing else to configure.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProjectEditor {
+    /// Spaces per indent level; `1..=16`. Outside that range the
+    /// default (2) is used and the value logged.
+    pub indent: Option<u8>,
+    /// `"upper"` (default), `"lower"`, or `"preserve"`. Any other
+    /// string is a parse error for the whole file, like every other
+    /// mis-typed value in it.
+    pub keywords: Option<KeywordCase>,
+}
+
+/// Widest indent the `[editor]` block accepts. Anything past it is a
+/// typo, not a preference.
+const MAX_INDENT: u8 = 16;
+
+/// Resolve the `[editor]` block into the formatter's options. Pure:
+/// absent block or absent field means the default.
+pub fn editor_options(project: Option<&ProjectEditor>) -> FormatOptions {
+    let mut out = FormatOptions::default();
+    let Some(p) = project else { return out };
+    match p.indent {
+        Some(n) if (1..=MAX_INDENT).contains(&n) => out.indent = n,
+        Some(n) => tracing::warn!(
+            "editor.indent = {n} is outside 1..={MAX_INDENT}; using {}",
+            out.indent
+        ),
+        None => {}
+    }
+    if let Some(k) = p.keywords {
+        out.keywords = k;
+    }
+    out
 }
 
 /// One project-level connection. `url` is a `postgres://` DSN string (no
@@ -351,10 +392,68 @@ pub fn load_from(start: &Path) -> Option<(PathBuf, ProjectConfig)> {
     }
 }
 
+/// The editor options for a session started under `start`: the
+/// project's `[editor]` block when there is one, the defaults
+/// otherwise. Thin wrapper over [`load_from`] + [`editor_options`].
+pub fn load_editor_options(start: &Path) -> FormatOptions {
+    editor_options(load_from(start).and_then(|(_, c)| c.editor).as_ref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn parse_extracts_editor_block() {
+        let cfg = parse("[editor]\nindent = 4\nkeywords = \"lower\"\n").unwrap();
+        let opts = editor_options(cfg.editor.as_ref());
+        assert_eq!(opts.indent, 4);
+        assert_eq!(opts.keywords, KeywordCase::Lower);
+    }
+
+    #[test]
+    fn editor_block_absent_or_partial_falls_back_to_defaults() {
+        assert_eq!(editor_options(None), FormatOptions::default());
+        let cfg = parse("[[connections]]\nname = \"x\"\nurl = \"postgres://h/d\"\n").unwrap();
+        assert!(cfg.editor.is_none());
+        let cfg = parse("[editor]\nkeywords = \"preserve\"\n").unwrap();
+        let opts = editor_options(cfg.editor.as_ref());
+        assert_eq!(opts.indent, 2);
+        assert_eq!(opts.keywords, KeywordCase::Preserve);
+    }
+
+    #[test]
+    fn editor_indent_outside_range_uses_default() {
+        for toml in ["[editor]\nindent = 0\n", "[editor]\nindent = 17\n"] {
+            let cfg = parse(toml).unwrap();
+            assert_eq!(editor_options(cfg.editor.as_ref()).indent, 2, "{toml}");
+        }
+        let cfg = parse("[editor]\nindent = 16\n").unwrap();
+        assert_eq!(editor_options(cfg.editor.as_ref()).indent, 16);
+    }
+
+    #[test]
+    fn editor_unknown_keyword_case_is_a_parse_error() {
+        let err = parse("[editor]\nkeywords = \"shout\"\n").unwrap_err();
+        assert!(
+            err.contains("shout") || err.contains("keywords"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn load_editor_options_reads_the_project_file() {
+        let tmp = std::env::temp_dir().join(format!("pgman-proj-editor-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let root = tmp.join("project");
+        fs::create_dir_all(root.join(".pgman")).unwrap();
+        fs::write(config_path(&root), "[editor]\nindent = 3\n").unwrap();
+        let opts = load_editor_options(&root.join("src"));
+        let _ = fs::remove_dir_all(&tmp);
+        assert_eq!(opts.indent, 3);
+        assert_eq!(opts.keywords, KeywordCase::Upper);
+    }
 
     #[test]
     fn find_root_walks_up_to_dot_pgman() {
