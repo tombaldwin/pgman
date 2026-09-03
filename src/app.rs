@@ -2632,10 +2632,27 @@ impl App {
 
         // Multi-statement script (DBUnit apply, hand-written batch, …) — take
         // the batch path which uses `batch_execute` and classifies each part.
-        let statements = safety::split_statements(&sql);
+        // The single-statement path classifies and executes the VERIFIED
+        // piece too, never the raw buffer: `; DROP TABLE t` is one command
+        // to the server (it discards the empty statement) but was `Other`
+        // to a classifier fed the raw text — a Block downgraded to Confirm.
+        let statements = match safety::split_verified(&sql) {
+            Ok(statements) => statements,
+            Err(e) => {
+                tracing::warn!("refusing to run the editor buffer: {e:?}");
+                self.last_error = Some(safety::SPLIT_REFUSAL.to_string());
+                return;
+            }
+        };
         if statements.len() > 1 {
             return self.request_run_batch(sql, kind, db.to_string());
         }
+        let Some(sql) = statements.into_iter().next() else {
+            self.last_error = Some(
+                "editor has no statement · e to focus it, then type SQL or paste a log".into(),
+            );
+            return;
+        };
 
         let decision = safety::evaluate(&self.safety_config, db, &sql);
 

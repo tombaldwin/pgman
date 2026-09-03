@@ -6929,3 +6929,32 @@ fn the_tunnel_prompt_still_cancels_on_question_mark_and_colon() {
         assert!(status.contains("cancelled"), "got: {status}");
     }
 }
+
+#[test]
+fn a_leading_separator_cannot_downgrade_a_block_to_a_confirm() {
+    // `; DROP TABLE users` is one command to the server, which discards the
+    // empty statement, but classified as `Other` (Confirm) when the raw
+    // buffer was evaluated. The verified piece is what gets classified now.
+    let mut a = crate::demo::app(Theme::default());
+    for sql in [
+        "; DROP TABLE users",
+        "\n\n; DROP TABLE users",
+        "/* hi */ ; DROP TABLE users",
+        "-- x\n; DROP TABLE users",
+    ] {
+        a.last_error = None;
+        a.mode = Mode::Normal;
+        run_in_demo(&mut a, sql);
+        let err = a.last_error.as_deref().unwrap_or("");
+        assert!(
+            err.contains("blocked by safety: DROP"),
+            "{sql:?} → mode {:?}, error {err:?}",
+            a.mode
+        );
+        assert_ne!(
+            a.mode,
+            Mode::Confirm,
+            "{sql:?} must not reach the confirm prompt"
+        );
+    }
+}
