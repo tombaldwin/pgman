@@ -65,9 +65,40 @@ fn batch_json_shape() {
         .expect("spawn pgman");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
+    // `id` is an int4 column — a JSON number, not a quoted string.
     assert!(
-        stdout.contains(r#""id":"1""#) && stdout.contains(r#""name":"alice""#),
+        stdout.contains(r#""id":1"#) && stdout.contains(r#""name":"alice""#),
         "expected JSON shape; got {stdout}"
+    );
+}
+
+#[test]
+fn batch_json_types_null_bool_numbers_and_text() {
+    // The exact reproduction from the JSON-typing fix: NULL must not
+    // collapse into the same `""` an empty string gets, and numbers /
+    // booleans must come back as JSON numbers/booleans rather than
+    // stringified text.
+    let out = Command::new(pgman_binary())
+        .args([
+            "--batch",
+            "--dsn",
+            DSN,
+            "--sql",
+            "select null::text as a, '' as b, 42 as c, true as d, 1.5 as e",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.trim_end(),
+        r#"[{"a":null,"b":"","c":42,"d":true,"e":1.5}]"#
     );
 }
 
