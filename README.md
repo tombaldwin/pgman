@@ -125,12 +125,6 @@ Three things worth knowing:
 
 ## Install
 
-The crates.io and Homebrew-tap routes below go live with the first release
-(v0.1.0) — until then, `brew install pgman` and `cargo install pgman` won't
-find anything yet. The pre-built tarball route further down doesn't need a
-maintainer publish step: it's available from the release page as soon as the
-v0.1.0 tag builds.
-
 **Homebrew (macOS / Linux):**
 
 ```sh
@@ -150,7 +144,7 @@ and put `pgman` on your `PATH`. Built for `x86_64-unknown-linux-gnu`,
 `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
 `x86_64-apple-darwin`.
 
-Until v0.1.0 exists, or if you want to hack on it, install from a checkout:
+To hack on it, install from a checkout:
 
 ```sh
 cargo install --path . --locked
