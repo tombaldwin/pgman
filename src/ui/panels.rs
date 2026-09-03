@@ -1811,13 +1811,17 @@ fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usiz
 /// modal to its own content — under-counting here clips the last line,
 /// which is where the modal's question lives. Pure / testable.
 fn wrapped_line_count(text: &str, width: usize) -> usize {
+    use unicode_width::UnicodeWidthStr;
     if width == 0 {
         return 1;
     }
     let mut rows = 1usize;
     let mut cur = 0usize;
     for word in text.split_whitespace() {
-        let w = word.chars().count();
+        // Display columns, the unit ratatui wraps in — a CJK literal
+        // paints two per char, and counting chars under-budgeted the
+        // modal by a row per 27 wide glyphs, dropping its y/n line.
+        let w = UnicodeWidthStr::width(word);
         if cur == 0 {
             cur = w;
         } else if cur + 1 + w <= width {
@@ -2002,6 +2006,21 @@ mod tests {
     fn wrapped_line_count_hard_splits_an_overlong_word() {
         // A 10-char word at width 4 needs three rows.
         assert_eq!(wrapped_line_count("abcdefghij", 4), 3);
+    }
+
+    /// A CJK word paints two columns per char. Counted in chars, a
+    /// 60-glyph literal at width 54 looked like it fit on two rows;
+    /// ratatui breaks it across three.
+    #[test]
+    fn wrapped_line_count_measures_display_columns_not_chars() {
+        let literal = format!("'{}'", "東".repeat(60)); // 62 chars, 122 columns
+                                                        // 122 columns at width 54 → 54 + 54 + 14 → three rows.
+        assert_eq!(wrapped_line_count(&literal, 54), 3);
+        // Preceded by SELECT: "SELECT" on row one, the literal needs
+        // three rows of its own.
+        assert_eq!(wrapped_line_count(&format!("SELECT {literal}"), 54), 4);
+        // The same shape in ASCII still counts one column per char.
+        assert_eq!(wrapped_line_count(&"a".repeat(62), 54), 2);
     }
 
     #[test]
