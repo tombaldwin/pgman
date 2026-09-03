@@ -69,6 +69,9 @@ pub fn app(theme: Theme) -> App {
         a.tap_health.last_event_at_unix_micros = last.received_at_unix_micros;
     }
     a.tap_events = events.into();
+    // Replacing the ring wholesale is a mutation like any other —
+    // the aggregates are memoised on this counter.
+    a.bump_tap_generation();
     a
 }
 

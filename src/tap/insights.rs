@@ -1012,162 +1012,140 @@ pub(super) fn percentile(sorted: &[u64], p: f64) -> u64 {
 // avoidable work for data that usually hasn't changed between
 // two consecutive frames.
 //
-// The natural fix is a `ring_generation: u64` on `App`, bumped
-// wherever `tap_events` is pushed to or cleared. That field (and
-// those two call sites, `on_tap_event` / `clear_tap_ring`) were
-// out of scope for this change — `App`'s accessors are the only
-// part of `app.rs` this change is allowed to touch. So instead
-// of a real generation counter, [`ring_fingerprint`] derives a
-// cheap proxy for "has the ring changed" straight from the ring:
-// its length plus the front and back events' `received_at_unix_micros`.
-// Every push changes `back` to a new event; every push either
-// grows `len` (below `TAP_CAP`) or evicts the old `front` (at
-// the cap) — so in practice this changes on every mutation a
-// clear drops `len` to 0. It's not a cryptographic guarantee
-// against a contrived sequence of same-microsecond pushes at a
-// stable ring length, but a ring that's genuinely untouched
-// between two calls always fingerprints identically, which is
-// the property memoisation needs: never a false miss, and in
-// every realistic workload, no false hits either.
+// The key is `App::tap_generation`, a counter bumped wherever
+// the ring is mutated (`App::on_tap_event`, `App::clear_tap_ring`,
+// the `--demo` fixture load).
 //
-// The cache lives in a `thread_local!`, not on `App`, for the
-// same reason. It's `RefCell`-based interior mutability keyed
-// by the fingerprint (+ the sort mode / N+1 window, since those
-// change the output for an unchanged ring). On a multi-threaded
-// tokio runtime a task migrating workers between polls would
-// see a cold thread-local cache and just recompute — a missed
-// optimisation, never a correctness issue, since a cache miss
-// always falls back to the real aggregation.
+// It used to be a fingerprint derived from the ring itself —
+// `(len, front.received_at, back.received_at)` — on the theory
+// that any mutation moves one of the three. It doesn't.
+// `received_at_unix_micros` comes from `SystemTime::now()`, whose
+// granularity is coarse enough (~20 µs here) that adjacent
+// events routinely share a stamp; and once the ring is at
+// `TAP_CAP` a push is also a pop, so `len` doesn't move either.
+// A push that evicts a same-microsecond front and appends a
+// same-microsecond back leaves the fingerprint *identical* to
+// the pre-push one — measured 23% of frames under a busy tap
+// serving an aggregate that both included an evicted statement
+// and omitted the newest one. A counter cannot do that.
+//
+// The cache lives on the `App` (`App::tap_cache`), not in a
+// `thread_local!`: a bare counter is only unique within one
+// App, so two Apps sharing a process-wide cache (every test
+// binary, and any future multi-session shape) would collide at
+// generation 0. `RefCell` interior mutability keeps the
+// `&self` accessors as they were. The key also carries the sort
+// mode / N+1 window, since those change the output for an
+// unchanged ring — which is why a sort change needs no bump.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
-/// Cheap proxy for "has the tap ring changed since I last
-/// looked." See the module note above.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct RingFingerprint {
-    len: usize,
-    front_received_at: u64,
-    back_received_at: u64,
+/// Memo for the three ring aggregates, keyed by
+/// `App::tap_generation`. One per `App`; see the module note
+/// above for why it isn't a `thread_local!`.
+///
+/// The `*_recomputes` counters record cache misses so tests can
+/// assert a call was (or wasn't) a hit via a before/after delta.
+/// They're bumped from the (non-test) miss path — a `Cell`
+/// increment per miss is cheaper than forking that path behind
+/// `cfg(test)`.
+#[derive(Debug, Default)]
+#[allow(clippy::type_complexity)]
+pub struct TapInsightsCache {
+    hotspots: RefCell<Option<(u64, HotspotSort, Vec<Hotspot>)>>,
+    callers: RefCell<Option<(u64, HotspotSort, Vec<CallerStats>)>>,
+    nplus1: RefCell<Option<(u64, u64, usize, Vec<NplusOneFinding>)>>,
+    hotspots_recomputes: Cell<usize>,
+    callers_recomputes: Cell<usize>,
+    nplus1_recomputes: Cell<usize>,
 }
 
-fn ring_fingerprint(events: &VecDeque<TapEvent>) -> RingFingerprint {
-    RingFingerprint {
-        len: events.len(),
-        front_received_at: events.front().map_or(0, |e| e.received_at_unix_micros),
-        back_received_at: events.back().map_or(0, |e| e.received_at_unix_micros),
-    }
-}
-
-// Test-only-in-practice counters: how many times each memoised
-// aggregate actually recomputed (a cache miss), vs. just
-// returning the cached clone. Thread-local so a test's delta
-// assertion (`count after` − `count before`) is never polluted
-// by other tests running concurrently on other threads — each
-// starts fresh at `0` on its own worker thread. The bump sites
-// live in the cache itself (below), which isn't test-only code,
-// so the counters aren't `#[cfg(test)]`-gated either — a
-// `Cell<usize>` increment per cache miss is cheap enough to
-// leave in the production build rather than forking that path.
-thread_local! {
-    static HOTSPOTS_RECOMPUTE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static CALLERS_RECOMPUTE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static NPLUS1_RECOMPUTE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Current recompute count for [`cached_hotspots`] on this
-/// thread. Exposed so tests can assert a call was (or wasn't) a
-/// cache hit via the before/after delta. Only the read side is
-/// test-only — the counters themselves are bumped from the
-/// (non-test) cache-miss path above.
-#[cfg(test)]
-pub(crate) fn hotspots_recompute_count() -> usize {
-    HOTSPOTS_RECOMPUTE_COUNT.with(std::cell::Cell::get)
-}
-
-/// Current recompute count for [`cached_callers`] on this thread.
-#[cfg(test)]
-pub(crate) fn callers_recompute_count() -> usize {
-    CALLERS_RECOMPUTE_COUNT.with(std::cell::Cell::get)
-}
-
-/// Current recompute count for [`cached_nplus1`] on this thread.
-#[cfg(test)]
-pub(crate) fn nplus1_recompute_count() -> usize {
-    NPLUS1_RECOMPUTE_COUNT.with(std::cell::Cell::get)
-}
-
-thread_local! {
-    static HOTSPOTS_CACHE: RefCell<Option<(RingFingerprint, HotspotSort, Vec<Hotspot>)>> =
-        const { RefCell::new(None) };
-    static CALLERS_CACHE: RefCell<Option<(RingFingerprint, HotspotSort, Vec<CallerStats>)>> =
-        const { RefCell::new(None) };
-    #[allow(clippy::type_complexity)]
-    static NPLUS1_CACHE: RefCell<Option<(RingFingerprint, u64, usize, Vec<NplusOneFinding>)>> =
-        const { RefCell::new(None) };
-}
-
-/// Memoised [`group_hotspots`] over the app's tap ring — same
-/// output, recomputed only when [`ring_fingerprint`] or `sort`
-/// changed since the last call on this thread. Called from
-/// `App::current_hotspots`.
-pub fn cached_hotspots(events: &VecDeque<TapEvent>, sort: HotspotSort) -> Vec<Hotspot> {
-    let fp = ring_fingerprint(events);
-    HOTSPOTS_CACHE.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((cached_fp, cached_sort, result)) = cache.as_ref() {
-            if *cached_fp == fp && *cached_sort == sort {
+impl TapInsightsCache {
+    /// Memoised [`group_hotspots`] over the app's tap ring — same
+    /// output, recomputed only when `generation` or `sort` changed
+    /// since the last call. Called from `App::current_hotspots`.
+    pub fn hotspots(
+        &self,
+        events: &VecDeque<TapEvent>,
+        generation: u64,
+        sort: HotspotSort,
+    ) -> Vec<Hotspot> {
+        let mut cache = self.hotspots.borrow_mut();
+        if let Some((cached_gen, cached_sort, result)) = cache.as_ref() {
+            if *cached_gen == generation && *cached_sort == sort {
                 return result.clone();
             }
         }
-        HOTSPOTS_RECOMPUTE_COUNT.with(|c| c.set(c.get() + 1));
+        self.hotspots_recomputes
+            .set(self.hotspots_recomputes.get() + 1);
         let result = group_hotspots(events.iter(), sort);
-        *cache = Some((fp, sort, result.clone()));
+        *cache = Some((generation, sort, result.clone()));
         result
-    })
-}
+    }
 
-/// Memoised [`group_by_caller`] — sibling to [`cached_hotspots`].
-/// Called from `App::current_callers`.
-pub fn cached_callers(events: &VecDeque<TapEvent>, sort: HotspotSort) -> Vec<CallerStats> {
-    let fp = ring_fingerprint(events);
-    CALLERS_CACHE.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((cached_fp, cached_sort, result)) = cache.as_ref() {
-            if *cached_fp == fp && *cached_sort == sort {
+    /// Memoised [`group_by_caller`] — sibling to [`Self::hotspots`].
+    /// Called from `App::current_callers`.
+    pub fn callers(
+        &self,
+        events: &VecDeque<TapEvent>,
+        generation: u64,
+        sort: HotspotSort,
+    ) -> Vec<CallerStats> {
+        let mut cache = self.callers.borrow_mut();
+        if let Some((cached_gen, cached_sort, result)) = cache.as_ref() {
+            if *cached_gen == generation && *cached_sort == sort {
                 return result.clone();
             }
         }
-        CALLERS_RECOMPUTE_COUNT.with(|c| c.set(c.get() + 1));
+        self.callers_recomputes
+            .set(self.callers_recomputes.get() + 1);
         let result = group_by_caller(events.iter(), sort);
-        *cache = Some((fp, sort, result.clone()));
+        *cache = Some((generation, sort, result.clone()));
         result
-    })
-}
+    }
 
-/// Memoised [`detect_nplus1`] — sibling to [`cached_hotspots`].
-/// Called from `App::current_nplus1`.
-pub fn cached_nplus1(
-    events: &VecDeque<TapEvent>,
-    window_micros: u64,
-    min_repeats: usize,
-) -> Vec<NplusOneFinding> {
-    let fp = ring_fingerprint(events);
-    NPLUS1_CACHE.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((cached_fp, cached_window, cached_min_repeats, result)) = cache.as_ref() {
-            if *cached_fp == fp
+    /// Memoised [`detect_nplus1`] — sibling to [`Self::hotspots`].
+    /// Called from `App::current_nplus1`.
+    pub fn nplus1(
+        &self,
+        events: &VecDeque<TapEvent>,
+        generation: u64,
+        window_micros: u64,
+        min_repeats: usize,
+    ) -> Vec<NplusOneFinding> {
+        let mut cache = self.nplus1.borrow_mut();
+        if let Some((cached_gen, cached_window, cached_min_repeats, result)) = cache.as_ref() {
+            if *cached_gen == generation
                 && *cached_window == window_micros
                 && *cached_min_repeats == min_repeats
             {
                 return result.clone();
             }
         }
-        NPLUS1_RECOMPUTE_COUNT.with(|c| c.set(c.get() + 1));
+        self.nplus1_recomputes.set(self.nplus1_recomputes.get() + 1);
         let result = detect_nplus1(events.iter(), window_micros, min_repeats);
-        *cache = Some((fp, window_micros, min_repeats, result.clone()));
+        *cache = Some((generation, window_micros, min_repeats, result.clone()));
         result
-    })
+    }
+
+    /// Cache misses so far for [`Self::hotspots`].
+    #[cfg(test)]
+    pub(crate) fn hotspots_recompute_count(&self) -> usize {
+        self.hotspots_recomputes.get()
+    }
+
+    /// Cache misses so far for [`Self::callers`].
+    #[cfg(test)]
+    pub(crate) fn callers_recompute_count(&self) -> usize {
+        self.callers_recomputes.get()
+    }
+
+    /// Cache misses so far for [`Self::nplus1`].
+    #[cfg(test)]
+    pub(crate) fn nplus1_recompute_count(&self) -> usize {
+        self.nplus1_recomputes.get()
+    }
 }
 
 #[cfg(test)]
@@ -1199,93 +1177,88 @@ mod cache_tests {
 
     #[test]
     fn cached_hotspots_skips_recompute_when_ring_is_unchanged() {
+        let cache = TapInsightsCache::default();
         let mut ring: VecDeque<TapEvent> = VecDeque::new();
         ring.push_back(ev("SELECT 1", 10, 1));
         ring.push_back(ev("SELECT 2", 20, 2));
 
-        let before = hotspots_recompute_count();
-        let first = cached_hotspots(&ring, HotspotSort::TotalTime);
-        let after_first = hotspots_recompute_count();
+        let first = cache.hotspots(&ring, 1, HotspotSort::TotalTime);
         assert_eq!(
-            after_first - before,
+            cache.hotspots_recompute_count(),
             1,
-            "first call on a fresh fingerprint must recompute"
+            "first call on a fresh generation must recompute"
         );
 
-        let second = cached_hotspots(&ring, HotspotSort::TotalTime);
-        let after_second = hotspots_recompute_count();
+        let second = cache.hotspots(&ring, 1, HotspotSort::TotalTime);
         assert_eq!(
-            after_second, after_first,
-            "second call with an UNCHANGED ring must be a cache hit, not a recompute"
+            cache.hotspots_recompute_count(),
+            1,
+            "second call at the SAME generation must be a cache hit, not a recompute"
         );
         assert_eq!(first, second);
     }
 
     #[test]
-    fn cached_hotspots_recomputes_when_ring_changes() {
+    fn cached_hotspots_recomputes_when_the_generation_moves() {
+        let cache = TapInsightsCache::default();
         let mut ring: VecDeque<TapEvent> = VecDeque::new();
         ring.push_back(ev("SELECT 1", 10, 1));
 
-        let before = hotspots_recompute_count();
-        cached_hotspots(&ring, HotspotSort::TotalTime);
-        let after_first = hotspots_recompute_count();
+        cache.hotspots(&ring, 1, HotspotSort::TotalTime);
+        assert_eq!(cache.hotspots_recompute_count(), 1);
 
         ring.push_back(ev("SELECT 2", 20, 2));
-        cached_hotspots(&ring, HotspotSort::TotalTime);
-        let after_second = hotspots_recompute_count();
-
-        assert_eq!(after_first - before, 1);
+        cache.hotspots(&ring, 2, HotspotSort::TotalTime);
         assert_eq!(
-            after_second - after_first,
-            1,
+            cache.hotspots_recompute_count(),
+            2,
             "a changed ring must be a cache miss"
         );
     }
 
     #[test]
     fn cached_hotspots_recomputes_when_only_sort_changes() {
+        let cache = TapInsightsCache::default();
         let mut ring: VecDeque<TapEvent> = VecDeque::new();
         ring.push_back(ev("SELECT 1", 10, 1));
         ring.push_back(ev("SELECT 2", 999, 2));
 
-        let before = hotspots_recompute_count();
-        cached_hotspots(&ring, HotspotSort::TotalTime);
-        cached_hotspots(&ring, HotspotSort::CallCount);
-        let after = hotspots_recompute_count();
+        cache.hotspots(&ring, 1, HotspotSort::TotalTime);
+        cache.hotspots(&ring, 1, HotspotSort::CallCount);
         assert_eq!(
-            after - before,
+            cache.hotspots_recompute_count(),
             2,
-            "same ring but a different sort must not hit the TotalTime entry"
+            "same generation but a different sort must not hit the TotalTime entry"
         );
     }
 
     #[test]
     fn cached_callers_and_nplus1_also_skip_recompute_when_unchanged() {
+        let cache = TapInsightsCache::default();
         let mut ring: VecDeque<TapEvent> = VecDeque::new();
         for i in 0..6u64 {
             ring.push_back(ev("SELECT 1", 1, i + 1));
         }
 
-        let callers_before = callers_recompute_count();
-        cached_callers(&ring, HotspotSort::TotalTime);
-        cached_callers(&ring, HotspotSort::TotalTime);
-        assert_eq!(callers_recompute_count() - callers_before, 1);
+        cache.callers(&ring, 7, HotspotSort::TotalTime);
+        cache.callers(&ring, 7, HotspotSort::TotalTime);
+        assert_eq!(cache.callers_recompute_count(), 1);
 
-        let nplus1_before = nplus1_recompute_count();
-        cached_nplus1(&ring, NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
-        cached_nplus1(&ring, NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
-        assert_eq!(nplus1_recompute_count() - nplus1_before, 1);
+        cache.nplus1(&ring, 7, NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
+        cache.nplus1(&ring, 7, NPLUS1_WINDOW_MICROS, NPLUS1_MIN_REPEATS);
+        assert_eq!(cache.nplus1_recompute_count(), 1);
     }
 
     #[test]
     fn cached_hotspots_reflects_a_clear_back_to_an_empty_ring() {
+        let cache = TapInsightsCache::default();
         let mut ring: VecDeque<TapEvent> = VecDeque::new();
         ring.push_back(ev("SELECT 1", 10, 1));
-        assert_eq!(cached_hotspots(&ring, HotspotSort::TotalTime).len(), 1);
+        assert_eq!(cache.hotspots(&ring, 1, HotspotSort::TotalTime).len(), 1);
 
         ring.clear();
         assert_eq!(
-            cached_hotspots(&ring, HotspotSort::TotalTime).len(),
+            cache.hotspots(&ring, 2, HotspotSort::TotalTime).len(),
             0,
             "a cleared ring must not keep serving the pre-clear cached result"
         );
