@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 mod editor;
 mod landing;
@@ -529,14 +529,50 @@ pub(crate) fn footer_badges_with(
 /// char, so a 40-char message painted 67 columns wide and shoved the
 /// protected `· F2 detail` pointer off the end of a row that measured
 /// as fitting. Every footer/status width budget goes through this.
+///
+/// Defined as the sum of [`char_width`] over the string — the *same*
+/// function the ellipsis walkers step by — never `UnicodeWidthStr`
+/// directly. The two disagree on control characters (`"\n"` is one
+/// column to the str version and `None` to the char version), and a
+/// fitter that measures with one and cuts with the other can find
+/// itself one column over with nothing left to cut: the shrink loop
+/// in [`fit_status`] spun forever at 100% CPU on a server error that
+/// carried a `\n`-joined hint.
 pub(crate) fn display_width(s: &str) -> usize {
-    UnicodeWidthStr::width(s)
+    s.chars().map(char_width).sum()
 }
 
 /// Display columns one `char` occupies (a combining mark is 0, a
-/// full-width CJK glyph 2, a control char treated as 0).
+/// full-width CJK glyph 2). A control character counts as 1 — the
+/// conservative choice: over-measuring can only make a fitted line
+/// shorter than it had to be, under-measuring lets it overrun.
 fn char_width(c: char) -> usize {
-    UnicodeWidthChar::width(c).unwrap_or(0)
+    UnicodeWidthChar::width(c).unwrap_or(1)
+}
+
+/// The footer paints one row: fold a multi-line message into it.
+/// `\n` / `\r` become a ` · ` segment break (so [`fit_status`] can
+/// shrink the continuation as its own segment) and `\t` — or any
+/// other control character — a space. The F2 detail overlay keeps
+/// the original multi-line form; only the one-row footer is folded.
+/// Pure / testable.
+pub(crate) fn footer_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut pending_break = false;
+    for c in s.replace("\r\n", "\n").chars() {
+        if matches!(c, '\n' | '\r') {
+            pending_break = true;
+            continue;
+        }
+        if pending_break {
+            pending_break = false;
+            if !out.is_empty() {
+                out.push_str(" · ");
+            }
+        }
+        out.push(if c.is_control() { ' ' } else { c });
+    }
+    out
 }
 
 /// Fit a ` · `-joined hint string into `width` columns without ever
@@ -712,12 +748,23 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     // hint middle-ellipsised reads as broken (`enter…cept`), and a
     // dropped hint reads as a choice.
     const MIN_SHRINK: usize = 16;
+    // Convergence guard: every pass must make the join strictly
+    // narrower. If a pass didn't (a segment `middle_ellipsis` could
+    // not shorten further), fall through to the next step instead of
+    // spinning — this loop once ran forever on a `\n` the two width
+    // measurements disagreed about, and pegged a core until `kill -9`.
+    let mut last_width = usize::MAX;
     loop {
         let candidate = segments.join(SEP);
-        let over = display_width(&candidate).saturating_sub(width);
+        let candidate_width = display_width(&candidate);
+        let over = candidate_width.saturating_sub(width);
         if over == 0 {
             return candidate;
         }
+        if candidate_width >= last_width {
+            break;
+        }
+        last_width = candidate_width;
         let longest = segments
             .iter()
             .enumerate()
@@ -822,7 +869,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         } else {
             ""
         };
-        let full = format!("{err}{pointer}");
+        // One row: a multi-line server error (message + `hint:`
+        // continuation) is folded into ` · ` segments here; F2 keeps
+        // the original lines.
+        let full = format!("{}{pointer}", footer_text(err));
         let available = area
             .width
             .saturating_sub(badge_width)
@@ -853,7 +903,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .width
             .saturating_sub(badge_width)
             .saturating_sub(display_width(&prefix) as u16) as usize;
-        let fitted = fit_status(status, available);
+        let fitted = fit_status(&footer_text(status), available);
         Line::from(Span::styled(
             format!("{prefix}{fitted}"),
             Style::default().fg(theme.health_green),

@@ -664,3 +664,147 @@ fn end_ellipsis_never_overruns_a_cjk_budget() {
     }
     assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
 }
+
+// ----- Fitter termination (the read-only refusal hang) -------------------
+
+/// The exact message a guarded `DELETE` produced under the default
+/// (`read_only = true`) profile: Postgres's refusal, a `\n`, and the
+/// `hint:` line `conn::read_only_refusal_hint` appends. The footer
+/// then adds its ` · F2 detail` pointer.
+fn read_only_refusal_footer() -> String {
+    format!(
+        "cannot execute DELETE in a read-only transaction\nhint: this connection is read-only by safety.toml ({}, read_only) — see docs/configuration.md · F2 detail",
+        "/home/op/.config/pgman/safety.toml"
+    )
+}
+
+/// Run `f` on its own thread and give up after two seconds — a fitter
+/// that fails to converge used to spin at 100% CPU with the UI dead,
+/// and the assertion has to *fail*, not hang the suite with it.
+fn bounded<F: FnOnce() -> String + Send + 'static>(f: F) -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
+}
+
+#[test]
+fn fit_status_terminates_on_the_read_only_refusal_at_sixty_columns() {
+    let text = read_only_refusal_footer();
+    let got = bounded(move || fit_status(&text, 60)).expect("fit_status hung");
+    assert!(
+        display_width(&got) <= 60,
+        "{got:?} is {} wide",
+        display_width(&got)
+    );
+    assert!(got.ends_with("· F2 detail"), "pointer lost: {got:?}");
+}
+
+#[test]
+fn fit_status_terminates_on_the_read_only_refusal_at_one_twenty_columns() {
+    let text = read_only_refusal_footer();
+    let got = bounded(move || fit_status(&text, 120)).expect("fit_status hung");
+    assert!(
+        display_width(&got) <= 120,
+        "{got:?} is {} wide",
+        display_width(&got)
+    );
+    assert!(got.ends_with("· F2 detail"), "pointer lost: {got:?}");
+    // The raw message is wider than 120; the shrink had to happen in
+    // the message, not the pointer.
+    assert!(got.starts_with("cannot execute DELETE"), "{got:?}");
+}
+
+#[test]
+fn footer_text_folds_newlines_into_segments_and_tabs_into_spaces() {
+    assert_eq!(
+        footer_text("cannot execute DELETE\nhint: read-only"),
+        "cannot execute DELETE · hint: read-only"
+    );
+    assert_eq!(footer_text("a\r\nb\rc"), "a · b · c");
+    assert_eq!(footer_text("a\tb\u{0}c"), "a b c");
+    // Blank lines don't become empty segments; edges don't grow separators.
+    assert_eq!(footer_text("\n\na\n\nb\n"), "a · b");
+    assert_eq!(footer_text("plain"), "plain");
+    assert_eq!(footer_text(""), "");
+}
+
+#[test]
+fn the_footer_fits_the_folded_refusal_within_every_width() {
+    let folded = footer_text(&read_only_refusal_footer());
+    assert!(!folded.contains('\n'));
+    for width in 0..=folded.chars().count() + 5 {
+        let f = folded.clone();
+        let got = bounded(move || fit_status(&f, width)).expect("fit_status hung");
+        assert!(
+            display_width(&got) <= width,
+            "width {width}: {got:?} is {} wide",
+            display_width(&got)
+        );
+    }
+}
+
+mod fitter_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Footer-shaped strings with the awkward cases over-represented:
+    /// control characters (the hang), the ` · ` separator, CJK and
+    /// emoji (double-width), a combining mark (zero-width).
+    fn footer_strings() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                4 => any::<char>(),
+                4 => prop::char::range('a', 'z'),
+                2 => Just(' '),
+                1 => Just('\n'),
+                1 => Just('\r'),
+                1 => Just('\t'),
+                1 => Just('\u{0}'),
+                1 => Just('\u{7f}'),
+                1 => Just('·'),
+                1 => Just('…'),
+                1 => Just('漢'),
+                1 => Just('😀'),
+                1 => Just('\u{301}'),
+            ],
+            0..96,
+        )
+        .prop_map(|cs| cs.into_iter().collect())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        #[test]
+        fn fit_status_terminates_and_never_exceeds_the_width(
+            text in footer_strings(),
+            width in 0usize..160,
+        ) {
+            let t = text.clone();
+            let got = bounded(move || fit_status(&t, width));
+            let got = got.expect("fit_status did not return within 2s");
+            prop_assert!(
+                display_width(&got) <= width,
+                "{text:?} @ {width}: {got:?} is {} wide",
+                display_width(&got)
+            );
+        }
+
+        #[test]
+        fn fit_hints_terminates_and_never_exceeds_the_width(
+            text in footer_strings(),
+            width in 0usize..160,
+        ) {
+            let t = text.clone();
+            let got = bounded(move || fit_hints(&t, width));
+            let got = got.expect("fit_hints did not return within 2s");
+            prop_assert!(
+                display_width(&got) <= width,
+                "{text:?} @ {width}: {got:?} is {} wide",
+                display_width(&got)
+            );
+        }
+    }
+}
