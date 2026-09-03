@@ -1,15 +1,17 @@
 # Keys
 
-Press `F1` (or `?` from the grid) for the in-app cheat sheet — it auto-scrolls
-to the section for whatever mode you opened it from. `q` closes most panels
-and quits from the grid / connection picker; `Esc` closes overlays but is a
-no-op in Normal mode (a reflex press can't drop the session). `F1` (help),
-`F2` (error detail), `F3` (notifications) and `F4` (JDBC tap monitor) work
-from **any** mode. `Ctrl-T` (new tab), `Ctrl-Tab` / `Ctrl-Shift-Tab` (cycle
-tabs) and `Alt-1`..`Alt-9` (jump to tab) are also global; `Ctrl-W` closes the
-current tab from any mode *except* while typing (editor, filters, search
-prompts — where `Ctrl-W` would collide with `\watch` or word-delete). `A`
-(about) and the bare `?` (help) only work from the grid (Normal mode).
+Press `F1` or `?` for the in-app cheat sheet — it auto-scrolls to the section
+for whatever mode you opened it from. `q` closes most panels and quits from
+the grid / connection picker; `Esc` closes overlays but is a no-op in Normal
+mode (a reflex press can't drop the session). `F1` (help), `F2` (error
+detail), `F3` (notifications) and `F4` (JDBC tap monitor) work from **any**
+mode, as do `?` (help) and `:` (the command bar) — except while a text input
+has focus, where both are characters you meant to type. `Ctrl-T` (new tab),
+`Ctrl-Tab` / `Ctrl-Shift-Tab` (cycle tabs) and `Alt-1`..`Alt-9` (jump to tab)
+are also global; `Ctrl-W` closes the current tab from any mode *except* while
+typing (editor, filters, search prompts — where `Ctrl-W` would collide with
+`\watch` or word-delete). `A` (about) works from the grid (Normal mode);
+`:about` reaches it from anywhere.
 
 ## Connection picker
 
@@ -35,7 +37,8 @@ once a query has run share one key map.
 | Key | Action |
 |---|---|
 | `q` | Quit (`Ctrl-C` also quits, except mid-query in the editor) |
-| `?` / `F1` | Toggle help |
+| `?` / `F1` | Toggle help (both work from every non-typing mode) |
+| `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |
 | `e` / `i` / `Tab` | Focus editor |
 | `c` | Change connection (opens the picker mid-session) |
@@ -298,6 +301,20 @@ txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 | `c` | Clear the event ring |
 | `Esc` / `q` | Close |
 
+## Command bar (`:`)
+
+`:` opens a one-line prompt in the footer from any mode that isn't taking
+literal text (so a colon still types in the editor, in filters, and in the
+bar itself). See [docs/commands.md](commands.md) for what each command does.
+
+| Key | Action |
+|---|---|
+| `Enter` | Run the command |
+| `Tab` | Complete the command name (unique name fills in; several are listed) |
+| `Esc` | Cancel — returns to the mode you opened it from |
+| `←` / `→` / `Home` / `End` | Move the cursor |
+| `Backspace` / `Ctrl-W` | Delete char / word |
+
 ## Overlays
 
 ### Help (`F1` / `?`)
@@ -308,6 +325,10 @@ txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 | `g` / `G` | Top / bottom |
 | `PageUp` / `PageDown` | Scroll by 10 |
 | `Esc` / `?` / `q` / `F1` | Close — returns to the mode you opened help from |
+
+Open it at a named section with `:help <topic>` — `grid`, `editor`,
+`commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`,
+`wizard`.
 
 ### About (`A`)
 
