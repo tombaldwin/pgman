@@ -30,8 +30,13 @@ class:
   it inside a checkout you didn't write means the repo's author chose those
   hosts. Nothing discovered connects without a keypress (a single candidate
   still lands in the picker), `PGPASSWORD` is only ever applied to a `--dsn`,
-  a `${…}` placeholder is never resolved into a URL's host or port, and a
-  discovered `ssh_tunnel` is confirmed before `ssh` runs. See
+  a `${…}` placeholder is never resolved into a URL's host or port — and the
+  DSN parser must read the same host, port and parameters out of the
+  resolved URL as out of the template, or the URL is refused — and a
+  discovered `ssh_tunnel` is confirmed before `ssh` runs. The picker row
+  shows the `sslmode` a discovered URL asks for, `disable` included, and
+  names (never values) every environment variable a credential comes from.
+  See
   [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
 - **A project's safety overrides can only tighten yours.** A committed
   `[safety]` block in `.pgman/pgman.toml` merges field-by-field into
@@ -46,7 +51,12 @@ class:
 - **The JDBC-tap listeners (`--tap-listen` / `--tap-otlp` / `--tap-udp`) are
   unauthenticated ingest** and bind to `127.0.0.1` by default. Only bind a
   non-loopback address (e.g. `0.0.0.0`) on a trusted/firewalled network — doing
-  so exposes an open ingest endpoint.
+  so exposes an open ingest endpoint. In a Java project the TCP listener
+  auto-enables on `127.0.0.1:7432`, says so on the status line, and
+  `--no-tap` stops it. Ingest is bounded end to end: per-field and
+  per-frame caps, a ring capped by count and by bytes, a `--tap-record` file
+  capped at 256 MiB, and every warning a peer can trigger throttled to one a
+  second per site.
 - **Destructive SQL is gated client-side** by the per-database safety profile
   (`safety.rs`). Every statement in a script is classified and guarded, and
   what reaches the server is the re-joined statements that were checked — not
@@ -55,14 +65,24 @@ class:
   guards computed from guessed statement boundaries approve the wrong
   statements. `SELECT … INTO`, and a `SELECT` calling one of a short list of
   destructive functions (`pg_terminate_backend`, `pg_read_file`, `lo_import`,
-  `dblink`, …), are treated as writes rather than reads. This is a guard rail,
+  `dblink`, …) — quoted or not, schema-qualified or not — are treated as
+  writes rather than reads, and identifiers are tokenised as Postgres
+  tokenises them (`where$` is a name, not a `WHERE`). Server-supplied text
+  that `--batch` prints is stripped of control characters first. This is a
+  guard rail,
   not a substitute for least-privilege database roles — run pgman with a role
   scoped to what you actually need.
 - **A read-only profile cannot be turned off from inside the session.**
   `read_only = true` is applied as `SET default_transaction_read_only = on`,
   but that setting is an ordinary session GUC any role may change, so Postgres
   does not defend it. pgman refuses the statements that would lift it —
-  including under `--batch --yes`.
+  `SET` / `RESET` / `DISCARD` of the GUC, the `READ WRITE` transaction
+  modes, `set_config()` naming it from any statement, a quoted GUC name —
+  including under `--batch --yes`. `DO` and `CALL` are refused outright on
+  a read-only profile, because their plpgsql bodies are opaque to the
+  classifier, and a `--batch` script runs inside one explicit transaction
+  with any transaction control of its own refused, so a lift the classifier
+  missed would reach no transaction at all.
 
 ## Supported versions
 
