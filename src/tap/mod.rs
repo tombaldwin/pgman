@@ -109,12 +109,25 @@ pub const TAP_MAX_SQL_BYTES: usize = 8 * 1024;
 
 /// Ceiling on every other string-shaped field after ingest, in
 /// bytes: `app`, `pool`, `conn`, `txn`, each `params` entry,
-/// each `caller` frame, each `error` cause. Applied per-string,
-/// not per-field-total — a `caller` stack with many short
-/// frames isn't capped further, but the overall frame is
-/// already bounded by [`crate::tap::listener::TAP_MAX_FRAME_BYTES`]
-/// (TCP) / [`crate::tap::otlp::OTLP_MAX_BODY_BYTES`] (OTLP).
+/// each `caller` frame, each `error` cause. Applied per-string;
+/// the *number* of entries in a list-shaped field is bounded
+/// separately by [`TAP_MAX_FIELD_ENTRIES`].
 pub const TAP_MAX_FIELD_BYTES: usize = 1024;
+
+/// Ceiling on the number of entries in a list-shaped field
+/// after ingest: `params`, `caller`, `error`. Includes the
+/// `… +N more` marker, so a capped list is exactly this long.
+///
+/// [`TAP_MAX_FIELD_BYTES`] bounds each entry but said nothing
+/// about how many there could be, and the frame-size bound
+/// (`listener::TAP_MAX_FRAME_BYTES`, 256 KiB) does not cover
+/// this: `"",` is three bytes on the wire and a `String` is 24
+/// bytes plus its heap block in memory, so one frame of 65 000
+/// empty `params` costs ~195 KiB to send and megabytes to hold
+/// — and the ring keeps [`crate::app::TAP_CAP`] of them. 2 000
+/// such frames took RSS to 3.86 GB. Capping at ingest is what
+/// makes the ring's memory bound real.
+pub const TAP_MAX_FIELD_ENTRIES: usize = 64;
 
 /// Marker appended to a field truncated at ingest. Doubles as
 /// the caller-visible signal that a field was shortened —
@@ -483,6 +496,37 @@ fn truncate_field(s: &mut String, max_bytes: usize) -> bool {
     }
     s.truncate(cut);
     s.push(TAP_TRUNCATION_MARKER);
+    // `truncate` shortens the string but keeps the allocation.
+    // The event is about to be parked in a ring holding
+    // `TAP_CAP` of them, so the buffer, not the length, is what
+    // shows up in RSS — hand it back.
+    s.shrink_to_fit();
+    true
+}
+
+/// Truncate `v` in place to at most [`TAP_MAX_FIELD_ENTRIES`]
+/// entries, the last of which becomes a `… +N more` marker
+/// naming how many were dropped. No-op (returns `false`) when
+/// `v` is already within the cap.
+///
+/// Entries are dropped from the *end*. For `error`, whose
+/// contract puts the root cause last, that means a capped chain
+/// loses its root cause — but a chain long enough to be capped
+/// is a hostile or broken sender rather than a real causal
+/// trail, and the marker says plainly that entries are missing.
+fn truncate_entries(v: &mut Vec<String>) -> bool {
+    if v.len() <= TAP_MAX_FIELD_ENTRIES {
+        return false;
+    }
+    // One slot of the cap is spent on the marker itself.
+    let kept = TAP_MAX_FIELD_ENTRIES - 1;
+    let dropped = v.len() - kept;
+    v.truncate(kept);
+    v.push(format!("{TAP_TRUNCATION_MARKER} +{dropped} more"));
+    // As in `truncate_field`: `truncate` frees the dropped
+    // `String`s but keeps the `Vec`'s own 65 000-slot buffer,
+    // which is most of the memory this cap exists to reclaim.
+    v.shrink_to_fit();
     true
 }
 
@@ -517,19 +561,20 @@ pub(crate) fn enforce_field_caps(event: &mut TapEvent) -> bool {
     if let Some(txn) = event.txn.as_mut() {
         truncated |= truncate_field(txn, TAP_MAX_FIELD_BYTES);
     }
-    if let Some(params) = event.params.as_mut() {
-        for p in params.iter_mut() {
-            truncated |= truncate_field(p, TAP_MAX_FIELD_BYTES);
-        }
-    }
-    if let Some(caller) = event.caller.as_mut() {
-        for frame in caller.iter_mut() {
-            truncated |= truncate_field(frame, TAP_MAX_FIELD_BYTES);
-        }
-    }
-    if let Some(error) = event.error.as_mut() {
-        for cause in error.iter_mut() {
-            truncated |= truncate_field(cause, TAP_MAX_FIELD_BYTES);
+    // Cap the entry count first, so the per-string pass only
+    // ever walks a bounded list — and, more to the point, so an
+    // over-long list is released before it reaches the ring.
+    for list in [
+        event.params.as_mut(),
+        event.caller.as_mut(),
+        event.error.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        truncated |= truncate_entries(list);
+        for entry in list.iter_mut() {
+            truncated |= truncate_field(entry, TAP_MAX_FIELD_BYTES);
         }
     }
     truncated
@@ -876,6 +921,71 @@ mod tests {
         assert_eq!(params[1], "short");
         assert!(e.caller.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
         assert!(e.error.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn parse_caps_the_entry_count_of_params_caller_and_error() {
+        // The reproduction: `TAP_MAX_FIELD_BYTES` bounded each
+        // entry but not how many there were, and 65 000 empty
+        // params is only ~195 KiB on the wire — well under the
+        // frame cap — while costing megabytes to hold. 2 000
+        // such frames in the ring took RSS to 3.86 GB.
+        const SENT: usize = 65_000;
+        let flood: Vec<String> = vec![String::new(); SENT];
+        let payload = serde_json::json!({
+            "v": 1,
+            "ts_unix_micros": 1,
+            "sql": "SELECT 1",
+            "duration_micros": 1,
+            "params": flood.clone(),
+            "caller": flood.clone(),
+            "error": flood,
+        });
+        let bytes = serde_json::to_vec(&payload).unwrap();
+        let e = parse(&bytes).unwrap();
+
+        for (name, list) in [
+            ("params", e.params.as_ref().unwrap()),
+            ("caller", e.caller.as_ref().unwrap()),
+            ("error", e.error.as_ref().unwrap()),
+        ] {
+            assert_eq!(
+                list.len(),
+                TAP_MAX_FIELD_ENTRIES,
+                "{name} must be capped at {TAP_MAX_FIELD_ENTRIES} entries"
+            );
+            // The last entry says how many were dropped, so the
+            // operator isn't shown a silently shortened list.
+            assert_eq!(
+                list[TAP_MAX_FIELD_ENTRIES - 1],
+                format!(
+                    "{TAP_TRUNCATION_MARKER} +{} more",
+                    SENT - (TAP_MAX_FIELD_ENTRIES - 1)
+                ),
+                "{name} must carry a marker naming the dropped count"
+            );
+            // Truncating a `Vec` keeps its buffer; the capacity
+            // is what the ring actually holds, so it has to come
+            // down too or the cap buys nothing.
+            assert!(
+                list.capacity() < SENT,
+                "{name} must release the over-long allocation; capacity {}",
+                list.capacity()
+            );
+        }
+    }
+
+    #[test]
+    fn a_list_at_the_cap_is_left_alone() {
+        let mut v: Vec<String> = (0..TAP_MAX_FIELD_ENTRIES).map(|i| i.to_string()).collect();
+        assert!(!truncate_entries(&mut v));
+        assert_eq!(v.len(), TAP_MAX_FIELD_ENTRIES);
+        assert_eq!(v[TAP_MAX_FIELD_ENTRIES - 1], "63");
+        // One over is the first length that loses an entry.
+        v.push("64".to_string());
+        assert!(truncate_entries(&mut v));
+        assert_eq!(v.len(), TAP_MAX_FIELD_ENTRIES);
+        assert_eq!(v[TAP_MAX_FIELD_ENTRIES - 1], "… +2 more");
     }
 
     #[test]
