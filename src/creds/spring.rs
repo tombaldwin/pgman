@@ -1,8 +1,8 @@
 //! Discover datasource settings from a Spring project's configuration.
 //!
-//! `application.properties` parsing lives in [`parse_properties_partials`] /
-//! [`parse_properties_all`]; `application.yml` in [`parse_yaml_partials`] /
-//! [`parse_yaml_all`] (via [`flatten_yaml`]). [`resolve_placeholders`]
+//! `application.properties` parsing lives in [`parse_properties_partials`];
+//! `application.yml` in [`parse_yaml_partials`] (via [`flatten_yaml`]).
+//! [`resolve_placeholders`]
 //! resolves the `${NAME}` / `${NAME:default}` placeholders those parsers
 //! leave untouched, against a caller-supplied lookup (`main.rs` wires
 //! `std::env::var`).
@@ -16,27 +16,15 @@ pub fn detect_java_project(dir: &Path) -> bool {
         .any(|f| dir.join(f).is_file())
 }
 
-/// One datasource discovered in a Spring `.properties` file, identified by
-/// its prefix (the key text before the trailing `.url` / `.username` /
-/// `.password`). A file can declare more than one — e.g.
-/// `dataSource.url`, `logDataSource.url`, `replicaDataSource.url`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpringDatasourceEntry {
-    /// The prefix (e.g. "dataSource", "spring.datasource", "logDataSource").
-    pub prefix: String,
-    pub url: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-}
-
 /// A possibly-**partial** datasource block: any of `url` /
 /// `username` / `password` may be absent. This is what a Spring
 /// *profile* overlay (`application-prod.yml`) looks like — it
 /// commonly carries just a password or just a URL, expecting the
 /// base `application.yml` to supply the rest. [`merge_partials`]
 /// folds an overlay onto a base; [`parse_properties_partials`]
-/// produces these without the JDBC-URL filter that
-/// [`parse_properties_all`] applies.
+/// produces these unfiltered — deciding which prefixes are actually
+/// datasources happens at pick emission (`main.rs`), using the raw URL
+/// and [`is_datasource_prefix`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpringDatasourcePartial {
     pub prefix: String,
@@ -50,8 +38,8 @@ pub struct SpringDatasourcePartial {
 /// first-appearance order of the prefix (across **any** field, so
 /// a password-only prefix is still emitted — that's the whole
 /// point for profile overlays). No filtering: non-datasource
-/// prefixes (`service.url`, …) are dropped later by the JDBC
-/// check at pick-emission / in [`parse_properties_all`].
+/// prefixes (`service.url`, …) are dropped at pick emission by
+/// the JDBC-URL check + [`is_datasource_prefix`].
 pub fn parse_properties_partials(text: &str) -> Vec<SpringDatasourcePartial> {
     use std::collections::HashMap;
 
@@ -104,24 +92,24 @@ pub fn parse_properties_partials(text: &str) -> Vec<SpringDatasourcePartial> {
         .collect()
 }
 
-/// Parse every `<prefix>.url` / `<prefix>.username` / `<prefix>.password`
-/// triple from a `.properties` body. Order in the output preserves the
-/// order in which each prefix first appeared.
+/// True when `prefix` names a datasource by convention: its last
+/// dot-separated segment is `datasource` (case-insensitively), or ends
+/// in it. Matches `spring.datasource`, `dataSource`, `logDataSource`,
+/// `replicaDataSource`; rejects `service`, `swagger`, `mailSender`.
 ///
-/// Filters: a prefix is only emitted when its `.url` starts with `jdbc:`
-/// — otherwise it's almost certainly not a datasource (e.g. `service.url`,
-/// `swagger.url`). Built on [`parse_properties_partials`] + this filter.
-pub fn parse_properties_all(text: &str) -> Vec<SpringDatasourceEntry> {
-    parse_properties_partials(text)
-        .into_iter()
-        .filter(|p| p.url.as_deref().is_some_and(|u| u.starts_with("jdbc:")))
-        .map(|p| SpringDatasourceEntry {
-            prefix: p.prefix,
-            url: p.url.unwrap_or_default(),
-            username: p.username,
-            password: p.password,
-        })
-        .collect()
+/// Used at pick emission alongside the `jdbc:` URL check: a URL that
+/// *is* a JDBC one speaks for itself, and a value that isn't (because
+/// the whole thing is a `${…}` placeholder, say) still counts when the
+/// prefix says datasource. Without the second half,
+/// `spring.datasource.url=${SPRING_DATASOURCE_URL}` would vanish from
+/// the picker with no message — the exact silent skip that
+/// `discover_spring_datasources_keeps_a_whole_url_placeholder_pick`
+/// exists to prevent.
+pub fn is_datasource_prefix(prefix: &str) -> bool {
+    prefix
+        .rsplit('.')
+        .next()
+        .is_some_and(|last| last.to_ascii_lowercase().ends_with("datasource"))
 }
 
 /// Overlay `profile` partials onto `base` partials, keyed by
@@ -200,24 +188,16 @@ pub fn format_precedence_rank(filename: &str) -> u8 {
     }
 }
 
-/// Flatten a Spring-style `application.yml` to dot-notation property
-/// lines, then run it through `parse_properties_all`. Same output type
-/// so `discover_spring_datasources` can treat both file types uniformly.
+/// YAML counterpart to [`parse_properties_partials`]: flatten the
+/// document, then parse partials (url optional, no JDBC filter).
+/// Used for profile-overlay merging where a profile file may
+/// carry only a password.
 ///
 /// The flattener handles the subset Spring config files use in
 /// practice: nested mappings, `key: value` leaves, `#` comments, and
 /// quoted string values. YAML lists / multi-line strings / anchors are
 /// out of scope — those lines are skipped rather than crashing, which
 /// is safe because they never appear in a datasource block.
-pub fn parse_yaml_all(text: &str) -> Vec<SpringDatasourceEntry> {
-    let flattened = flatten_yaml(text);
-    parse_properties_all(&flattened)
-}
-
-/// YAML counterpart to [`parse_properties_partials`]: flatten the
-/// document, then parse partials (url optional, no JDBC filter).
-/// Used for profile-overlay merging where a profile file may
-/// carry only a password.
 pub fn parse_yaml_partials(text: &str) -> Vec<SpringDatasourcePartial> {
     let flattened = flatten_yaml(text);
     parse_properties_partials(&flattened)
@@ -277,9 +257,10 @@ pub fn flatten_yaml(text: &str) -> String {
             // map. We can't disambiguate without look-ahead, so do
             // BOTH — emit `path.key=` as an empty leaf AND push onto
             // the path stack so any actually-nested children below
-            // still resolve as `path.key.child=…`. Downstream
-            // (`parse_properties_all`) drops triples without a JDBC
-            // URL, so the spurious empty leaf is harmless and the
+            // still resolve as `path.key.child=…`. Downstream (pick
+            // emission) drops blocks without a JDBC URL under a
+            // datasource-shaped prefix, so the spurious leaf is
+            // harmless and the
             // blank password / username case is no longer silently
             // dropped.
             let mut dotted = String::new();
@@ -688,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_properties_all_handles_non_spring_prefix() {
+    fn parse_properties_partials_handles_non_spring_prefix() {
         // Real-world shape: a project that uses `dataSource.*`, not the
         // Spring-Boot-canonical `spring.datasource.*`. Both should work.
         let text = "\
@@ -700,38 +681,38 @@ logDataSource.url=jdbc:postgresql://localhost:5432/shoplog
 logDataSource.username=shop
 logDataSource.password=local-dev-placeholder
 ";
-        let entries = parse_properties_all(text);
+        let entries = parse_properties_partials(text);
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].prefix, "dataSource");
         assert_eq!(entries[0].username.as_deref(), Some("shop"));
-        assert!(entries[0].url.contains("shop"));
+        assert!(entries[0]
+            .url
+            .as_deref()
+            .is_some_and(|u| u.contains("shop")));
         assert_eq!(entries[1].prefix, "logDataSource");
-        assert!(entries[1].url.contains("shoplog"));
+        assert!(entries[1]
+            .url
+            .as_deref()
+            .is_some_and(|u| u.contains("shoplog")));
     }
 
     #[test]
-    fn parse_properties_all_filters_non_jdbc_urls() {
-        // `service.url` is a URL but not a datasource; should be dropped.
-        let text = "\
-service.url=https://example.test
-dataSource.url=jdbc:postgresql://h/x
-";
-        let entries = parse_properties_all(text);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].prefix, "dataSource");
-    }
-
-    #[test]
-    fn parse_properties_all_skips_prefixes_with_no_url() {
-        // `mailSender.username` alone is not a datasource — no jdbc URL.
-        let text = "\
-mailSender.username=svc
-mailSender.password=secret
-dataSource.url=jdbc:postgresql://h/x
-";
-        let entries = parse_properties_all(text);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].prefix, "dataSource");
+    fn is_datasource_prefix_accepts_the_conventional_names_only() {
+        for good in [
+            "spring.datasource",
+            "dataSource",
+            "logDataSource",
+            "replicaDataSource",
+            "app.replicaDataSource",
+        ] {
+            assert!(is_datasource_prefix(good), "{good} should be a datasource");
+        }
+        for bad in ["service", "swagger", "mailSender", "datasource.pool", ""] {
+            assert!(
+                !is_datasource_prefix(bad),
+                "{bad} should NOT be a datasource"
+            );
+        }
     }
 
     #[test]
@@ -783,7 +764,7 @@ spring:
     }
 
     #[test]
-    fn parse_yaml_all_returns_a_datasource_entry() {
+    fn parse_yaml_partials_returns_a_datasource_entry() {
         let yaml = "\
 spring:
   datasource:
@@ -791,11 +772,14 @@ spring:
     username: alice
     password: secret
 ";
-        let entries = parse_yaml_all(yaml);
+        let entries = parse_yaml_partials(yaml);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].prefix, "spring.datasource");
         assert_eq!(entries[0].username.as_deref(), Some("alice"));
-        assert!(entries[0].url.contains("postgresql"));
+        assert!(entries[0]
+            .url
+            .as_deref()
+            .is_some_and(|u| u.contains("postgresql")));
     }
 
     #[test]
@@ -814,7 +798,7 @@ spring:
 ";
         let flat = flatten_yaml(yaml);
         // Both URLs survive as distinct property lines in the flattened
-        // output (parse_properties_all then HashMap-merges by prefix —
+        // output (parse_properties_partials then merges by prefix —
         // that's a different concern; the flattener's job is to not
         // lose either).
         assert!(flat.contains("prod"), "prod URL missing: {flat:?}");
@@ -862,7 +846,7 @@ spring:
     }
 
     #[test]
-    fn parse_yaml_all_finds_non_spring_prefix() {
+    fn parse_yaml_partials_finds_non_spring_prefix() {
         // Some Spring apps put the connection straight under top-level
         // `dataSource:` (mirroring the .properties shape).
         let yaml = "\
@@ -871,16 +855,16 @@ dataSource:
   username: shop
   password: ignored
 ";
-        let entries = parse_yaml_all(yaml);
+        let entries = parse_yaml_partials(yaml);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].prefix, "dataSource");
     }
 
     #[test]
-    fn parse_properties_all_handles_spring_canonical_prefix() {
+    fn parse_properties_partials_handles_spring_canonical_prefix() {
         let text = "spring.datasource.url=jdbc:postgresql://h/x\n\
                     spring.datasource.username=svc";
-        let entries = parse_properties_all(text);
+        let entries = parse_properties_partials(text);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].prefix, "spring.datasource");
     }
@@ -912,11 +896,20 @@ dataSource:
     }
 
     #[test]
-    fn partials_keep_non_jdbc_prefixes_unlike_all() {
-        // partials are unfiltered; `_all` drops the non-jdbc one.
+    fn partials_keep_non_jdbc_prefixes_for_the_emitter_to_filter() {
+        // Partials are unfiltered on purpose — a profile overlay may
+        // carry only a password. Pick emission is what drops
+        // `service.url`, using the JDBC check + `is_datasource_prefix`.
         let text = "service.url=https://api\nspring.datasource.url=jdbc:postgresql://h/x";
-        assert_eq!(parse_properties_partials(text).len(), 2);
-        assert_eq!(parse_properties_all(text).len(), 1);
+        let ps = parse_properties_partials(text);
+        assert_eq!(ps.len(), 2);
+        assert_eq!(
+            ps.iter()
+                .filter(|p| p.url.as_deref().is_some_and(|u| u.starts_with("jdbc:"))
+                    || is_datasource_prefix(&p.prefix))
+                .count(),
+            1
+        );
     }
 
     #[test]
