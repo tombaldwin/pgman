@@ -71,6 +71,13 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     }
 }
 
+/// The status line when the query Enter loaded from the log picker
+/// still has `?` / `$N` placeholders: the log carried no bound values
+/// for it (Hibernate's bind logging is `TRACE`, usually off), so what
+/// landed in the editor is the template, not a runnable statement.
+pub const LOG_PICK_UNBOUND_STATUS: &str =
+    "no bound values in the log for this query — ? placeholders remain";
+
 /// The sessions panel's title / footer line when the only backend on
 /// the server is pgman's own (the panel SQL excludes it): `0 total · 0
 /// blocked` read as a failed load on a quiet server.
@@ -2561,21 +2568,29 @@ impl App {
         });
     }
 
-    /// Resolve the focused row's runnable SQL — `runnable_sql` for
-    /// the AllQueries view, the cluster's `example` for Clusters.
-    fn focused_log_pick_sql(&self) -> Option<String> {
-        match self.log_pick.view {
+    /// Resolve the focused row's SQL to load, and whether it still has
+    /// unbound placeholders. `runnable_sql` for the AllQueries view; for
+    /// Clusters, the first member whose values are all bound
+    /// (`nplus1::runnable_member`) — the cluster's `example` is the `?`
+    /// template the view groups by, and loading it handed the operator a
+    /// statement that cannot run. When no member is bound (the log had
+    /// no bind lines for this shape) the template loads and the flag
+    /// lets Enter say so instead of calling it `loaded query`.
+    fn focused_log_pick_sql(&self) -> Option<(String, bool)> {
+        let sql = match self.log_pick.view {
             LogPickView::AllQueries => self
                 .log_pick
                 .picks
                 .get(self.log_pick.index)
                 .map(|q| q.runnable_sql.clone()),
-            LogPickView::Clusters => self
-                .log_pick
-                .clusters
-                .get(self.log_pick.index)
-                .map(|c| c.example.clone()),
-        }
+            LogPickView::Clusters => self.log_pick.clusters.get(self.log_pick.index).map(|c| {
+                crate::query::nplus1::runnable_member(c, &self.log_pick.picks)
+                    .map(|q| q.runnable_sql.clone())
+                    .unwrap_or_else(|| c.example.clone())
+            }),
+        }?;
+        let unbound = crate::query::nplus1::has_unbound_placeholder(&sql);
+        Some((sql, unbound))
     }
 
     // -- run dispatch --

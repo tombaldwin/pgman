@@ -2915,20 +2915,85 @@ fn log_pick_toggle_resets_cursor() {
     assert_eq!(a.log_pick.index, 0);
 }
 
+/// The shape a Hibernate log with bind logging gives: one raw `?`
+/// template per statement, and `runnable_sql` substituted for the
+/// statements whose bind lines were present.
+fn log_picks_with_a_cluster_of(
+    runnable: &[&str],
+) -> Vec<crate::query::reconstruct::ReconstructedQuery> {
+    use crate::query::reconstruct::{ReconstructedQuery, Source};
+    runnable
+        .iter()
+        .enumerate()
+        .map(|(i, r)| ReconstructedQuery {
+            raw_sql: "select * from item where order_id=?".into(),
+            params: Vec::new(),
+            runnable_sql: (*r).into(),
+            source: Source::HibernateLog,
+            src_line: i,
+        })
+        .collect()
+}
+
 #[test]
-fn log_pick_enter_in_cluster_view_loads_example_sql() {
+fn log_pick_enter_in_cluster_view_loads_a_runnable_member_not_the_template() {
+    // The cluster row shows the `?` template (that is what it groups by);
+    // Enter used to load exactly that, and F5 then failed on the `?`.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.log_pick.picks = log_picks_with_an_n_plus_one_cluster();
+    a.log_pick.picks = log_picks_with_a_cluster_of(&[
+        "select * from item where order_id=?",
+        "select * from item where order_id=101",
+        "select * from item where order_id=102",
+    ]);
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
+    assert_eq!(a.log_pick.clusters.len(), 1, "fixture check");
+    a.mode = Mode::LogPick;
+    a.on_key(KeyEvent::from(KeyCode::Char('c')));
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "select * from item where order_id=101");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("loaded query · 37 char(s)"),
+        "a bound member is an ordinary load"
+    );
+}
+
+#[test]
+fn log_pick_enter_on_a_cluster_with_no_bound_member_loads_the_template_and_says_so() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.log_pick.picks = log_picks_with_a_cluster_of(&[
+        "select * from item where order_id=?",
+        "select * from item where order_id=?",
+    ]);
     a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
     a.mode = Mode::LogPick;
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "select * from item where order_id=?");
+    assert_eq!(a.last_status.as_deref(), Some(LOG_PICK_UNBOUND_STATUS));
     assert!(
-        a.editor.buffer.contains("from item where order_id"),
-        "buffer should be the cluster's example; got: {:?}",
-        a.editor.buffer
+        a.last_error.is_none(),
+        "a template is a notice, not a failure"
     );
+}
+
+#[test]
+fn log_pick_enter_in_all_queries_view_says_when_the_pick_is_a_template() {
+    // The same honesty in the flat view: a pick whose bind lines were
+    // missing lands as a template, and the status must not call it a
+    // loaded, runnable query.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.log_pick.picks = log_picks_with_a_cluster_of(&[
+        "select * from item where order_id=?",
+        "select * from item where order_id=5",
+    ]);
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
+    a.mode = Mode::LogPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "select * from item where order_id=?");
+    assert_eq!(a.last_status.as_deref(), Some(LOG_PICK_UNBOUND_STATUS));
 }
 
 #[test]

@@ -87,8 +87,56 @@ pub fn fingerprint(sql: &str) -> String {
 pub struct Cluster {
     pub fingerprint: String,
     pub count: usize,
-    /// One representative statement from the cluster.
+    /// One representative statement from the cluster — the raw,
+    /// unsubstituted shape (`… order_id=?`), which is what the cluster
+    /// groups by and what the cluster view shows. Not runnable when
+    /// the log used placeholders; see [`runnable_member`].
     pub example: String,
+    /// Indices, into the slice `detect` was given, of every query in
+    /// the cluster — in log order. `members.len() == count`.
+    pub members: Vec<usize>,
+}
+
+/// Does `sql` still carry an unbound placeholder — a `?` or `$N`
+/// outside a string literal? A query reconstructed from a log with no
+/// bind-parameter lines keeps its template form, which cannot run.
+pub fn has_unbound_placeholder(sql: &str) -> bool {
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                // String literal — skip to the closing quote ('' escapes).
+                while let Some(cc) = chars.next() {
+                    if cc == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '?' => return true,
+            '$' if chars.peek().is_some_and(|d| d.is_ascii_digit()) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The member of `cluster` to load when the operator picks it: the
+/// first, in log order, whose `runnable_sql` has every value bound.
+/// `None` when the log bound no values for this shape at all — the
+/// caller falls back to the template and says so.
+pub fn runnable_member<'a>(
+    cluster: &Cluster,
+    queries: &'a [ReconstructedQuery],
+) -> Option<&'a ReconstructedQuery> {
+    cluster
+        .members
+        .iter()
+        .filter_map(|&i| queries.get(i))
+        .find(|q| !has_unbound_placeholder(&q.runnable_sql))
 }
 
 /// A one-line triage view of an imported log: how many queries
@@ -155,19 +203,22 @@ pub fn summarize(queries: &[ReconstructedQuery]) -> SessionSummary {
 /// Cluster reconstructed queries by fingerprint. Only clusters seen 2+ times
 /// are returned, most-repeated first — a repeated shape is the N+1 signature.
 pub fn detect(queries: &[ReconstructedQuery]) -> Vec<Cluster> {
-    let mut groups: HashMap<String, (usize, String)> = HashMap::new();
-    for q in queries {
+    let mut groups: HashMap<String, (String, Vec<usize>)> = HashMap::new();
+    for (i, q) in queries.iter().enumerate() {
         let fp = fingerprint(&q.raw_sql);
-        let entry = groups.entry(fp).or_insert((0, q.raw_sql.clone()));
-        entry.0 += 1;
+        let entry = groups
+            .entry(fp)
+            .or_insert_with(|| (q.raw_sql.clone(), Vec::new()));
+        entry.1.push(i);
     }
     let mut clusters: Vec<Cluster> = groups
         .into_iter()
-        .filter(|(_, (count, _))| *count >= 2)
-        .map(|(fingerprint, (count, example))| Cluster {
+        .filter(|(_, (_, members))| members.len() >= 2)
+        .map(|(fingerprint, (example, members))| Cluster {
             fingerprint,
-            count,
+            count: members.len(),
             example,
+            members,
         })
         .collect();
     // Most-repeated first; fingerprint as a stable tiebreak for deterministic
@@ -233,6 +284,91 @@ mod tests {
         assert_eq!(clusters.len(), 1);
         assert_eq!(clusters[0].count, 3);
         assert!(clusters[0].fingerprint.contains("from item"));
+    }
+
+    #[test]
+    fn detect_records_each_member_in_log_order() {
+        let queries = vec![
+            rq("select * from item where order_id = 1"),
+            rq("select * from orders where id = 1"),
+            rq("select * from item where order_id = 2"),
+            rq("select * from item where order_id = 3"),
+        ];
+        let clusters = detect(&queries);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].members, vec![0, 2, 3]);
+        assert_eq!(clusters[0].count, clusters[0].members.len());
+    }
+
+    #[test]
+    fn has_unbound_placeholder_sees_question_marks_and_dollar_numbers_outside_literals() {
+        assert!(has_unbound_placeholder(
+            "select * from item where order_id=?"
+        ));
+        assert!(has_unbound_placeholder(
+            "select * from item where order_id=$1"
+        ));
+        assert!(!has_unbound_placeholder(
+            "select * from item where order_id=7"
+        ));
+        // Inside a string literal a `?` is data, not a placeholder —
+        // and a doubled quote does not end the literal early.
+        assert!(!has_unbound_placeholder(
+            "select * from faq where q = 'why?' and a = 'it''s ?'"
+        ));
+        assert!(!has_unbound_placeholder("select '$' || 1"));
+        assert!(has_unbound_placeholder("select 'ok' from t where x = ?"));
+    }
+
+    /// A member with its values bound, and one without (the log had no
+    /// bind lines for it): `runnable_sql` keeps the template.
+    fn rq_bound(raw_sql: &str, runnable_sql: &str) -> ReconstructedQuery {
+        ReconstructedQuery {
+            raw_sql: raw_sql.to_string(),
+            params: Vec::new(),
+            runnable_sql: runnable_sql.to_string(),
+            source: Source::HibernateLog,
+            src_line: 0,
+        }
+    }
+
+    #[test]
+    fn runnable_member_is_the_first_fully_substituted_one() {
+        let queries = vec![
+            rq_bound(
+                "select * from item where order_id=?",
+                "select * from item where order_id=?",
+            ),
+            rq_bound(
+                "select * from item where order_id=?",
+                "select * from item where order_id=7",
+            ),
+            rq_bound(
+                "select * from item where order_id=?",
+                "select * from item where order_id=8",
+            ),
+        ];
+        let clusters = detect(&queries);
+        assert_eq!(clusters.len(), 1);
+        let m = runnable_member(&clusters[0], &queries).expect("one member is bound");
+        assert_eq!(m.runnable_sql, "select * from item where order_id=7");
+    }
+
+    #[test]
+    fn runnable_member_is_none_when_no_member_is_bound() {
+        let queries = vec![
+            rq_bound(
+                "select * from item where order_id=?",
+                "select * from item where order_id=?",
+            ),
+            rq_bound(
+                "select * from item where order_id=?",
+                "select * from item where order_id=?",
+            ),
+        ];
+        let clusters = detect(&queries);
+        assert_eq!(clusters.len(), 1);
+        assert!(runnable_member(&clusters[0], &queries).is_none());
     }
 
     #[test]
