@@ -6352,3 +6352,33 @@ fn question_mark_types_a_literal_question_mark_while_a_text_input_has_focus() {
     assert_eq!(a.mode, Mode::CommandBar);
     assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("?"));
 }
+
+#[test]
+fn p_on_the_failure_screen_opens_the_picker_with_a_single_candidate() {
+    // Nothing discovered auto-connects any more, so a lone candidate
+    // is reachable ONLY through the picker — and it need not be the
+    // DSN that just failed (a --dsn can fail with one discovered
+    // candidate sitting behind it). Gating `p` at two candidates left
+    // that operator with `r retry` against a connection they never
+    // chose.
+    let dsn = crate::conn::Dsn::parse("postgres://app@flag-host/main").unwrap();
+    let pick = DataSourcePick {
+        name: "dataSource (application)".into(),
+        origin: "Spring",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@discovered-host/main").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    };
+    let mut a = App::new(
+        Theme::default(),
+        Some(dsn),
+        vec![pick],
+        SafetyConfig::default(),
+    );
+    a.splash_visible = false;
+    a.mode = Mode::Normal;
+    a.conn_state = ConnState::Failed("connection refused".into());
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::ConnPick, "p must open the picker");
+    assert_eq!(a.conn_pick.index, 0);
+}

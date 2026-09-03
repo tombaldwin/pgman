@@ -415,7 +415,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
 
     lines.push(Line::from(""));
     let mut actions = String::from("  r retry");
-    if app.conn_pick.picks.len() >= 2 {
+    if !app.conn_pick.picks.is_empty() {
         actions.push_str(" · p change connection");
     }
     // Resolved through `util::cache_dir()` (not hand-typed) so this
@@ -871,7 +871,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         let hints: &str = if tunnel_prompt {
             "y proceed · any other key cancels"
         } else if failed_normal {
-            if app.conn_pick.picks.len() >= 2 {
+            // Same gate as the failure card's action line and the `p`
+            // key handler: one discovered candidate is still a picker
+            // worth opening.
+            if !app.conn_pick.picks.is_empty() {
                 "r retry · p change connection · q quit · ? help"
             } else {
                 "r retry · q quit · ? help"
