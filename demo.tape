@@ -67,13 +67,11 @@ Enter
 # pre-run result.
 Sleep 2000ms
 
-# `e` focuses the editor — it still opens on the demo's canned SELECT
-# (only the grid was cleared for the start card, not the draft buffer).
+# `e` focuses the editor. In --demo it starts empty; the Ctrl+U is a
+# harmless no-op kept so a re-record after a change to the demo's
+# starting buffer still parses exactly the sample below.
 Type "e"
 Sleep 700ms
-
-# Clear it: the log sample below is what should be in the buffer when
-# ctrl-l parses it, not a leftover query.
 Ctrl+U
 Sleep 400ms
 
