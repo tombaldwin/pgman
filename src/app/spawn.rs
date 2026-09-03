@@ -415,6 +415,13 @@ impl App {
         // re-fetch after a (guard-permitting) DDL-shaped statement.
         self.schema_dirty_after_run = false;
         self.last_error = None;
+        // `\timing` reads `query_started` in the QueryOk handler and
+        // shows nothing without it — so `\timing on` in `--demo` used
+        // to print no elapsed line at all, which is exactly the kind
+        // of drift the demo exists to avoid. The clock starts here and
+        // the answer is synthesized immediately below, so the figure
+        // the demo shows is the real time this run took.
+        self.query_started = Some(Instant::now());
         let grid = crate::demo::answer(&sql, &self.schema_cache);
         let msg = AppMsg::QueryOk {
             generation: self.generation,
