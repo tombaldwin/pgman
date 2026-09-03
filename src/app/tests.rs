@@ -6316,7 +6316,7 @@ fn demo_batch_runs_the_statements_it_checked_not_the_raw_buffer() {
     assert!(pending.is_batch);
     assert_eq!(
         pending.sql,
-        "SELECT 1;\n/* note */ UPDATE users SET active = false WHERE id = 1 -- tail"
+        "SELECT 1\n;\n/* note */ UPDATE users SET active = false WHERE id = 1 -- tail"
     );
 }
 

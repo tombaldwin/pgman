@@ -176,7 +176,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // uses `client.prepare` under the hood, which the extended-query
     // protocol rejects for multi-command strings. `safety::split_verified`
     // is the same splitter the interactive editor uses.
-    let sql = checked.join(";\n");
+    let sql = crate::safety::join_verified(&checked);
     // `--format json` on a single statement gets the typed path
     // (`run_statement_typed_json`): SQL NULL, numbers, and booleans
     // stay distinct instead of collapsing through `Grid`'s

@@ -610,3 +610,103 @@ fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
         "got: {stderr}"
     );
 }
+
+/// A statement ending in a `-- line comment` used to swallow the `;` the
+/// re-join inserted, so `UPDATE … WHERE id=1 --` followed by `; OR true`
+/// reached the server as `WHERE id=1 OR true` — past
+/// `update_without_where = block`. Live: the rows must not all change.
+#[test]
+fn batch_cannot_widen_a_where_clause_through_a_trailing_comment() {
+    let home = scratch_home("trailing-comment", WRITABLE_PROFILE);
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_repro_tc (id int, v text); \
+             DELETE FROM pgman_repro_tc WHERE true; \
+             INSERT INTO pgman_repro_tc VALUES (1,'a'),(2,'b'),(3,'c')",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "UPDATE pgman_repro_tc SET v='PWNED' WHERE id=1 --\n; OR true",
+        ],
+    );
+    // Either refused outright, or the second fragment (`OR true`) is a
+    // syntax error that rolls the implicit transaction back. Never three
+    // PWNED rows.
+    let probe = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            "SELECT count(*) FROM pgman_repro_tc WHERE v = 'PWNED'",
+            "--format",
+            "csv",
+        ],
+    );
+    let pwned = String::from_utf8_lossy(&probe.stdout);
+    assert!(
+        !pwned.contains('3'),
+        "the WHERE clause was widened: {pwned} (run stderr: {})",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The legitimate shape of the same script must still work: a statement
+/// that ends in a comment, then another statement.
+#[test]
+fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
+    let home = scratch_home("trailing-comment-ok", WRITABLE_PROFILE);
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_repro_tc2 (id int); \
+             DELETE FROM pgman_repro_tc2 WHERE true; \
+             INSERT INTO pgman_repro_tc2 VALUES (1),(2)",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "DELETE FROM pgman_repro_tc2 WHERE id=1 --x\n; INSERT INTO pgman_repro_tc2 VALUES (3)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "a trailing comment must not break a script: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let probe = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            "SELECT string_agg(id::text, ',' ORDER BY id) FROM pgman_repro_tc2",
+            "--format",
+            "csv",
+        ],
+    );
+    assert!(
+        String::from_utf8_lossy(&probe.stdout).contains("2,3"),
+        "expected rows 2,3: {}",
+        String::from_utf8_lossy(&probe.stdout)
+    );
+}
