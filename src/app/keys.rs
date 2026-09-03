@@ -1032,15 +1032,16 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.log_pick.select_first(),
             KeyCode::Char('G') | KeyCode::End => self.log_pick.select_last(),
             KeyCode::Enter => {
-                if let Some(sql) = self.focused_log_pick_sql() {
+                if let Some((sql, unbound)) = self.focused_log_pick_sql() {
                     self.editor.buffer = sql;
                     self.editor.cursor = self.editor.buffer.len();
                     self.editor.preferred_col = None;
                     self.history_pos = None;
-                    self.last_status = Some(format!(
-                        "loaded query · {} char(s)",
-                        self.editor.buffer.len()
-                    ));
+                    self.last_status = Some(if unbound {
+                        LOG_PICK_UNBOUND_STATUS.to_string()
+                    } else {
+                        format!("loaded query · {} char(s)", self.editor.buffer.len())
+                    });
                 }
                 self.log_pick.picks.clear();
                 self.log_pick.clusters.clear();

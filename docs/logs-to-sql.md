@@ -121,7 +121,12 @@ among near-identical rows in a longer log:
 
 `Enter` loads the highlighted query's runnable SQL into the editor, cursor at
 the end, and drops you back into the editor with a `loaded query · N
-char(s)` status. From there it's an ordinary pgman query: `F5` runs it (or
+char(s)` status. In the cluster view, `Enter` loads the cluster's first
+member whose values are all bound — a runnable statement, not the `?`
+template the row shows; when the log bound no values for that shape at all
+(bind logging off), the template loads instead and the status says so:
+`no bound values in the log for this query — ? placeholders remain`. From
+there it's an ordinary pgman query: `F5` runs it (or
 `ctrl-Enter` / `ctrl-J`) through the normal safety guard (see
 [docs/safety-and-privacy.md](safety-and-privacy.md)) — same read-only
 defaults, same per-database rules — and the result lands in the grid like any
