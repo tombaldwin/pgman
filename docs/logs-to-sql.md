@@ -41,7 +41,7 @@ Paste this into the editor — it also matches what `pgman --demo` ships,
 so `F5` returns real-looking rows even with no database connected:
 
 ```
-2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.status, o.total_cents from orders o where o.user_id=?
+2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.user_id=?
 2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
 2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?
 2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]
@@ -101,7 +101,7 @@ Below it, one row per reconstructed query, tagged by source and showing the
 runnable SQL with bind values substituted in:
 
 ```
-▶ [hibernate] select o.id, o.status, o.total_cents from orders o where o.user_id=42
+▶ [hibernate] select o.id, o.total_cents from orders o where o.user_id=42
   [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=101
   [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=102
 ```

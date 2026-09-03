@@ -7,7 +7,8 @@
 #
 # Flow (~30s) — the wedge, start to finish: logs/pasted code → runnable
 # SQL → rows:
-#   launch → settle on the start card (F8 / F4 named, no query run yet)
+#   type `pgman --demo` (the local binary is put on PATH off-screen
+#   first) → settle on the start card (F8 / F4 named, no query run yet)
 #   → e (editor) → clear the demo's canned query → paste a 5-line
 #   Hibernate log sample (two binding-parameter lines, one repeated
 #   select) → ctrl-l to reconstruct (same path as F8 — VHS 0.11 has no
@@ -45,10 +46,18 @@ Set TypingSpeed 60ms
 Set PlaybackSpeed 1.0
 Set Padding 16
 
-# Launch against the synthetic fixture. `~/.cargo/bin/pgman` rather
-# than bare `pgman` so VHS picks up the locally-built binary that has
-# --demo.
-Type "~/.cargo/bin/pgman --demo"
+# Launch against the synthetic fixture. Put ~/.cargo/bin ahead of PATH
+# so the locally-built binary (which has --demo) is what runs — but
+# keep that plumbing off-screen: the hero should show the command a
+# real user types, `pgman --demo`, not a dev's install path.
+Hide
+Type "export PATH=$HOME/.cargo/bin:$PATH"
+Enter
+Type "clear"
+Enter
+Sleep 200ms
+Show
+Type "pgman --demo"
 Sleep 400ms
 Enter
 
@@ -68,20 +77,22 @@ Sleep 700ms
 Ctrl+U
 Sleep 400ms
 
-# Type a 5-line Hibernate log sample: an order lookup, then an item
-# lookup that repeats for a second order_id in the same burst — the
-# N+1 signature nplus1.rs clusters on. Typed at a fast override speed;
-# these lines are long and the ambient TypingSpeed would blow the
-# runtime budget.
-Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.customer_id=?"
+# Type a 5-line Hibernate log sample: an order lookup, then an
+# order_items lookup that repeats for a second order_id in the same
+# burst — the N+1 signature nplus1.rs clusters on. Both tables are in
+# the --demo fixture schema, so ctrl-j below returns real rows instead
+# of the "no database" notice. Typed at a fast override speed; these
+# lines are long and the ambient TypingSpeed would blow the runtime
+# budget.
+Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.user_id=?"
 Enter
 Type@12ms "2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]"
 Enter
-Type@12ms "2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?"
+Type@12ms "2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?"
 Enter
 Type@12ms "2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]"
 Enter
-Type@12ms "2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?"
+Type@12ms "2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?"
 Sleep 700ms
 
 # ctrl-l — same import path as F8 — parses the buffer and opens the
@@ -89,7 +100,7 @@ Sleep 700ms
 Ctrl+L
 Sleep 2000ms
 
-# `c` toggles to the N+1 cluster view: the repeated item lookup
+# `c` toggles to the N+1 cluster view: the repeated order_items lookup
 # collapses to one row, ×2.
 Type "c"
 Sleep 2000ms
