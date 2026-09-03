@@ -164,6 +164,34 @@ fn grid_with_data_and_sort() {
     insta::assert_snapshot!(dump(&buf));
 }
 
+/// A CJK column: header `名前` is 2 chars / 4 columns, the cells 3
+/// chars / 6. Char-counted widths gave the column half its width and
+/// the header rendered as `名`.
+#[test]
+fn grid_with_a_cjk_column_gets_its_full_width() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.grid = Grid {
+        columns: vec!["id".into(), "名前".into(), "city".into()],
+        rows: vec![
+            vec!["1".into(), "東京都".into(), "tokyo".into()],
+            vec!["2".into(), "bob".into(), "leeds".into()],
+        ],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
+    a.grid_view.col_cursor = 0;
+    a.grid_state.select(Some(0));
+    let buf = render(&mut a, 60, 14);
+    let text = dump(&buf);
+    // The buffer holds a wide glyph as its cell plus a blank
+    // continuation cell, so compare with the blanks squeezed out.
+    let compact: String = text.chars().filter(|c| *c != ' ').collect();
+    assert!(compact.contains("名前"), "header cut in half:\n{text}");
+    assert!(compact.contains("東京都"), "cell cut in half:\n{text}");
+    insta::assert_snapshot!(text);
+}
+
 #[test]
 fn grid_with_filter_active() {
     let mut a = settle_app();
