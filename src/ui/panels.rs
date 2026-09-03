@@ -694,8 +694,14 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(Clear, popup);
     let effective_scroll = app.help.scroll.min(max_scroll);
 
+    // No `.wrap(…)`: `wrap_help_lines` above already re-flowed every
+    // row to exactly `inner_width`, and that is the wrap the anchor map
+    // was counted over. Letting `Paragraph` wrap a second time turned
+    // any over-budget row into two rendered rows *after* the anchors
+    // were fixed, so every anchor below such a row pointed short of its
+    // heading — 15 rows short at a 50-column terminal, and far more
+    // below that.
     let help = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
         .scroll((effective_scroll, 0))
         .style(Style::default().fg(theme.text))
         .block(
@@ -1522,6 +1528,31 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// The narrowest description column worth hanging from: an indent that
+/// leaves fewer than this many columns of text is a left margin, not an
+/// indent, and wrapping into it produces rows *wider* than the width
+/// they were fitted to (a single word can't be split, so it overhangs).
+/// Below this, the row wraps flush left instead.
+const MIN_DESC_COLS: usize = 8;
+
+/// Can a description column at `col` be hung from, at `width` columns,
+/// for this `text`? Two conditions, both about the *resulting* row
+/// rather than the indent alone:
+///
+/// 1. at least `MIN_DESC_COLS` of text must be left beside the indent;
+/// 2. every word must still fit beside it — words are never split, so a
+///    word wider than the budget is emitted whole and overhangs the
+///    width the row was fitted to.
+///
+/// `false` means wrap flush left instead: alignment is worth less than
+/// a row the renderer doesn't clip.
+fn hanging_indent_fits(text: &str, col: usize, width: usize) -> bool {
+    col + MIN_DESC_COLS <= width
+        && text
+            .split_whitespace()
+            .all(|w| col + w.chars().count() <= width)
+}
+
 /// Re-flow `help_body`'s lines to `width` columns, giving long
 /// descriptions a hanging indent to the column where the description
 /// starts (right after the key), instead of `Paragraph`'s `Wrap`
@@ -1529,6 +1560,13 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
 /// plus the `anchors` map remapped to the new row indices — headings
 /// are never wrapped (they're short), so each still points at the
 /// first (and only) row it now occupies.
+///
+/// This is the *only* wrapping the help overlay gets: `draw_help`
+/// renders the result with `Wrap` disabled. When `Paragraph` also
+/// wrapped, every row this function left over budget silently became
+/// two rendered rows, and the anchor map — counted here, before that
+/// second pass — pointed further and further above the heading it
+/// named the narrower the terminal got.
 fn wrap_help_lines(
     raw: Vec<Line<'static>>,
     anchors: std::collections::HashMap<&'static str, u16>,
@@ -1548,7 +1586,16 @@ fn wrap_help_lines(
             continue;
         }
         let style = line.spans.first().map(|s| s.style).unwrap_or_default();
-        match description_split(&plain) {
+        // The hanging-indent form only works while the description
+        // column leaves real room to wrap into: the first row is
+        // `prefix` + a chunk budgeted against `width - desc_col`, and a
+        // single word wider than that budget overhangs the width the
+        // renderer will clip at. Below the floor, wrap the whole row —
+        // key and all — flush left.
+        let split = description_split(&plain).filter(|(prefix, desc)| {
+            hanging_indent_fits(desc.trim_start(), prefix.chars().count(), width)
+        });
+        match split {
             Some((prefix, desc)) => {
                 let desc_col = prefix.chars().count();
                 let wrapped = wrap_hanging(desc.trim_start(), desc_col, desc_col, width);
@@ -1626,12 +1673,18 @@ fn wrap_hanging(text: &str, first_indent: usize, cont_indent: usize, width: usiz
     // indent, it's a left margin with nothing left over: the budget
     // below floors at 1 column, so every continuation became one word
     // per row pushed off to the right, and the whole help body drifted
-    // out of alignment below ~43 inner columns. Under four columns of
-    // room, drop the indent and wrap flush left instead.
-    let cont_indent = if cont_indent + 4 >= width {
-        0
+    // out of alignment below ~43 inner columns.
+    //
+    // The test is `hanging_indent_fits`, not a bare four-column floor:
+    // it also asks whether every word still fits beside the indent,
+    // because a continuation of `indent + one whole unsplittable word`
+    // is *wider* than the width it was wrapped to — which is the shape
+    // that made `Paragraph`'s own wrap re-break these rows and drift
+    // the anchor map underneath them.
+    let (first_indent, cont_indent) = if hanging_indent_fits(text, cont_indent, width) {
+        (first_indent, cont_indent)
     } else {
-        cont_indent
+        (first_indent.min(cont_indent), 0)
     };
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -2002,6 +2055,54 @@ mod tests {
                 text.starts_with(&" ".repeat(18)),
                 "continuation not hanging-indented: {text:?}"
             );
+        }
+    }
+
+    /// The whole real help body, at every inner width the 70%-wide
+    /// overlay reaches on a plausible terminal (23 columns is a 40-col
+    /// terminal; 70 is a 104-col one).
+    ///
+    /// Two properties, and they are the same property twice:
+    ///
+    /// 1. No produced line is wider than the width it was wrapped to.
+    ///    `draw_help` renders these lines with `Wrap` **off** — a line
+    ///    over budget would be clipped, and (when `Wrap` was on) each
+    ///    one silently became two rendered rows.
+    /// 2. Every anchor lands on the row holding its heading. That is
+    ///    only true if the row indices were counted over the same
+    ///    wrapping the renderer draws; when the renderer re-wrapped
+    ///    behind the anchor pass, `?` from the tap monitor scrolled to
+    ///    a row 131 lines short of the section it named at 40 columns.
+    #[test]
+    fn wrap_help_lines_fits_every_width_and_anchors_land_on_their_heading() {
+        let theme = crate::theme::Theme::default();
+        for &width in &[23usize, 31, 40, 50, 58, 70] {
+            let (raw, anchors) = crate::ui::help_body(&theme);
+            let (lines, mapped) = wrap_help_lines(raw, anchors, width);
+            let texts: Vec<String> = lines
+                .iter()
+                .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+                .collect();
+            for (i, text) in texts.iter().enumerate() {
+                assert!(
+                    text.chars().count() <= width,
+                    "row {i} is {} columns wide at inner width {width}: {text:?}",
+                    text.chars().count()
+                );
+            }
+            assert!(
+                !mapped.is_empty(),
+                "no anchors survived the wrap at width {width}"
+            );
+            for (label, row) in &mapped {
+                let text = &texts[*row as usize];
+                assert_eq!(
+                    text.trim(),
+                    *label,
+                    "anchor {label:?} points at row {row} at inner width \
+                     {width}, which holds {text:?}"
+                );
+            }
         }
     }
 }
