@@ -23,7 +23,7 @@ expression: dump(&buf)
 │              │     c             change connection (opens the picker mid-session) │              │
 │              │     S             schema browser (psql `\d` equivalent)            │              │
 │              │     W             schema wizard / lint (missing PK, mixed-case,    │              │
-│              │ ↓ 241 more below                                                   │              │
+│              │ ↓ 242 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

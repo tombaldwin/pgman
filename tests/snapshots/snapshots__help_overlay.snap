@@ -61,7 +61,8 @@ expression: dump(&buf)
 │              │     enter         expand selected row (psql \x style)              │              │
 │              │                                                                    │              │
 │              │   editor                                                           │              │
-│              │     F5 / ctrl-↵   run the statement (through safety guards)        │              │
+│              │     ↵             run the statement once it ends with ; (guarded)  │              │
+│              │     alt-↵ / F5    run it regardless of the ; (ctrl-↵ / ctrl-j too) │              │
 │              │     ctrl-z         undo last edit ctrl-y / ctrl-shift-z redo       │              │
 │              │     ctrl-c         cancel the running query (while in-flight)      │              │
 │              │     ctrl-e / F6   EXPLAIN  (never executes; tree-viewer opens)     │              │
@@ -90,8 +91,7 @@ expression: dump(&buf)
 │              │                   across restarts)                                 │              │
 │              │     ctrl-u        clear the buffer                                 │              │
 │              │     esc           back to grid                                     │              │
-│              │                                                                    │              │
-│              │ ↓ 185 more below                                                   │              │
+│              │ ↓ 186 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

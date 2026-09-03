@@ -1126,7 +1126,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "ctrl-c cancel running query"
                 }
                 Mode::Editor => {
-                    "F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · ctrl-e EXPLAIN · tab complete · ctrl-l log · esc"
+                    "⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · ctrl-y redo · ctrl-r history · tab complete · ctrl-l log · esc"
                 }
                 Mode::HistorySearch => {
                     "type to search · ctrl-r next-older · ctrl-d delete · enter accept · esc cancel"
@@ -1619,7 +1619,11 @@ pub(crate) fn help_body(
 
     heading("editor", &mut lines, &mut anchors);
     push(
-        row("    F5 / ctrl-↵   run the statement (through safety guards)"),
+        row("    ↵             run the statement once it ends with ; (guarded)"),
+        &mut lines,
+    );
+    push(
+        row("    alt-↵ / F5    run it regardless of the ; (ctrl-↵ / ctrl-j too)"),
         &mut lines,
     );
     push(

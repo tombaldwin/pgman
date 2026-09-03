@@ -11,7 +11,7 @@ expression: dump(&buf)
 └────────│ · F2 error detail · F3 notify)         │────────┘
 ┌ result │                                        │────────┐
 │id  emai│   grid                                 │        │
-│1   ada@│ ↓ 436 more below                       │00+00   │
+│1   ada@│ ↓ 439 more below                       │00+00   │
 │2   linu│                                        │00+00   │
 │3   grac└────────────────────────────────────────┘00+00   │
 │4   alan@example.com       team  2026-02-17 19:05:00+00   │

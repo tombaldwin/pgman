@@ -74,6 +74,20 @@ impl App {
             self.editor_abandon_completion();
             return;
         }
+        // Enter with the popup up accepts a candidate — the highlighted
+        // one, or the first when nothing is highlighted yet — and
+        // dismisses the popup. It never reaches the run-or-newline rule
+        // below on the same press: the operator was answering the
+        // popup, not the buffer.
+        if matches!(key.code, KeyCode::Enter)
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && self.completion.is_some()
+        {
+            self.editor_accept_completion();
+            return;
+        }
         // While a completion popup is up in pre-selection state (LCP
         // expanded / popup-only, nothing committed via Tab yet),
         // narrowing keys — plain char insertion, Backspace, Delete —
@@ -106,13 +120,16 @@ impl App {
             self.completion = None;
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
             KeyCode::Esc => self.mode = Mode::Normal,
-            // Run keys (Ctrl-* primary; F-keys are aliases for full-keyboard
-            // users — F-keys on a MacBook need fn+). Enter inserts a newline.
-            // Ctrl-R is reverse-incremental history search (matches
-            // bash / readline / psql convention). Run moves to F5 and
-            // Ctrl-Enter (terminal-dependent) — see below.
+            // Run keys. Enter runs a *terminated* statement (see
+            // `enter_runs`) and otherwise inserts a newline; Alt-Enter
+            // runs regardless. F5 / Ctrl-Enter / Ctrl-J are aliases —
+            // F-keys on a MacBook need fn+, and Ctrl-Enter is
+            // terminal-dependent. Ctrl-R is reverse-incremental history
+            // search (matches bash / readline / psql convention).
             KeyCode::Char('r') if ctrl => self.start_history_search(),
             KeyCode::Char('e') if ctrl => self.request_run(RunKind::Explain),
             KeyCode::Char('a') if ctrl => self.request_run(RunKind::ExplainAnalyze),
@@ -145,9 +162,12 @@ impl App {
                 self.editor_dirty();
                 editor_toggle_line_comment(&mut self.editor.buffer, &mut self.editor.cursor);
             }
-            // Some terminals report Ctrl-Enter; others fold it into
-            // Ctrl-J. Both run.
-            KeyCode::Enter if ctrl => self.request_run(RunKind::Run),
+            // Alt-Enter runs whatever is in the buffer, terminated or
+            // not — every terminal delivers Alt as an ESC prefix, so it
+            // works where Ctrl-Enter does not (pgcli's Meta-Enter). Some
+            // terminals report Ctrl-Enter; others fold it into Ctrl-J.
+            // All three run.
+            KeyCode::Enter if ctrl || alt => self.request_run(RunKind::Run),
             KeyCode::Char('j') if ctrl => self.request_run(RunKind::Run),
             // Ctrl-C while a query is in flight sends a PostgreSQL
             // CancelRequest to the same backend. No-op otherwise (we
@@ -206,6 +226,14 @@ impl App {
                     editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, c);
                     self.auto_closers.shift_insert(at, c.len_utf8());
                 }
+            }
+            // Enter on a terminated statement (`… ;`) or a backslash
+            // command runs it — the psql reflex, and the only run key a
+            // MacBook keyboard delivers without a modifier or fn+. An
+            // unterminated statement gets a newline instead, as does
+            // Shift-Enter where a terminal distinguishes it.
+            KeyCode::Enter if !shift && enter_runs(&self.editor.buffer) => {
+                self.request_run(RunKind::Run)
             }
             KeyCode::Enter => {
                 self.editor_dirty();
@@ -468,6 +496,28 @@ impl App {
         self.last_status = Some("completion cancelled".to_string());
     }
 
+    /// Accept the completion popup's candidate: the highlighted one
+    /// stays in the buffer; when none is highlighted yet (LCP expanded
+    /// / popup-only) the first candidate is inserted, exactly as a
+    /// second Tab would. Either way the cycle ends and the popup
+    /// closes. No-op when no cycle is active.
+    fn editor_accept_completion(&mut self) {
+        let Some(cycle) = self.completion.as_ref() else {
+            return;
+        };
+        if cycle.selected.is_none() {
+            self.editor_complete();
+        }
+        let Some(cycle) = self.completion.take() else {
+            return;
+        };
+        let label = cycle
+            .selected
+            .and_then(|i| cycle.candidates.get(i))
+            .map(|c| c.kind.label());
+        self.last_status = label.map(|kind| format!("completion · accepted · {kind}"));
+    }
+
     /// Tab-completion in the editor. Bash-style two-phase:
     ///
     /// - First Tab on a fresh prefix:
@@ -677,6 +727,29 @@ impl App {
             selected: None,
         });
     }
+}
+
+/// Does a bare Enter run this buffer, or insert a newline? It runs when
+/// the statement is *terminated* — the trimmed buffer ends with `;` —
+/// or is a backslash command (`\l`, `\d users`), which has no
+/// terminator to wait for. Anything else is a statement still being
+/// typed, and Enter is a newline. Alt-Enter runs regardless; this rule
+/// is only for the unmodified key. Pure / testable.
+pub fn enter_runs(buffer: &str) -> bool {
+    let trimmed = buffer.trim();
+    trimmed.ends_with(';') || trimmed.starts_with('\\')
+}
+
+/// A statement handed to the editor from a picker, terminated so a
+/// bare Enter runs it (see [`enter_runs`]). Appends `;` unless the
+/// trimmed text already ends with one, is a backslash command, or is
+/// empty — an empty buffer must stay empty for the `editor is empty`
+/// notice to fire. Pure / testable.
+pub fn ensure_terminated(sql: &str) -> String {
+    if enter_runs(sql) || sql.trim().is_empty() {
+        return sql.to_string();
+    }
+    format!("{};", sql.trim_end())
 }
 
 pub(super) fn editor_insert(buffer: &mut String, cursor: &mut usize, c: char) {
