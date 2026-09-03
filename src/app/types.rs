@@ -885,6 +885,43 @@ pub struct HelpUi {
     pub max_scroll: u16,
 }
 
+/// A cheap stand-in for "is this the same buffer text as last time",
+/// used to key the editor's memoised log-kind verdict.
+///
+/// Keyed on the length plus a hash of the first and last 4 KiB, so
+/// re-keying a 300 KiB buffer costs 8 KiB of hashing instead of a
+/// 300 KiB `String` clone on every keystroke. The trade-off is
+/// stated rather than hidden: an edit that changes neither the
+/// length nor either end — a same-length substitution in the middle
+/// of a large buffer — is invisible to it, so the verdict can lag
+/// one edit behind. The verdict is a hint about the WHOLE buffer's
+/// framing (a logger line, a `LOG:` record), which such an edit
+/// almost never flips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BufferFingerprint {
+    len: usize,
+    ends_hash: u64,
+}
+
+impl BufferFingerprint {
+    /// Bytes hashed from each end of the buffer.
+    const END_BYTES: usize = 4 * 1024;
+
+    pub fn of(text: &str) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let bytes = text.as_bytes();
+        let head = &bytes[..bytes.len().min(Self::END_BYTES)];
+        let tail = &bytes[bytes.len().saturating_sub(Self::END_BYTES)..];
+        head.hash(&mut hasher);
+        tail.hash(&mut hasher);
+        Self {
+            len: text.len(),
+            ends_hash: hasher.finish(),
+        }
+    }
+}
+
 /// `:` command-bar state — the single-line input plus the mode the
 /// bar was opened from. Esc returns to `origin`; Enter returns there
 /// too and then dispatches, so a command that opens a panel (`:dt`,

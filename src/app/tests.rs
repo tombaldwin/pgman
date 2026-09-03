@@ -6407,3 +6407,123 @@ fn demo_timing_reports_an_elapsed_figure_like_a_live_run() {
         "and the QueryOk handler must consume it"
     );
 }
+
+// ---------------------------------------------------------------
+// Editor log detection: no auto-completion inside a log, and no
+// buffer clone per edit
+// ---------------------------------------------------------------
+
+/// A schema cache with one table, so completion has something to
+/// offer — without it "no popup" would prove nothing.
+fn app_with_completable_schema() -> App {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
+    a.completion = None;
+    a
+}
+
+/// One Hibernate log line — enough for `detect_log` to say so.
+const HIBERNATE_LINE: &str =
+    "2024-01-15 10:00:00.123 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : \
+     select u.id from users u where u.id=?";
+
+#[test]
+fn typing_a_dot_auto_triggers_completion_in_ordinary_sql() {
+    // The control for the test below: with a normal buffer, `.` after
+    // an identifier does pop the popup.
+    let mut a = app_with_completable_schema();
+    a.editor.buffer = "select * from users u where u".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::Char('.')));
+    assert!(
+        a.completion.is_some(),
+        "a `.` after an alias should complete in SQL"
+    );
+}
+
+#[test]
+fn no_auto_completion_inside_a_pasted_log() {
+    // Every `.` in `org.hibernate.SQL` and every `FROM ` inside a
+    // logged statement would otherwise pop the popup, once per
+    // keystroke, over text the operator is about to hand to ctrl-l.
+    let mut a = app_with_completable_schema();
+    a.editor.buffer = format!("{HIBERNATE_LINE}\nselect * from users u where u");
+    a.editor.cursor = a.editor.buffer.len();
+    assert!(
+        a.editor_log_kind().is_some(),
+        "fixture check: this buffer must read as a log"
+    );
+    a.on_key(KeyEvent::from(KeyCode::Char('.')));
+    assert!(
+        a.completion.is_none(),
+        "no `.`-triggered popup inside a log"
+    );
+
+    // The keyword trigger is gated too.
+    let mut a = app_with_completable_schema();
+    a.editor.buffer = format!("{HIBERNATE_LINE}\nselect * from");
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::Char(' ')));
+    assert!(
+        a.completion.is_none(),
+        "no keyword-triggered popup inside a log"
+    );
+
+    // Tab still completes on demand — the gate is on the automatic
+    // trigger, not on completion itself.
+    a.editor.buffer = format!("{HIBERNATE_LINE}\nselect * from us");
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert!(
+        a.completion.is_some(),
+        "Tab must still complete inside a log"
+    );
+}
+
+#[test]
+fn the_log_verdict_is_keyed_on_a_fingerprint_not_a_copy_of_the_buffer() {
+    // 300 KiB of SQL. Keying the memo on a clone of the buffer meant
+    // every keystroke here copied 300 KiB; the fingerprint is two
+    // words wide however big the buffer gets.
+    let mut a = app_with_completable_schema();
+    a.editor.buffer = "select 1 from users;\n".repeat(15_000);
+    assert!(a.editor.buffer.len() > 300 * 1024);
+    a.editor.cursor = a.editor.buffer.len();
+    assert_eq!(a.editor_log_kind(), None, "plain SQL is not a log");
+    assert!(
+        std::mem::size_of::<crate::app::BufferFingerprint>() <= 16,
+        "the cache key must not own the text"
+    );
+    let before = a.editor_log_kind_cache.expect("verdict cached").0;
+
+    // An edit at the end moves the fingerprint, so the next read
+    // recomputes the verdict rather than serving a stale one.
+    a.on_key(KeyEvent::from(KeyCode::Char('x')));
+    a.editor_log_kind();
+    let after = a.editor_log_kind_cache.expect("verdict cached").0;
+    assert_ne!(before, after, "an edit must invalidate the memo");
+
+    // Re-reading with no edit in between reuses it.
+    a.editor_log_kind();
+    assert_eq!(a.editor_log_kind_cache.expect("cached").0, after);
+}
+
+#[test]
+fn the_log_verdict_only_scans_the_head_of_a_huge_buffer() {
+    // Stated cost of the cap: a log pasted below 64 KiB of something
+    // else doesn't fire the hint. ctrl-l / F8 still reconstruct from
+    // the whole buffer.
+    let mut a = app_with_completable_schema();
+    let filler = "select 1 from users;\n".repeat(4_000);
+    assert!(filler.len() > crate::query::logdetect::DETECT_HEAD_BYTES);
+    a.editor.buffer = format!("{filler}{HIBERNATE_LINE}");
+    assert_eq!(a.editor_log_kind(), None);
+    // The same log inside the head IS seen.
+    a.editor.buffer = format!("{HIBERNATE_LINE}\n{filler}");
+    assert_eq!(
+        a.editor_log_kind(),
+        Some(crate::query::logdetect::LogKind::Hibernate)
+    );
+}
