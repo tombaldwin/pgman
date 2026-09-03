@@ -3691,6 +3691,38 @@ fn tap_ring_evicts_oldest_past_cap() {
 }
 
 #[test]
+fn hotspots_reflect_a_push_and_eviction_that_share_a_timestamp() {
+    // The memo behind `current_hotspots` used to key on
+    // `(ring.len(), front.received_at, back.received_at)`. At
+    // `TAP_CAP` a push is also a pop, so `len` doesn't move; and
+    // `received_at` comes from `SystemTime::now()`, whose ~20 µs
+    // granularity means adjacent events routinely share a stamp. All
+    // three components can be identical across a mutation that
+    // replaced the ring's entire content — and the panel then showed
+    // an evicted statement while omitting the newest one.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    for _ in 0..TAP_CAP {
+        a.on_msg(AppMsg::TapEvent {
+            event: tap_query("SELECT evicted", 1_000_000),
+        });
+    }
+    let before = a.current_hotspots();
+    assert_eq!(before.len(), 1, "one fingerprint so far: {before:?}");
+
+    // Same length before and after, same front stamp, same back stamp.
+    a.on_msg(AppMsg::TapEvent {
+        event: tap_query("SELECT newest", 1_000_000),
+    });
+    assert_eq!(a.tap_events.len(), TAP_CAP);
+
+    let after = a.current_hotspots();
+    assert!(
+        after.iter().any(|h| h.fingerprint.contains("newest")),
+        "the newest statement must be aggregated, not served from a stale memo: {after:?}"
+    );
+}
+
+#[test]
 fn tap_ring_eviction_keeps_cursor_aligned_with_content() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     // Fill exactly to cap.

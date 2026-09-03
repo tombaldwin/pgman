@@ -934,6 +934,16 @@ pub struct App {
     /// end. Heartbeat events don't land here — they update
     /// `tap_health` instead. Capped at `TAP_CAP`.
     pub tap_events: std::collections::VecDeque<crate::tap::TapEvent>,
+    /// Bumped on every mutation of `tap_events` (push, eviction,
+    /// clear, `--demo` fixture load). Keys `tap_cache`, so a frame
+    /// whose ring hasn't moved is a cache hit and one whose ring has
+    /// is never served a stale aggregate. Use
+    /// [`App::bump_tap_generation`] rather than touching it directly.
+    pub tap_generation: u64,
+    /// Memoised hotspot / caller / N+1 aggregates over `tap_events`,
+    /// keyed by `tap_generation`. Per-`App` on purpose — see the note
+    /// in `tap::insights`.
+    tap_cache: crate::tap::TapInsightsCache,
     /// Tap-monitor navigation state — active sub-view, sort, and the
     /// per-view cursors (including the cursor into `tap_events`).
     pub tap_nav: TapNavUi,
@@ -1180,6 +1190,8 @@ impl App {
             editor_log_kind_cache: None,
             notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
+            tap_generation: 0,
+            tap_cache: crate::tap::TapInsightsCache::default(),
             tap_nav: TapNavUi::default(),
             tap_health: TapHealth::default(),
             tap_baseline: None,
@@ -1468,6 +1480,7 @@ impl App {
                     self.tap_health.query_count = self.tap_health.query_count.saturating_add(1);
                 }
                 self.tap_events.push_back(event);
+                self.bump_tap_generation();
                 while self.tap_events.len() > TAP_CAP {
                     self.tap_events.pop_front();
                     // Cursor follows the eviction so a viewer
@@ -1477,6 +1490,14 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Mark the tap ring as changed, invalidating every memoised
+    /// aggregate over it. Must be called by anything that pushes to,
+    /// evicts from, clears or replaces `tap_events` — the aggregates
+    /// are keyed on this and nothing else about the ring's contents.
+    pub fn bump_tap_generation(&mut self) {
+        self.tap_generation = self.tap_generation.wrapping_add(1);
     }
 
     /// True while the picker is asking the operator to authorise an
@@ -1746,6 +1767,7 @@ impl App {
     fn clear_tap_ring(&mut self) {
         let n = self.tap_events.len();
         self.tap_events.clear();
+        self.bump_tap_generation();
         self.tap_nav.reset_cursors();
         self.last_status = Some(format!("cleared {n} tap event(s)"));
     }
@@ -3937,13 +3959,12 @@ impl App {
     /// re-aggregating a full `TAP_CAP`-sized ring from scratch
     /// every frame stopped being the "sub-millisecond" cost this
     /// comment used to promise — measured ~1.7s/frame at 200 x
-    /// 1 MiB events. `tap::cached_hotspots` memoises the result
-    /// per ring-content-fingerprint (see its doc comment for why
-    /// that's the proxy used instead of a real generation counter)
-    /// so a frame with an unchanged ring is a cache hit, not a
-    /// re-walk.
+    /// 1 MiB events. `tap_cache` memoises the result per
+    /// `tap_generation`, so a frame with an unchanged ring is a
+    /// cache hit, not a re-walk.
     pub fn current_hotspots(&self) -> Vec<crate::tap::Hotspot> {
-        crate::tap::cached_hotspots(&self.tap_events, self.tap_nav.sort)
+        self.tap_cache
+            .hotspots(&self.tap_events, self.tap_generation, self.tap_nav.sort)
     }
 
     /// Compute the current N+1 findings — called by the panel
@@ -3951,10 +3972,11 @@ impl App {
     /// (`NPLUS1_WINDOW_MICROS`, `NPLUS1_MIN_REPEATS`) which
     /// match the offline classifier's operating point. Memoised
     /// the same way as `current_hotspots` — see
-    /// `tap::cached_nplus1`.
+    /// `tap::TapInsightsCache`.
     pub fn current_nplus1(&self) -> Vec<crate::tap::NplusOneFinding> {
-        crate::tap::cached_nplus1(
+        self.tap_cache.nplus1(
             &self.tap_events,
+            self.tap_generation,
             crate::tap::NPLUS1_WINDOW_MICROS,
             crate::tap::NPLUS1_MIN_REPEATS,
         )
@@ -3963,9 +3985,10 @@ impl App {
     /// Compute the current per-caller rollup per `tap_sort`.
     /// Same shape as `current_hotspots` but the grouping key
     /// is the innermost caller frame instead of the SQL
-    /// fingerprint. Memoised — see `tap::cached_callers`.
+    /// fingerprint. Memoised — see `tap::TapInsightsCache`.
     pub fn current_callers(&self) -> Vec<crate::tap::CallerStats> {
-        crate::tap::cached_callers(&self.tap_events, self.tap_nav.sort)
+        self.tap_cache
+            .callers(&self.tap_events, self.tap_generation, self.tap_nav.sort)
     }
 }
 
