@@ -7255,3 +7255,36 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
         "pending_terminate survived a reconnect"
     );
 }
+
+#[tokio::test]
+async fn a_guarded_run_cannot_survive_from_confirm_to_a_reconnect() {
+    // The journey the review flagged: F3 / F4 walked out of `Confirm`
+    // with `pending_run` still armed, and a later `\c` connected to a
+    // different database with a DELETE classified against the old one
+    // waiting for a `y`. Both halves are pinned here: the modal keeps
+    // the keyboard, and the reconnect drops the run regardless.
+    let mut a = App::new(
+        Theme::default(),
+        Some(crate::conn::Dsn::parse("postgres://app@old-host/app").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.pending_run = confirm_modal_app().pending_run.take();
+    a.mode = Mode::Confirm;
+    for key in [KeyCode::F(3), KeyCode::F(4)] {
+        a.on_key(KeyEvent::from(key));
+        assert_eq!(a.mode, Mode::Confirm, "{key:?} escaped Confirm");
+        assert!(a.pending_run.is_some(), "{key:?} dropped the run");
+    }
+    // Even with the modal somehow bypassed, `start_connect` is the
+    // choke point every reconnect goes through.
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c other_db".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(matches!(a.conn_state, ConnState::Connecting));
+    assert!(
+        a.pending_run.is_none(),
+        "a guarded run classified against the old database survived the reconnect"
+    );
+}
