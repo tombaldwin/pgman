@@ -517,7 +517,9 @@ impl App {
 
     pub(super) fn on_error_detail_key(&mut self, key: KeyEvent) {
         if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(2)) {
-            self.mode = Mode::Normal;
+            // Back to the mode F2 was pressed in (the editor, usually),
+            // not Normal — same contract as closing help.
+            self.mode = self.error_detail_return_to.take().unwrap_or(Mode::Normal);
         }
     }
 
