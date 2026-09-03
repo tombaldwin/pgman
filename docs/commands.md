@@ -113,7 +113,7 @@ surface.
 | `[DSN]` (positional) | Connect using a `postgres://` DSN — same as `--dsn`. `pgman postgres://app@localhost/appdb` works without the flag name. Passing both `--dsn` and the positional form is fine only when they're identical; disagreeing values are a hard error. |
 | `--dsn <DSN>` | Connect using a `postgres://` DSN. |
 | `--theme <THEME>` | Colour theme: `dark` \| `light` \| `high-contrast` (default `dark`). |
-| `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. |
+| `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. `F6` / `F7` answer with a canned plan, so the EXPLAIN tree opens in the demo the same way it does live. |
 | `--init-config` | Write a commented default `safety.toml` under the config dir (honouring `XDG_CONFIG_HOME`), `0600`, then exit. Refuses to overwrite an existing file (exit `1`, says so on stderr) rather than clobbering your edits. |
 | `--log <PATH>` | Preload the editor with a Hibernate or Postgres server log from `PATH` (`-` for stdin) and open straight into the reconstructed-query picker — same as pasting the log and pressing `Ctrl-L` / `F8`. Refused past 64 MB (`-` / stdin is exempt — its size isn't known ahead of reading it) — trim the file first (`grep` for `org.hibernate.SQL` or `LOG:`). |
 | `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. |

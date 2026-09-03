@@ -6141,6 +6141,47 @@ fn demo_confirmed_write_is_answered_synthetically() {
 }
 
 #[test]
+fn demo_explain_opens_the_plan_tree() {
+    // `--demo` routed EXPLAIN through `demo::answer`, which projects
+    // *result* columns — so the grid's first cell was a row value,
+    // `explain::parse` failed on it, and the demo fell back to raw
+    // text every time. EXPLAIN was the one feature the demo could
+    // never show.
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM orders JOIN users ON users.id = orders.user_id".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(6)));
+    pump_one_demo_msg(&mut a);
+
+    assert_eq!(a.mode, Mode::ExplainTree, "status: {:?}", a.last_status);
+    let plan = a.explain.plan.as_ref().expect("a parsed plan");
+    assert_eq!(plan.node_type, "Hash Join");
+    assert_eq!(plan.children.len(), 2);
+    assert_eq!(
+        plan.actual_total_time, None,
+        "plain EXPLAIN has no ANALYZE timings"
+    );
+}
+
+#[test]
+fn demo_explain_analyze_carries_the_actual_timings() {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM orders JOIN users ON users.id = orders.user_id".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(7)));
+    pump_one_demo_msg(&mut a);
+
+    assert_eq!(a.mode, Mode::ExplainTree, "status: {:?}", a.last_status);
+    let plan = a.explain.plan.as_ref().expect("a parsed plan");
+    assert!(
+        plan.actual_total_time.is_some(),
+        "EXPLAIN ANALYZE must show measured time, not just estimates"
+    );
+}
+
+#[test]
 fn opening_the_command_bar_over_the_confirm_modal_cancels_the_run() {
     // `:` is not one of the modal's keys, so the statement was never
     // confirmed — but `pending_run` used to survive the detour, and it
