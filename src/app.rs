@@ -1464,6 +1464,16 @@ impl App {
         }
     }
 
+    /// True while the picker is asking the operator to authorise an
+    /// `ssh` session to a bastion a committed file named. That prompt
+    /// says "any other key cancels" and means it: the global `?` and
+    /// `:` handlers step aside so the key reaches the picker and
+    /// cancels, rather than leaving the question armed behind an
+    /// overlay.
+    fn tunnel_prompt_open(&self) -> bool {
+        self.mode == Mode::ConnPick && self.pending_tunnel.is_some()
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) {
         // Any key cancels an active `\watch` session — psql-style.
         // Done BEFORE the Ctrl-C-quits arm so Ctrl-C-while-watching
@@ -1525,6 +1535,7 @@ impl App {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.mode != Mode::Help
             && !self.mode.is_text_input()
+            && !self.tunnel_prompt_open()
         {
             self.open_help_from(self.mode);
             return;
@@ -1573,7 +1584,12 @@ impl App {
         // colon still types into the editor and every other prompt
         // (`Mode::CommandBar` is itself a typing mode, so the bar can't
         // re-open on top of itself either).
-        if !ctrl && !alt && !typing_mode && matches!(key.code, KeyCode::Char(':')) {
+        if !ctrl
+            && !alt
+            && !typing_mode
+            && !self.tunnel_prompt_open()
+            && matches!(key.code, KeyCode::Char(':'))
+        {
             self.open_command_bar();
             return;
         }
