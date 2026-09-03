@@ -37,6 +37,29 @@ impl LogKind {
     }
 }
 
+/// How much of a buffer [`head_for_detection`] hands to
+/// [`detect_log`]. A log paste announces itself in its first lines —
+/// a logger name, a `LOG:` record, a parameter tail — so scanning
+/// past this buys nothing, and the scan runs on every buffer change.
+pub const DETECT_HEAD_BYTES: usize = 64 * 1024;
+
+/// The leading [`DETECT_HEAD_BYTES`] of `text`, cut back to a char
+/// boundary. Shorter input is returned whole.
+///
+/// The trade-off is explicit: a log pasted BELOW 64 KiB of something
+/// else won't fire the hint. `Ctrl-L` / `F8` still reconstruct from
+/// the whole buffer — this bounds the hint, not the import.
+pub fn head_for_detection(text: &str) -> &str {
+    if text.len() <= DETECT_HEAD_BYTES {
+        return text;
+    }
+    let mut end = DETECT_HEAD_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 /// Detect whether `text` looks like a Hibernate application log or a
 /// Postgres/RDS server log. `None` for plain SQL, prose, or empty input.
 ///
@@ -140,6 +163,19 @@ pub fn split_jdbc_paste(text: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn head_for_detection_cuts_at_the_cap_on_a_char_boundary() {
+        let short = "LOG:  statement: select 1";
+        assert_eq!(head_for_detection(short), short);
+        // A multi-byte char straddling the cap must not be split.
+        let mut long = "é".repeat(DETECT_HEAD_BYTES); // 2 bytes each
+        long.push_str("tail");
+        let head = head_for_detection(&long);
+        assert!(head.len() <= DETECT_HEAD_BYTES);
+        assert!(long.starts_with(head));
+        assert!(!head.contains("tail"));
+    }
 
     #[test]
     fn detects_hibernate_log() {

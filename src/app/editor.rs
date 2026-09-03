@@ -263,7 +263,12 @@ impl App {
             && !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-        if just_typed_dot && self.completion.is_none() {
+        // A pasted log is not SQL being typed: every `.` in a logger
+        // name (`org.hibernate.SQL`) and every `FROM ` inside a logged
+        // statement would pop the completion popup, once per keystroke,
+        // over text the operator is about to hand to `ctrl-l` anyway.
+        // Tab still completes on demand.
+        if just_typed_dot && self.completion.is_none() && self.editor_log_kind().is_none() {
             // The `.` is at the byte position immediately before the
             // cursor. Walk back ONE char (not one byte) so identifiers
             // ending in non-ASCII letters — `café.`, `naïve.`,
@@ -297,7 +302,7 @@ impl App {
             && !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-        if just_typed_space && self.completion.is_none() {
+        if just_typed_space && self.completion.is_none() && self.editor_log_kind().is_none() {
             // The just-typed space is at `editor.cursor - 1`. Strip it
             // and any further trailing whitespace, then read back the
             // last alphanumeric / `_` word. Walk char_indices in reverse
@@ -325,6 +330,28 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The memoised "does this buffer look like a pasted log" verdict,
+    /// refreshed when the buffer's [`BufferFingerprint`] has moved.
+    ///
+    /// One owner for the cache: the editor block title reads it to show
+    /// the `ctrl-l / F8 to reconstruct` hint, and the completion
+    /// auto-triggers read it to stay quiet inside a log. Only the first
+    /// `logdetect::DETECT_HEAD_BYTES` are scanned — a log announces
+    /// itself in its opening lines, and this runs on every edit.
+    pub(crate) fn editor_log_kind(&mut self) -> Option<crate::query::logdetect::LogKind> {
+        let key = BufferFingerprint::of(&self.editor.buffer);
+        if let Some((cached, kind)) = &self.editor_log_kind_cache {
+            if *cached == key {
+                return *kind;
+            }
+        }
+        let kind = crate::query::logdetect::detect_log(
+            crate::query::logdetect::head_for_detection(&self.editor.buffer),
+        );
+        self.editor_log_kind_cache = Some((key, kind));
+        kind
     }
 
     /// Any edit / non-vertical motion exits history navigation and resets

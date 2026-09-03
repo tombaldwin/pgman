@@ -917,12 +917,16 @@ pub struct App {
     /// (key mismatch) or a schema-cache change (cleared on Booted /
     /// SchemaRefreshed).
     pub editor_highlight_cache: Option<(String, Vec<crate::query::highlight::Span>)>,
-    /// Memoised "does the whole buffer look like a log" verdict, keyed on
-    /// the buffer text it was computed for — same shape and reasoning as
-    /// `editor_highlight_cache`. Read (and refreshed on a key mismatch) by
-    /// the editor block title; recomputing `logdetect::detect_log` from
-    /// scratch every render frame would rescan the whole buffer at ≈9fps.
-    pub editor_log_kind_cache: Option<(String, Option<crate::query::logdetect::LogKind>)>,
+    /// Memoised "does the whole buffer look like a log" verdict, keyed
+    /// on a [`BufferFingerprint`] of the text it was computed for.
+    /// Recomputing `logdetect::detect_log` from scratch every render
+    /// frame would rescan the buffer at ≈9fps — but keying it on a
+    /// clone of the buffer (as it was) meant every keystroke in a
+    /// 300 KiB paste copied 300 KiB. Refreshed through
+    /// `App::editor_log_kind`, which both the editor block title and
+    /// the completion auto-trigger read.
+    pub editor_log_kind_cache:
+        Option<(BufferFingerprint, Option<crate::query::logdetect::LogKind>)>,
     /// Notifications panel state (ring buffer + cursor).
     pub notifications: NotificationsUi,
     /// Ring buffer of recent JDBC-tap events (queries +

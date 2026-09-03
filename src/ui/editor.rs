@@ -149,6 +149,9 @@ fn push_with_cursor<'a>(
 /// SQL editor pane — always visible, focused in `Mode::Editor`. Multi-line
 /// buffer; the cursor renders as a reverse-video character on its line.
 pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
+    // Taken before `theme` borrows the App immutably: this is the one
+    // call in the render path that may refresh a memo on the App.
+    let log_kind = app.editor_log_kind();
     let theme = &app.theme;
     let focused = app.mode == Mode::Editor;
     let border_color = if focused {
@@ -174,21 +177,12 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         "editor (e to focus)".to_string()
     };
     let plain_only = app.editor.buffer.len() > PLAIN_ABOVE_BYTES;
-    // Refresh the cached "whole buffer looks like a log" verdict only when
-    // the buffer changed since last frame — same reasoning as the
-    // highlight cache just below: `detect_log` is cheap per call, but not
-    // free enough to re-run unconditionally every render frame against a
-    // multi-MB buffer. Persists the hint after the paste-time status line
-    // (which only covered the pasted text) scrolls off.
-    let log_stale = match &app.editor_log_kind_cache {
-        Some((b, _)) => b != &app.editor.buffer,
-        None => true,
-    };
-    if log_stale {
-        let kind = crate::query::logdetect::detect_log(&app.editor.buffer);
-        app.editor_log_kind_cache = Some((app.editor.buffer.clone(), kind));
-    }
-    if let Some((_, Some(kind))) = &app.editor_log_kind_cache {
+    // The "whole buffer looks like a log" verdict, memoised on the
+    // App (`App::editor_log_kind`) because `detect_log` is cheap per
+    // call but not free enough to re-run every render frame at ≈9fps.
+    // Persists the hint after the paste-time status line (which only
+    // covered the pasted text) scrolls off.
+    if let Some(kind) = log_kind {
         title_text.push_str(&format!(
             " · {} log — ctrl-l / F8 to reconstruct",
             kind.label()
