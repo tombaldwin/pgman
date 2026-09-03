@@ -33,6 +33,13 @@ Optional — falls back to hard-coded defaults when absent or unparsable.
 `pgman --init-config` writes the file below (every field at its
 default) and refuses to overwrite an existing one.
 
+Those defaults open every session read-only. When Postgres then refuses
+a write (SQLSTATE 25006), the footer — and `--batch` stderr — say where
+that came from: with no file on disk, `read-only by default · pgman
+--init-config writes safety.toml; set read_only = false for this
+database`; once the file exists, the same refusal names its path and the
+`read_only` key instead.
+
 ```toml
 # [default] is the profile for any database with no entry of its own.
 [default]
