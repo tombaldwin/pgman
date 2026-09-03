@@ -2076,7 +2076,7 @@ impl App {
                 Some("tip · c toggles cluster view · enter loads selected · F1 full keys")
             }
             Mode::RowDetail => {
-                Some("tip · enter zooms a field · y yanks · j/k between fields · F1 full keys")
+                Some("tip · J/K next/prev row · enter zooms a field · y yanks · F1 full keys")
             }
             Mode::CellDetail => {
                 Some("tip · JSON cells render as a tree · y yanks the value (or jq path)")
@@ -2342,6 +2342,39 @@ impl App {
         self.row_detail.scroll = 0;
         self.row_detail.field = 0;
         self.mode = Mode::RowDetail;
+    }
+
+    /// `J` / `K` (and PageDown / PageUp) in the row detail — move the
+    /// grid selection to the next / previous visible row (the filtered,
+    /// sorted order `j` / `k` walk on the grid) and keep the detail
+    /// open on it, with the highlighted field preserved — clamped if
+    /// the new row has fewer fields. The selection moves for real, so
+    /// closing the detail leaves the operator on the row they were
+    /// reading. At either end: a status, no move.
+    fn step_row_detail(&mut self, delta: isize) {
+        let count = self.visible_row_count();
+        let Some(current) = self.grid_state.selected() else {
+            return;
+        };
+        let target = current as isize + delta;
+        if target < 0 || target >= count as isize {
+            let end = if delta < 0 { "first" } else { "last" };
+            self.last_status = Some(format!(
+                "already at the {end} row ({} / {count})",
+                current.min(count.saturating_sub(1)) + 1
+            ));
+            return;
+        }
+        let target = target as usize;
+        self.grid_state.select(Some(target));
+        if let Some(row) = self
+            .grid_view
+            .visible_rows
+            .get(target)
+            .and_then(|&i| self.grid.rows.get(i))
+        {
+            self.row_detail.field = self.row_detail.field.min(row.len().saturating_sub(1));
+        }
     }
 
     /// Zoom into the currently-focused field. No-op when the row or

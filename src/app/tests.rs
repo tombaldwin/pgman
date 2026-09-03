@@ -8786,6 +8786,126 @@ fn plain_zoom_and_size_keys_share_the_alt_implementation_and_type_in_the_editor(
     assert_eq!(a.editor_lines, Some(7));
 }
 
+// ---- Row detail: J / K step rows, keeping the field -----------------------
+
+fn people_grid() -> Grid {
+    grid_of(
+        &["id", "name", "plan"],
+        &[
+            &["1", "ada", "pro"],
+            &["2", "linus", "free"],
+            &["3", "grace", "pro"],
+        ],
+    )
+}
+
+/// The detail open on the first row of `people_grid`, as Enter leaves
+/// it (the renderer has not run, so the field bound is set by hand).
+fn row_detail_app() -> App {
+    let mut a = app_with_grid(people_grid());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::RowDetail);
+    a.row_detail.field_count = 3;
+    a
+}
+
+#[test]
+fn shift_j_and_k_step_rows_in_the_detail_and_keep_the_field() {
+    let mut a = row_detail_app();
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.row_detail.field, 2);
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!(
+        (a.mode, a.grid_state.selected(), a.row_detail.field),
+        (Mode::RowDetail, Some(1), 2),
+        "next row, same field, still in the detail"
+    );
+    press(&mut a, KeyCode::PageDown);
+    assert_eq!((a.grid_state.selected(), a.row_detail.field), (Some(2), 2));
+    press(&mut a, KeyCode::Char('K'));
+    press(&mut a, KeyCode::PageUp);
+    assert_eq!(
+        (a.grid_state.selected(), a.row_detail.field),
+        (Some(0), 2),
+        "J then K returns to the same row with the same field"
+    );
+}
+
+#[test]
+fn shift_j_at_the_last_row_and_k_at_the_first_stay_put_with_a_status() {
+    let mut a = row_detail_app();
+    press(&mut a, KeyCode::Char('J'));
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!(a.grid_state.selected(), Some(2));
+    a.last_status = None;
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!(a.grid_state.selected(), Some(2), "no wrap");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("already at the last row (3 / 3)")
+    );
+    assert_eq!(a.mode, Mode::RowDetail);
+    press(&mut a, KeyCode::Char('K'));
+    press(&mut a, KeyCode::Char('K'));
+    press(&mut a, KeyCode::Char('K'));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("already at the first row (1 / 3)")
+    );
+}
+
+#[test]
+fn the_grid_selection_follows_the_detail_so_closing_lands_on_that_row() {
+    let mut a = row_detail_app();
+    press(&mut a, KeyCode::Char('J'));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!((a.mode, a.grid_state.selected()), (Mode::Normal, Some(1)));
+    assert_eq!(a.selected_grid_row_idx(), Some(1));
+}
+
+#[test]
+fn row_detail_steps_walk_the_filtered_order() {
+    // Filtered to the two "pro" rows, J from ada lands on grace —
+    // linus is not visible, so it is not a stop.
+    let mut a = app_with_grid(people_grid());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('/'));
+    type_str(&mut a, "pro");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.grid_view.visible_rows, vec![0, 2]);
+    assert_eq!(a.mode, Mode::Normal);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::RowDetail);
+    assert_eq!(a.selected_grid_row_idx(), Some(0));
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!(
+        a.selected_grid_row_idx(),
+        Some(2),
+        "grace, the next visible row"
+    );
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("already at the last row (2 / 2)"),
+        "the count is the visible count"
+    );
+}
+
+#[test]
+fn the_field_clamps_when_the_next_row_is_narrower() {
+    let mut a = app_with_grid(grid_of(&["a", "b", "c"], &[&["1", "2", "3"], &["x"]]));
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Enter);
+    a.row_detail.field_count = 3;
+    press(&mut a, KeyCode::Char('G'));
+    assert_eq!(a.row_detail.field, 2);
+    press(&mut a, KeyCode::Char('J'));
+    assert_eq!((a.grid_state.selected(), a.row_detail.field), (Some(1), 0));
+}
+
 // ---- Alt-N / Alt-P: next / previous tab ----------------------------------
 
 #[test]

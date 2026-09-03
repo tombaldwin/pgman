@@ -1316,7 +1316,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel",
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
-            Mode::RowDetail => "↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close",
+            Mode::RowDetail => "J / K next / prev row · j / k field · y yank · esc close",
             Mode::CellDetail => {
                 if app.cell_detail.json_rows.is_empty() {
                     "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back"
@@ -1964,11 +1964,14 @@ pub(crate) fn help_body(
 
     heading("row detail", &mut lines, &mut anchors);
     push(
+        row("    J / K         next / previous row, keeping the field (PgDn / PgUp too)"),
+        &mut lines,
+    );
+    push(
         row("    j / k  ↑ ↓    move to next / previous field"),
         &mut lines,
     );
     push(row("    g / G         first / last field"), &mut lines);
-    push(row("    PageUp/Down   jump 10 fields"), &mut lines);
     push(
         row("    enter         zoom into focused field (cell detail)"),
         &mut lines,
