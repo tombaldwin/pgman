@@ -3563,9 +3563,36 @@ fn default_query_name_sanitises_to_kebab() {
     assert_eq!(default_query_name("a    b"), "a-b");
 }
 
+/// A throwaway `saved.toml` path for a test. Every test that can
+/// reach `persist_saved_queries` MUST inject one: `App::new` points
+/// at the operator's real file, and a test that presses Enter in the
+/// save prompt against that has already overwritten a maintainer's
+/// `saved.toml` once.
+fn temp_saved_path(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("pgman-saved-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("saved.toml");
+    let _ = std::fs::remove_file(&path);
+    path
+}
+
+/// Ctrl-S from the editor, overwrite the pre-filled name with `name`,
+/// Enter.
+fn save_via_prompt(a: &mut App, name: &str) {
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+    a.saved_ui.save_name.clear();
+    for c in name.chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+}
+
 #[test]
 fn save_query_prompt_persists_buffer_under_name() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = temp_saved_path("persists");
     a.mode = Mode::Editor;
     a.editor.buffer = "select 1".into();
     a.editor.cursor = a.editor.buffer.len();
@@ -3596,6 +3623,76 @@ fn save_query_prompt_esc_cancels_without_persist() {
 }
 
 #[test]
+fn ctrl_s_in_a_real_session_writes_the_injected_saved_toml() {
+    // The control for the demo tests below: same keystrokes, no
+    // `--demo`, and the file appears with the entry in it.
+    let path = temp_saved_path("real-save");
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = path.clone();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    save_via_prompt(&mut a, "mine");
+    assert_eq!(a.last_error, None);
+    let on_disk = crate::saved::load_from(&path);
+    assert_eq!(
+        on_disk.get("mine").map(|q| q.body.as_str()),
+        Some("select 1")
+    );
+}
+
+#[test]
+fn demo_ctrl_s_keeps_the_entry_in_memory_but_never_writes_saved_toml() {
+    // `--demo` ships a fixture list of saved queries. Ctrl-S used to
+    // persist that whole list to the operator's real `saved.toml`,
+    // replacing their queries with the samples. The save must still
+    // land in memory (the demo behaves) but nothing may reach disk.
+    let path = temp_saved_path("demo-save");
+    let mut a = crate::demo::app(Theme::default());
+    a.saved_queries_file = path.clone();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    save_via_prompt(&mut a, "mine");
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(
+        a.saved_queries.get("mine").map(|q| q.body.as_str()),
+        Some("select 1"),
+        "the demo still saves in memory"
+    );
+    assert!(
+        !path.exists(),
+        "--demo must never write saved.toml; found {}",
+        path.display()
+    );
+}
+
+#[test]
+fn demo_delete_and_rename_never_write_saved_toml() {
+    let path = temp_saved_path("demo-delete-rename");
+    let mut a = crate::demo::app(Theme::default());
+    a.saved_queries_file = path.clone();
+    let first = a.saved_queries.entries[0].name.clone();
+    // Delete the focused entry.
+    a.open_saved_queries();
+    assert_eq!(a.mode, Mode::SavedQueries);
+    a.saved_ui.cursor = 0;
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(a.saved_queries.get(&first).is_none(), "deleted in memory");
+    assert!(!path.exists(), "delete wrote saved.toml under --demo");
+    // Rename the (new) focused entry.
+    a.saved_ui.cursor = 0;
+    a.on_key(KeyEvent::from(KeyCode::Char('r')));
+    assert_eq!(a.mode, Mode::RenameQueryPrompt);
+    a.saved_ui.rename_buf.clear();
+    type_str(&mut a, "renamed-in-demo");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(
+        a.saved_queries.get("renamed-in-demo").is_some(),
+        "renamed in memory"
+    );
+    assert!(!path.exists(), "rename wrote saved.toml under --demo");
+}
+
+#[test]
 fn saved_queries_panel_enter_loads_into_editor() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.saved_queries.upsert(crate::saved::SavedQuery {
@@ -3616,6 +3713,7 @@ fn saved_queries_panel_enter_loads_into_editor() {
 #[test]
 fn saved_queries_panel_d_deletes_focused_entry() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = temp_saved_path("panel-delete");
     a.saved_queries.upsert(crate::saved::SavedQuery {
         name: "a".into(),
         body: "select 1".into(),

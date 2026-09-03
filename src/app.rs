@@ -1009,6 +1009,12 @@ pub struct App {
     /// Persisted saved queries — loaded at startup, written back
     /// on quit (and on save / delete during the session).
     pub saved_queries: crate::saved::SavedQueries,
+    /// Where `saved_queries` is written back. `saved_queries_path()`
+    /// for a real session; tests inject a temp file so pressing
+    /// Ctrl-S / `d` / rename in a test can never touch the operator's
+    /// own `saved.toml`. Nothing is written under `--demo` regardless
+    /// (see `persist_saved_queries`).
+    pub saved_queries_file: std::path::PathBuf,
     /// Modal/interaction state for the saved-queries panel.
     pub saved_ui: SavedQueriesUi,
     /// Saved state for the non-active tabs. The active tab's
@@ -1248,6 +1254,7 @@ impl App {
             tap_health: TapHealth::default(),
             tap_baseline: None,
             saved_queries: crate::saved::SavedQueries::default(),
+            saved_queries_file: saved_queries_path(),
             saved_ui: SavedQueriesUi::default(),
             // Start with a single tab whose state IS the per-
             // session fields. The Vec entry is a placeholder that
@@ -1421,7 +1428,7 @@ impl App {
             if let Err(e) = persist_history(&self.history) {
                 tracing::warn!("could not save query history: {e}");
             }
-            if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
+            if let Err(e) = crate::saved::save_to(&self.saved_queries_file, &self.saved_queries) {
                 tracing::warn!("could not save 'saved queries': {e}");
             }
         }
