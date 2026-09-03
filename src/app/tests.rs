@@ -6115,7 +6115,6 @@ fn scratch_persistence(app: &mut App) {
 /// A TuiHost that records "draw" into a shared log, so a test can
 /// assert ordering against another recorder that shares the same
 /// log (the injected update-check spawn hook, below) — proving
-
 /// `run_with` fires the update check strictly AFTER the first draw,
 /// not before it.
 struct RecordingTui {

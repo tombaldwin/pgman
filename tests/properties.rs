@@ -381,6 +381,20 @@ fn settled_app() -> App {
         Vec::new(),
         pgman::safety::SafetyConfig::default(),
     );
+    // Random key sequences reach Ctrl-S / Enter, which persists saved
+    // queries — never to the operator's real ~/.local/share/pgman.
+    let scratch = std::env::temp_dir().join(format!(
+        "pgman-{}-{}-{}",
+        "props",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    a.draft_file = scratch.join("draft.sql");
+    a.history_file = scratch.join("history.log");
+    a.saved_queries_file = scratch.join("saved.toml");
     a.splash_visible = false;
     a.splash_until = None;
     a.conn_state = ConnState::Connected {
