@@ -2177,6 +2177,72 @@ mod tests {
         assert_eq!(e.duration_micros, Some(20_000));
     }
 
+    #[tokio::test]
+    async fn a_silent_tcp_connection_is_closed_and_its_permit_released() {
+        use crate::tap::listener::handle_tcp_conn_with_idle_timeout;
+        // The reproduction: `TAP_MAX_CONCURRENT_CONNS` bounds how many
+        // connections may be open, but a peer that connects and never
+        // sends held its permit for as long as it liked — 64 silent
+        // sockets took every slot and shut the tap to real clients.
+        let (tx, _rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            handle_tcp_conn_with_idle_timeout(sock, &tx, std::time::Duration::from_millis(150))
+                .await
+        });
+
+        // Connect and say nothing at all. The handle must come back on
+        // its own — nothing here closes the socket for it.
+        let _client = tokio::net::TcpStream::connect(local_addr).await.unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .expect("the idle connection must be closed without the peer's help")
+            .expect("handler task");
+        // An idle close is a normal end of connection, not an error:
+        // the permit is released either way, but a task that returned
+        // `Err` would log as a failure every time a JAR goes quiet.
+        assert!(result.is_ok(), "idle close should be Ok, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_tcp_connection_delivering_frames_is_not_closed_as_idle() {
+        use crate::tap::listener::handle_tcp_conn_with_idle_timeout;
+        use tokio::io::AsyncWriteExt;
+        // The deadline is per-frame, so a client that keeps sending
+        // stays connected however long it lives. Without this, the
+        // idle timeout would be a connection lifetime cap and a busy
+        // JAR would be disconnected mid-stream.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<TapEvent>(64);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            handle_tcp_conn_with_idle_timeout(sock, &tx, std::time::Duration::from_millis(300))
+                .await
+        });
+
+        let mut client = tokio::net::TcpStream::connect(local_addr).await.unwrap();
+        let payload =
+            br#"{"v":1,"ts_unix_micros":1,"sql":"SELECT 1","duration_micros":1}"#.to_vec();
+        // Three frames spaced past half the deadline: their total span
+        // exceeds it, so only a per-frame clock keeps this alive.
+        for _ in 0..3 {
+            tokio::time::sleep(std::time::Duration::from_millis(180)).await;
+            client
+                .write_all(&(payload.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            client.write_all(&payload).await.unwrap();
+            let e = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+                .await
+                .expect("event delivered in time")
+                .expect("event surfaced");
+            assert_eq!(e.sql.as_deref(), Some("SELECT 1"));
+        }
+    }
+
     // --- OTLP parser tests ----------------------------
 
     /// Build a minimal OTLP/HTTP JSON body wrapping `spans`

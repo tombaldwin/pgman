@@ -241,7 +241,10 @@ address on a trusted/firewalled network. Events ingested this way
 them) are held only in memory (a capped ring buffer) unless you pass
 `--tap-record PATH`, which appends them to a JSONL file you chose
 (created owner-only, `0600`, alongside its parent directory).
-Each listener also caps concurrent connections and every event
+Each listener also caps concurrent connections — and closes one
+that goes 30 seconds without completing a frame, so a peer that
+connects and then says nothing cannot hold a connection slot
+indefinitely — caps every event
 field — both the length of each field and, for the list-shaped
 `params`, `caller` and `error`, the number of entries in it (64,
 the last being a `… +N more` marker), since a list of many short

@@ -21,8 +21,25 @@ use super::{forward_or_drop, now_unix_micros, parse, TapEvent, WarnThrottle};
 /// immediately (the socket is dropped without being read).
 pub const TAP_MAX_CONCURRENT_CONNS: usize = 64;
 
+/// How long an accepted TCP connection may go without
+/// completing a frame before pgman closes it.
+///
+/// [`TAP_MAX_CONCURRENT_CONNS`] bounds how many connections can
+/// be open, but a connection that never sends anything holds its
+/// permit forever — so 64 silent sockets were enough to lock
+/// every slot and shut the tap to real clients, at the cost of
+/// opening 64 connections. A permit has to be reclaimable
+/// without the peer's cooperation.
+///
+/// The clock is per-frame, not per-connection: a live JAR
+/// resets it on every event it delivers, and an idle one
+/// reconnects. 30s is far longer than the JAR's heartbeat
+/// interval, so a healthy connection never trips it.
+pub const TAP_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 static TCP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
 static TCP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
+static TCP_IDLE_WARN: WarnThrottle = WarnThrottle::new();
 static UDP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
 
 // ---------------------------------------------------------
@@ -156,11 +173,44 @@ pub async fn run_tcp_listener(
 }
 
 pub async fn handle_tcp_conn(
-    mut sock: tokio::net::TcpStream,
+    sock: tokio::net::TcpStream,
     tx: &tokio::sync::mpsc::Sender<TapEvent>,
 ) -> std::io::Result<()> {
+    handle_tcp_conn_with_idle_timeout(sock, tx, TAP_IDLE_TIMEOUT).await
+}
+
+/// [`handle_tcp_conn`] with the idle deadline injected, so a test
+/// can drive it without waiting out [`TAP_IDLE_TIMEOUT`].
+pub async fn handle_tcp_conn_with_idle_timeout(
+    mut sock: tokio::net::TcpStream,
+    tx: &tokio::sync::mpsc::Sender<TapEvent>,
+    idle: std::time::Duration,
+) -> std::io::Result<()> {
     loop {
-        match read_frame(&mut sock, TAP_MAX_FRAME_BYTES).await? {
+        // A read that never completes must not pin the permit
+        // this task holds. Timing out the whole `read_frame`
+        // also covers a peer that dribbles a frame's bytes out
+        // slowly enough to stay under any per-read deadline.
+        let frame = match tokio::time::timeout(idle, read_frame(&mut sock, TAP_MAX_FRAME_BYTES))
+            .await
+        {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                TCP_IDLE_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more idle closes suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "tap: closing idle connection after {}s without a complete frame{suffix}",
+                        idle.as_secs()
+                    )
+                });
+                return Ok(());
+            }
+        };
+        match frame {
             None => return Ok(()), // peer closed cleanly
             Some(bytes) => match parse(&bytes) {
                 Ok(mut event) => {
