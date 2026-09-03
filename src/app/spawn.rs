@@ -454,7 +454,18 @@ impl App {
         // the answer is synthesized immediately below, so the figure
         // the demo shows is the real time this run took.
         self.query_started = Some(Instant::now());
-        let grid = crate::demo::answer(&sql, &self.schema_cache);
+        // EXPLAIN never reaches `demo::answer`: that projects *result*
+        // columns, so the grid's first cell was a row value,
+        // `explain::parse` failed on it, and the demo fell back to raw
+        // text every time — EXPLAIN was the one feature `--demo` could
+        // never show. A canned plan grid is the same shape Postgres
+        // returns, so `AppMsg::QueryOk`'s handler opens
+        // `Mode::ExplainTree` through the identical path.
+        let grid = match kind {
+            RunKind::Explain => crate::demo::explain_plan_grid(false),
+            RunKind::ExplainAnalyze => crate::demo::explain_plan_grid(true),
+            RunKind::Run => crate::demo::answer(&sql, &self.schema_cache),
+        };
         let msg = AppMsg::QueryOk {
             generation: self.generation,
             grid,

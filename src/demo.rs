@@ -311,6 +311,63 @@ fn notice_grid() -> Grid {
     }
 }
 
+/// A canned `EXPLAIN (FORMAT JSON)` answer, shaped exactly like the
+/// one-column / one-row grid Postgres returns — so
+/// `AppMsg::QueryOk`'s handler parses it and opens `Mode::ExplainTree`
+/// through the same path a live EXPLAIN takes.
+///
+/// `--demo` used to route an EXPLAIN through `answer`, which projects
+/// *result* columns: the grid's first cell was a row value like `42`,
+/// `explain::parse` failed on it, and the demo fell back to raw text
+/// every single time. EXPLAIN was the one feature the demo could never
+/// show.
+///
+/// The plan is a Hash Join over two Seq Scans on the demo's own
+/// tables. `analyze` adds the `Actual *` fields Postgres only emits
+/// under ANALYZE, so the tree renders timings for `EXPLAIN ANALYZE`
+/// and estimates for plain `EXPLAIN` — the same difference a live
+/// session shows.
+pub fn explain_plan_grid(analyze: bool) -> Grid {
+    let actual = |time: &str, rows: &str| -> String {
+        if analyze {
+            format!(
+                ",\n        \"Actual Startup Time\": 0.05,\
+                 \n        \"Actual Total Time\": {time},\
+                 \n        \"Actual Rows\": {rows},\
+                 \n        \"Actual Loops\": 1"
+            )
+        } else {
+            String::new()
+        }
+    };
+    let plan = format!(
+        "[\n  {{\n    \"Plan\": {{\n      \"Node Type\": \"Hash Join\",\
+         \n      \"Join Type\": \"Inner\",\
+         \n      \"Startup Cost\": 1.09,\n      \"Total Cost\": 2.21,\
+         \n      \"Plan Rows\": 4,\n      \"Plan Width\": 68,\
+         \n      \"Hash Cond\": \"(orders.user_id = users.id)\"{join_actual},\
+         \n      \"Plans\": [\n        {{\n          \"Node Type\": \"Seq Scan\",\
+         \n          \"Parent Relationship\": \"Outer\",\
+         \n          \"Relation Name\": \"orders\",\n          \"Alias\": \"orders\",\
+         \n          \"Startup Cost\": 0.00,\n          \"Total Cost\": 1.04,\
+         \n          \"Plan Rows\": 4,\n          \"Plan Width\": 36{outer_actual}\n        }},\
+         \n        {{\n          \"Node Type\": \"Seq Scan\",\
+         \n          \"Parent Relationship\": \"Inner\",\
+         \n          \"Relation Name\": \"users\",\n          \"Alias\": \"users\",\
+         \n          \"Startup Cost\": 0.00,\n          \"Total Cost\": 1.04,\
+         \n          \"Plan Rows\": 4,\n          \"Plan Width\": 36{inner_actual}\n        }}\
+         \n      ]\n    }}\n  }}\n]",
+        join_actual = actual("0.41", "4"),
+        outer_actual = actual("0.12", "4"),
+        inner_actual = actual("0.09", "4"),
+    );
+    Grid {
+        columns: vec!["QUERY PLAN".to_string()],
+        rows: vec![vec![plan]],
+        truncated: false,
+    }
+}
+
 /// Number of synthetic rows `generated_rows` fabricates per table —
 /// within the 3–5 range asked for, deterministic across runs.
 const GENERATED_ROW_COUNT: usize = 4;
