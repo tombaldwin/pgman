@@ -26,10 +26,14 @@ behaviour without being parsed as backslash text.
 - `\l` — list databases (name + on-disk size) as a result grid. Reads
   from data already fetched at connect time; sends no new query.
 - `\c` — open the connection picker.
-- `\c <name>` — connect to the picker entry named `<name>` (case-
-  insensitive). If no picker entry matches, swaps `dbname` on the
-  *current* DSN to `<name>` and reconnects. Errors if there's no active
-  connection to swap and no matching entry.
+- `\c <name>` — connect to the picker entry `<name>` names. Matching is
+  case-insensitive: an exact name wins, otherwise a **unique prefix** does
+  (so `\c rep` reaches `reports (application)`). Several matches are
+  listed rather than guessed. Discovered names contain spaces, so a name
+  can also be given **double-quoted**: `\c "dataSource (application)"`.
+  If no entry matches, swaps `dbname` on the *current* DSN to `<name>`
+  and reconnects. Errors if there's no active connection to swap and no
+  matching entry.
 - `\i <path>` — read a SQL file into the editor buffer, replacing it.
   Does **not** run it — review, then press run yourself.
 
@@ -58,6 +62,34 @@ behaviour without being parsed as backslash text.
 
 Anything else starting with `\` is reported as an unknown command rather
 than sent to the server.
+
+## The `:` command bar
+
+`:` from any mode that isn't taking literal text (so a colon still types in
+the editor and in filters) opens a one-line prompt in the footer. `Enter`
+runs, `Esc` cancels back to where you were, `Tab` completes the command name
+— a unique name fills in whole, several are listed in the status line. The
+editor buffer is never touched: unlike the backslash form, the command isn't
+the buffer.
+
+| Command | `\` equivalent | What it does |
+|---|---|---|
+| `:about` | — | The About card: version, install channel, server version, licence. |
+| `:update` | — | The About card, plus a footer line saying where the release check got to. "Up to date" is only claimed once a check has landed. |
+| `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`, `wizard`. |
+| `:quit`, `:q` | `\q` | Quit pgman. |
+| `:readonly on\|off` | — | Set the read-only flag pgman opens connections with. Applied at connect (`SET default_transaction_read_only`), so a change made while connected takes effect at the next connect. **Refused** when `safety.toml` pins the current database read-only — a session cannot vote itself out of that file. |
+| `:connect [NAME]` | `\c [NAME]` | The picker, or the named data source. Same quoting and unique-prefix matching as `\c`. |
+| `:l` | `\l` | List databases (name + size). |
+| `:x [on\|off]` | `\x` | Expanded (row-detail) output. |
+| `:dt` / `:dn` | `\dt` / `\dn` | Open the schema browser. |
+| `:d [NAME]` | `\d` | Schema browser, filtered to `NAME` when given. |
+| `:i PATH` | `\i` | Load a SQL file into the editor (doesn't run it). |
+| `:timing [on\|off]` | `\timing` | Elapsed-ms in the status footer. |
+| `:report [PATH]` | `\report` | Write the advisor + tap report. |
+| `:fixture [PATH]` | `\fixture` | Capture the current result as a DBUnit fixture. |
+
+An unrecognised name answers `unknown command :foo · :help lists them`.
 
 ## Command line
 
