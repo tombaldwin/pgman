@@ -1,8 +1,10 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 336
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
+ 1 SELECT * FROM us                                   ctrl-t new · ctrl-w close
 ┌ editor ──────────────────────────────────────────────────────────────────────┐
 │> SELECT * FROM us                                                            │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -11,7 +13,6 @@ expression: dump(&buf)
 ││  users            (table)│                                                  │
 ││  user_logs        (table)│                                                  │
 │└──────────────────────────┘                                                  │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

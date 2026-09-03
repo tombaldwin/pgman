@@ -18,7 +18,8 @@ const RECENT_MAX_ROWS: usize = 5;
 const COL_GAP: usize = 3;
 /// Every key hint's key glyph is left-justified into a field this wide
 /// before the description starts, so single-char keys (`e`) and
-/// two-char keys (`F8`) line up on the same description column.
+/// two-char keys (`F8`) line up on the same description column. A
+/// longer key (`ctrl-t`) widens its own field — see `key_field`.
 const KEY_FIELD_WIDTH: usize = 4;
 /// Leading indent for key-hint / recent-row lines (a "sub-list" look
 /// under the header / `recent` label, which get a single-space indent).
@@ -61,13 +62,15 @@ impl Hint {
 /// while `app.databases` is empty, i.e. the bootstrap hasn't answered
 /// yet); a blank line; six core key hints (two columns when
 /// `inner_width >= 64`, one otherwise); the F8/F4 differentiator row; a
-/// `?  all keys` line; then (if there's room and history isn't empty) a
-/// blank line, a `recent` label, and up to five of the most recent
-/// history entries.
+/// `?  all keys` line, sharing its row with `ctrl-t  new tab` in two
+/// columns (its own line in one); then (if there's room and history
+/// isn't empty) a blank line, a `recent` label, and up to five of the
+/// most recent history entries.
 ///
 /// Under height pressure, sections drop in this order: `recent` first,
-/// then `databases`, then the `?` line, then the F8/F4 row — so the
-/// connection line and the six core keys always survive down to 8 rows.
+/// then the one-column `ctrl-t` line, then `databases`, then the `?`
+/// line, then the F8/F4 row — so the connection line and the six core
+/// keys always survive down to 8 rows.
 pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> Vec<Line<'static>> {
     let theme = &app.theme;
     let key_style = Style::default()
@@ -93,6 +96,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     let w = Hint::new("W", "schema wizard");
     let l = Hint::new("L", "sessions & locks");
     let help = Hint::new("?", "all keys");
+    let new_tab = Hint::new("ctrl-t", "new tab");
 
     // F8's description is long; shorten it rather than truncate it if
     // it (plus, in two-column mode, F4's cell and the gap) wouldn't
@@ -108,7 +112,11 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
                                                        // with F4 clipped off, and 60x17 clipped the `?` line.
     let f8f4_lines = if two_col { 1 } else { 2 };
     let key_lines_with_f8f4 = key_lines_floor + f8f4_lines;
-    let key_lines_with_help = key_lines_with_f8f4 + 1; // + `?` line
+    // + the `?` line
+    let key_lines_with_help = key_lines_with_f8f4 + 1;
+    // `ctrl-t` shares the `?` row in two columns; alone it is a row.
+    let new_tab_lines = if two_col { 0 } else { 1 };
+    let key_lines_with_new_tab = key_lines_with_help + new_tab_lines;
     let recent_len = if app.history.is_empty() {
         0
     } else {
@@ -119,17 +127,19 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     const HEADER_LINES: usize = 2; // connection line + blank
 
     let h = inner_height as usize;
-    let (include_recent, include_databases, include_help, include_f8f4) =
-        if HEADER_LINES + db_len + key_lines_with_help + recent_len <= h {
-            (true, true, true, true)
+    let (include_recent, include_new_tab, include_databases, include_help, include_f8f4) =
+        if HEADER_LINES + db_len + key_lines_with_new_tab + recent_len <= h {
+            (true, true, true, true, true)
+        } else if HEADER_LINES + db_len + key_lines_with_new_tab <= h {
+            (false, true, true, true, true)
         } else if HEADER_LINES + db_len + key_lines_with_help <= h {
-            (false, true, true, true)
+            (false, false, true, true, true)
         } else if HEADER_LINES + key_lines_with_help <= h {
-            (false, false, true, true)
+            (false, false, false, true, true)
         } else if HEADER_LINES + key_lines_with_f8f4 <= h {
-            (false, false, false, true)
+            (false, false, false, false, true)
         } else {
-            (false, false, false, false)
+            (false, false, false, false, false)
         };
     let include_recent = include_recent && !app.history.is_empty();
     let include_databases = include_databases && has_databases;
@@ -183,7 +193,15 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         if include_f8f4 {
             lines.push(paired_line(&f8, &f4, key_style, desc_style, left_col_width));
         }
-        if include_help {
+        if include_help && include_new_tab {
+            lines.push(paired_line(
+                &help,
+                &new_tab,
+                key_style,
+                desc_style,
+                left_col_width,
+            ));
+        } else if include_help {
             lines.push(single_line(&help, key_style, desc_style));
         }
     } else {
@@ -196,6 +214,9 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         }
         if include_help {
             lines.push(single_line(&help, key_style, desc_style));
+        }
+        if include_new_tab {
+            lines.push(single_line(&new_tab, key_style, desc_style));
         }
     }
 
@@ -362,11 +383,19 @@ fn ordered_databases<'a>(databases: &'a [DatabaseInfo], current_db: &str) -> Vec
     }
 }
 
+/// The key glyph padded to its field: [`KEY_FIELD_WIDTH`], or wider
+/// when the key itself needs it (`ctrl-t` plus a two-column gap), so a
+/// long key never runs straight into its description.
+fn key_field(key: &str) -> String {
+    let width = KEY_FIELD_WIDTH.max(display_width(key) + 2);
+    format!("{key:<width$}")
+}
+
 /// Render one key hint on its own line (single-column layout).
 fn single_line(hint: &Hint, key_style: Style, desc_style: Style) -> Line<'static> {
     Line::from(vec![
         Span::raw(HINT_INDENT),
-        Span::styled(format!("{:<KEY_FIELD_WIDTH$}", hint.key), key_style),
+        Span::styled(key_field(hint.key), key_style),
         Span::styled(hint.desc.clone(), desc_style),
     ])
 }
@@ -380,14 +409,16 @@ fn paired_line(
     desc_style: Style,
     left_col_width: usize,
 ) -> Line<'static> {
-    let left_text_width = display_width(HINT_INDENT) + KEY_FIELD_WIDTH + display_width(&left.desc);
+    let left_key = key_field(left.key);
+    let left_text_width =
+        display_width(HINT_INDENT) + display_width(&left_key) + display_width(&left.desc);
     let pad = left_col_width.saturating_sub(left_text_width);
     Line::from(vec![
         Span::raw(HINT_INDENT),
-        Span::styled(format!("{:<KEY_FIELD_WIDTH$}", left.key), key_style),
+        Span::styled(left_key, key_style),
         Span::styled(left.desc.clone(), desc_style),
         Span::raw(" ".repeat(pad + COL_GAP)),
-        Span::styled(format!("{:<KEY_FIELD_WIDTH$}", right.key), key_style),
+        Span::styled(key_field(right.key), key_style),
         Span::styled(right.desc.clone(), desc_style),
     ])
 }
@@ -585,6 +616,80 @@ mod tests {
         let text = plain(&landing_lines(&a, 58, 9));
         assert!(!text.iter().any(|l| l.contains("F8")), "{text:?}");
         assert!(!text.iter().any(|l| l.contains("F4")), "{text:?}");
+    }
+
+    #[test]
+    fn ctrl_t_shares_the_help_row_in_two_columns_and_has_its_own_line_in_one() {
+        let a = app();
+        let wide = plain(&landing_lines(&a, 80, 30));
+        let help_row = wide
+            .iter()
+            .find(|l| l.contains("all keys"))
+            .expect("`?` row");
+        assert!(
+            help_row.contains("ctrl-t  new tab"),
+            "two columns: ctrl-t shares the `?` row, with a gap after the key: {help_row:?}"
+        );
+        assert_eq!(
+            wide.iter().filter(|l| l.contains("new tab")).count(),
+            1,
+            "{wide:?}"
+        );
+
+        let narrow = plain(&landing_lines(&a, 40, 30));
+        let help_at = narrow.iter().position(|l| l.contains("all keys")).unwrap();
+        let tab_at = narrow
+            .iter()
+            .position(|l| l.contains("ctrl-t  new tab"))
+            .expect("one column: ctrl-t is its own line");
+        assert_eq!(tab_at, help_at + 1, "directly under `?`: {narrow:?}");
+        assert!(
+            !narrow[help_at].contains("new tab"),
+            "one column: `?` keeps its line to itself: {narrow:?}"
+        );
+    }
+
+    #[test]
+    fn one_column_ctrl_t_line_drops_first_before_databases_and_help() {
+        let mut a = app();
+        a.history = vec!["select 1".into()];
+        a.databases = vec![DatabaseInfo {
+            name: "test".into(),
+            size: "1.2 GB".into(),
+        }];
+        // One column: header(2) + databases(1) + six core(6) + F8/F4(2)
+        // + `?`(1) + ctrl-t(1) = 13 rows.
+        let full = plain(&landing_lines(&a, 40, 13));
+        assert!(full.iter().any(|l| l.contains("new tab")), "{full:?}");
+        assert!(full.iter().any(|l| l.contains("databases")), "{full:?}");
+        assert!(!full.iter().any(|l| l.contains("recent")), "{full:?}");
+        // One row short: ctrl-t goes, databases and `?` stay.
+        let short = plain(&landing_lines(&a, 40, 12));
+        assert!(
+            !short.iter().any(|l| l.contains("new tab")),
+            "ctrl-t is the first key line to go: {short:?}"
+        );
+        assert!(short.iter().any(|l| l.contains("databases")), "{short:?}");
+        assert!(short.iter().any(|l| l.contains("all keys")), "{short:?}");
+        assert!(short.len() <= 12, "{short:?}");
+        // Another row short: now databases goes, `?` still stays.
+        let shorter = plain(&landing_lines(&a, 40, 11));
+        assert!(
+            !shorter.iter().any(|l| l.contains("databases")),
+            "{shorter:?}"
+        );
+        assert!(
+            shorter.iter().any(|l| l.contains("all keys")),
+            "{shorter:?}"
+        );
+        assert!(shorter.len() <= 11, "{shorter:?}");
+    }
+
+    #[test]
+    fn key_field_widens_for_a_long_key_and_keeps_short_keys_aligned() {
+        assert_eq!(key_field("e"), "e   ");
+        assert_eq!(key_field("F8"), "F8  ");
+        assert_eq!(key_field("ctrl-t"), "ctrl-t  ");
     }
 
     #[test]

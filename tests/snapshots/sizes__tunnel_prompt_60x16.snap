@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…             ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
@@ -15,6 +17,5 @@ expression: dump(&buf)
 ││  pgman runs the system ssh binary with your keys, agent││
 ││  ~/.ssh/config — before any Postgres traffic, so a fail││
 ││  database login would not stop it.                     ││
-││                                                        ││
 └└────────────────────────────────────────────────────────┘┘
  RO   TAP   N+1 ×1   y proceed · any other key cancels

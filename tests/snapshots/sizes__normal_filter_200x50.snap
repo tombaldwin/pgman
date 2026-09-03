@@ -4,6 +4,7 @@ assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                                                                                                                         ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
@@ -16,7 +17,6 @@ expression: dump(&buf)
 │1   ada@example.com        pro   2026-01-04 09:12:00+00                                                                                                                                               │
 │3   grace@example.com      pro   2026-02-01 08:30:00+00                                                                                                                                               │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                                                                                                                                               │
-│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

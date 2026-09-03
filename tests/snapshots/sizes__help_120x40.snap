@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                                         ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
@@ -31,8 +33,7 @@ expression: dump(&buf)
 │                 │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)    │                 │
 │                 │     h / l  ← →    move column cursor                                             │                 │
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
-│                 │     /             live row filter (HIDES non-matching rows)                      │                 │
-│                 │ ↓ 198 more below                                                                 │                 │
+│                 │ ↓ 199 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

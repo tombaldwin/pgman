@@ -1,24 +1,25 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                 ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
-│  WHERE plan = 'pro'                                                          │
-│  ORDER BY crea┌ about ───────────────────────────────────────┐               │
+│  WHERE plan = ┌ about ───────────────────────────────────────┐               │
+│  ORDER BY crea│                                              │               │
 │               │                                              │               │
-└───────────────│                                              │───────────────┘
-┌ result · 6 row│              pgman 0.1.0 · beta              │───────────────┐
-│id  email      │       installed via a standalone binary      │               │
-│1   ada@example│   k9s-style Postgres TUI for Java/AWS shops  │               │
-│2   linus@examp│            server: pg 16.2 (demo)            │               │
-│3   grace@examp│                                              │               │
-│4   alan@exampl│       by Tom Baldwin / Polymorphism Ltd      │               │
-│5   edsger@exam│          license: MIT OR Apache-2.0          │               │
-│6   katherine@e│                                              │               │
-│               │           esc / enter / A to close           │               │
+└───────────────│              pgman 0.1.0 · beta              │───────────────┘
+┌ result · 6 row│       installed via a standalone binary      │───────────────┐
+│id  email      │   k9s-style Postgres TUI for Java/AWS shops  │               │
+│1   ada@example│            server: pg 16.2 (demo)            │               │
+│2   linus@examp│                                              │               │
+│3   grace@examp│       by Tom Baldwin / Polymorphism Ltd      │               │
+│4   alan@exampl│          license: MIT OR Apache-2.0          │               │
+│5   edsger@exam│                                              │               │
+│6   katherine@e│           esc / enter / A to close           │               │
 │               │                                              │               │
 │               └──────────────────────────────────────────────┘               │
 │                                                                              │

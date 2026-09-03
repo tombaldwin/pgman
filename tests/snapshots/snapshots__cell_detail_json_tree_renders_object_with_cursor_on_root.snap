@@ -1,8 +1,10 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 526
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                                              ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> (┌ data · row 1 of 1 · field 1/1 · JSON ────────────────────────────────┐   │
 └───│                                                                      │───┘
@@ -13,7 +15,6 @@ expression: dump(&buf)
 │   │   ▼ "tags": [ 2 ]                                                    │   │
 │   │     [0]: "a"                                                         │   │
 │   │     [1]: "b"                                                         │   │
-│   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │

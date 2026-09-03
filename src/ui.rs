@@ -39,12 +39,22 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let area = f.area();
-    // Tab bar: one extra line iff we have more than one tab.
-    // Keeps the single-tab default UX byte-identical to the
-    // pre-multi-tab layout.
-    let tabbar_height: u16 = if app.tabs.len() > 1 { 1 } else { 0 };
-    // Everything between the header row and the footer row is the
-    // editor's and the grid's to share — see `pane_split`.
+    // Tab bar: one row, always there once connected — a single tab
+    // used to hide it, and with it the only sign that Ctrl-T exists.
+    // Before a connection (picker, failure card) there is nothing to
+    // tab between, and on a cramped terminal (a body under
+    // `CRAMPED_BODY` rows, where the editor is already pinned to one
+    // line) the row is worth more to the panes — unless a second tab
+    // exists, when the operator needs to see which one they are on.
+    let connected = matches!(app.conn_state, ConnState::Connected { .. });
+    let cramped = area.height.saturating_sub(2) < CRAMPED_BODY;
+    let tabbar_height: u16 = if app.tabs.len() > 1 || (connected && !cramped) {
+        1
+    } else {
+        0
+    };
+    // Everything between the header row (and tab bar) and the footer
+    // row is the editor's and the grid's to share — see `pane_split`.
     let body_height = area.height.saturating_sub(2 + tabbar_height);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let zoom = app.zoomed.then(|| zoomed_pane(app));
@@ -92,8 +102,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // carries the mode's only close hint, and a popup tall enough to
     // reach either row used to paint its own border over it (the About
     // card at 80x24 replaced the footer with `└────┘`). One rect,
-    // computed once, so no overlay can drift back out of it.
-    let area = body_area(area);
+    // computed once, so no overlay can drift back out of it. The tab
+    // bar is chrome like the header: an overlay centred over it
+    // painted `┌ about ┐` across the tab labels on a short terminal.
+    let area = body_area(area, tabbar_height);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -712,7 +724,6 @@ pub fn editor_rows(content_lines: usize, body_height: u16) -> u16 {
     const BORDERS: u16 = 2;
     const OPEN_LINES: u16 = 5;
     const OPEN_BODY: u16 = 20;
-    const CRAMPED_BODY: u16 = 12;
     if body_height < CRAMPED_BODY {
         return (1 + BORDERS).min(body_height);
     }
@@ -733,6 +744,11 @@ pub fn editor_rows(content_lines: usize, body_height: u16) -> u16 {
 
 /// The editor pane's top and bottom border rows.
 pub const EDITOR_BORDERS: u16 = 2;
+
+/// A body (rows between header and footer) under this many rows has
+/// no room to spare: the editor is pinned to one line whatever the
+/// buffer holds, and the tab bar gives its row back to the panes.
+pub const CRAMPED_BODY: u16 = 12;
 
 /// Appended to the zoomed pane's block title so the missing pane
 /// reads as hidden on purpose, with the key that brings it back.
@@ -2291,35 +2307,79 @@ pub(crate) fn help_body(
     (lines, anchors)
 }
 
-/// Render the tab bar (one line above the editor). Active tab
-/// is reverse-styled. Tab labels are auto-derived from the
-/// buffer's first non-blank line (truncated), so the operator
-/// sees what each tab is doing without naming them.
+/// Render the tab bar — one muted row between the header and the
+/// editor. Every tab is numbered and labelled by its buffer's first
+/// line (`empty` for a blank one), the active tab in the accent
+/// colour, and the two keys that manage tabs sit right-aligned so
+/// they are visible before the operator has a second tab to notice
+/// them with. The hint is dropped, whole, when the tabs need the room.
 fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
+    let muted = Style::default().fg(theme.muted);
+    let active = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let width = usize::from(area.width);
+    let labels: Vec<String> = (0..app.tabs.len()).map(|i| tab_label(app, i)).collect();
+    let cells = tab_bar_cells(&labels, width);
     let mut spans: Vec<Span<'static>> = Vec::new();
-    spans.push(Span::raw(" "));
-    for (i, _) in app.tabs.iter().enumerate() {
-        let label = tab_label(app, i);
-        let style = if i == app.active_tab {
-            Style::default()
-                .fg(theme.text)
-                .bg(theme.row_selected_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.muted)
-        };
-        spans.push(Span::styled(format!(" {} {label} ", i + 1), style));
+    let mut used = 0usize;
+    for (i, cell) in cells.into_iter().enumerate() {
+        used += display_width(&cell) + 1;
+        spans.push(Span::styled(
+            cell,
+            if i == app.active_tab { active } else { muted },
+        ));
         spans.push(Span::raw(" "));
+    }
+    let hint_width = display_width(TAB_BAR_HINT) + 1;
+    if used + hint_width <= width {
+        spans.push(Span::raw(" ".repeat(width - used - hint_width)));
+        spans.push(Span::styled(TAB_BAR_HINT, muted));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Derive a short label for tab `idx` from its editor buffer's
-/// first non-blank line. The ACTIVE tab reads from App's live
-/// fields; the rest read from their stashed snapshot. Empty
-/// buffers get the placeholder "(empty)" so the tab is still
-/// addressable.
+/// Right-aligned on the tab bar: the keys that open and close tabs.
+const TAB_BAR_HINT: &str = "ctrl-t new · ctrl-w close";
+
+/// Display columns a tab label may take on the bar, widest first:
+/// the budgets `tab_bar_cells` tries in turn until every tab fits,
+/// ending with the numbers alone.
+const TAB_LABEL_BUDGETS: &[usize] = &[18, 10, 6, 0];
+
+/// The bar's cells — ` N label ` per tab — at the widest label budget
+/// that lets every tab fit in `width` (each cell is followed by one
+/// separating column). Nine tabs of long statements on a narrow
+/// terminal shrink to ` N sele… ` and finally to ` N `; the row is
+/// left to clip only when even the numbers overflow. Pure / testable.
+pub(crate) fn tab_bar_cells(labels: &[String], width: usize) -> Vec<String> {
+    let cells_at = |cols: usize| -> Vec<String> {
+        labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                if cols == 0 {
+                    format!(" {} ", i + 1)
+                } else {
+                    format!(" {} {} ", i + 1, grid::truncate_cell(label, cols))
+                }
+            })
+            .collect()
+    };
+    for &cols in TAB_LABEL_BUDGETS {
+        let cells = cells_at(cols);
+        let used: usize = cells.iter().map(|c| display_width(c) + 1).sum();
+        if used <= width {
+            return cells;
+        }
+    }
+    cells_at(0)
+}
+
+/// Derive the label for tab `idx`. The ACTIVE tab reads from App's
+/// live fields — so the label follows every keystroke — and the rest
+/// read from their stashed snapshot.
 fn tab_label(app: &App, idx: usize) -> String {
     let body: &str = if idx == app.active_tab {
         &app.editor.buffer
@@ -2329,14 +2389,17 @@ fn tab_label(app: &App, idx: usize) -> String {
             .map(|t| t.editor.buffer.as_str())
             .unwrap_or("")
     };
-    let first: String = body
-        .lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("(empty)")
-        .chars()
-        .take(20)
-        .collect();
-    first
+    tab_label_text(body)
+}
+
+/// A tab's label from its editor buffer: the first non-blank line,
+/// trimmed, or `empty` for a blank buffer. Untruncated — the bar cuts
+/// it to whatever budget fits (`tab_bar_cells`). Pure / testable.
+pub(crate) fn tab_label_text(buffer: &str) -> String {
+    match buffer.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(line) => line.to_string(),
+        None => "empty".to_string(),
+    }
 }
 
 /// Render the no-tap-yet onboarding hint for the TapMonitor
@@ -2429,19 +2492,21 @@ pub(crate) fn short_server_version(v: &str) -> &str {
 }
 
 /// The body rect of a full-terminal `area`: everything between the
-/// one-row header and the one-row footer. Overlays are centred inside
-/// this rather than the whole terminal, so a popup can never paint
-/// over the connection state above or the close hint below. Degrades
-/// to the input rect when there aren't two rows to give up.
-fn body_area(area: Rect) -> Rect {
-    if area.height < 3 {
+/// one-row header plus `tabbar` rows of tab bar, and the one-row
+/// footer. Overlays are centred inside this rather than the whole
+/// terminal, so a popup can never paint over the connection state or
+/// the tab labels above, or the close hint below. Degrades to the
+/// input rect when there aren't enough rows to give up.
+fn body_area(area: Rect, tabbar: u16) -> Rect {
+    let above = 1 + tabbar;
+    if area.height < above + 2 {
         return area;
     }
     Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y + above,
         width: area.width,
-        height: area.height - 2,
+        height: area.height - above - 1,
     }
 }
 

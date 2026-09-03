@@ -1,8 +1,10 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 772
 expression: dumped
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ───────────────────────────┐
 │> (empty — press e to focus)                    │
 └────────────────────────────────────────────────┘
@@ -12,7 +14,6 @@ expression: dumped
 ││  [project] prod                     app@pro… ││
 ││                                              ││
 ││  nothing here connects until you press enter ││
-││  PGPASSWORD is only used with --dsn          ││
 │└──────────────────────────────────────────────┘│
 └────────────────────────────────────────────────┘
  RO   ↑↓ / j/k navigate · F1 +3 more

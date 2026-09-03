@@ -795,7 +795,11 @@ fn editor_zoomed_60x16() {
         .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
         .map(|(y, _)| y)
         .collect();
-    assert_eq!(corners, vec![1, 14], "one block, header to footer:\n{text}");
+    assert_eq!(
+        corners,
+        vec![2, 14],
+        "one block, tab bar to footer:\n{text}"
+    );
     insta::assert_snapshot!(text);
 }
 
@@ -820,7 +824,7 @@ fn grid_zoomed_80x24() {
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
     assert!(
-        !text.contains("editor") && !text.contains("SELECT id, name"),
+        !text.contains("┌ editor") && !text.contains("> SELECT id, name"),
         "no editor block while the grid is zoomed:\n{text}"
     );
     assert!(
@@ -833,6 +837,10 @@ fn grid_zoomed_80x24() {
         .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
         .map(|(y, _)| y)
         .collect();
-    assert_eq!(corners, vec![1, 22], "one block, header to footer:\n{text}");
+    assert_eq!(
+        corners,
+        vec![2, 22],
+        "one block, tab bar to footer:\n{text}"
+    );
     insta::assert_snapshot!(text);
 }

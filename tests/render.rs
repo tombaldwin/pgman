@@ -132,10 +132,11 @@ fn editor_renders_keyword_in_title_colour() {
         name: "users".into(),
     });
     let buf = render(&mut a, 80, 16);
-    // Find the `S` of SELECT and check its foreground colour matches
-    // `theme.title`.
-    let (x, y) = find_cell(&buf, "SELECT").expect("SELECT should appear");
-    let cell = &buf[(x, y)];
+    // Find the `S` of SELECT in the editor (the tab bar above carries
+    // the same text as its label) and check its foreground colour
+    // matches `theme.title`.
+    let (x, y) = find_cell(&buf, "> SELECT").expect("SELECT should appear");
+    let cell = &buf[(x + 2, y)];
     assert_eq!(
         cell.fg, theme.title,
         "expected SELECT in theme.title ({:?}), got {:?}",
@@ -1149,11 +1150,12 @@ fn editor_cursor_sits_after_a_wide_literal_not_inside_it() {
     let pos = term.get_cursor_position().expect("cursor position");
     // Editor border at x=0, "> " prompt at x=1..2, text from x=3:
     // "SELECT '" (8) + 東京都 (6) + "'" (1) = 15 columns → x = 18.
+    // Header, tab bar and the editor's top border above: y = 3.
     assert_eq!(
         (pos.x, pos.y),
-        (18, 2),
+        (18, 3),
         "cursor drifted: {:?}",
-        row_text(term.backend().buffer(), 2)
+        row_text(term.backend().buffer(), 3)
     );
 }
 
@@ -1233,7 +1235,8 @@ fn editor_marks_a_line_cut_at_the_right_border() {
     a.editor.buffer = format!("select {} from t", "x".repeat(80));
     a.editor.cursor = 0;
     let buf = render(&mut a, 40, 16);
-    let row = row_text(&buf, 2);
+    // Row 3: under the header, the tab bar and the editor's top border.
+    let row = row_text(&buf, 3);
     assert!(
         row.ends_with("…│"),
         "expected the cut marker before the border: {row:?}"
@@ -1241,7 +1244,7 @@ fn editor_marks_a_line_cut_at_the_right_border() {
     // A line that fits is untouched.
     a.editor.buffer = "select 1".into();
     let buf = render(&mut a, 40, 16);
-    let row = row_text(&buf, 2);
+    let row = row_text(&buf, 3);
     assert!(row.contains("select 1") && !row.contains('…'), "{row:?}");
 }
 
@@ -1314,8 +1317,8 @@ fn alt_z_twice_restores_the_exact_prior_split() {
     let before = render(&mut a, 80, 24);
     let body_before: Vec<String> = (0..23).map(|y| row_text(&before, y)).collect();
     assert!(
-        row_text(&before, 10).starts_with('└'),
-        "8 lines + 2 borders under the header: bottom border on row 10:\n{}",
+        row_text(&before, 11).starts_with('└'),
+        "8 lines + 2 borders under the header and tab bar: bottom border on row 11:\n{}",
         dump(&before)
     );
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
@@ -1397,4 +1400,148 @@ fn completion_popup_floats_inside_a_zoomed_editor() {
         text.lines().nth(y).unwrap().starts_with('│'),
         "the editor's own border survives beside the popup:\n{text}"
     );
+}
+
+// ---- tab bar -------------------------------------------------------------
+
+fn connected_app() -> App {
+    let mut a = App::new(
+        Theme::default(),
+        Some(Dsn::parse("postgres://test@localhost/test").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a.mode = Mode::Normal;
+    a
+}
+
+/// One tab, just connected: the bar is there, with the tab labelled
+/// `empty`, and the keys that manage tabs on its right edge.
+#[test]
+fn tab_bar_is_visible_with_a_single_tab_once_connected() {
+    let mut a = connected_app();
+    let buf = render(&mut a, 80, 24);
+    let bar = row_text(&buf, 1);
+    assert!(
+        bar.starts_with(" 1 empty "),
+        "row 1 is the tab bar: {bar:?}"
+    );
+    assert!(
+        bar.ends_with("ctrl-t new · ctrl-w close"),
+        "the tab keys are right-aligned: {bar:?}"
+    );
+    assert_eq!(
+        bar.len(),
+        80usize.min(bar.len()),
+        "never wider than the terminal"
+    );
+    assert!(
+        row_text(&buf, 2).starts_with('┌'),
+        "the editor starts under the bar:\n{}",
+        dump(&buf)
+    );
+}
+
+/// Before a connection there is nothing to tab between: no bar, and
+/// the body starts right under the header as it always did.
+#[test]
+fn tab_bar_is_hidden_before_a_connection() {
+    let mut a = connected_app();
+    a.conn_state = ConnState::Failed("refused".into());
+    let buf = render(&mut a, 80, 24);
+    assert!(
+        row_text(&buf, 1).starts_with('┌'),
+        "no tab bar on the failure card:\n{}",
+        dump(&buf)
+    );
+    let text = dump(&buf);
+    assert!(!text.contains("ctrl-w close"), "{text}");
+}
+
+/// The active tab's label follows the buffer as it is typed, the
+/// other tabs keep their stashed labels, and only the active tab is
+/// painted in the accent colour.
+#[test]
+fn tab_bar_labels_update_live_and_the_active_tab_is_accented() {
+    let mut a = connected_app();
+    a.editor.buffer = "SELECT 1".into();
+    a.new_tab();
+    a.mode = Mode::Editor;
+    for c in "select count(*) from orders".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    let buf = render(&mut a, 80, 24);
+    let bar = row_text(&buf, 1);
+    assert!(
+        bar.contains(" 1 SELECT 1 ") && bar.contains(" 2 select count(*) f… "),
+        "both tabs labelled, the long one cut at 18 columns: {bar:?}"
+    );
+    let theme = Theme::default();
+    let (x1, _) = find_cell(&buf, "1 SELECT 1").expect("tab 1 on the bar");
+    let (x2, _) = find_cell(&buf, "2 select").expect("tab 2 on the bar");
+    assert_eq!(buf[(x1, 1)].fg, theme.muted, "tab 1 is not active: muted");
+    assert_eq!(buf[(x2, 1)].fg, theme.accent, "tab 2 is active: accent");
+    // Back to tab 1 (alt-p works from the editor; alt-1 does not):
+    // the accent moves with it.
+    a.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
+    assert_eq!(a.active_tab, 0);
+    let buf = render(&mut a, 80, 24);
+    assert_eq!(buf[(x1, 1)].fg, theme.accent);
+    assert_eq!(buf[(x2, 1)].fg, theme.muted);
+}
+
+/// A cramped terminal (body under 12 rows) gives the bar's row back
+/// to the panes while there is one tab; a second tab brings it back,
+/// since the operator then needs to see which tab they are on.
+#[test]
+fn tab_bar_yields_its_row_on_a_cramped_terminal_unless_there_are_two_tabs() {
+    let mut a = connected_app();
+    let buf = render(&mut a, 60, 13);
+    assert!(
+        row_text(&buf, 1).starts_with('┌'),
+        "60x13 is an 11-row body: no bar:\n{}",
+        dump(&buf)
+    );
+    let buf = render(&mut a, 60, 14);
+    assert!(
+        row_text(&buf, 1).starts_with(" 1 empty"),
+        "60x14 is a 12-row body: the bar is back:\n{}",
+        dump(&buf)
+    );
+    a.new_tab();
+    let buf = render(&mut a, 60, 13);
+    assert!(
+        row_text(&buf, 1).starts_with(" 1 empty"),
+        "two tabs: the bar stays even when cramped:\n{}",
+        dump(&buf)
+    );
+}
+
+/// When the tabs need the room, the labels shrink so every tab stays
+/// on the bar, and the right-hand hint goes as a whole rather than
+/// being cut mid-word.
+#[test]
+fn tab_bar_shrinks_labels_and_drops_the_hint_whole_when_the_tabs_need_the_room() {
+    let mut a = connected_app();
+    for i in 0..4 {
+        a.editor.buffer = format!("select {i} from a_long_table_name");
+        a.new_tab();
+    }
+    let buf = render(&mut a, 60, 16);
+    let bar = row_text(&buf, 1);
+    assert!(!bar.contains("ctrl-"), "hint dropped whole: {bar:?}");
+    assert!(
+        bar.contains(" 1 selec… "),
+        "labels cut to six columns: {bar:?}"
+    );
+    assert!(
+        bar.contains(" 5 empty"),
+        "the last tab is still on the bar: {bar:?}"
+    );
+    assert!(bar.len() <= 60, "{bar:?}");
 }

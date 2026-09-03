@@ -1,20 +1,21 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…             ctrl-t new · ctrl-w close
 ┌ edit┌ about ───────────────────────────────────────┐─────┐
 │  FRO│                                              │     │
-│  WHE│                                              │     │
-│  ORD│              pgman 0.1.0 · beta              │     │
-└─────│       installed via a standalone binary      │─────┘
-┌ resu│   k9s-style Postgres TUI for Java/AWS shops  │─────┐
-│id  e│            server: pg 16.2 (demo)            │     │
-│1   a│                                              │00   │
-│2   l│       by Tom Baldwin / Polymorphism Ltd      │00   │
-│3   g│          license: MIT OR Apache-2.0          │00   │
-│4   a│                                              │00   │
-│5   e│           esc / enter / A to close           │00   │
-│6   k│                                              │00   │
-└─────└──────────────────────────────────────────────┘─────┘
+│  WHE│              pgman 0.1.0 · beta              │     │
+│  ORD│       installed via a standalone binary      │     │
+└─────│   k9s-style Postgres TUI for Java/AWS shops  │─────┘
+┌ resu│            server: pg 16.2 (demo)            │─────┐
+│id  e│                                              │     │
+│1   a│       by Tom Baldwin / Polymorphism Ltd      │00   │
+│2   l│          license: MIT OR Apache-2.0          │00   │
+│3   g│                                              │00   │
+│4   a│           esc / enter / A to close           │00   │
+│5   e└──────────────────────────────────────────────┘00   │
+└──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   esc / enter / A close · F1 help

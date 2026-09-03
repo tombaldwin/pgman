@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                     ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
@@ -12,13 +14,12 @@ expression: dump(&buf)
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────┐
 │id  email                  plan  created_at                                                       │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
-│2   linus@exam┌ confirm ───────────────────────────────────────────────────────────┐              │
-│3   grace@exam│run (DELETE without WHERE) · will be refused — this session is      │              │
-│4   alan@examp│read-only                                                           │              │
-│5   edsger@exa│                                                                    │              │
-│6   katherine@│DELETE FROM orders                                                  │              │
-│              │                                                                    │              │
+│1   ada@exampl┌ confirm ───────────────────────────────────────────────────────────┐              │
+│2   linus@exam│run (DELETE without WHERE) · will be refused — this session is      │              │
+│3   grace@exam│read-only                                                           │              │
+│4   alan@examp│                                                                    │              │
+│5   edsger@exa│DELETE FROM orders                                                  │              │
+│6   katherine@│                                                                    │              │
 │              │y = run · n / esc = cancel                                          │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

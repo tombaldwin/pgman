@@ -1,14 +1,14 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 834
+assertion_line: 845
 expression: text
 ---
  pgman │ test  connected · pg 16.0
+ 1 SELECT id, name F…                                 ctrl-t new · ctrl-w close
 ┌ result · 2 row(s) · zoomed (alt-z) ──────────────────────────────────────────┐
 │id  name                                                                      │
 │1   alice                                                                     │
 │2   bob                                                                       │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
