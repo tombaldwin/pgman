@@ -78,7 +78,7 @@ the buffer.
 | `:update` | — | The About card, plus a footer line saying where the release check got to. "Up to date" is only claimed once a check has landed. |
 | `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`, `wizard`. |
 | `:quit`, `:q` | `\q` | Quit pgman. |
-| `:readonly on\|off` | — | Set the read-only flag pgman opens connections with. Applied at connect (`SET default_transaction_read_only`), so a change made while connected takes effect at the next connect. **Refused** when `safety.toml` pins the current database read-only — a session cannot vote itself out of that file. |
+| `:readonly on\|off` | — | Set the read-only flag pgman opens connections with. Applied at connect (`SET default_transaction_read_only`), so a change made while connected takes effect at the next connect. `:readonly on` is sticky for the rest of the session: it survives every later `:connect` / `\c`, and can only ever tighten what the next database's safety profile already asks for. **Refused** when `safety.toml` pins the current database read-only — a session cannot vote itself out of that file. |
 | `:connect [NAME]` | `\c [NAME]` | The picker, or the named data source. Same quoting and unique-prefix matching as `\c`. |
 | `:l` | `\l` | List databases (name + size). |
 | `:x [on\|off]` | `\x` | Expanded (row-detail) output. |
