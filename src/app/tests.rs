@@ -6527,3 +6527,38 @@ fn the_log_verdict_only_scans_the_head_of_a_huge_buffer() {
         Some(crate::query::logdetect::LogKind::Hibernate)
     );
 }
+
+#[test]
+fn the_tunnel_prompt_still_cancels_on_question_mark_and_colon() {
+    // The prompt's footer says "y proceed · any other key cancels".
+    // The global `?` / `:` handlers must not turn that into a lie by
+    // opening an overlay over an armed ssh question.
+    for key in [KeyCode::Char('?'), KeyCode::Char(':')] {
+        let pick = DataSourcePick {
+            name: "via-bastion".into(),
+            origin: "project",
+            dsn: Some(
+                crate::conn::Dsn::parse(
+                    "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+                )
+                .unwrap(),
+            ),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        };
+        let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+        a.splash_visible = false;
+        a.mode = Mode::ConnPick;
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert!(
+            a.pending_tunnel.is_some(),
+            "fixture check: enter must arm the tunnel confirmation"
+        );
+        a.on_key(KeyEvent::from(key));
+        assert_eq!(a.mode, Mode::ConnPick, "{key:?} must not open an overlay");
+        assert!(a.pending_tunnel.is_none(), "{key:?} must cancel");
+        assert!(a.command_bar.is_none());
+        let status = a.last_status.as_deref().unwrap_or("");
+        assert!(status.contains("cancelled"), "got: {status}");
+    }
+}
