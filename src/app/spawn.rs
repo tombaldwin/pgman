@@ -257,7 +257,18 @@ impl App {
     /// confirmed when the current connection was made.
     pub(super) fn connect_to_discovered_pick(&mut self, dsn: Dsn, origin: String) {
         if dsn.ssh_tunnel.is_some() {
-            self.pending_tunnel = Some(crate::app::PendingTunnel { dsn, origin });
+            // The confirmation names where the credentials come from. The
+            // pick is found by its DSN: the callers hand over only the DSN
+            // and the origin string, and a discovered DSN is unique to its
+            // pick in practice.
+            let creds = self
+                .conn_pick
+                .picks
+                .iter()
+                .find(|p| p.dsn.as_ref() == Some(&dsn))
+                .map(|p| p.creds.clone())
+                .unwrap_or_default();
+            self.pending_tunnel = Some(crate::app::PendingTunnel { dsn, origin, creds });
             // Stay in (or return to) the picker: it renders the
             // confirmation in place of the candidate list.
             self.mode = Mode::ConnPick;

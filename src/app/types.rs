@@ -625,6 +625,48 @@ pub struct DataSourcePick {
     /// apart from `unresolved` only so the refusal can say the right
     /// thing — "export it" is not the fix here.
     pub unresolved_host: Vec<String>,
+    /// Where this pick's credentials come from, by environment-variable
+    /// name. Shown on the picker row (`ui::panels::conn_pick_target`)
+    /// and in the tunnel confirmation.
+    pub creds: CredsProvenance,
+}
+
+/// Where a pick's credentials come from — by environment-variable
+/// *name*, never value. A checkout can pair `password_env =
+/// "AWS_SECRET_ACCESS_KEY"` with a host of its own and
+/// `sslmode=disable`; the picker row and the tunnel confirmation say so
+/// before the operator presses Enter.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CredsProvenance {
+    /// Variables the user name resolves from — `${DB_USER}` in a URL or
+    /// a `username:` key.
+    pub user_env: Vec<String>,
+    /// Variables the password resolves from — `${DB_PASSWORD}` in a URL
+    /// or a `password:` key, or a project connection's `password_env`.
+    pub password_env: Vec<String>,
+}
+
+impl CredsProvenance {
+    /// Build one, keeping each name once in first-appearance order: a
+    /// URL's `${DB_USER}` and a `username: ${DB_USER}` are one source.
+    pub fn new(user_env: Vec<String>, password_env: Vec<String>) -> Self {
+        fn uniq(names: Vec<String>) -> Vec<String> {
+            let mut seen = std::collections::HashSet::new();
+            names
+                .into_iter()
+                .filter(|n| seen.insert(n.clone()))
+                .collect()
+        }
+        Self {
+            user_env: uniq(user_env),
+            password_env: uniq(password_env),
+        }
+    }
+
+    /// `true` when nothing is environment-sourced.
+    pub fn is_empty(&self) -> bool {
+        self.user_env.is_empty() && self.password_env.is_empty()
+    }
 }
 
 /// A discovered connection whose `ssh_tunnel` is waiting on an explicit
@@ -642,6 +684,9 @@ pub struct PendingTunnel {
     pub dsn: Dsn,
     /// Provenance string for `dsn_origin` once confirmed.
     pub origin: String,
+    /// Where the credentials that will ride the tunnel come from — the
+    /// confirmation names them (by variable name) beside the bastion.
+    pub creds: CredsProvenance,
 }
 
 /// A run waiting on user confirmation (the safety guard returned `Confirm`).

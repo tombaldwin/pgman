@@ -722,6 +722,7 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
             dsn: Some(Dsn::parse("postgres://app@prod-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "staging".into(),
@@ -729,6 +730,7 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
             dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -1011,6 +1013,7 @@ fn conn_pick_footer_states_the_tunnel_prompt_keys() {
         ),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
     a.splash_visible = false;

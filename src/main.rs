@@ -1125,6 +1125,19 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
         // the literal text went on the wire.
         let (resolved, meta_resolved, unresolved, unresolved_host) =
             resolve_intellij_placeholders(&s, meta);
+        // Provenance by variable name — the row says where the password
+        // comes from before the operator presses Enter.
+        let provenance = {
+            let (mut user_env, password_env) = s
+                .jdbc_url
+                .as_deref()
+                .map(creds::spring::userinfo_env_names)
+                .unwrap_or_default();
+            for u in s.user.iter().chain(meta.and_then(|m| m.user.as_ref())) {
+                user_env.extend(creds::spring::placeholder_env_names(u));
+            }
+            app::CredsProvenance::new(user_env, password_env)
+        };
         let dsns = creds::intellij::expand_to_dsns(&resolved, meta_resolved.as_ref());
         for (suffix, dsn) in dsns {
             let mut label = if s.name.is_empty() {
@@ -1152,6 +1165,7 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
                 dsn: Some(dsn),
                 unresolved: unresolved.clone(),
                 unresolved_host: unresolved_host.clone(),
+                creds: provenance.clone(),
             });
         }
     }
@@ -1258,6 +1272,19 @@ fn project_connection_pick(c: &project::Connection) -> Option<DataSourcePick> {
     if dsn.is_none() && unresolved.is_empty() && unresolved_host.is_empty() {
         return None;
     }
+    // Provenance by variable name: the URL's userinfo placeholders, a
+    // `user = "${…}"`, and `password_env` — which is the one a checkout
+    // can point at `AWS_SECRET_ACCESS_KEY` beside its own host.
+    let provenance = {
+        let (mut user_env, mut password_env) = creds::spring::userinfo_env_names(&c.url);
+        if let Some(u) = &c.user {
+            user_env.extend(creds::spring::placeholder_env_names(u));
+        }
+        if let Some(var) = c.password_env.as_deref().filter(|v| !v.is_empty()) {
+            password_env.push(var.to_string());
+        }
+        app::CredsProvenance::new(user_env, password_env)
+    };
     let mut name = c.name.clone();
     if !unresolved.is_empty() || !unresolved_host.is_empty() {
         let list = unresolved
@@ -1274,6 +1301,7 @@ fn project_connection_pick(c: &project::Connection) -> Option<DataSourcePick> {
         dsn,
         unresolved,
         unresolved_host,
+        creds: provenance,
     })
 }
 
@@ -1476,12 +1504,25 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                     .join(", ");
                 name = format!("{name} — unresolved {list}");
             }
+            // Provenance by variable name: the URL's userinfo placeholders
+            // plus the block's own `username` / `password` keys.
+            let provenance = {
+                let (mut user_env, mut password_env) = creds::spring::userinfo_env_names(raw_url);
+                if let Some(u) = &p.username {
+                    user_env.extend(creds::spring::placeholder_env_names(u));
+                }
+                if let Some(pw) = &p.password {
+                    password_env.extend(creds::spring::placeholder_env_names(pw));
+                }
+                app::CredsProvenance::new(user_env, password_env)
+            };
             picks.push(DataSourcePick {
                 name,
                 origin: "Spring",
                 dsn,
                 unresolved,
                 unresolved_host,
+                creds: provenance,
             });
         }
     };
@@ -1744,6 +1785,80 @@ mod main_tests {
         );
     }
 
+    // --- credential provenance on the pick ---------------------------------
+
+    #[test]
+    fn project_pick_carries_where_its_credentials_come_from() {
+        let c = project::Connection {
+            name: "shop".into(),
+            url: "postgres://${PGMAN_TEST_MAIN_PROV_U}:${PGMAN_TEST_MAIN_PROV_URLPW}@db/main"
+                .into(),
+            user: Some("${PGMAN_TEST_MAIN_PROV_U:fallback}".into()),
+            password_env: Some("AWS_SECRET_ACCESS_KEY".into()),
+            ssh_tunnel: None,
+        };
+        let pick = project_connection_pick(&c).expect("a marked pick");
+        assert_eq!(
+            pick.creds,
+            app::CredsProvenance::new(
+                vec!["PGMAN_TEST_MAIN_PROV_U".into()],
+                vec![
+                    "PGMAN_TEST_MAIN_PROV_URLPW".into(),
+                    "AWS_SECRET_ACCESS_KEY".into()
+                ]
+            ),
+            "names once each, never a value: {pick:?}"
+        );
+    }
+
+    #[test]
+    fn spring_pick_carries_where_its_credentials_come_from() {
+        let base = spring_project_with(
+            "provenance",
+            "spring.datasource.url=jdbc:postgresql://${PGMAN_TEST_MAIN_PROV_SU}@h:5432/orders\n\
+             spring.datasource.password=${PGMAN_TEST_MAIN_PROV_SPW:x}\n",
+        );
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(picks.len(), 1, "{picks:?}");
+        assert_eq!(
+            picks[0].creds,
+            app::CredsProvenance::new(
+                vec!["PGMAN_TEST_MAIN_PROV_SU".into()],
+                vec!["PGMAN_TEST_MAIN_PROV_SPW".into()]
+            )
+        );
+    }
+
+    #[test]
+    fn intellij_pick_carries_where_its_credentials_come_from() {
+        let base =
+            std::env::temp_dir().join(format!("pgman-main-idea-provenance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".idea")).unwrap();
+        std::fs::write(
+            base.join(".idea/dataSources.xml"),
+            "<project><component name=\"DataSourceManagerImpl\">\
+             <data-source name=\"shop\" uuid=\"u1\">\
+             <jdbc-url>jdbc:postgresql://svc:${PGMAN_TEST_MAIN_PROV_IPW}@db:5432/shop</jdbc-url>\
+             <user-name>${PGMAN_TEST_MAIN_PROV_IU}</user-name>\
+             </data-source></component></project>",
+        )
+        .unwrap();
+        let mut picks = Vec::new();
+        discover_intellij_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(picks.len(), 1, "{picks:?}");
+        assert_eq!(
+            picks[0].creds,
+            app::CredsProvenance::new(
+                vec!["PGMAN_TEST_MAIN_PROV_IU".into()],
+                vec!["PGMAN_TEST_MAIN_PROV_IPW".into()]
+            )
+        );
+    }
+
     /// A discovered pick for the `batch_dsn_from_picks` tests.
     fn batch_pick(name: &str, url: &str) -> DataSourcePick {
         DataSourcePick {
@@ -1752,6 +1867,7 @@ mod main_tests {
             dsn: conn::Dsn::parse(url).ok(),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         }
     }
 

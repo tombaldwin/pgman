@@ -519,6 +519,32 @@ pub(crate) fn conn_pick_target(pick: &crate::app::DataSourcePick) -> String {
         // confirmation that follows.
         out.push_str(&format!("  tunnel → {}", t.to_display()));
     }
+    // Where the credentials come from. A checkout can pair `password_env
+    // = "AWS_SECRET_ACCESS_KEY"` with its own host and `sslmode=disable`;
+    // without this the row showed the host and the sslmode and nothing
+    // about which of the operator's variables would be sent there.
+    out.push_str(&creds_suffix(&pick.creds));
+    out
+}
+
+/// `  password ← $A  user ← $B` for every environment-sourced credential
+/// on a pick — variable names, never values — or empty when there is
+/// none. Appended to the picker row and shown in the tunnel confirmation.
+pub(crate) fn creds_suffix(creds: &crate::app::CredsProvenance) -> String {
+    fn dollars(names: &[String]) -> String {
+        names
+            .iter()
+            .map(|n| format!("${n}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+    let mut out = String::new();
+    if !creds.password_env.is_empty() {
+        out.push_str(&format!("  password ← {}", dollars(&creds.password_env)));
+    }
+    if !creds.user_env.is_empty() {
+        out.push_str(&format!("  user ← {}", dollars(&creds.user_env)));
+    }
     out
 }
 
@@ -533,8 +559,13 @@ pub(crate) fn tunnel_confirm_lines(pending: &crate::app::PendingTunnel) -> Vec<S
         // `PendingTunnel` when the tunnel is Some.
         None => "(no bastion)".to_string(),
     };
-    vec![
-        format!("  ssh {bastion} → {}:{}", d.host, d.port),
+    let mut lines = vec![format!("  ssh {bastion} → {}:{}", d.host, d.port)];
+    // The credentials that ride the tunnel, by variable name: the same
+    // suffix the picker row carries, on its own line here.
+    if !pending.creds.is_empty() {
+        lines.push(format!("  {}", creds_suffix(&pending.creds).trim_start()));
+    }
+    lines.extend([
         String::new(),
         format!("  {} wants an ssh session first.", pending.origin),
         "  pgman runs the system ssh binary with your keys, agent and".to_string(),
@@ -542,7 +573,8 @@ pub(crate) fn tunnel_confirm_lines(pending: &crate::app::PendingTunnel) -> Vec<S
         "  database login would not stop it.".to_string(),
         String::new(),
         "  y proceed · any other key cancels".to_string(),
-    ]
+    ]);
+    lines
 }
 
 pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
@@ -1890,6 +1922,7 @@ mod tests {
             dsn: Some(crate::conn::Dsn::parse(url).unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         }
     }
 
@@ -2038,14 +2071,63 @@ mod tests {
         let lines = tunnel_confirm_lines(&crate::app::PendingTunnel {
             dsn,
             origin: "picked project data source 'via-bastion'".into(),
+            creds: Default::default(),
         });
         assert_eq!(lines[0], "  ssh tom@bastion.example.com → db.internal:5432");
+        assert_eq!(lines[1], "", "nothing env-sourced, nothing to say");
         let body = lines.join("\n");
         assert!(
             body.contains("picked project data source 'via-bastion'"),
             "the operator needs to know which pick is asking: {body}"
         );
         assert!(body.contains("y proceed · any other key cancels"));
+    }
+
+    #[test]
+    fn tunnel_confirm_names_where_the_credentials_come_from() {
+        let dsn = crate::conn::Dsn::parse(
+            "postgres://app:pw@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+        )
+        .unwrap();
+        let lines = tunnel_confirm_lines(&crate::app::PendingTunnel {
+            dsn,
+            origin: "picked project data source 'via-bastion'".into(),
+            creds: crate::app::CredsProvenance::new(
+                vec!["DB_USER".into()],
+                vec!["AWS_SECRET_ACCESS_KEY".into()],
+            ),
+        });
+        assert_eq!(lines[0], "  ssh tom@bastion.example.com → db.internal:5432");
+        assert_eq!(
+            lines[1],
+            "  password ← $AWS_SECRET_ACCESS_KEY  user ← $DB_USER"
+        );
+        assert!(!lines.join("\n").contains("pw"), "never the value");
+    }
+
+    #[test]
+    fn conn_pick_target_names_where_an_env_sourced_credential_comes_from() {
+        // Snapshot of the row: the exact text, because the row is the
+        // whole protection.
+        let mut p = pick("postgres://app@prod-db:5432/main?sslmode=disable");
+        p.creds =
+            crate::app::CredsProvenance::new(Vec::new(), vec!["AWS_SECRET_ACCESS_KEY".into()]);
+        assert_eq!(
+            conn_pick_target(&p),
+            "app@prod-db:5432/main  sslmode=disable  password ← $AWS_SECRET_ACCESS_KEY"
+        );
+        let mut p = pick("postgres://svc:s3cret@prod-db/main?ssh_tunnel=bastion");
+        p.creds = crate::app::CredsProvenance::new(
+            vec!["DB_USER".into(), "DB_USER".into()],
+            vec!["DB_PASSWORD".into(), "PGPASS_ALT".into()],
+        );
+        let row = conn_pick_target(&p);
+        assert_eq!(
+            row,
+            "svc@prod-db:5432/main  sslmode=default  tunnel → bastion  \
+             password ← $DB_PASSWORD,$PGPASS_ALT  user ← $DB_USER"
+        );
+        assert!(!row.contains("s3cret"), "never the value");
     }
 
     #[test]

@@ -536,6 +536,7 @@ fn connection_picker_with_two_entries() {
             dsn: Some(Dsn::parse("postgres://app@prod-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "staging".into(),
@@ -543,6 +544,7 @@ fn connection_picker_with_two_entries() {
             dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(theme, None, picks, SafetyConfig::default());
@@ -569,6 +571,7 @@ fn connection_picker_row_shows_target_sslmode_and_tunnel() {
             dsn: Some(Dsn::parse("postgres://app@prod-db:5432/main?sslmode=verify-full").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "via-bastion".into(),
@@ -581,6 +584,7 @@ fn connection_picker_row_shows_target_sslmode_and_tunnel() {
             ),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "spring.datasource (application) — unresolved ${DB_HOST}".into(),
@@ -588,6 +592,7 @@ fn connection_picker_row_shows_target_sslmode_and_tunnel() {
             dsn: None,
             unresolved: Vec::new(),
             unresolved_host: vec!["DB_HOST".into()],
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(theme, None, picks, SafetyConfig::default());
@@ -612,6 +617,7 @@ fn connection_picker_confirms_a_discovered_ssh_tunnel() {
         ),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let mut a = App::new(theme, None, picks, SafetyConfig::default());
     a.splash_visible = false;
@@ -671,6 +677,7 @@ fn connection_failed_with_one_pick_offers_the_picker() {
         dsn: Some(Dsn::parse("postgres://app@discovered-host:5432/main").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let mut a = App::new(theme, Some(dsn), picks, SafetyConfig::default());
     a.splash_visible = false;
@@ -743,6 +750,7 @@ fn conn_pick_keeps_the_unresolved_marker_at_50_columns() {
             dsn: Some(Dsn::parse("postgres://app@orders-db.internal:5432/orders").unwrap()),
             unresolved: vec!["DB_PASSWORD".into()],
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "prod".into(),
@@ -750,6 +758,7 @@ fn conn_pick_keeps_the_unresolved_marker_at_50_columns() {
             dsn: Some(Dsn::parse("postgres://app@prod-db:5432/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     a.conn_pick.index = 0;
