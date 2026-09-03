@@ -341,8 +341,12 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     if focused {
         let visible_y = (cur_line as u16).saturating_sub(scroll);
         if visible_y < inner.height {
+            // `cur_col` is a char index (what the highlight above needs
+            // to find the cell); the terminal cursor wants the display
+            // column, which differs by one per wide glyph before it.
+            let (_, cur_x) = crate::app::cursor_display_position(buf, app.editor.cursor);
             // 2-char prompt prefix on every line ("> " or "  ").
-            let x = inner.x.saturating_add(2).saturating_add(cur_col as u16);
+            let x = inner.x.saturating_add(2).saturating_add(cur_x as u16);
             let y = inner.y.saturating_add(visible_y);
             if x < inner.x.saturating_add(inner.width) {
                 f.set_cursor_position((x, y));

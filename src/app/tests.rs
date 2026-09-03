@@ -541,6 +541,24 @@ fn cursor_position_walks_newlines() {
 }
 
 #[test]
+fn cursor_display_position_sums_glyph_widths_not_chars() {
+    // "SELECT '" is 8 columns; each CJK glyph paints two.
+    let buf = "SELECT '東京都'";
+    assert_eq!(cursor_position(buf, buf.len()), (0, 12), "chars");
+    assert_eq!(cursor_display_position(buf, buf.len()), (0, 15), "columns");
+    // Mid-glyph run: after 東 (8 + 2).
+    let after_first = "SELECT '東".len();
+    assert_eq!(cursor_display_position(buf, after_first), (0, 10));
+    // Lines reset the column; ASCII is one per char either way.
+    let two = "東京
+ab";
+    assert_eq!(cursor_display_position(two, two.len()), (1, 2));
+    assert_eq!(cursor_display_position("abc", 2), cursor_position("abc", 2));
+    // Past the end clamps to the end rather than panicking.
+    assert_eq!(cursor_display_position(buf, 999), (0, 15));
+}
+
+#[test]
 fn byte_offset_at_line_col_clamps_past_line_end() {
     let buf = "abc\nde\nf";
     assert_eq!(byte_offset_at_line_col(buf, 0, 0), 0);

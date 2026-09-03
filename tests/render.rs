@@ -1130,3 +1130,26 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
         "the modal's y/n line fell off the bottom:\n{text}"
     );
 }
+
+/// The terminal cursor is painted at a display column. `cursor_position`
+/// counts chars, so every wide glyph before the cursor left it one
+/// cell short — over the closing quote instead of after it.
+#[test]
+fn editor_cursor_sits_after_a_wide_literal_not_inside_it() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT '東京都'".into();
+    a.editor.cursor = a.editor.buffer.len();
+    let backend = TestBackend::new(80, 16);
+    let mut term = Terminal::new(backend).expect("terminal");
+    term.draw(|f| pgman::ui::draw(f, &mut a)).expect("draw");
+    let pos = term.get_cursor_position().expect("cursor position");
+    // Editor border at x=0, "> " prompt at x=1..2, text from x=3:
+    // "SELECT '" (8) + 東京都 (6) + "'" (1) = 15 columns → x = 18.
+    assert_eq!(
+        (pos.x, pos.y),
+        (18, 2),
+        "cursor drifted: {:?}",
+        row_text(term.backend().buffer(), 2)
+    );
+}
