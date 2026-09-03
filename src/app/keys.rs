@@ -765,11 +765,13 @@ impl App {
                     }
                     return;
                 }
-                // Only offer "change connection" when there are at least
-                // two candidates — otherwise the picker would just show
-                // the same DSN that just failed, and Enter would retry it
-                // (already on `r`).
-                KeyCode::Char('p') if self.conn_pick.picks.len() >= 2 => {
+                // Offer "change connection" whenever there is anything
+                // to pick. One candidate counts: nothing discovered
+                // connects without a keypress any more, so a lone pick
+                // is reachable only through the picker — and it may not
+                // be the DSN that just failed (a `--dsn` can fail with
+                // one discovered candidate sitting behind it).
+                KeyCode::Char('p') if !self.conn_pick.picks.is_empty() => {
                     self.mode = Mode::ConnPick;
                     self.conn_pick.index = 0;
                     return;

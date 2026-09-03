@@ -627,3 +627,40 @@ fn schema_wizard_renders_findings_sorted_by_severity() {
     let buf = render(&mut a, 110, 24);
     insta::assert_snapshot!(dump(&buf));
 }
+
+/// The connection-failure screen with exactly ONE discovered
+/// candidate. Both the card's action line and the footer must offer
+/// `p change connection`: with nothing auto-connecting any more, the
+/// picker is the only way to reach that candidate, and it is not
+/// necessarily the DSN that just failed.
+#[test]
+fn connection_failed_with_one_pick_offers_the_picker() {
+    let theme = Theme::default();
+    let dsn = Dsn::parse("postgres://app@flag-host:5432/main").unwrap();
+    let picks = vec![DataSourcePick {
+        name: "dataSource (application)".into(),
+        origin: "Spring",
+        dsn: Some(Dsn::parse("postgres://app@discovered-host:5432/main").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let mut a = App::new(theme, Some(dsn), picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::Normal;
+    a.conn_state = ConnState::Failed("connection refused (os error 61)".into());
+    let buf = render(&mut a, 100, 20);
+    let dumped = dump(&buf);
+    assert_eq!(
+        dumped.matches("p change connection").count(),
+        2,
+        "the card and the footer must both offer it:\n{dumped}"
+    );
+    // Not snapshotted: the card's action line carries the operator's
+    // own cache path, which would pin this file to one machine.
+    let footer = dumped.lines().last().unwrap_or_default();
+    assert!(
+        footer.contains("r retry · p change connection"),
+        "footer: {footer:?}"
+    );
+}
