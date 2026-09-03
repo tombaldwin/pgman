@@ -70,6 +70,21 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     }
 }
 
+/// The sessions panel's title / footer line when the only backend on
+/// the server is pgman's own (the panel SQL excludes it): `0 total · 0
+/// blocked` read as a failed load on a quiet server.
+pub const SESSIONS_ONLY_THIS_SESSION: &str = "sessions · only this session";
+
+/// The sessions panel's status line for `total` listed backends, of
+/// which `blocked` are waiting on a lock. Pure / testable.
+pub fn sessions_status(total: usize, blocked: usize) -> String {
+    if total == 0 {
+        SESSIONS_ONLY_THIS_SESSION.to_string()
+    } else {
+        format!("sessions · {total} total · {blocked} blocked")
+    }
+}
+
 /// Is there a `safety.toml` in the config dir? Decides which
 /// [`read_only_escape_refusal`] to show; checked at message time
 /// because the profile itself does not record where it came from.

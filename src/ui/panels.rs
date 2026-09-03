@@ -1141,9 +1141,19 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, popup);
 
     if app.sessions.rows.is_empty() {
-        let msg = app.last_status.clone().unwrap_or_else(|| "no rows".into());
+        // Either still loading, or the server is quiet: the panel SQL
+        // leaves pgman's own backend out, so an empty list on a live
+        // connection means exactly one session — this one. Say so.
+        let msg = if app.last_status.as_deref() == Some(crate::app::SESSIONS_ONLY_THIS_SESSION) {
+            "only this session — no other backend is connected (pgman's own is left out of the list)"
+                .to_string()
+        } else {
+            app.last_status.clone().unwrap_or_else(|| "no rows".into())
+        };
         f.render_widget(
-            Paragraph::new(Text::from(msg)).style(Style::default().fg(theme.muted)),
+            Paragraph::new(Text::from(msg))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme.muted)),
             inner,
         );
         return;
