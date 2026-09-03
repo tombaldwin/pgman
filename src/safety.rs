@@ -902,15 +902,55 @@ pub fn split_verified(sql: &str) -> Result<Vec<String>, SplitError> {
         return Err(SplitError::Unterminated(bad.kind.name()));
     }
     let statements = split_statements(sql);
-    // `";\n"`, not `";"` — the same separator both callers execute with. A
-    // statement may now end in a `-- line comment`, and on one line the `;`
-    // that follows would fall *inside* it; the newline is what keeps the
-    // re-join meaning what the pieces meant.
-    let rejoined = statements.join(";\n");
+    let rejoined = join_verified(&statements);
     if canonical_for_compare(&rejoined) != canonical_for_compare(sql) {
         return Err(SplitError::Mismatch);
     }
+    // The re-join is what executes, so it must split back into exactly the
+    // statements the classifier saw. This is the check that catches a
+    // separator being swallowed by the tail of a statement — which is how
+    // `UPDATE … WHERE id=1 --` followed by `; OR true` once reached the
+    // server as `WHERE id=1 OR true`.
+    if split_statements(&rejoined) != statements {
+        return Err(SplitError::Mismatch);
+    }
     Ok(statements)
+}
+
+/// The one way verified statements are joined back into the script that
+/// executes. `"\n;\n"`: the newline BEFORE the `;` ends any `-- line
+/// comment` the statement finishes with, so the separator can never land
+/// inside it; the newline after keeps the next statement's own leading
+/// comment (if any) on its own line. Every executor — batch, the TUI's
+/// multi-statement path, and `split_verified`'s self-check — uses this, so
+/// what was checked is what runs.
+pub fn join_verified(statements: &[String]) -> String {
+    statements.join("\n;\n")
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    #[test]
+    fn a_trailing_line_comment_cannot_swallow_the_separator() {
+        // `UPDATE … WHERE id=1 --` then `; OR true`: joined with `";\n"` the
+        // `;` sat inside the comment and the server ran `WHERE id=1 OR true`.
+        let sql = "UPDATE t SET v='PWNED' WHERE id=1 --\n; OR true";
+        let statements = split_verified(sql).expect("splits");
+        assert_eq!(statements.len(), 2, "{statements:?}");
+        let joined = join_verified(&statements);
+        assert_eq!(split_statements(&joined), statements);
+        assert!(joined.contains("--\n;\n"), "{joined:?}");
+    }
+
+    #[test]
+    fn a_legitimate_script_with_a_trailing_comment_round_trips() {
+        let sql = "DELETE FROM t WHERE id=1 --x\n; INSERT INTO t VALUES (3)";
+        let statements = split_verified(sql).expect("splits");
+        assert_eq!(statements.len(), 2);
+        assert_eq!(split_statements(&join_verified(&statements)), statements);
+    }
 }
 
 /// A comparison form for [`split_verified`]: comments dropped, whitespace and
@@ -1575,7 +1615,7 @@ mod tests {
             "the body must survive verbatim, got {:?}",
             parts[1]
         );
-        let rejoined = parts.join(";\n");
+        let rejoined = join_verified(&parts);
         assert!(rejoined.contains(&format!("$fn${body}$fn$")));
     }
 

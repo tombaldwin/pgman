@@ -2716,7 +2716,7 @@ impl App {
             }
         };
         // From here on, `sql` is the checked text — never the raw buffer.
-        let sql = statements.join(";\n");
+        let sql = safety::join_verified(&statements);
         let decisions: Vec<Decision> = statements
             .iter()
             .map(|s| safety::evaluate(&self.safety_config, &db, s))
