@@ -696,3 +696,41 @@ fn log_pick_at_a_short_terminal_still_shows_a_pick() {
     );
     insta::assert_snapshot!(dumped);
 }
+
+/// The connection picker at 50 columns with a Spring pick whose URL
+/// still holds an unresolved `${…}` placeholder.
+///
+/// `main.rs` marks such a pick by appending `— unresolved ${NAME}` to
+/// its name, and that marker is the whole warning: pressing enter on it
+/// is refused. The row was never fitted to the popup, so at a narrow
+/// width the marker fell off the right edge and a pick that cannot
+/// connect looked exactly like one that can.
+#[test]
+fn conn_pick_keeps_the_unresolved_marker_at_50_columns() {
+    let mut a = settle_app();
+    a.conn_pick.picks = vec![
+        DataSourcePick {
+            name: "dataSource (application-dev.yml) — unresolved ${DB_PASSWORD}".into(),
+            origin: "Spring",
+            dsn: Some(Dsn::parse("postgres://app@orders-db.internal:5432/orders").unwrap()),
+            unresolved: vec!["DB_PASSWORD".into()],
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "prod".into(),
+            origin: "project",
+            dsn: Some(Dsn::parse("postgres://app@prod-db:5432/main").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+    ];
+    a.conn_pick.index = 0;
+    a.mode = Mode::ConnPick;
+    let buf = render(&mut a, 50, 14);
+    let dumped = dump(&buf);
+    assert!(
+        dumped.contains("unresolved"),
+        "the refusal marker must survive the fit:\n{dumped}"
+    );
+    insta::assert_snapshot!(dumped);
+}
