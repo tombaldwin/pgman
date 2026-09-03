@@ -7393,3 +7393,55 @@ fn f5_while_a_query_is_running_does_not_start_a_second_execution() {
     );
     assert_eq!(a.mode, Mode::Editor);
 }
+
+#[test]
+fn j_and_g_stop_at_the_end_of_a_filtered_grid_not_the_whole_grid() {
+    // Ten rows, one visible after `/alice`. `j` clamped to
+    // `grid.row_count()`, so five presses selected row 5 of a
+    // one-row view: no highlight, and Enter opened nothing.
+    let rows: Vec<Vec<String>> = (0..10)
+        .map(|i| {
+            vec![
+                i.to_string(),
+                if i == 3 {
+                    "alice".into()
+                } else {
+                    format!("user{i}")
+                },
+            ]
+        })
+        .collect();
+    let mut a = app_with_grid(Grid {
+        columns: vec!["id".into(), "name".into()],
+        rows,
+        truncated: false,
+    });
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('/')));
+    type_str(&mut a, "alice");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.grid_view.visible_rows, vec![3], "one visible row");
+    for _ in 0..5 {
+        a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    }
+    assert_eq!(
+        a.grid_state.selected(),
+        Some(0),
+        "j walked past the only visible row"
+    );
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    assert_eq!(
+        a.grid_state.selected(),
+        Some(0),
+        "G jumped past the filtered end"
+    );
+    a.on_key(KeyEvent::from(KeyCode::End));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    // Unfiltered, the whole grid is still reachable.
+    a.on_key(KeyEvent::from(KeyCode::Char('/')));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.grid_view.visible_rows.len(), 10);
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    assert_eq!(a.grid_state.selected(), Some(9));
+}

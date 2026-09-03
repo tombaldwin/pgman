@@ -3480,8 +3480,17 @@ impl App {
         self.refresh_grid_find_status();
     }
 
+    /// Rows the grid is currently showing — the filtered set, not
+    /// `grid.row_count()`. The selection indexes into THIS list (the
+    /// renderer walks `visible_rows`), so clamping to the unfiltered
+    /// count let `j` step past the last visible row onto rows that
+    /// weren't drawn: the highlight vanished and Enter opened nothing.
+    fn visible_row_count(&self) -> usize {
+        self.grid_view.visible_rows.len()
+    }
+
     fn scroll(&mut self, delta: isize) {
-        let count = self.grid.row_count();
+        let count = self.visible_row_count();
         if count == 0 {
             return;
         }
@@ -3491,7 +3500,7 @@ impl App {
     }
 
     fn select_row(&mut self, idx: usize) {
-        let count = self.grid.row_count();
+        let count = self.visible_row_count();
         if count == 0 {
             return;
         }
