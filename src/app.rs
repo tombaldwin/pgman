@@ -1124,6 +1124,15 @@ pub struct App {
     /// `tabs` always has at least one entry and `active_tab <
     /// tabs.len()`.
     pub active_tab: usize,
+    /// Per-tab editor height set by hand, in content lines — see
+    /// `TabSnapshot::editor_lines`. `None` is the automatic split.
+    pub editor_lines: Option<u16>,
+    /// Per-tab `Alt-Z` zoom — see `TabSnapshot::zoomed`.
+    pub zoomed: bool,
+    /// Body height (rows between the header/tab-bar and the footer)
+    /// of the last frame, recorded by `ui::draw`. `Alt-=` / `Alt--`
+    /// clamp against it; 0 until the first frame.
+    pub body_rows: u16,
     /// `true` after the operator pressed `m` and the next key
     /// is interpreted as the bookmark letter. Cleared after one
     /// dispatch (success or not).
@@ -1373,6 +1382,9 @@ impl App {
             // gets refreshed on every tab switch.
             tabs: vec![TabSnapshot::default()],
             active_tab: 0,
+            editor_lines: None,
+            zoomed: false,
+            body_rows: 0,
             pending_mark_set: false,
             pending_mark_jump: false,
             query_started: None,
@@ -1917,6 +1929,33 @@ impl App {
                         return;
                     }
                 }
+            }
+        }
+        // Pane zoom and editor size — Alt-Z / Alt-= / Alt-- / Alt-0.
+        // Global, and live in the editor too (that is where the
+        // operator is when the grid is too short), but off in every
+        // other text input: a prompt or filter has the keyboard, and
+        // reshaping the panes under it is not what a chord typed there
+        // meant. The decision modals returned above.
+        if alt && (!typing_mode || self.mode == Mode::Editor) && !self.tunnel_prompt_open() {
+            match key.code {
+                KeyCode::Char('z') => {
+                    self.toggle_zoom();
+                    return;
+                }
+                KeyCode::Char('=') | KeyCode::Char('+') => {
+                    self.resize_editor(1);
+                    return;
+                }
+                KeyCode::Char('-') | KeyCode::Char('_') => {
+                    self.resize_editor(-1);
+                    return;
+                }
+                KeyCode::Char('0') => {
+                    self.reset_editor_size();
+                    return;
+                }
+                _ => {}
             }
         }
 

@@ -12,7 +12,7 @@
 //! layout, not colour. Colour invariants live in
 //! `tests/render.rs` which inspects specific cells.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pgman::app::{
     compute_visible_rows, App, CompletionCycle, ConnState, DataSourcePick, DatabaseInfo,
     HistorySearchState, Mode, PendingRun, RunKind, WatchState,
@@ -770,4 +770,69 @@ fn conn_pick_keeps_the_unresolved_marker_at_50_columns() {
         "the refusal marker must survive the fit:\n{dumped}"
     );
     insta::assert_snapshot!(dumped);
+}
+
+/// `Alt-Z` in the editor on a short terminal: the editor is the whole
+/// body, there is no result block, and the editor's bottom border
+/// sits directly on the footer.
+#[test]
+fn editor_zoomed_60x16() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT id, email\nFROM users\nWHERE active = true".into();
+    a.editor.cursor = 0;
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+    let buf = render(&mut a, 60, 16);
+    let text = dump(&buf);
+    assert!(
+        !text.contains("result") && !text.contains("(no rows)"),
+        "no result block while the editor is zoomed:\n{text}"
+    );
+    assert!(text.contains(" editor · zoomed (alt-z) "), "{text}");
+    let corners: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
+        .map(|(y, _)| y)
+        .collect();
+    assert_eq!(corners, vec![1, 14], "one block, header to footer:\n{text}");
+    insta::assert_snapshot!(text);
+}
+
+/// `Alt-Z` on the grid: the results are the whole body and the editor
+/// block is gone.
+#[test]
+fn grid_zoomed_80x24() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.editor.buffer = "SELECT id, name FROM users".into();
+    a.grid = Grid {
+        columns: vec!["id".into(), "name".into()],
+        rows: vec![
+            vec!["1".into(), "alice".into()],
+            vec!["2".into(), "bob".into()],
+        ],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, None);
+    a.grid_state.select(Some(0));
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+    let buf = render(&mut a, 80, 24);
+    let text = dump(&buf);
+    assert!(
+        !text.contains("editor") && !text.contains("SELECT id, name"),
+        "no editor block while the grid is zoomed:\n{text}"
+    );
+    assert!(
+        text.contains(" result · 2 row(s) · zoomed (alt-z) "),
+        "{text}"
+    );
+    let corners: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
+        .map(|(y, _)| y)
+        .collect();
+    assert_eq!(corners, vec![1, 22], "one block, header to footer:\n{text}");
+    insta::assert_snapshot!(text);
 }

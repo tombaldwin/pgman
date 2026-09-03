@@ -44,25 +44,49 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // pre-multi-tab layout.
     let tabbar_height: u16 = if app.tabs.len() > 1 { 1 } else { 0 };
     // Everything between the header row and the footer row is the
-    // editor's and the grid's to share — see `editor_rows`.
+    // editor's and the grid's to share — see `pane_split`.
     let body_height = area.height.saturating_sub(2 + tabbar_height);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
-    let editor_height = editor_rows(editor_lines, body_height);
+    let zoom = app.zoomed.then(|| zoomed_pane(app));
+    let (editor_height, results_height) =
+        pane_split(editor_lines, app.editor_lines, zoom, body_height);
+    // `Alt-=` / `Alt--` clamp against the body they were pressed over.
+    app.body_rows = body_height;
     let chunks = Layout::vertical([
-        Constraint::Length(1),             // header
-        Constraint::Length(tabbar_height), // optional tab bar
-        Constraint::Length(editor_height), // editor pane (border + lines + border)
-        Constraint::Min(0),                // results grid
-        Constraint::Length(1),             // footer
+        Constraint::Length(1),              // header
+        Constraint::Length(tabbar_height),  // optional tab bar
+        Constraint::Length(editor_height),  // editor pane (border + lines + border)
+        Constraint::Length(results_height), // results grid
+        Constraint::Length(1),              // footer
     ])
     .split(area);
     draw_header(f, chunks[0], app);
     if tabbar_height > 0 {
         draw_tab_bar(f, chunks[1], app);
     }
-    draw_editor(f, chunks[2], app);
-    draw_body(f, chunks[3], app);
+    // A zoomed-away pane has no rows: skip it rather than hand its
+    // renderer a zero-height rect (the editor computes its scroll
+    // window from `inner.height`).
+    if editor_height > 0 {
+        draw_editor(f, chunks[2], app);
+    }
+    if results_height > 0 {
+        draw_body(f, chunks[3], app);
+    }
+    match zoom {
+        Some(ZoomPane::Editor) => paint_title_suffix(f, chunks[2], ZOOMED_TITLE_SUFFIX, app),
+        Some(ZoomPane::Results) => paint_title_suffix(f, chunks[3], ZOOMED_TITLE_SUFFIX, app),
+        None => {}
+    }
     draw_footer(f, chunks[4], app);
+    // Popups that anchor inside the results panel need somewhere to
+    // land when the editor is zoomed over it; the editor's own area
+    // is the whole body then, so they float there instead.
+    let panel_anchor = if results_height > 0 {
+        chunks[3]
+    } else {
+        chunks[2]
+    };
     // Every overlay below is centred inside the BODY, not the whole
     // terminal: the header carries the connection state and the footer
     // carries the mode's only close hint, and a popup tall enough to
@@ -73,7 +97,14 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
-        draw_completion_popup(f, chunks[2], chunks[3], app);
+        // Zoomed, the editor is the whole body and there is no panel
+        // under it: the popup floats over the editor's lower half.
+        let (above, below) = if results_height > 0 {
+            (chunks[2], chunks[3])
+        } else {
+            halves(chunks[2])
+        };
+        draw_completion_popup(f, above, below, app);
     }
     if app.mode == Mode::Help {
         draw_help(f, area, app);
@@ -86,10 +117,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // on the panel's top border and title (`┌ pgman┌ pick a
     // connection`). Same treatment the completion popup already gets.
     if app.mode == Mode::LogPick {
-        draw_log_pick(f, chunks[3], app);
+        draw_log_pick(f, panel_anchor, app);
     }
     if app.mode == Mode::ConnPick {
-        draw_conn_pick(f, chunks[3], app);
+        draw_conn_pick(f, panel_anchor, app);
     }
     if app.mode == Mode::RowDetail {
         draw_row_detail(f, area, app);
@@ -700,6 +731,103 @@ pub fn editor_rows(content_lines: usize, body_height: u16) -> u16 {
     wanted.clamp(floor, cap)
 }
 
+/// The editor pane's top and bottom border rows.
+pub const EDITOR_BORDERS: u16 = 2;
+
+/// Appended to the zoomed pane's block title so the missing pane
+/// reads as hidden on purpose, with the key that brings it back.
+const ZOOMED_TITLE_SUFFIX: &str = "· zoomed (alt-z) ";
+
+/// Which pane `Alt-Z` gives the whole body to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZoomPane {
+    Editor,
+    Results,
+}
+
+/// The pane a zoom applies to: the editor while the operator is in it
+/// — including its history search and a `:` bar opened from it, which
+/// both edit the editor's buffer — and the results otherwise. Decided
+/// per frame rather than latched at the keypress, so `e` from a
+/// zoomed grid lands in a zoomed editor instead of a hidden one.
+fn zoomed_pane(app: &App) -> ZoomPane {
+    let mode = match (app.mode, &app.command_bar) {
+        (Mode::CommandBar, Some(bar)) => bar.origin,
+        (m, _) => m,
+    };
+    if matches!(mode, Mode::Editor | Mode::HistorySearch) {
+        ZoomPane::Editor
+    } else {
+        ZoomPane::Results
+    }
+}
+
+/// `area` cut into an upper and a lower half, `(upper, lower)`; the
+/// lower half gets the odd row. Where the completion popup floats
+/// when the editor is zoomed and there is no result panel under it.
+fn halves(area: Rect) -> (Rect, Rect) {
+    let upper = area.height / 2;
+    (
+        Rect {
+            height: upper,
+            ..area
+        },
+        Rect {
+            y: area.y + upper,
+            height: area.height - upper,
+            ..area
+        },
+    )
+}
+
+/// Split `body_height` rows between the editor and the results:
+/// `(editor, results)`, always summing to `body_height`. A zoom gives
+/// the whole body to one pane; a manual size (`Alt-=` / `Alt--`, in
+/// content lines) gets its borders added and is clamped to the body;
+/// otherwise the automatic split (`editor_rows`). Pure / testable.
+pub fn pane_split(
+    content_lines: usize,
+    manual_lines: Option<u16>,
+    zoom: Option<ZoomPane>,
+    body_height: u16,
+) -> (u16, u16) {
+    let editor = match (zoom, manual_lines) {
+        (Some(ZoomPane::Editor), _) => body_height,
+        (Some(ZoomPane::Results), _) => 0,
+        (None, Some(lines)) => lines
+            .saturating_add(EDITOR_BORDERS)
+            .clamp((1 + EDITOR_BORDERS).min(body_height), body_height),
+        (None, None) => editor_rows(content_lines, body_height),
+    };
+    (editor, body_height - editor)
+}
+
+/// Write `suffix` onto `area`'s top border directly after the title
+/// its renderer drew there — the editor's and the grid's titles are
+/// built in their own modules, and the zoom marker is layout state
+/// that belongs to this one. The title is the run of non-`─` cells
+/// after the corner; the suffix follows its trailing space and is cut
+/// to fit before the far corner.
+fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
+    if area.height == 0 || area.width < 3 {
+        return;
+    }
+    let style = Style::default().fg(app.theme.title);
+    let buf = f.buffer_mut();
+    let y = area.y;
+    let last_x = area.right() - 2;
+    let title_end = (area.x + 1..=last_x)
+        .rev()
+        .find(|&x| buf[(x, y)].symbol() != "─")
+        .unwrap_or(area.x);
+    let start = title_end + 1;
+    if start > last_x {
+        return;
+    }
+    let room = usize::from(last_x - start + 1);
+    buf.set_stringn(start, y, suffix, room, style);
+}
+
 /// Fit a ` · `-joined hint string into `width` columns without ever
 /// truncating a hint mid-item. `hints` is treated as an ordered list of
 /// `" · "`-separated items, already written most-important-first; when
@@ -1162,7 +1290,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "ctrl-c cancel running query"
                 }
                 Mode::Editor => {
-                    "⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · ctrl-y redo · ctrl-r history · tab complete · ctrl-l log · esc"
+                    "⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · ctrl-y redo · ctrl-r history · tab complete · ctrl-l log · alt-z zoom · esc"
                 }
                 Mode::HistorySearch => {
                     "type to search · ctrl-r next-older · ctrl-d delete · enter accept · esc cancel"
@@ -1181,7 +1309,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · alt-z zoom",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",

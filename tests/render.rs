@@ -1279,3 +1279,122 @@ fn sessions_panel_on_a_quiet_server_says_only_this_session() {
     );
     assert!(!text.contains("0 total"), "{text}");
 }
+
+/// `Alt-Z` twice puts the screen back exactly as it was — the manual
+/// size set with `Alt-=` included — and nothing but the footer's
+/// status text differs between the two frames.
+#[test]
+fn alt_z_twice_restores_the_exact_prior_split() {
+    let mut a = App::new(
+        Theme::default(),
+        Some(Dsn::parse("postgres://test@localhost/test").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.grid = Grid {
+        columns: vec!["a".into()],
+        rows: vec![vec!["1".into()]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, None);
+    // One frame so the body height is known, then three lines taller
+    // than the automatic five.
+    render(&mut a, 80, 24);
+    for _ in 0..3 {
+        a.on_key(KeyEvent::new(KeyCode::Char('='), KeyModifiers::ALT));
+    }
+    let before = render(&mut a, 80, 24);
+    let body_before: Vec<String> = (0..23).map(|y| row_text(&before, y)).collect();
+    assert!(
+        row_text(&before, 10).starts_with('└'),
+        "8 lines + 2 borders under the header: bottom border on row 10:\n{}",
+        dump(&before)
+    );
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+    let zoomed = render(&mut a, 80, 24);
+    assert!(
+        row_text(&zoomed, 22).starts_with('└'),
+        "zoomed: the editor's bottom border is on the footer:\n{}",
+        dump(&zoomed)
+    );
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+    let after = render(&mut a, 80, 24);
+    let body_after: Vec<String> = (0..23).map(|y| row_text(&after, y)).collect();
+    assert_eq!(body_after, body_before, "the split came back different");
+}
+
+/// With the editor zoomed there is no result panel for the completion
+/// popup to float in; it floats over the editor's lower half instead
+/// of being placed on the footer row (or off the screen).
+#[test]
+fn completion_popup_floats_inside_a_zoomed_editor() {
+    use pgman::app::CompletionCycle;
+    use pgman::query::complete::{Candidate, CandidateKind};
+    let mut a = App::new(
+        Theme::default(),
+        Some(Dsn::parse("postgres://test@localhost/test").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a.mode = Mode::Editor;
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion = Some(CompletionCycle {
+        start: 14,
+        end: 16,
+        origin: "us".into(),
+        origin_prefix: "us".into(),
+        origin_cursor: 16,
+        candidates: vec![
+            Candidate {
+                display: "users".into(),
+                insert: "users".into(),
+                kind: CandidateKind::Table,
+                context: Some("public".into()),
+            },
+            Candidate {
+                display: "user_roles".into(),
+                insert: "user_roles".into(),
+                kind: CandidateKind::Table,
+                context: Some("public".into()),
+            },
+        ],
+        selected: Some(0),
+    });
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
+    let buf = render(&mut a, 80, 24);
+    let text = dump(&buf);
+    let popup_rows: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("users") && l.contains("table"))
+        .map(|(y, _)| y)
+        .collect();
+    assert_eq!(
+        popup_rows.len(),
+        1,
+        "one candidate row for `users`:\n{text}"
+    );
+    let y = popup_rows[0];
+    assert!(
+        (12..22).contains(&y),
+        "the popup floats in the editor's lower half (row {y}):\n{text}"
+    );
+    assert!(
+        text.lines().nth(y).unwrap().starts_with('│'),
+        "the editor's own border survives beside the popup:\n{text}"
+    );
+}

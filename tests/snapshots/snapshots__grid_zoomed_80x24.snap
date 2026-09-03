@@ -1,0 +1,29 @@
+---
+source: tests/snapshots.rs
+assertion_line: 834
+expression: text
+---
+ pgman │ test  connected · pg 16.0
+┌ result · 2 row(s) · zoomed (alt-z) ──────────────────────────────────────────┐
+│id  name                                                                      │
+│1   alice                                                                     │
+│2   bob                                                                       │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   results zoomed · alt-z restores the split
