@@ -110,6 +110,20 @@ async fn main() -> anyhow::Result<()> {
         std::process::exit(code);
     }
 
+    // `--log`'s size ceiling is a plain argument-validation error —
+    // independent of whether a terminal is attached — so it's checked
+    // ahead of the terminal probe below rather than deep in the
+    // preload path where it used to live. Skipped under `--demo`,
+    // which never reads `--log` at all (same as before this change).
+    if !cli.demo {
+        if let Some(path) = cli.log.as_deref() {
+            if let Err(msg) = check_log_max_size(path) {
+                eprintln!("--log: {msg}");
+                std::process::exit(2);
+            }
+        }
+    }
+
     // Every remaining path enters the alternate screen (--demo included).
     // A launch with no terminal on either end used to die with a raw
     // `Error: Device not configured (os error 6)` from inside crossterm —
@@ -258,7 +272,7 @@ async fn main() -> anyhow::Result<()> {
     // is a stronger signal of intent than a leftover editor session.
     if let Some(path) = cli.log.as_ref() {
         match read_log_source(path) {
-            Ok(text) => application.preload_log(&text),
+            Ok(text) => application.preload_log(text),
             Err(e) => {
                 eprintln!("--log {}: {e}", path.display());
                 std::process::exit(2);
@@ -829,6 +843,34 @@ fn init_config() -> i32 {
             1
         }
     }
+}
+
+/// `--log`'s size ceiling — the reconstruction parsers hold the whole
+/// file (and their parsed output) in memory, and the editor buffer
+/// isn't meant to carry tens of megabytes of raw log text either.
+const LOG_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Refuse a `--log PATH` bigger than [`LOG_MAX_BYTES`] before reading
+/// it. `-` (stdin) has no knowable size ahead of reading it, so it's
+/// exempt. A `path` that doesn't exist / can't be stat'd is let
+/// through here — `read_log_source` produces the real (not-found /
+/// permission) error for that case.
+fn check_log_max_size(path: &std::path::Path) -> Result<(), String> {
+    if path.as_os_str() == "-" {
+        return Ok(());
+    }
+    let Ok(meta) = std::fs::metadata(path) else {
+        return Ok(());
+    };
+    if meta.len() > LOG_MAX_BYTES {
+        let mb = meta.len() / (1024 * 1024);
+        return Err(format!(
+            "{} is {mb} MB; pgman reconstructs logs up to 64 MB — trim it first \
+             (grep for org.hibernate.SQL or LOG:)",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Read `--log PATH`'s target: `-` reads stdin to EOF, otherwise the file
@@ -1806,5 +1848,52 @@ mod main_tests {
         assert_eq!(cfg.default.guards.other, want.default.guards.other);
         assert!(cfg.databases.is_empty());
         assert!(want.databases.is_empty());
+    }
+
+    // --- check_log_max_size: the --log 64 MiB ceiling -------------------
+
+    #[test]
+    fn check_log_max_size_allows_the_stdin_marker() {
+        assert!(check_log_max_size(std::path::Path::new("-")).is_ok());
+    }
+
+    #[test]
+    fn check_log_max_size_allows_a_small_file() {
+        let dir = std::env::temp_dir().join(format!("pgman-log-size-small-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small.log");
+        std::fs::write(&path, "tiny").unwrap();
+        let got = check_log_max_size(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(got.is_ok());
+    }
+
+    #[test]
+    fn check_log_max_size_refuses_a_file_over_64mb() {
+        let dir = std::env::temp_dir().join(format!("pgman-log-size-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.log");
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            f.set_len(65 * 1024 * 1024).unwrap();
+        }
+        let err = check_log_max_size(&path).unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(err.contains("is 65 MB"), "got: {err}");
+        assert!(err.contains("64 MB"), "got: {err}");
+        assert!(
+            err.contains("org.hibernate.SQL") || err.contains("LOG:"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn check_log_max_size_lets_a_missing_file_through() {
+        // `read_log_source` produces the real not-found error; this
+        // check must not shadow it with a misleading size message.
+        let path =
+            std::env::temp_dir().join(format!("pgman-log-size-missing-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert!(check_log_max_size(&path).is_ok());
     }
 }

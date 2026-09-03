@@ -2152,8 +2152,8 @@ impl App {
     /// pasting the text and pressing F8 by hand. Either way this overrides
     /// whatever startup mode `App::new` picked (e.g. `Mode::ConnPick` for
     /// multiple detected data sources) — an explicit `--log` wins.
-    pub fn preload_log(&mut self, text: &str) {
-        self.editor.buffer = text.to_string();
+    pub fn preload_log(&mut self, text: String) {
+        self.editor.buffer = text;
         self.editor.cursor = self.editor.buffer.len();
         self.mode = Mode::Editor;
         self.start_log_import();

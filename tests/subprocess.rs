@@ -287,3 +287,25 @@ fn init_config_writes_a_default_and_refuses_to_overwrite() {
     let stderr = String::from_utf8_lossy(&second.stderr);
     assert!(stderr.contains("already exists"), "got: {stderr}");
 }
+
+#[test]
+fn log_over_64mb_is_refused_before_being_read() {
+    let dir = std::env::temp_dir().join(format!("pgman-log-cap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("huge.log");
+    {
+        let f = std::fs::File::create(&path).unwrap();
+        f.set_len(65 * 1024 * 1024).unwrap();
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .args(["--log", path.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("is 65 MB"), "got: {stderr}");
+    assert!(stderr.contains("64 MB"), "got: {stderr}");
+}
