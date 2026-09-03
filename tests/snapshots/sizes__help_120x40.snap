@@ -32,7 +32,7 @@ expression: dump(&buf)
 │                 │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)    │                 │
 │                 │     h / l  ← →    move column cursor                                             │                 │
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
-│                 │ ↓ 209 more below                                                                 │                 │
+│                 │ ↓ 214 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

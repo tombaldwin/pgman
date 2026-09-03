@@ -40,7 +40,7 @@ expression: dump(&buf)
 │                             │     m<a-z>        set bookmark at focused (row, col)                                                                                     │                             │
 │                             │     '<a-z>        jump to bookmark                                                                                                       │                             │
 │                             │     j / k  ↑ ↓    move selection                                                                                                         │                             │
-│                             │ ↓ 193 more below                                                                                                                         │                             │
+│                             │ ↓ 196 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │

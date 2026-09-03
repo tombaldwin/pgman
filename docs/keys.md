@@ -12,11 +12,12 @@ but not while typing; `Ctrl-]` (next tab) and `Ctrl-T` (new tab) work from
 the editor too; `Ctrl-W` closes the current tab from any mode *except* while
 typing (editor, filters, search prompts — where `Ctrl-W` would collide with
 `\watch` or word-delete). `Ctrl-Tab` / `Ctrl-Shift-Tab`, `Alt-N` / `Alt-P`
-and `Alt-1`..`Alt-9` do the same where the terminal delivers them. `Alt-Z`
-(zoom the focused pane) and `Alt-=` / `Alt--` / `Alt-0` (editor size) work
-from the grid, the editor and every panel, but not from a prompt, filter or
-the command bar. `A` (about) works from the grid (Normal mode); `:about`
-reaches it from anywhere.
+and `Alt-1`..`Alt-9` do the same where the terminal delivers them. `z` / `Z`
+(zoom the results / the editor) and `+` / `-` / `0` (editor size) work from
+the grid; `Alt-Z` and `Alt-=` / `Alt--` / `Alt-0` do the same from the grid,
+the editor and every panel where the terminal delivers them, but not from a
+prompt, filter or the command bar. `A` (about) works from the grid (Normal
+mode); `:about` reaches it from anywhere.
 
 ## Connection picker
 
@@ -54,9 +55,11 @@ once a query has run share one key map.
 | `L` | Active sessions + locks |
 | `F3` | NOTIFY arrivals panel (also reachable from any mode) |
 | `]` / `[` / `1`..`9` / `Ctrl-T` | Next / previous tab, jump to tab N, new tab — see [Tabs](#tabs) |
-| `Alt-Z` | Zoom the results to the whole body; `Alt-Z` again restores the split exactly as it was |
-| `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
-| `Alt-0` | Back to the automatic editor/results split |
+| `z` | Zoom the results to the whole body; `z` again restores the split exactly as it was |
+| `Z` | Zoom the editor and go there; `Esc` then `z` restores the split |
+| `+` (or `=`) / `-` | Grow / shrink the editor by one line (the results keep at least one row) |
+| `0` | Back to the automatic editor/results split |
+| `Alt-Z`, `Alt-=` / `Alt--`, `Alt-0` | The same zoom and size, where the terminal delivers Alt chords |
 | `j` / `k` / `↓` / `↑` | Move selection |
 | `h` / `l` / `←` / `→` | Move column cursor |
 | `g` / `Home` | First row |
@@ -99,9 +102,9 @@ diff, all of which are also dispatched from this mode.
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
 | `Home` / `End` | Start / end of current line |
 | `Ctrl-]` | Next tab (`Ctrl-Tab` / `Alt-N` too, where the terminal delivers them) |
-| `Alt-Z` | Zoom the editor to the whole body; `Alt-Z` again restores the split exactly as it was |
-| `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
-| `Alt-0` | Back to the automatic editor/results split |
+| `Alt-Z` | Zoom the editor to the whole body; `Alt-Z` again (or `Esc` then `z`) restores the split exactly as it was — where the terminal delivers Alt; from the grid, `Z` does the same |
+| `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) — from the grid, `+` / `-` |
+| `Alt-0` | Back to the automatic editor/results split — from the grid, `0` |
 | `Esc` | Back to grid (or, with a completion popup open, abandon the popup and restore the typed prefix) |
 
 Typing a space right after `FROM`, `JOIN`, `INNER`, `LEFT`, `RIGHT`, `FULL`,
@@ -312,8 +315,8 @@ the digits still switch tabs there.
 | `Alt-N` / `Alt-P`, `Alt-1` .. `Alt-9` | The same, where the terminal delivers Alt chords (iTerm on a Mac needs the option key set to `Esc+`) |
 
 Connection, schema cache, history and saved queries are shared across tabs.
-The editor/results split (`Alt-=` / `Alt--` / `Alt-0`) and the zoom
-(`Alt-Z`) are per tab: switching tabs restores each tab's own layout.
+The editor/results split (`+` / `-` / `0`) and the zoom (`z` / `Z`) are
+per tab: switching tabs restores each tab's own layout.
 
 ## JDBC tap monitor
 

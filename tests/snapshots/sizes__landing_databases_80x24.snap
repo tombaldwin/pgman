@@ -25,4 +25,4 @@ expression: dump(&buf)
 │   SELECT * FROM users WHERE id = 42;                                         │
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                      │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +9 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +10 more

@@ -8639,7 +8639,11 @@ fn editor_size_clamps_to_one_line_and_to_a_body_that_keeps_a_results_row() {
     a.on_key(alt('='));
     a.on_key(alt('='));
     assert_eq!(a.editor_lines, Some(17));
-    assert!(a.last_status.as_deref().unwrap().contains("alt-z to zoom"));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("editor 17 lines (results keep a row · z to zoom) · 0 auto"),
+        "from the grid the status names the plain keys"
+    );
     // Before the first frame nothing is known about the body: the
     // size still moves, from a floor of one line.
     let mut fresh = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -8698,6 +8702,88 @@ fn zoom_and_size_chords_are_inert_in_prompts_and_decision_modals() {
     assert!(!c.zoomed);
     assert_eq!(c.editor_lines, None);
     assert_eq!(c.mode, Mode::Confirm);
+}
+
+// ---- z / Z zoom, + - 0 editor size from the grid ------------------------
+
+#[test]
+fn z_toggles_the_results_zoom_and_restores_the_exact_split() {
+    let mut a = sized_app(Mode::Normal);
+    a.editor_lines = Some(9);
+    press(&mut a, KeyCode::Char('z'));
+    assert!(a.zoomed);
+    assert_eq!(a.editor_lines, Some(9));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("results zoomed · z restores the split")
+    );
+    press(&mut a, KeyCode::Char('z'));
+    assert!(!a.zoomed, "the second z restores the split");
+    assert_eq!(a.editor_lines, Some(9), "…exactly as it was");
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+#[test]
+fn shift_z_lands_in_a_zoomed_editor_and_esc_then_z_restores() {
+    let mut a = sized_app(Mode::Normal);
+    a.editor_lines = Some(7);
+    press(&mut a, KeyCode::Char('Z'));
+    assert_eq!((a.zoomed, a.mode), (true, Mode::Editor));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("editor zoomed · esc then z restores the split (alt-z too)")
+    );
+    assert_eq!(a.editor.buffer, "", "no Z was typed");
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(
+        (a.zoomed, a.mode),
+        (true, Mode::Normal),
+        "esc leaves the zoom on — the results take the body"
+    );
+    press(&mut a, KeyCode::Char('z'));
+    assert_eq!((a.zoomed, a.editor_lines), (false, Some(7)));
+    // Z on an already-zoomed grid goes into the editor with the zoom
+    // kept, rather than switching it off.
+    press(&mut a, KeyCode::Char('z'));
+    press(&mut a, KeyCode::Char('Z'));
+    assert_eq!((a.zoomed, a.mode), (true, Mode::Editor));
+}
+
+#[test]
+fn plus_and_minus_size_the_editor_from_the_grid_and_zero_resets() {
+    let mut a = sized_app(Mode::Normal);
+    press(&mut a, KeyCode::Char('='));
+    assert_eq!(a.editor_lines, Some(6), "= is + on a US layout");
+    press(&mut a, KeyCode::Char('+'));
+    assert_eq!(a.editor_lines, Some(7));
+    press(&mut a, KeyCode::Char('-'));
+    press(&mut a, KeyCode::Char('-'));
+    press(&mut a, KeyCode::Char('-'));
+    assert_eq!(a.editor_lines, Some(4));
+    assert_eq!(a.last_status.as_deref(), Some("editor 4 lines · 0 auto"));
+    press(&mut a, KeyCode::Char('0'));
+    assert_eq!(a.editor_lines, None);
+    assert_eq!(a.last_status.as_deref(), Some("editor auto-sized"));
+    assert_eq!(a.mode, Mode::Normal, "0 is not a tab jump");
+}
+
+#[test]
+fn plain_zoom_and_size_keys_share_the_alt_implementation_and_type_in_the_editor() {
+    let mut a = sized_app(Mode::Normal);
+    press(&mut a, KeyCode::Char('+'));
+    a.on_key(alt('='));
+    assert_eq!(a.editor_lines, Some(7), "one step each, same counter");
+    press(&mut a, KeyCode::Char('z'));
+    a.on_key(alt('z'));
+    assert!(!a.zoomed, "z and alt-z toggle the same flag");
+    // In the editor the plain keys are characters.
+    a.mode = Mode::Editor;
+    press(&mut a, KeyCode::Char('z'));
+    press(&mut a, KeyCode::Char('0'));
+    press(&mut a, KeyCode::Char('-'));
+    assert_eq!(a.editor.buffer, "z0-");
+    assert!(!a.zoomed);
+    assert_eq!(a.editor_lines, Some(7));
 }
 
 // ---- Alt-N / Alt-P: next / previous tab ----------------------------------

@@ -25,4 +25,4 @@ expression: dump(&buf)
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                      │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +9 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +10 more

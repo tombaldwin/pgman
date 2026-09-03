@@ -4,7 +4,7 @@ expression: text
 ---
  pgman │ test  connected · pg 16.0
  1 SELECT id, name F…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ result · 2 row(s) · zoomed (alt-z) ──────────────────────────────────────────┐
+┌ result · 2 row(s) · zoomed (z) ──────────────────────────────────────────────┐
 │id  name                                                                      │
 │1   alice                                                                     │
 │2   bob                                                                       │
@@ -25,4 +25,4 @@ expression: text
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   results zoomed · alt-z restores the split
+ RO   results zoomed · z restores the split

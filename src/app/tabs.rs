@@ -171,33 +171,47 @@ pub(crate) fn tab_index_for_digit(c: char) -> Option<usize> {
 /// Fewest content lines the editor can be shrunk to by hand.
 const EDITOR_LINES_MIN: u16 = 1;
 /// Rows the result pane keeps when the editor is grown by hand — its
-/// two borders and one content row — so `Alt-=` can never push the
-/// grid off the screen; that is what `Alt-Z` is for.
+/// two borders and one content row — so `+` can never push the grid
+/// off the screen; that is what the zoom is for.
 const RESULTS_ROWS_MIN: u16 = 3;
 
 impl App {
-    /// `Alt-Z` — the focused pane takes the whole body; again restores
-    /// the split as it was (manual or automatic — `editor_lines` is not
-    /// touched). Per-tab.
+    /// `z` from the grid / `Alt-Z` anywhere — the focused pane takes
+    /// the whole body; again restores the split as it was (manual or
+    /// automatic — `editor_lines` is not touched). Per-tab. The status
+    /// names the key that undoes it from where the operator now is:
+    /// in the editor `z` would type, so it is `esc` then `z` (or the
+    /// Alt chord, where the terminal delivers it).
     pub fn toggle_zoom(&mut self) {
         self.zoomed = !self.zoomed;
         self.last_status = Some(if self.zoomed {
-            let pane = if self.mode == Mode::Editor {
-                "editor"
+            if self.mode == Mode::Editor {
+                "editor zoomed · esc then z restores the split (alt-z too)".to_string()
             } else {
-                "results"
-            };
-            format!("{pane} zoomed · alt-z restores the split")
+                "results zoomed · z restores the split".to_string()
+            }
         } else {
             "zoom off".to_string()
         });
     }
 
-    /// `Alt-=` / `Alt--` — grow / shrink the editor by `delta` content
-    /// lines, starting from whatever it is on screen now (the automatic
-    /// split when no size was set). Clamped to `[1, body - results
-    /// minimum]` against the last rendered body height. Leaves zoom
-    /// alone: the new size shows once the zoom is toggled off.
+    /// `Z` from the grid — the editor takes the whole body and gets the
+    /// cursor. A grid that is already zoomed goes into the editor with
+    /// the zoom kept (the zoomed pane follows the mode), so `Z` always
+    /// lands in a zoomed editor; `esc` then `z` restores the split.
+    pub fn zoom_editor(&mut self) {
+        self.mode = Mode::Editor;
+        if !self.zoomed {
+            self.toggle_zoom();
+        }
+    }
+
+    /// `+` / `-` from the grid, `Alt-=` / `Alt--` anywhere — grow /
+    /// shrink the editor by `delta` content lines, starting from
+    /// whatever it is on screen now (the automatic split when no size
+    /// was set). Clamped to `[1, body - results minimum]` against the
+    /// last rendered body height. Leaves zoom alone: the new size shows
+    /// once the zoom is toggled off.
     pub fn resize_editor(&mut self, delta: i32) {
         let body = self.body_rows;
         let auto_lines = crate::ui::editor_rows(self.editor_content_lines(), body)
@@ -211,20 +225,27 @@ impl App {
         // `max ≥ EDITOR_LINES_MIN ≥ 1`, so the clamp always lands in u16.
         let next = u16::try_from(clamped).unwrap_or(EDITOR_LINES_MIN);
         self.editor_lines = Some(next);
-        let edge = if wanted > i64::from(max) {
-            " (results keep a row · alt-z to zoom)"
-        } else if wanted < i64::from(EDITOR_LINES_MIN) {
-            " (minimum)"
+        // Name the keys that work from where the operator is: the
+        // plain ones from the grid, the Alt chords from the editor.
+        let (zoom_key, reset_key) = if self.mode == Mode::Editor {
+            ("alt-z", "alt-0")
         } else {
-            ""
+            ("z", "0")
+        };
+        let edge = if wanted > i64::from(max) {
+            format!(" (results keep a row · {zoom_key} to zoom)")
+        } else if wanted < i64::from(EDITOR_LINES_MIN) {
+            " (minimum)".to_string()
+        } else {
+            String::new()
         };
         self.last_status = Some(format!(
-            "editor {next} line{}{edge} · alt-0 auto",
+            "editor {next} line{}{edge} · {reset_key} auto",
             if next == 1 { "" } else { "s" }
         ));
     }
 
-    /// `Alt-0` — back to the automatic split.
+    /// `0` from the grid / `Alt-0` anywhere — back to the automatic split.
     pub fn reset_editor_size(&mut self) {
         self.editor_lines = None;
         self.last_status = Some("editor auto-sized".into());
