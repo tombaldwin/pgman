@@ -284,6 +284,37 @@ async fn cancel_token_aborts_pg_sleep() {
     );
 }
 
+#[tokio::test]
+async fn every_connection_identifies_itself_as_pgman_in_pg_stat_activity() {
+    // `pg_stat_activity.application_name` is how a DBA tells pgman's
+    // backend from the application pool's — and what the sessions
+    // panel's `user/app` column shows for another pgman.
+    use pgman::conn::{connect_only, NoticeMsg, NotificationMsg};
+
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("parse DSN");
+    let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel::<NoticeMsg>();
+    let (notification_tx, _notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<NotificationMsg>();
+    let (client, _tunnel) = connect_only(dsn, true, 0, notice_tx, notification_tx)
+        .await
+        .expect("connect");
+    let grid = pgman::conn::run_statement(
+        &client,
+        "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid()",
+    )
+    .await
+    .expect("query pg_stat_activity");
+    assert_eq!(
+        grid.rows
+            .first()
+            .and_then(|r| r.first())
+            .map(String::as_str),
+        Some(format!("pgman/{}", env!("CARGO_PKG_VERSION")).as_str()),
+        "got: {:?}",
+        grid.rows
+    );
+}
+
 #[test]
 fn batch_expanded_format_renders_one_record_per_block() {
     let out = Command::new(pgman_binary())

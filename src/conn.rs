@@ -833,6 +833,7 @@ async fn connect_inner(
     if let Some(password) = &dsn.password {
         cfg.password(password);
     }
+    cfg.application_name(application_name(&dsn));
     let verify = apply_ssl_mode(&mut cfg, &dsn);
 
     // Connect with TLS when we can build a connector; fall back to
@@ -1339,6 +1340,18 @@ const KNOWN_SSLMODES: [&str; 6] = [
     "verify-ca",
     "verify-full",
 ];
+
+/// The `application_name` every pgman connection identifies itself with
+/// in `pg_stat_activity` (and a DBA's grep of it): `pgman/<version>`,
+/// unless the DSN carries its own `application_name=` — libpq honours
+/// that parameter and an operator who set it meant it. Pure / testable.
+pub fn application_name(dsn: &Dsn) -> String {
+    dsn.params
+        .iter()
+        .find(|(k, v)| k.eq_ignore_ascii_case("application_name") && !v.is_empty())
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| format!("pgman/{}", env!("CARGO_PKG_VERSION")))
+}
 
 /// Apply `sslmode` from `dsn.params` to a `tokio_postgres::Config` and
 /// return whether certificate verification should be performed by the
@@ -2231,6 +2244,26 @@ mod tests {
             h.contains("ssh -v"),
             "hint should suggest manual verify: {h}"
         );
+    }
+
+    #[test]
+    fn application_name_defaults_to_pgman_and_its_version() {
+        let d = Dsn::parse("postgres://h/db").unwrap();
+        assert_eq!(
+            application_name(&d),
+            format!("pgman/{}", env!("CARGO_PKG_VERSION"))
+        );
+        // An empty value is no value.
+        let d = Dsn::parse("postgres://h/db?application_name=").unwrap();
+        assert!(application_name(&d).starts_with("pgman/"));
+    }
+
+    #[test]
+    fn application_name_honours_the_dsn_parameter() {
+        let d = Dsn::parse("postgres://h/db?application_name=svc@box").unwrap();
+        assert_eq!(application_name(&d), "svc@box");
+        let d = Dsn::parse("postgres://h/db?Application_Name=svc").unwrap();
+        assert_eq!(application_name(&d), "svc");
     }
 
     #[test]
