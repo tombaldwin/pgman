@@ -326,15 +326,15 @@ impl App {
                 self.last_status = Some(format!("no command starts with :{typed}"));
             }
             1 => {
+                // `with_text` leaves the cursor at the end — right
+                // where the argument goes.
                 bar.input = TextInput::with_text(format!("{} ", candidates[0]));
-                bar.input.end();
                 self.last_status = None;
             }
             _ => {
                 let prefix = crate::app::cmd::longest_common_prefix(&candidates);
                 if prefix.len() > typed.len() {
                     bar.input = TextInput::with_text(prefix);
-                    bar.input.end();
                 }
                 self.last_status = Some(candidates.join(" "));
             }
