@@ -212,11 +212,21 @@ impl App {
             "help" => self.dispatch_help_topic(arg),
             "readonly" => self.dispatch_read_only(arg),
             other => {
+                // Rebuild from the LOWERCASED name, not the raw line:
+                // the four commands handled above matched on the
+                // lowercased name, so `:ABOUT` worked, while
+                // everything delegated here was handed `\DT` — which
+                // `parse_backslash_command` doesn't recognise, so
+                // `:DT` answered "unknown command". The argument keeps
+                // its case (paths and data-source names are
+                // case-sensitive); only the name is folded.
+                //
                 // `connect` is the bar's spelling of psql's `\c`.
-                let body = if other == "connect" {
-                    format!("c {rest}")
+                let name = if other == "connect" { "c" } else { other };
+                let body = if rest.is_empty() {
+                    name.to_string()
                 } else {
-                    line.to_string()
+                    format!("{name} {rest}")
                 };
                 match crate::query::backslash::parse_backslash_command(&format!("\\{body}")) {
                     Some(crate::query::backslash::BackslashCmd::Unknown(_)) | None => {
