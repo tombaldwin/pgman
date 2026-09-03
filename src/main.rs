@@ -61,7 +61,8 @@ struct Cli {
     #[arg(long, default_value = "csv", help_heading = "Batch mode")]
     format: String,
 
-    /// In --batch, proceed past statements the safety guard would only confirm.
+    /// In --batch, proceed past guarded writes needing confirmation;
+    /// blocked statements and read-only stay refused either way.
     #[arg(long, help_heading = "Batch mode")]
     yes: bool,
 
