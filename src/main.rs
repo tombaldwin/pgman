@@ -1263,12 +1263,38 @@ fn discover_spring_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSource
                     }
                 }
             }
-            if dsn.is_none() && unresolved.is_empty() && unresolved_host.is_empty() {
-                // Not a Postgres URL and nothing unresolved to report —
-                // e.g. a `jdbc:mysql:` block. Skipping it silently is
-                // right; skipping a *marked* one is what hid the
-                // problem from the operator.
-                continue;
+            if dsn.is_none() {
+                // No parseable Postgres DSN. Two different reasons to
+                // skip, and one reason to keep.
+                //
+                // `parse_properties_partials` is deliberately
+                // unfiltered (a profile overlay may carry only a
+                // password), so `service.url=${API_URL}` arrives here
+                // like any datasource block. Its placeholder is
+                // unresolvable-by-design (no `://`, so the whole value
+                // is host-tainting) — which used to be enough to keep
+                // it, and it showed up in the picker as a Postgres
+                // candidate called "service (application)". A block is
+                // only a candidate when the URL says so (`jdbc:`) or
+                // the prefix does (`spring.datasource`, `dataSource`,
+                // `logDataSource`, …); the second half is what keeps
+                // `spring.datasource.url=${SPRING_DATASOURCE_URL}`
+                // visible-but-refused rather than silently gone.
+                let looks_like_a_datasource = raw_url
+                    .trim_start()
+                    .to_ascii_lowercase()
+                    .starts_with("jdbc:")
+                    || creds::spring::is_datasource_prefix(&p.prefix);
+                if !looks_like_a_datasource {
+                    continue;
+                }
+                if unresolved.is_empty() && unresolved_host.is_empty() {
+                    // A real datasource block that simply isn't
+                    // Postgres — a `jdbc:mysql:` URL. Skipping it
+                    // silently is right; skipping a *marked* one is
+                    // what hid the problem from the operator.
+                    continue;
+                }
             }
             // Provenance only — never the raw password (CLAUDE.md).
             tracing::info!(
@@ -1756,6 +1782,26 @@ mod main_tests {
         assert_eq!(
             picks[0].unresolved_host,
             vec!["PGMAN_TEST_MAIN_DB_URL_F".to_string()]
+        );
+    }
+
+    #[test]
+    fn discover_spring_datasources_ignores_a_non_datasource_url_property() {
+        // `service.url` is a URL but not a datasource. Its `${…}` is
+        // host-tainting (no `://` to protect), which used to be enough
+        // to keep it — so an unrelated API endpoint showed up in the
+        // connection picker as "service (application)".
+        let base = spring_project_with(
+            "service-url",
+            "service.url=${PGMAN_TEST_MAIN_API_URL_G}\n\
+             swagger.url=https://example.test/docs\n",
+        );
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            picks.is_empty(),
+            "neither property is a datasource: {picks:?}"
         );
     }
 
