@@ -371,6 +371,14 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     let value = Style::default().fg(theme.text);
     let red = Style::default().fg(theme.health_red);
 
+    // Every labelled row is fitted to the card's inner width (borders
+    // off) rather than left to `Paragraph`'s wrap: a path or DSN has
+    // no space to break at, so the wrap cut it mid-token and dropped
+    // the remainder flush against the border, unpadded.
+    let inner_width = area.width.saturating_sub(2) as usize;
+    const LABEL_WIDTH: usize = 10; // `"  target  "`
+    let fit_value = |v: &str| middle_ellipsis(v, inner_width.saturating_sub(LABEL_WIDTH));
+
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
         "connection failed",
         Style::default()
@@ -382,13 +390,13 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     if let Some(dsn) = &app.dsn {
         lines.push(Line::from(vec![
             Span::styled("  target  ", label),
-            Span::styled(dsn.redacted(), value),
+            Span::styled(fit_value(&dsn.redacted()), value),
         ]));
     }
     if let Some(origin) = &app.dsn_origin {
         lines.push(Line::from(vec![
             Span::styled("  source  ", label),
-            Span::styled(origin.clone(), value),
+            Span::styled(fit_value(origin), value),
         ]));
     }
     lines.push(Line::from(""));
@@ -417,15 +425,28 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     }
 
     lines.push(Line::from(""));
+    // Resolved through `util::cache_dir()` (not hand-typed) so this
+    // stays correct if the cache location ever moves. The file is the
+    // daily roller's `pgman.log.YYYY-MM-DD` — there is no bare
+    // `pgman.log` to open.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let log_path = crate::util::cache_dir().join(dated_log_file_name(now));
+    lines.push(Line::from(vec![
+        Span::styled("  logs    ", label),
+        Span::styled(fit_value(&log_path.display().to_string()), value),
+    ]));
     let mut actions = String::from("  r retry");
     if !app.conn_pick.picks.is_empty() {
         actions.push_str(" · p change connection");
     }
-    // Resolved through `util::cache_dir()` (not hand-typed) so this
-    // stays correct if the cache location ever moves.
-    let log_path = crate::util::cache_dir().join("pgman.log");
-    actions.push_str(&format!(" · q quit · logs in {}", log_path.display()));
-    lines.push(Line::from(Span::styled(actions, label)));
+    actions.push_str(" · q quit");
+    lines.push(Line::from(Span::styled(
+        fit_hints(&actions, inner_width),
+        label,
+    )));
 
     f.render_widget(
         Paragraph::new(Text::from(lines))
@@ -433,6 +454,31 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
             .block(bordered(theme, "connection")),
         area,
     );
+}
+
+/// `pgman.log.YYYY-MM-DD` — the file `tracing_appender`'s daily roller
+/// (UTC dates) writes for the instant `unix_secs`; the name the failure
+/// card points at. Pure / testable.
+pub(crate) fn dated_log_file_name(unix_secs: u64) -> String {
+    let (y, m, d) = civil_from_unix(unix_secs);
+    format!("pgman.log.{y:04}-{m:02}-{d:02}")
+}
+
+/// Proleptic-Gregorian `(year, month, day)` of a Unix timestamp, UTC.
+/// Howard Hinnant's days-to-civil algorithm; no calendar dependency
+/// for one date. Pure / testable.
+fn civil_from_unix(unix_secs: u64) -> (i64, u32, u32) {
+    let days = (unix_secs / 86_400) as i64;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
 }
 
 /// Persistent state badges prepended to the footer line: `[RO]`

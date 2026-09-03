@@ -1179,3 +1179,45 @@ fn a_failed_panel_load_leaves_the_start_card_in_place() {
         "footer lost the error:\n{text}"
     );
 }
+
+/// The connection-failure card names the log file that exists
+/// (`pgman.log.YYYY-MM-DD`, not `pgman.log`), keeps it on one fitted
+/// row rather than wrapping the path across the border, and — with no
+/// password in the DSN — suggests supplying one.
+#[test]
+fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.conn_state = ConnState::Failed(
+        "error connecting to server: password authentication failed for user \"test\"".into(),
+    );
+    for width in [60u16, 100] {
+        let buf = render(&mut a, width, 24);
+        let text = dump(&buf);
+        let logs_row = text
+            .lines()
+            .find(|l| l.contains("logs"))
+            .unwrap_or_else(|| panic!("no logs row at {width}:\n{text}"));
+        assert!(
+            logs_row.contains("pgman.log."),
+            "the dated file name must be on the logs row at {width}: {logs_row:?}"
+        );
+        assert!(
+            !text.contains("pgman.log\n") && !text.contains("pgman.log "),
+            "the undated name must not appear at {width}:\n{text}"
+        );
+        assert!(
+            text.lines()
+                .any(|l| l.contains("r retry") && l.contains("q quit")),
+            "actions row lost at {width}:\n{text}"
+        );
+    }
+    // Narrow: the path is middle-ellipsised on its row, never wrapped
+    // onto an unpadded continuation row.
+    let text = dump(&render(&mut a, 30, 24));
+    let logs_row = text.lines().find(|l| l.contains("logs")).unwrap();
+    assert!(logs_row.contains('…'), "{logs_row:?}");
+    // The hint knows no password was supplied.
+    let text = dump(&render(&mut a, 100, 24));
+    assert!(text.contains("PGPASSWORD"), "{text}");
+}
