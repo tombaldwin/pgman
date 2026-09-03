@@ -1,0 +1,18 @@
+---
+source: tests/snapshots.rs
+expression: text
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> (empty — press e to focus)                              │
+└──────────────────────────────────────────────────────────┘
+┌ result · 2 row(s) ───────────────────────────────────────┐
+│id  名 前     city                                          │
+│1   東 京 都   tokyo                                         │
+│2   bob     leeds                                         │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+ RO   q quit · ? help · e editor · S schema · F1 +7 more

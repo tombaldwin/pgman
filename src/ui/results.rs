@@ -125,11 +125,13 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     // Label column = widest column name, capped so a runaway name doesn't
     // squeeze the value column off-screen.
     let label_max = 32usize;
+    // Display columns, not chars — a CJK column name paints two per
+    // char, and the value column starts where the label column ends.
     let label_width = app
         .grid
         .columns
         .iter()
-        .map(|c| c.chars().count())
+        .map(|c| unicode_width::UnicodeWidthStr::width(c.as_str()))
         .max()
         .unwrap_or(0)
         .min(label_max);

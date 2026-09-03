@@ -30,8 +30,12 @@ impl Grid {
 }
 
 /// Display width for each column: the widest of the header and its cells,
-/// clamped to `[1, max_width]`. Width is counted in `char`s.
+/// clamped to `[1, max_width]`. Width is counted in **display columns**
+/// (`UnicodeWidthStr`), the same unit `truncate_cell_parts` and ratatui
+/// lay the table out in — a `char` count gave a CJK column half its
+/// width, so a `名前` header rendered as `名`.
 pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
+    use unicode_width::UnicodeWidthStr;
     let max_width = max_width.max(1);
     grid.columns
         .iter()
@@ -41,10 +45,12 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
                 .rows
                 .iter()
                 .filter_map(|r| r.get(col))
-                .map(|c| c.chars().count())
+                .map(|c| UnicodeWidthStr::width(c.as_str()))
                 .max()
                 .unwrap_or(0);
-            header.chars().count().max(cell_max).clamp(1, max_width)
+            UnicodeWidthStr::width(header.as_str())
+                .max(cell_max)
+                .clamp(1, max_width)
         })
         .collect()
 }
@@ -144,6 +150,30 @@ mod tests {
     #[test]
     fn column_widths_clamp_to_max() {
         assert_eq!(column_widths(&grid(), 3), vec![3, 3]);
+    }
+
+    /// A CJK glyph paints two columns. Counting chars gave the column
+    /// half the width its cells need, and `truncate_cell_parts` (which
+    /// counts columns) then cut every value in half.
+    #[test]
+    fn column_widths_count_display_columns_not_chars() {
+        let g = Grid {
+            columns: vec!["id".into(), "名前".into()],
+            rows: vec![
+                vec!["1".into(), "東京都".into()],
+                vec!["2".into(), "bob".into()],
+            ],
+            truncated: false,
+        };
+        // "名前" is 2 chars / 4 columns; "東京都" is 3 chars / 6 columns.
+        assert_eq!(column_widths(&g, 80), vec![2, 6]);
+        // A width-2 header alone must still get its 4 columns.
+        let g = Grid {
+            columns: vec!["名前".into()],
+            rows: vec![vec!["x".into()]],
+            truncated: false,
+        };
+        assert_eq!(column_widths(&g, 80), vec![4]);
     }
 
     #[test]
