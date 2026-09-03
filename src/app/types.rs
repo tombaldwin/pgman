@@ -874,11 +874,19 @@ pub struct HelpUi {
     /// Vertical scroll offset for the help overlay (number of leading lines
     /// hidden above the viewport).
     pub scroll: u16,
-    /// Mode the operator came from when opening help. Used to
-    /// restore that mode on close, so F1 from inside Editor /
-    /// SchemaBrowser / etc. doesn't dump them back to Normal.
-    /// `None` for the legacy `?`-from-Normal path.
+    /// Mode whose help section the overlay pre-scrolls to
+    /// (`App::help_anchor_for`). Usually the mode help was opened
+    /// from; for `:help <topic>` it is the topic's mode, which is
+    /// *not* where the operator was. Consumed by the renderer after
+    /// the first draw so j/k navigation doesn't snap back.
     pub origin: Option<Mode>,
+    /// Mode to restore when help closes, so F1 from inside Editor /
+    /// SchemaBrowser / etc. doesn't dump the operator back to Normal.
+    /// Separate from `origin` for two reasons: `:help tap` anchors on
+    /// `TapMonitor` but must return to where the `:` bar was opened
+    /// from, and `origin` is cleared by the renderer long before the
+    /// operator presses Esc. `None` falls back to Normal.
+    pub return_to: Option<Mode>,
     /// Last-rendered max scroll for the help overlay. Written by `draw_help`
     /// each frame and read by the j/k handler so an incremental scroll past
     /// the bottom doesn't accumulate phantom offsets.
