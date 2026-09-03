@@ -1156,3 +1156,26 @@ fn editor_cursor_sits_after_a_wide_literal_not_inside_it() {
         row_text(term.backend().buffer(), 2)
     );
 }
+
+/// A panel load that fails (`T` on a server without
+/// `pg_stat_statements`) puts its error in the footer; the start card
+/// underneath stays. It used to turn into an empty `result · (no
+/// rows)` block for a query nobody ran.
+#[test]
+fn a_failed_panel_load_leaves_the_start_card_in_place() {
+    let mut a = settle_app();
+    assert!(a.grid.columns.is_empty(), "nothing has run yet");
+    a.mode = Mode::Normal;
+    a.last_error = Some("slow queries load failed: relation \"pg_stat_statements\" does not exist (try `CREATE EXTENSION pg_stat_statements`)".into());
+    let buf = render(&mut a, 120, 30);
+    let text = dump(&buf);
+    assert!(text.contains("write a query"), "start card gone:\n{text}");
+    assert!(
+        !text.contains("(no rows)"),
+        "an empty result block replaced the start card:\n{text}"
+    );
+    assert!(
+        text.contains("slow queries load failed"),
+        "footer lost the error:\n{text}"
+    );
+}

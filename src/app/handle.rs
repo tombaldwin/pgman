@@ -230,13 +230,24 @@ impl App {
                 Err(e) => {
                     // pg_stat_statements not installed is the most
                     // common failure — point the operator at the
-                    // `CREATE EXTENSION` they need.
-                    let hint = if e.contains("pg_stat_statements") {
+                    // `CREATE EXTENSION` they need. The server says
+                    // `relation "pg_stat_statements" does not exist`
+                    // (SQLSTATE 42P01); the message has to be the
+                    // server's for this to fire — a bare `db error`
+                    // named nothing, hinted nothing, and F2 had no
+                    // detail to show.
+                    let hint = if e.msg.contains("pg_stat_statements") {
                         " (try `CREATE EXTENSION pg_stat_statements`)"
                     } else {
                         ""
                     };
-                    self.last_error = Some(format!("slow queries load failed: {e}{hint}"));
+                    tracing::warn!(
+                        code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
+                        "slow queries load failed: {}",
+                        e.msg
+                    );
+                    self.last_error = Some(format!("slow queries load failed: {}{hint}", e.msg));
+                    self.last_error_detail = e.detail;
                     self.mode = Mode::Normal;
                 }
             },
@@ -258,7 +269,13 @@ impl App {
                     ));
                 }
                 Err(e) => {
-                    self.last_error = Some(format!("sessions load failed: {e}"));
+                    tracing::warn!(
+                        code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
+                        "sessions load failed: {}",
+                        e.msg
+                    );
+                    self.last_error = Some(format!("sessions load failed: {}", e.msg));
+                    self.last_error_detail = e.detail;
                     self.mode = Mode::Normal;
                 }
             },
@@ -303,6 +320,7 @@ impl App {
                         // findings in place. Surface the failure
                         // so the operator knows the FK-index
                         // check didn't run.
+                        tracing::warn!("schema lint live check failed: {e}");
                         self.last_status = Some(format!(
                             "schema lint · live check failed: {e} (showing cached-only)"
                         ));
