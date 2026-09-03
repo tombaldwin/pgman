@@ -6623,6 +6623,33 @@ fn unknown_command_names_itself_and_points_at_help() {
 }
 
 #[test]
+fn the_editor_blocks_every_lift_of_the_read_only_floor_without_a_prompt() {
+    // `SELECT set_config('default_transaction_read_only', 'off', false)`
+    // classified as a read and ran with no prompt at all; a quoted GUC
+    // name was invisible to the escape check; `DO` hid its `SET` in a
+    // dollar-quoted body. The demo app carries the default, read-only,
+    // profile and goes through the same `request_run` a live one does.
+    let mut a = crate::demo::app(Theme::default());
+    for sql in [
+        "SELECT set_config('default_transaction_read_only', 'off', false)",
+        "SET \"transaction_read_only\" = off",
+        "DO $$ BEGIN SET default_transaction_read_only = off; END $$",
+        "CALL lift_the_floor()",
+        "SELECT set_config('default_transaction_read_only', 'off', false); SELECT 1",
+    ] {
+        a.last_error = None;
+        run_in_demo(&mut a, sql);
+        assert_eq!(
+            a.last_error.as_deref(),
+            Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL),
+            "{sql}"
+        );
+        assert!(a.pending_run.is_none(), "{sql}: a block never prompts");
+        assert_ne!(a.mode, Mode::Confirm, "{sql}");
+    }
+}
+
+#[test]
 fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     // The default safety profile is read-only. The bar is inside the
     // session, and a session cannot vote itself out of safety.toml —
