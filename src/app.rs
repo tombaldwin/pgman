@@ -2068,7 +2068,18 @@ impl App {
     /// matches `from` — operators see the relevant keys without
     /// hunting for them.
     pub fn open_help_from(&mut self, from: Mode) {
-        self.help.origin = Some(from);
+        self.open_help_anchored(from, from);
+    }
+
+    /// Open help pre-scrolled to `anchor`'s section but returning to
+    /// `return_to` on close. `:help <topic>` is the reason the two
+    /// can differ: the topic names the section to show, not the mode
+    /// the operator was in. Collapsing them meant `:help tap` closed
+    /// into the tap monitor and `:help commands` into
+    /// `Mode::CommandBar` — a mode with no command bar behind it.
+    pub fn open_help_anchored(&mut self, anchor: Mode, return_to: Mode) {
+        self.help.origin = Some(anchor);
+        self.help.return_to = Some(return_to);
         self.help.scroll = 0; // Renderer-side anchor pass will adjust.
         self.mode = Mode::Help;
     }

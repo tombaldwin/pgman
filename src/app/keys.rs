@@ -696,9 +696,14 @@ impl App {
         match key.code {
             KeyCode::Char('q' | '?') | KeyCode::Esc | KeyCode::F(1) => {
                 // Restore the mode the operator was in when they
-                // opened help. Legacy `?`-from-Normal (no origin
-                // captured) falls back to Normal.
-                self.mode = self.help.origin.take().unwrap_or(Mode::Normal);
+                // opened help — NOT `origin`, which is the section
+                // anchor (`:help tap` anchors on the tap monitor from
+                // wherever the operator was) and which the renderer
+                // consumes on the first draw anyway. Legacy
+                // `?`-from-Normal (nothing captured) falls back to
+                // Normal.
+                self.mode = self.help.return_to.take().unwrap_or(Mode::Normal);
+                self.help.origin = None;
                 self.help.scroll = 0;
             }
             KeyCode::Char('j') | KeyCode::Down => {

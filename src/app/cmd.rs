@@ -13,6 +13,11 @@ pub const COMMAND_NAMES: &[&str] = &[
 /// help anchor they scroll to. Reuses `App::help_anchor_for` rather
 /// than naming heading strings twice — a renamed heading can't leave
 /// this table pointing at nothing.
+///
+/// The mode here is *only* an anchor. It is not where the operator
+/// was, and closing help must not send them there — `:help commands`
+/// used to land them in `Mode::CommandBar` with no command bar behind
+/// it. See `App::open_help_anchored`.
 const HELP_TOPICS: &[(&str, Mode)] = &[
     ("grid", Mode::Normal),
     ("editor", Mode::Editor),
@@ -26,6 +31,13 @@ const HELP_TOPICS: &[(&str, Mode)] = &[
     ("diff", Mode::ResultDiff),
     ("wizard", Mode::SchemaLint),
 ];
+
+/// The `(topic, anchor mode)` table `:help <topic>` dispatches on.
+/// Exposed so a test can walk every topic rather than a sample.
+#[cfg(test)]
+pub(crate) fn help_topics() -> &'static [(&'static str, Mode)] {
+    HELP_TOPICS
+}
 
 /// Candidate command names for `typed` — every entry of
 /// [`COMMAND_NAMES`] it is a prefix of. Pure; drives Tab completion
@@ -254,7 +266,10 @@ impl App {
             .find(|(name, _)| *name == wanted)
             .map(|(_, mode)| *mode)
         {
-            Some(mode) => self.open_help_from(mode),
+            // Anchor on the topic; come back to where the bar was
+            // opened from (`on_command_bar_key` has already restored
+            // `self.mode` to the bar's origin by this point).
+            Some(anchor) => self.open_help_anchored(anchor, self.mode),
             None => {
                 let names: Vec<&str> = HELP_TOPICS.iter().map(|(n, _)| *n).collect();
                 self.last_error = Some(format!(

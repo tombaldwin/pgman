@@ -6297,6 +6297,31 @@ fn command_help_opens_the_overlay_at_the_topic_and_names_the_topics_it_knows() {
 }
 
 #[test]
+fn every_help_topic_closes_back_to_where_the_bar_was_opened_from() {
+    // The topic names the SECTION to scroll to, not the mode the
+    // operator was in. Treating it as both meant `:help tap` closed
+    // into the tap monitor and `:help commands` into
+    // `Mode::CommandBar` — a mode with no command bar behind it, so
+    // every key went to a prompt that wasn't on screen.
+    for (topic, anchor) in crate::app::cmd::help_topics() {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        run_command(&mut a, &format!("help {topic}"));
+        assert_eq!(a.mode, Mode::Help, "`:help {topic}` must open help");
+        assert_eq!(
+            a.help.origin,
+            Some(*anchor),
+            "`:help {topic}` must anchor on its own section"
+        );
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            a.mode,
+            Mode::Normal,
+            "`:help {topic}` was opened from Normal, so Esc must return there"
+        );
+    }
+}
+
+#[test]
 fn unknown_command_names_itself_and_points_at_help() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     run_command(&mut a, "foo");
