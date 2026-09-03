@@ -269,6 +269,78 @@ impl App {
         }
     }
 
+    /// `:` command bar. Enter dispatches, Esc cancels back to the
+    /// mode the bar was opened from, Tab completes the command name.
+    /// Everything else (insert / backspace / cursor motion /
+    /// word-delete) routes through the shared single-line widget, so
+    /// editing behaves exactly like every other prompt.
+    pub(super) fn on_command_bar_key(&mut self, key: KeyEvent) {
+        // Taken out so the dispatch below can borrow `self` mutably
+        // without aliasing the bar — same shape as `on_param_prompt_key`.
+        let Some(mut bar) = self.command_bar.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = bar.origin;
+                self.last_status = None;
+            }
+            KeyCode::Enter => {
+                let line = bar.input.trimmed().to_string();
+                // Restore the origin mode FIRST so a command that
+                // opens a panel (`:dt`, `:about`) still wins, and one
+                // that doesn't (`:timing on`) leaves the operator
+                // where they were.
+                self.mode = bar.origin;
+                self.last_status = None;
+                self.last_error = None;
+                self.dispatch_command(&line);
+            }
+            KeyCode::Tab => {
+                self.complete_command_bar(&mut bar);
+                self.command_bar = Some(bar);
+            }
+            _ => {
+                bar.input.handle_key(key);
+                self.command_bar = Some(bar);
+            }
+        }
+    }
+
+    /// Tab in the command bar: complete the command NAME against the
+    /// static list. Only fires while the operator is still typing the
+    /// first word — past the first space they're typing an argument
+    /// (a path, a data-source name) that this list knows nothing
+    /// about. A single candidate is inserted whole (plus a trailing
+    /// space, so an argument follows straight on); several share
+    /// their common prefix and are listed in the status line.
+    fn complete_command_bar(&mut self, bar: &mut CommandBarUi) {
+        let typed = bar.input.text().to_string();
+        if typed.contains(char::is_whitespace) {
+            return;
+        }
+        let candidates = crate::app::cmd::command_candidates(&typed);
+        match candidates.len() {
+            0 => {
+                self.last_status = Some(format!("no command starts with :{typed}"));
+            }
+            1 => {
+                bar.input = TextInput::with_text(format!("{} ", candidates[0]));
+                bar.input.end();
+                self.last_status = None;
+            }
+            _ => {
+                let prefix = crate::app::cmd::longest_common_prefix(&candidates);
+                if prefix.len() > typed.len() {
+                    bar.input = TextInput::with_text(prefix);
+                    bar.input.end();
+                }
+                self.last_status = Some(candidates.join(" "));
+            }
+        }
+    }
+
     pub(super) fn on_saved_queries_key(&mut self, key: KeyEvent) {
         // Compute the filtered/visible index list once per keypress —
         // it lowercases every entry name + body, so re-deriving it for

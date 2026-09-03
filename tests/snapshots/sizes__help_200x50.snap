@@ -40,7 +40,7 @@ expression: dump(&buf)
 │                             │     j / k  ↑ ↓    move selection                                                                                                         │                             │
 │                             │     g / G         first / last row                                                                                                       │                             │
 │                             │     enter         expand selected row (psql \x style)                                                                                    │                             │
-│                             │ ↓ 165 more below                                                                                                                         │                             │
+│                             │ ↓ 181 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │

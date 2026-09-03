@@ -869,3 +869,22 @@ fn tap_nplus1() {
 fn tap_baseline() {
     run_sizes("tap_baseline", scr_tap_baseline);
 }
+
+/// The `:` command bar, mid-word: the prompt takes over the footer
+/// row that normally carries the hints, so this pins that the badges
+/// still lead and the typed text follows the `:` prefix.
+fn scr_command_bar() -> App {
+    let mut a = base();
+    a.mode = Mode::Normal;
+    a.grid_state.select(Some(0));
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    for c in "rea".chars() {
+        a.on_key(key(c));
+    }
+    a
+}
+
+#[test]
+fn command_bar() {
+    run_sizes("command_bar", scr_command_bar);
+}

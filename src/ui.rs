@@ -790,8 +790,18 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .map(|s| display_width(&s.content) as u16)
         .sum();
-    // Priority: query error > status (e.g. "EXPLAIN ok · 4 rows") > hints.
-    let line = if let Some(err) = &app.last_error {
+    // Priority: the `:` command bar (the operator is typing INTO the
+    // footer — nothing else may occupy it) > query error > status
+    // (e.g. "EXPLAIN ok · 4 rows") > hints.
+    let line = if let Some(bar) = &app.command_bar {
+        Line::from(vec![
+            Span::styled(" :", Style::default().fg(theme.accent)),
+            Span::styled(
+                bar.input.text().to_string(),
+                Style::default().fg(theme.text),
+            ),
+        ])
+    } else if let Some(err) = &app.last_error {
         let icon = " ⚠ ";
         // The "F2 detail" pointer is the load-bearing part of this line
         // when it's present — it's how the operator finds the rich error
@@ -922,6 +932,10 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::SaveQueryPrompt => "type a name · enter persist · esc cancel",
                 Mode::ParamPrompt => "type value · enter next · esc cancel",
                 Mode::ResultDiff => "j/k navigate · r re-pin B as A · c clear pin · q / esc close",
+                // Unreachable in practice: the command-bar branch at
+                // the head of this chain owns the footer while the bar
+                // is open. Kept so the match stays exhaustive.
+                Mode::CommandBar => "type a command · enter run · tab complete · esc cancel",
             }
         };
         // Append a universal "F1 help" pointer to every non-modal
@@ -945,6 +959,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 | Mode::ParamPrompt
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
+                | Mode::CommandBar
         ) || tunnel_prompt
             || failed_normal
             || connecting_normal
@@ -988,6 +1003,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     // and any active `[RO]` / `[TX]` badges add their own width on
     // top.
     let cursor_offset: Option<u16> = match app.mode {
+        // The bar renders as ":<typed>"; the cursor sits inside the
+        // typed text at the widget's own column.
+        Mode::CommandBar => app.command_bar.as_ref().map(|bar| {
+            const PREFIX_CHARS: u16 = 1; // the ':'
+            PREFIX_CHARS + bar.input.cursor_col() as u16
+        }),
         Mode::GridFilter => app.grid_view.filter.as_ref().map(|f| {
             // Status reads "filter: /<pat>  · …"; cursor sits just
             // after the typed pattern.
@@ -1654,6 +1675,56 @@ pub(crate) fn help_body(
     );
     push(
         row("    \\i <path>         load a SQL file into the editor (doesn't run it)"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
+    heading(": commands", &mut lines, &mut anchors);
+    push(
+        row("    :             open the command bar (any mode except while typing)"),
+        &mut lines,
+    );
+    push(
+        row("                  enter runs · esc cancels · tab completes the command name"),
+        &mut lines,
+    );
+    push(row("    :about          the About card"), &mut lines);
+    push(
+        row("    :update         About card + where the release check got to"),
+        &mut lines,
+    );
+    push(
+        row("    :help [topic]   this help · topics: grid, editor, commands, schema, saved,"),
+        &mut lines,
+    );
+    push(
+        row("                    slow, sessions, tap, explain, diff, wizard"),
+        &mut lines,
+    );
+    push(row("    :quit  /  :q    quit pgman"), &mut lines);
+    push(
+        row("    :readonly on|off  the read-only flag pgman opens connections with; applies"),
+        &mut lines,
+    );
+    push(
+        row("                    at the next connect. Refused when safety.toml pins this"),
+        &mut lines,
+    );
+    push(row("                    database read-only."), &mut lines);
+    push(
+        row("    :connect [NAME] the picker, or the named data source (= \\c). Quote a name"),
+        &mut lines,
+    );
+    push(
+        row("                    with spaces, or give a unique prefix of it."),
+        &mut lines,
+    );
+    push(
+        row("    (:l :x :dt :dn :d NAME :i PATH :timing :report :fixture — the backslash"),
+        &mut lines,
+    );
+    push(
+        row("     commands above, same arguments, without the backslash)"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);

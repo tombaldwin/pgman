@@ -6014,3 +6014,177 @@ fn demo_batch_runs_the_statements_it_checked_not_the_raw_buffer() {
         "SELECT 1;\nUPDATE users SET active = false WHERE id = 1"
     );
 }
+
+// ---------------------------------------------------------------
+// `:` command bar
+// ---------------------------------------------------------------
+
+/// Type `line` into the command bar and press Enter, from Normal mode.
+fn run_command(a: &mut App, line: &str) {
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    assert_eq!(a.mode, Mode::CommandBar, "':' must open the bar");
+    for c in line.chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+}
+
+#[test]
+fn colon_opens_the_command_bar_and_esc_returns_to_the_origin_mode() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaBrowser;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    assert_eq!(a.mode, Mode::CommandBar);
+    for c in "abo".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("abo"));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(
+        a.mode,
+        Mode::SchemaBrowser,
+        "esc returns where it came from"
+    );
+    assert!(a.command_bar.is_none(), "and the bar state is dropped");
+}
+
+#[test]
+fn colon_types_a_literal_colon_while_the_editor_has_focus() {
+    // Otherwise `:param` placeholders (and every other colon in SQL)
+    // would be impossible to type.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, ":");
+    assert!(a.command_bar.is_none());
+}
+
+#[test]
+fn command_bar_dispatches_backslash_commands_without_clearing_the_editor_draft() {
+    // `\timing` from the editor clears the buffer (it IS the buffer);
+    // `:timing` never touches it — the operator's draft is not the
+    // command they just typed.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.editor.buffer = "SELECT 1".into();
+    run_command(&mut a, "timing on");
+    assert!(a.timing_on);
+    assert_eq!(a.editor.buffer, "SELECT 1", "the draft must survive");
+    run_command(&mut a, "x on");
+    assert!(a.expanded_on);
+    assert_eq!(a.editor.buffer, "SELECT 1");
+}
+
+#[test]
+fn command_about_update_and_quit() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut a, "about");
+    assert_eq!(a.mode, Mode::About);
+    run_command(&mut a, "update");
+    assert_eq!(a.mode, Mode::About);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.contains("update check is off for this run"),
+        "App::new never enables the check — say so rather than claiming up-to-date; got {status:?}"
+    );
+    run_command(&mut a, "q");
+    assert!(a.should_quit);
+}
+
+#[test]
+fn command_help_opens_the_overlay_at_the_topic_and_names_the_topics_it_knows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut a, "help editor");
+    assert_eq!(a.mode, Mode::Help);
+    assert_eq!(a.help.origin, Some(Mode::Editor));
+    a.mode = Mode::Normal;
+    run_command(&mut a, "help nonsense");
+    assert_eq!(a.mode, Mode::Normal, "an unknown topic opens nothing");
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("unknown help topic 'nonsense'"), "got {err:?}");
+    assert!(err.contains("editor"), "and it lists the topics: {err:?}");
+}
+
+#[test]
+fn unknown_command_names_itself_and_points_at_help() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut a, "foo");
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("unknown command :foo · :help lists them")
+    );
+}
+
+#[test]
+fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
+    // The default safety profile is read-only. The bar is inside the
+    // session, and a session cannot vote itself out of safety.toml —
+    // same refusal a `SET default_transaction_read_only = off`
+    // statement gets.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    assert!(
+        a.read_only,
+        "fixture check: the default profile is read-only"
+    );
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only, "the flag must not move");
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL)
+    );
+}
+
+#[test]
+fn command_readonly_moves_the_flag_when_the_profile_does_not_pin_it() {
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+    assert!(!a.read_only);
+    run_command(&mut a, "readonly on");
+    assert!(a.read_only);
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    run_command(&mut a, "readonly off");
+    assert!(!a.read_only, "an unpinned profile can be turned back off");
+    run_command(&mut a, "readonly");
+    assert_eq!(a.last_error.as_deref(), Some("usage: :readonly on|off"));
+}
+
+#[test]
+fn command_bar_tab_completes_a_unique_name_and_lists_ambiguous_ones() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    for c in "rea".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(
+        a.command_bar.as_ref().map(|b| b.input.text()),
+        Some("readonly "),
+        "a lone candidate completes whole, ready for its argument"
+    );
+    // `d`, `dn`, `dt` share the `d` prefix — nothing to insert, but
+    // the candidates are surfaced.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("d"));
+    assert_eq!(a.last_status.as_deref(), Some("d dn dt"));
+}
+
+#[test]
+fn command_candidates_and_common_prefix_are_pure_and_total() {
+    use crate::app::cmd::{command_candidates, longest_common_prefix, COMMAND_NAMES};
+    assert_eq!(command_candidates("rea"), vec!["readonly"]);
+    assert_eq!(command_candidates("d"), vec!["d", "dn", "dt"]);
+    assert!(command_candidates("zzz").is_empty());
+    assert_eq!(command_candidates("").len(), COMMAND_NAMES.len());
+    assert_eq!(longest_common_prefix(&[]), "");
+    assert_eq!(longest_common_prefix(&["readonly"]), "readonly");
+    assert_eq!(longest_common_prefix(&["d", "dn", "dt"]), "d");
+    assert_eq!(longest_common_prefix(&["report", "readonly"]), "re");
+    assert_eq!(longest_common_prefix(&["abc", "xyz"]), "");
+}

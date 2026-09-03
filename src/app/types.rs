@@ -185,6 +185,12 @@ pub enum Mode {
     /// full-row identity). j/k navigate; `r` re-pins B as the
     /// new A; `c` clears the pin; q/esc close.
     ResultDiff,
+    /// The `:` command bar (`:` from any non-typing mode). A
+    /// one-line prompt rendered where the footer hints normally
+    /// go; Enter dispatches through `App::dispatch_command`, Esc
+    /// returns to the mode the bar was opened from. State lives
+    /// in `App::command_bar`.
+    CommandBar,
 }
 
 impl Mode {
@@ -206,6 +212,7 @@ impl Mode {
                 | Mode::ParamPrompt
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
+                | Mode::CommandBar
         )
     }
 }
@@ -876,6 +883,21 @@ pub struct HelpUi {
     /// each frame and read by the j/k handler so an incremental scroll past
     /// the bottom doesn't accumulate phantom offsets.
     pub max_scroll: u16,
+}
+
+/// `:` command-bar state — the single-line input plus the mode the
+/// bar was opened from. Esc returns to `origin`; Enter returns there
+/// too and then dispatches, so a command that opens a panel (`:dt`,
+/// `:about`) still wins over the restored mode.
+#[derive(Debug)]
+pub struct CommandBarUi {
+    /// What the operator has typed after the `:` prefix. Same
+    /// single-line widget every other prompt uses, so editing keys
+    /// (word-delete, home/end, cursor motion) behave identically.
+    pub input: TextInput,
+    /// Mode to return to on Esc / after a command that doesn't
+    /// change the mode itself.
+    pub origin: Mode,
 }
 
 /// Connection-picker state — the candidate data sources surfaced at
