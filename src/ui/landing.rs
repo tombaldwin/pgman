@@ -169,11 +169,11 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         } else {
             vec![e.desc.as_str(), q.desc.as_str(), w.desc.as_str()]
         };
-        let left_col_width = HINT_INDENT.chars().count()
+        let left_col_width = display_width(HINT_INDENT)
             + KEY_FIELD_WIDTH
             + left_descs
                 .iter()
-                .map(|d| d.chars().count())
+                .map(|d| display_width(d))
                 .max()
                 .unwrap_or(0);
 
@@ -206,7 +206,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
             let one_line = entry.split_whitespace().collect::<Vec<_>>().join(" ");
             let truncated = crate::grid::truncate_cell(
                 &one_line,
-                width.saturating_sub(HINT_INDENT.chars().count()),
+                width.saturating_sub(display_width(HINT_INDENT)),
             );
             lines.push(Line::from(vec![
                 Span::raw(HINT_INDENT),
@@ -223,14 +223,14 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
 /// `width`; the short form otherwise. Never truncates either form.
 fn pick_f8_desc(two_col: bool, width: usize) -> &'static str {
     let needed = if two_col {
-        HINT_INDENT.chars().count()
+        display_width(HINT_INDENT)
             + KEY_FIELD_WIDTH
-            + F8_DESC_LONG.chars().count()
+            + display_width(F8_DESC_LONG)
             + COL_GAP
             + KEY_FIELD_WIDTH
-            + F4_DESC.chars().count()
+            + display_width(F4_DESC)
     } else {
-        HINT_INDENT.chars().count() + KEY_FIELD_WIDTH + F8_DESC_LONG.chars().count()
+        display_width(HINT_INDENT) + KEY_FIELD_WIDTH + display_width(F8_DESC_LONG)
     };
     if needed <= width {
         F8_DESC_LONG
@@ -318,11 +318,11 @@ pub(crate) fn format_databases_line(
         };
         let not_shown_after = entries.len() - i - 1;
         let suffix_len = if not_shown_after > 0 {
-            format!(" · +{not_shown_after} more").chars().count()
+            display_width(&format!(" · +{not_shown_after} more"))
         } else {
             0
         };
-        if candidate.chars().count() + suffix_len <= width {
+        if display_width(&candidate) + suffix_len <= width {
             line = candidate;
             shown = i + 1;
         } else {
@@ -380,7 +380,7 @@ fn paired_line(
     desc_style: Style,
     left_col_width: usize,
 ) -> Line<'static> {
-    let left_text_width = HINT_INDENT.chars().count() + KEY_FIELD_WIDTH + left.desc.chars().count();
+    let left_text_width = display_width(HINT_INDENT) + KEY_FIELD_WIDTH + display_width(&left.desc);
     let pad = left_col_width.saturating_sub(left_text_width);
     Line::from(vec![
         Span::raw(HINT_INDENT),
@@ -771,6 +771,34 @@ mod tests {
         // No entry is cut mid-way — dropped entries don't appear at all.
         assert!(!got.contains("analytics"));
         assert!(!got.contains("staging"));
+    }
+
+    /// A `lc_collate=ja_JP` shop names its databases in kana. Every
+    /// glyph there is two terminal columns wide, so a line that counts
+    /// `char`s measures half of what it paints — at width 44 the
+    /// databases line came out 55 columns and ran through the card's
+    /// right border.
+    #[test]
+    fn format_databases_line_measures_columns_not_chars() {
+        let dbs = vec![
+            DatabaseInfo {
+                name: "受注管理".into(),
+                size: "1.2 GB".into(),
+            },
+            DatabaseInfo {
+                name: "分析基盤データ".into(),
+                size: "300 MB".into(),
+            },
+        ];
+        for width in 0..70 {
+            if let Some(line) = format_databases_line(&dbs, "受注管理", width) {
+                assert!(
+                    display_width(&line) <= width,
+                    "width {width}: {line:?} paints {} columns",
+                    display_width(&line)
+                );
+            }
+        }
     }
 
     #[test]

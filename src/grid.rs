@@ -88,14 +88,34 @@ pub fn truncate_cell(s: &str, width: usize) -> String {
 /// marker distinctly from the value. The kept-text part has no
 /// trailing marker; concatenating the two recreates `truncate_cell`'s
 /// output. Pure / testable.
+///
+/// `width` is **display columns**, not chars. A CJK cell paints two
+/// columns per char, so a char-counting truncation hands back a string
+/// twice as wide as the budget it was given — and every caller here
+/// (grid columns, picker rows, the start card's `recent` list) uses the
+/// result to decide where the *next* thing starts.
 pub fn truncate_cell_parts(s: &str, width: usize) -> (String, &'static str) {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
     if width == 0 {
         return (String::new(), "");
     }
-    if s.chars().count() <= width {
+    if UnicodeWidthStr::width(s) <= width {
         return (s.to_string(), "");
     }
-    let kept: String = s.chars().take(width.saturating_sub(1)).collect();
+    // One column goes to the `…` marker. A wide glyph that would land
+    // half in and half out of the budget is dropped whole: one column
+    // short beats one column over.
+    let budget = width - 1;
+    let mut kept = String::new();
+    let mut used = 0usize;
+    for c in s.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + cw > budget {
+            break;
+        }
+        used += cw;
+        kept.push(c);
+    }
     (kept, "…")
 }
 
@@ -148,6 +168,33 @@ mod tests {
         // Multi-byte chars count as one column each.
         assert_eq!(truncate_cell("héllo", 5), "héllo");
         assert_eq!(truncate_cell("héllo", 3), "hé…");
+    }
+
+    /// A CJK cell paints two columns per char, so a `char`-counting
+    /// truncation returns a string twice as wide as the budget it was
+    /// given — and the grid's own column layout then paints over the
+    /// next column's cells.
+    #[test]
+    fn truncate_cell_counts_display_columns_not_chars() {
+        use unicode_width::UnicodeWidthStr;
+        // 4 chars, 8 columns.
+        let cjk = "受注管理";
+        assert_eq!(UnicodeWidthStr::width(cjk), 8);
+        assert_eq!(truncate_cell(cjk, 8), cjk, "an exact fit is untouched");
+        for w in 0..=10 {
+            let got = truncate_cell(cjk, w);
+            assert!(
+                UnicodeWidthStr::width(got.as_str()) <= w,
+                "width {w}: {got:?} paints {} columns",
+                UnicodeWidthStr::width(got.as_str())
+            );
+        }
+        // Room for one glyph plus the marker, not two.
+        assert_eq!(truncate_cell(cjk, 4), "受…");
+        assert_eq!(truncate_cell(cjk, 5), "受注…");
+        // A glyph that would land half in and half out of the budget is
+        // dropped whole — one column short beats one column over.
+        assert_eq!(truncate_cell(cjk, 2), "…");
     }
 
     #[test]
