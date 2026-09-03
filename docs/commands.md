@@ -62,7 +62,7 @@ than sent to the server.
 ## Command line
 
 ```
-pgman [OPTIONS]
+pgman [OPTIONS] [DSN]
 ```
 
 pgman is a TUI: every path except `--batch`, `--upgrade`, `--version`, and
@@ -73,6 +73,7 @@ than the raw crossterm error a bare terminal probe used to surface.
 
 | Flag | Behaviour |
 |---|---|
+| `[DSN]` (positional) | Connect using a `postgres://` DSN — same as `--dsn`. `pgman postgres://app@localhost/appdb` works without the flag name. Passing both `--dsn` and the positional form is fine only when they're identical; disagreeing values are a hard error. |
 | `--dsn <DSN>` | Connect using a `postgres://` DSN. |
 | `--theme <THEME>` | Colour theme: `dark` \| `light` \| `high-contrast` (default `dark`). |
 | `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. |

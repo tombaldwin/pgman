@@ -223,3 +223,21 @@ fn help_output_fits_a_screen_and_names_no_rust_types() {
     assert!(stdout.contains("Batch mode"), "got: {stdout}");
     assert!(stdout.contains("JDBC tap"), "got: {stdout}");
 }
+
+#[test]
+fn positional_dsn_and_dsn_flag_must_agree() {
+    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .args([
+            "--batch",
+            "--dsn",
+            "postgres://a@host/db",
+            "postgres://b@host/db",
+            "--sql",
+            "SELECT 1",
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("disagree"), "got: {stderr}");
+}
