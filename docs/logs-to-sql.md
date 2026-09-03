@@ -37,21 +37,21 @@ Three input shapes are recognised:
 
 ## The sample
 
-Paste this into the editor (it's lifted straight from the parser's own
-tests):
+Paste this into the editor — it also matches what `pgman --demo` ships,
+so `F5` returns real-looking rows even with no database connected:
 
 ```
-2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.customer_id=?
+2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.status, o.total_cents from orders o where o.user_id=?
 2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
-2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?
+2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?
 2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]
-2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.sku from item i where i.order_id=?
+2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?
 2024-01-15 10:00:00.121 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [102]
 ```
 
-That `item` select fires twice for two different `order_id`s in the same
-burst — a classic N+1: an order lookup followed by a per-row item lookup
-that should have been a join.
+That `order_items` select fires twice for two different `order_id`s in the
+same burst — a classic N+1: an order lookup followed by a per-row item
+lookup that should have been a join.
 
 ## Three ways in
 
@@ -90,7 +90,7 @@ pgman opens the pick list with a one-line triage summary up top:
 
 ```
 3 queries · 1 N+1 cluster (2 of 3 repeated) · view: all queries (press `c` to toggle)
-leader (×2): select i.id, i.sku from item i where i.order_id=?
+leader (×2): select oi.id, oi.sku from order_items oi where oi.order_id=?
 ```
 
 (The leader line and the cluster view below both show the raw, unsubstituted
@@ -101,9 +101,9 @@ Below it, one row per reconstructed query, tagged by source and showing the
 runnable SQL with bind values substituted in:
 
 ```
-▶ [hibernate] select o.id, o.total_cents from orders o where o.customer_id=42
-  [hibernate] select i.id, i.sku from item i where i.order_id=101
-  [hibernate] select i.id, i.sku from item i where i.order_id=102
+▶ [hibernate] select o.id, o.status, o.total_cents from orders o where o.user_id=42
+  [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=101
+  [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=102
 ```
 
 Press `c` to flip to the cluster view — the same queries grouped by shape,
@@ -111,7 +111,7 @@ most-repeated first, so a loop-driven select stands out instead of hiding
 among near-identical rows in a longer log:
 
 ```
-▶ ×2   select i.id, i.sku from item i where i.order_id=?
+▶ ×2   select oi.id, oi.sku from order_items oi where oi.order_id=?
 ```
 
 `c` again toggles back. `j`/`k` (or the arrow keys) move the selection,
@@ -130,11 +130,16 @@ without loading anything.
 
 ## N+1 detection
 
-The clustering behind both the summary line and the cluster view is
-`src/query/nplus1.rs`: it fingerprints each statement (lowercased,
-whitespace collapsed, string/numeric literals and placeholders all reduced
-to `?`) and groups by that shape. Any fingerprint that fires **twice or
-more** becomes a cluster, sorted most-repeated first. Two structurally
+The clustering behind both the summary line and the cluster view
+fingerprints each statement (lowercased, whitespace collapsed,
+string/numeric literals and placeholders all reduced to `?`) and
+groups by that shape. Any fingerprint that fires **twice or more**
+becomes a cluster, sorted most-repeated first. Two structurally
 different one-off queries never cluster; two copies of the same query with
 different literals always do — which is exactly the loop-driven-select
 signature this is built to catch.
+
+## Implementation notes
+
+Reconstruction: `src/query/hibernate.rs`, `src/query/pglog.rs`,
+`src/query/jdbc.rs`. Clustering: `src/query/nplus1.rs`.

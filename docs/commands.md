@@ -130,9 +130,9 @@ surface.
 | `--no-update-check` | Skip the startup check for a newer release on crates.io (same effect as the `PGMAN_NO_UPDATE_CHECK` env var). Without either, pgman makes at most one crates.io request every six hours, sending only the running version and a user-agent string. |
 
 A `--batch --dsn` connect failure prints the driver/server message, then a
-`hint: …` line when `conn::connect_hint` recognises it (wrong password,
-nothing listening, unknown host, …) — the same hint the TUI shows on a
-failed connection. A write refused because the session is read-only
+`hint: …` line when pgman recognises the cause (wrong password, nothing
+listening, unknown host, …) — the same hint the TUI shows on a failed
+connection. A write refused because the session is read-only
 (`safety.toml`'s `read_only = true`) carries its own hint pointing at the
 file and key — see [Configuration](configuration.md).
 
