@@ -6066,6 +6066,66 @@ fn demo_confirmed_write_is_answered_synthetically() {
     );
 }
 
+#[test]
+fn opening_the_command_bar_over_the_confirm_modal_cancels_the_run() {
+    // `:` is not one of the modal's keys, so the statement was never
+    // confirmed — but `pending_run` used to survive the detour, and it
+    // is a `\watch` blocker (`watch_should_fire`). F5 on a DELETE,
+    // `:about`, Esc, and `\watch` then refused to fire for the rest of
+    // the session with no modal on screen to explain why.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "UPDATE users SET active = false WHERE id = 1");
+    assert_eq!(a.mode, Mode::Confirm, "a guarded write must prompt first");
+    assert!(a.pending_run.is_some());
+
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    assert_eq!(a.mode, Mode::CommandBar);
+    assert!(
+        a.pending_run.is_none(),
+        "the unconfirmed run must be cancelled, not left armed"
+    );
+
+    for c in "about".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(a.pending_run.is_none());
+    assert!(
+        crate::app::watch_should_fire(
+            &crate::app::WatchState {
+                sql: "SELECT 1".into(),
+                interval: std::time::Duration::from_secs(0),
+                last_fire: std::time::Instant::now(),
+            },
+            std::time::Instant::now(),
+            crate::app::WatchTickInputs {
+                query_running: false,
+                tx_open: false,
+                pending_run: a.pending_run.is_some(),
+                mode_blocks: false,
+            },
+        ),
+        "a cancelled run must stop blocking \\watch"
+    );
+}
+
+#[test]
+fn cancelling_a_run_by_opening_the_command_bar_says_so_after_the_bar_closes() {
+    // Both close paths blank the status line (the bar owned the
+    // footer), so the "cancelled" notice has to outlive the bar.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "UPDATE users SET active = false WHERE id = 1");
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.last_status.as_deref(), Some("cancelled"));
+    assert_eq!(
+        a.mode,
+        Mode::Editor,
+        "and Esc lands in the editor, not on a modal with nothing behind it"
+    );
+}
+
 // --- the multi-statement run path: split, verify, run what was checked ---
 
 #[test]
