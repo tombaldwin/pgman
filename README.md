@@ -58,7 +58,8 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 - **N+1 detection.** Cluster reconstructed queries by shape to surface
   loop-driven selects.
 
-Three ways in: paste a log into the editor and press F8 (or `ctrl-l`); skip
+Three ways in: paste a log into the editor, press F8 (or `ctrl-l`), pick a
+query — `Enter` loads it terminated with `;`, and a second `Enter` runs it; skip
 the paste and launch straight into the reconstructed queries with
 `pgman --log app.log`; or, with no log at all, paste a `?`-placeholder
 statement plus its typed parameter list. Walkthrough:
