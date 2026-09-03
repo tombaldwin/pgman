@@ -737,6 +737,9 @@ async fn run_batch(cli: &Cli) -> i32 {
         let profile = safety_cfg.profile_for(&dsn.dbname);
         (profile.read_only, profile.statement_timeout_ms)
     };
+    // Kept for the connect-failure hint below — `opts.dsn` is moved
+    // into `batch::run`, which only reports the failure as a String.
+    let dsn_for_hint = dsn.clone();
     let opts = batch::Opts {
         db: dsn.dbname.clone(),
         read_only,
@@ -750,10 +753,23 @@ async fn run_batch(cli: &Cli) -> i32 {
     match batch::run(opts).await {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("connect failed: {e}");
+            eprintln!("{}", format_connect_failure(&e, &dsn_for_hint));
             2
         }
     }
+}
+
+/// Format a connect failure for stderr: the driver/server message on
+/// the first line, then `hint: …` on a second line when
+/// `conn::connect_hint` recognises the error text. Pure so it's unit
+/// tested without a live (or deliberately broken) connection.
+fn format_connect_failure(err: &str, dsn: &conn::Dsn) -> String {
+    let mut out = format!("connect failed: {err}");
+    if let Some(hint) = conn::connect_hint(err, dsn) {
+        out.push('\n');
+        out.push_str(&format!("hint: {hint}"));
+    }
+    out
 }
 
 /// Read `--log PATH`'s target: `-` reads stdin to EOF, otherwise the file
@@ -1618,5 +1634,25 @@ mod main_tests {
         let path = dir.join("pgman.log");
         chmod_owner_only_if_exists(&path); // must not panic
         assert!(!path.exists());
+    }
+
+    // --- format_connect_failure: connect-error + hint on stderr --------
+
+    #[test]
+    fn format_connect_failure_appends_hint_when_recognised() {
+        let dsn = conn::Dsn::parse("postgres://app@nosuchhost.invalid/db").unwrap();
+        let out = format_connect_failure("Connection refused (os error 61)", &dsn);
+        assert!(
+            out.starts_with("connect failed: Connection refused"),
+            "got: {out}"
+        );
+        assert!(out.contains("\nhint: nothing is listening"), "got: {out}");
+    }
+
+    #[test]
+    fn format_connect_failure_omits_hint_line_when_unrecognised() {
+        let dsn = conn::Dsn::parse("postgres://app@host/db").unwrap();
+        let out = format_connect_failure("something weird happened", &dsn);
+        assert_eq!(out, "connect failed: something weird happened");
     }
 }
