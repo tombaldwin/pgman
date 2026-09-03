@@ -247,8 +247,11 @@ impl App {
                     // server's for this to fire — a bare `db error`
                     // named nothing, hinted nothing, and F2 had no
                     // detail to show.
+                    // `CREATE EXTENSION` alone is not enough: the
+                    // module has to be preloaded, and the session
+                    // pgman opened is read-only by default.
                     let hint = if e.msg.contains("pg_stat_statements") {
-                        " (try `CREATE EXTENSION pg_stat_statements`)"
+                        " (try `CREATE EXTENSION pg_stat_statements` — needs shared_preload_libraries and a read-write session)"
                     } else {
                         ""
                     };

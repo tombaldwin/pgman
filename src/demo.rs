@@ -82,13 +82,18 @@ pub fn app(theme: Theme) -> App {
 ///
 /// Everything else — schema cache, saved queries, history, tap
 /// events — is identical to [`app`]; only the grid (cleared back to
-/// `Grid::default()`, same as a fresh, query-less connection) and
-/// `databases` (populated, so the start card's databases line isn't
-/// blank) differ.
+/// `Grid::default()`, same as a fresh, query-less connection), the
+/// editor (empty: the walkthrough says `e` then paste, and a paste
+/// appended to the pre-filled SELECT) and `databases` (populated, so
+/// the start card's databases line isn't blank) differ.
 pub fn launch_app(theme: Theme) -> App {
     let mut a = app(theme);
     a.grid = Grid::default();
     a.reset_grid_view();
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
+    a.editor.preferred_col = None;
+    a.editor_highlight_cache = None;
     a.databases = vec![
         DatabaseInfo {
             name: "shop".into(),
@@ -758,6 +763,12 @@ mod tests {
         assert!(
             !a.databases.is_empty(),
             "start card's databases line needs data to show"
+        );
+        assert!(
+            a.editor.buffer.is_empty() && a.editor.cursor == 0,
+            "launch_app must start with an EMPTY editor — docs/logs-to-sql.md says \
+             `e` then paste, and a paste appended to the pre-filled SELECT: {:?}",
+            a.editor.buffer
         );
         // Everything else app() sets up is untouched.
         assert_eq!(a.schema_cache.tables.len(), 4);
