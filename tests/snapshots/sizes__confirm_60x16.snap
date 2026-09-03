@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -7,8 +8,8 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                      │
 │  FROM users                                              │
 │  WHERE ┌ confirm ───────────────────────────────┐        │
-│  ORDER │run (DELETE without WHERE) · will wrap  │        │
-└────────│in transaction                          │────────┘
+│  ORDER │run (DELETE without WHERE) · will be    │        │
+└────────│refused — this session is read-only     │────────┘
 ┌ result │                                        │────────┐
 │id  emai│DELETE FROM orders                      │        │
 │1   ada@│                                        │00+00   │
