@@ -641,13 +641,73 @@ pub(crate) fn fit_title(title: &str, width: usize) -> String {
     crate::grid::truncate_cell(items[0], width)
 }
 
-/// Middle-ellipsise `s` down to `target_len` chars, keeping both ends —
-/// `"abc…xyz"` — since for a quoted SQL statement the tail matters as
-/// much as the head (a `WHERE` clause, a trailing `;`). `target_len` is
-/// the *exact* char budget the result must not exceed; if `s` already
-/// fits, it's returned unchanged. `target_len == 0` yields `""`;
-/// `target_len == 1` yields just the ellipsis marker (no room for either
-/// end). Pure / testable.
+/// Does a footer segment carry SQL — a statement, quoted or bare —
+/// rather than prose *about* SQL? A quoted statement (`"UPDATE
+/// accounts SET …"`) or a keyword pair in statement order (`SELECT …
+/// FROM`, `DELETE FROM`, `UPDATE … SET`, `INSERT INTO`, `WHERE x =`)
+/// says statement. The bare keywords are not enough: `run (DELETE
+/// without WHERE)` is prose, and cutting it mid-word gave `DELETE
+/// w…hout WHERE`. Pure / testable.
+fn looks_like_sql(s: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    let after = |needle: &str| lower.find(needle).map(|i| i + needle.len());
+    let pair =
+        |first: &str, second: &str| after(first).is_some_and(|from| lower[from..].contains(second));
+    let quoted_statement = ["select", "insert", "update", "delete", "with", "explain"]
+        .iter()
+        .any(|kw| lower.contains(&format!("\"{kw}")) || lower.contains(&format!("'{kw}")));
+    quoted_statement
+        || pair("select", " from ")
+        || lower.contains("delete from")
+        || lower.contains("insert into")
+        || pair("update ", " set ")
+        || pair("where ", "=")
+        || pair("where ", " in ")
+        || pair("where ", " like ")
+}
+
+/// Shorten `s` to `target_len` columns at word boundaries: the first
+/// words that fit, an ellipsis, then the last word — `"hint: this
+/// connection is… docs/configuration.md"`. `None` when even `… last`
+/// does not fit (a single over-long word, a tiny budget); the caller
+/// falls back to the character-level cut. Pure / testable.
+fn word_ellipsis(s: &str, target_len: usize) -> Option<String> {
+    let words: Vec<&str> = s.split_whitespace().collect();
+    let (&last, head_words) = words.split_last()?;
+    if head_words.is_empty() {
+        return None;
+    }
+    // "…" + " " + last word.
+    let tail_width = 2 + display_width(last);
+    if tail_width > target_len {
+        return None;
+    }
+    let mut head = String::new();
+    for w in head_words {
+        let sep = usize::from(!head.is_empty());
+        if display_width(&head) + sep + display_width(w) + tail_width > target_len {
+            break;
+        }
+        if sep == 1 {
+            head.push(' ');
+        }
+        head.push_str(w);
+    }
+    let out = format!("{head}… {last}");
+    (display_width(&out) <= target_len).then_some(out)
+}
+
+/// Ellipsise `s` down to `target_len` columns, keeping both ends.
+/// Prose is cut at word boundaries ([`word_ellipsis`]): the first
+/// words and the last one — a footer that read `DELETE w…hout WHERE`
+/// now reads `run (DELETE… WHERE)`. A segment that carries a statement
+/// ([`looks_like_sql`]) keeps the character-level middle cut
+/// (`"abc…xyz"`), since in SQL the tail matters as much as the head
+/// (a `WHERE` clause, a trailing `;`) and words are not the unit.
+/// `target_len` is the *exact* column budget the result must not
+/// exceed; if `s` already fits, it's returned unchanged. `target_len ==
+/// 0` yields `""`; `target_len == 1` yields just the ellipsis marker
+/// (no room for either end). Pure / testable.
 fn middle_ellipsis(s: &str, target_len: usize) -> String {
     if display_width(s) <= target_len {
         return s.to_string();
@@ -657,6 +717,11 @@ fn middle_ellipsis(s: &str, target_len: usize) -> String {
     }
     if target_len == 1 {
         return "…".to_string();
+    }
+    if !looks_like_sql(s) {
+        if let Some(prose) = word_ellipsis(s, target_len) {
+            return prose;
+        }
     }
     let chars: Vec<char> = s.chars().collect();
     let avail = target_len - 1; // minus the ellipsis marker itself
