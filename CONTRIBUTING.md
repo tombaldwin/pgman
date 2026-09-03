@@ -50,11 +50,12 @@ A few rules keep the codebase consistent — please follow them:
 - **No hardcoded colours or paths.** Use `theme::Theme` fields and
   `util::config_dir()` / `util::cache_dir()`.
 
-There's an optional effect-regression guard (`scripts/candor-guard.sh`,
-powered by [candor](https://github.com/tombaldwin/candor)) that flags when a
-function unexpectedly gains a network / filesystem / subprocess effect. It's
-opt-in — it skips cleanly if you don't have a local candor checkout, so you
-don't need it to contribute.
+CI also runs `cargo-deny` (advisories, licences), `cargo-machete` (unused
+dependencies), an MSRV build and test on Rust 1.94.1, fmt and clippy pinned to
+1.96.0, a size sweep of every screen, and a **required** data-layer check
+(`ci/candor-check.sh`): a UI or app function that reaches the database
+directly fails the build; direct queries live in `src/conn.rs` and
+`src/query/`. `docs/development.md` lists every gate and how to run it.
 
 ## Commit / PR style
 
