@@ -664,3 +664,35 @@ fn connection_failed_with_one_pick_offers_the_picker() {
         "footer: {footer:?}"
     );
 }
+
+/// The log picker at a terminal short enough that the popup shrinks to
+/// its minimum height: the two borders plus the summary header already
+/// fill the box.
+///
+/// The visible-row count used to saturate to zero there, so the picker
+/// drew a titled box with a summary line and no picks in it, while
+/// `j`/`k` still walked an index nothing rendered. At least one pick
+/// row must survive, and it must be the selected one.
+#[test]
+fn log_pick_at_a_short_terminal_still_shows_a_pick() {
+    use pgman::query::reconstruct::{ReconstructedQuery, Source};
+    let mut a = settle_app();
+    a.log_pick.picks = (0..40)
+        .map(|i| ReconstructedQuery {
+            raw_sql: "select * from users where id = ?".into(),
+            params: Vec::new(),
+            runnable_sql: format!("select * from users where id = {i}"),
+            source: Source::HibernateLog,
+            src_line: i,
+        })
+        .collect();
+    a.log_pick.index = 17;
+    a.mode = Mode::LogPick;
+    let buf = render(&mut a, 60, 10);
+    let dumped = dump(&buf);
+    assert!(
+        dumped.contains("id = 17"),
+        "the selected pick must be on screen:\n{dumped}"
+    );
+    insta::assert_snapshot!(dumped);
+}

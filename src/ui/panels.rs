@@ -249,6 +249,22 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// How a picker popup `popup_height` rows tall divides its inner rows
+/// (height minus the two borders) between its `header_len` header lines
+/// and the pick rows themselves: `(header_lines_kept, pick_rows)`.
+///
+/// Pick rows are floored at one and the header gives way to make room.
+/// On a short terminal the popup shrinks to its three-row minimum, the
+/// row count reached zero through `saturating_sub`, and the picker drew
+/// a titled box holding nothing but its summary line — while `j`/`k`
+/// still walked an index nothing rendered. The picks are what the
+/// picker is *for*; the summary is not. Pure / testable.
+fn pick_popup_budget(popup_height: u16, header_len: usize) -> (usize, usize) {
+    let inner = popup_height.saturating_sub(2) as usize;
+    let rows = inner.saturating_sub(header_len).max(1).min(inner.max(1));
+    (inner.saturating_sub(rows), rows)
+}
+
 /// Log-import picker: lists reconstructed queries (`hibernate` / `pglog`
 /// sources), highlights the selection.
 pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
@@ -259,11 +275,11 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     // One-line triage summary above the picker rows. Surfaces N+1
     // hotspots that the per-row list buries.
     //
-    // Built from `log_pick.clusters` — the cache written when the
-    // picks were set and on every view toggle — rather than by calling
-    // `nplus1::summarize`, which re-fingerprints and re-clusters every
-    // query in the import. That ran on EVERY frame, including the ~9fps
-    // animation ticks, for a list that cannot have changed.
+    // Built from `log_pick.clusters` — the cache written when the picks
+    // were set and on every view toggle — rather than re-fingerprinting
+    // and re-clustering every query in the import on EVERY frame,
+    // including the ~9fps animation ticks, for a list that cannot have
+    // changed.
     let clusters = &app.log_pick.clusters;
     let summary = crate::query::nplus1::SessionSummary {
         total_queries: app.log_pick.picks.len(),
@@ -307,12 +323,45 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
     lines.push(Line::from(""));
+
+    let total = app.log_pick_visible_len();
+    let title = format!(
+        " log picks · {}/{} ",
+        if total == 0 {
+            0
+        } else {
+            app.log_pick.index + 1
+        },
+        total,
+    );
+    // Scroll the ROWS (not the header lines) to follow the cursor.
+    // Without this only the first screenful of picks was ever drawn,
+    // while `j` / `G` walked the index — and the title's `n/total` —
+    // off the bottom of a popup that never moved. An imported log
+    // routinely holds hundreds of queries.
+    //
+    // The popup is sized from the row *count*, and the visible window
+    // is settled, BEFORE any row is built: an imported log holds tens
+    // of thousands of picks, and rendering all of them to throw all but
+    // a screenful away cost ~21 ms per frame at 9fps.
+    let header_len = lines.len();
+    let w = 100u16.min(area.width.saturating_sub(2));
+    let h = ((header_len + total) as u16 + 2)
+        .min(area.height.saturating_sub(2))
+        .max(3);
+    let popup = floated_in_panel(area, w, h);
+    let (header_budget, visible_rows) = pick_popup_budget(popup.height, header_len);
+    lines.truncate(header_budget);
+    let scroll = scroll_offset(app.log_pick.index, visible_rows);
+
     let row_lines: Vec<Line> = match app.log_pick.view {
         LogPickView::AllQueries => app
             .log_pick
             .picks
             .iter()
             .enumerate()
+            .skip(scroll)
+            .take(visible_rows)
             .map(|(i, q)| {
                 let source = match q.source {
                     Source::HibernateLog => "hibernate",
@@ -353,6 +402,8 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .clusters
             .iter()
             .enumerate()
+            .skip(scroll)
+            .take(visible_rows)
             .map(|(i, c)| {
                 let mut preview: String = c
                     .example
@@ -383,30 +434,7 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             })
             .collect(),
     };
-    let total = app.log_pick_visible_len();
-    let title = format!(
-        " log picks · {}/{} ",
-        if total == 0 {
-            0
-        } else {
-            app.log_pick.index + 1
-        },
-        total,
-    );
-    // Scroll the ROWS (not the header lines) to follow the cursor.
-    // Without this only the first screenful of picks was ever drawn,
-    // while `j` / `G` walked the index — and the title's `n/total` —
-    // off the bottom of a popup that never moved. An imported log
-    // routinely holds hundreds of queries.
-    let header_len = lines.len();
-    let w = 100u16.min(area.width.saturating_sub(2));
-    let h = ((header_len + row_lines.len()) as u16 + 2)
-        .min(area.height.saturating_sub(2))
-        .max(3);
-    let popup = floated_in_panel(area, w, h);
-    let visible_rows = (popup.height.saturating_sub(2) as usize).saturating_sub(header_len);
-    let scroll = scroll_offset(app.log_pick.index, visible_rows);
-    lines.extend(row_lines.into_iter().skip(scroll).take(visible_rows));
+    lines.extend(row_lines);
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
@@ -1796,6 +1824,44 @@ mod tests {
             dsn: Some(crate::conn::Dsn::parse(url).unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pick_popup_budget_keeps_the_header_when_there_is_room() {
+        // 20 rows of box: 2 borders, 3 header lines, 15 picks.
+        assert_eq!(pick_popup_budget(20, 3), (3, 15));
+        // Exactly one row left over after the header.
+        assert_eq!(pick_popup_budget(6, 3), (3, 1));
+    }
+
+    #[test]
+    fn pick_popup_budget_drops_header_lines_before_the_last_pick_row() {
+        // A short terminal squeezes the popup to its three-row minimum:
+        // one inner row, and the header alone would fill it. Showing
+        // one pick that scrolls beats showing a header-only box while
+        // `j`/`k` walk an invisible cursor.
+        assert_eq!(pick_popup_budget(3, 3), (0, 1));
+        assert_eq!(pick_popup_budget(5, 3), (2, 1));
+        assert_eq!(pick_popup_budget(3, 50), (0, 1));
+    }
+
+    #[test]
+    fn pick_popup_budget_never_exceeds_the_inner_height() {
+        for h in 0u16..30 {
+            for header in 0usize..8 {
+                let (kept, rows) = pick_popup_budget(h, header);
+                let inner = h.saturating_sub(2) as usize;
+                assert!(rows >= 1, "h={h} header={header}: no row survived");
+                assert!(
+                    kept <= header,
+                    "h={h} header={header}: invented header lines"
+                );
+                assert!(
+                    kept + rows <= inner.max(1),
+                    "h={h} header={header}: {kept}+{rows} overruns {inner}"
+                );
+            }
         }
     }
 
