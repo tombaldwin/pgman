@@ -239,7 +239,11 @@ them) are held only in memory (a capped ring buffer) unless you pass
 `--tap-record PATH`, which appends them to a JSONL file you chose
 (created owner-only, `0600`, alongside its parent directory).
 Each listener also caps concurrent connections and every event
-field, and throttles its malformed-frame warnings (at most one per
+field — both the length of each field and, for the list-shaped
+`params`, `caller` and `error`, the number of entries in it (64,
+the last being a `… +N more` marker), since a list of many short
+entries is cheap to send and expensive to hold —
+and throttles its malformed-frame warnings (at most one per
 second, with a suppressed-count) so a hostile or broken client can't
 blow up memory or flood the app log — which itself rolls daily
 (`pgman.log.YYYY-MM-DD` under `~/.cache/pgman/`, see the table
