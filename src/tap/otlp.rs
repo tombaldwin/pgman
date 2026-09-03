@@ -24,6 +24,7 @@ use super::{
 static OTLP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
 static OTLP_ACCEPT_WARN: WarnThrottle = WarnThrottle::new();
 static DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
+static OTLP_CONN_ENDED_WARN: WarnThrottle = WarnThrottle::new();
 
 /// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
 /// Anything beyond this is broken telemetry (clock skew /
@@ -317,7 +318,16 @@ pub async fn run_otlp_listener(
         tokio::spawn(async move {
             let _permit = permit;
             if let Err(e) = handle_otlp_conn(sock, &tx).await {
-                tracing::warn!("tap-otlp: conn {peer} ended: {e}");
+                // Throttled like the TCP site: a peer closing with RST
+                // in a loop produced 1 400 of these a second.
+                OTLP_CONN_ENDED_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap-otlp: conn {peer} ended: {e}{suffix}")
+                });
             }
         });
     }
