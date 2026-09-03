@@ -22,6 +22,7 @@ use super::{now_unix_micros, parse, TapEvent, WarnThrottle, TAP_MAX_FRAME_BYTES}
 pub const TAP_REPLAY_MAX_LINE_BYTES: usize = TAP_MAX_FRAME_BYTES;
 
 static OVERLONG_LINE_WARN: WarnThrottle = WarnThrottle::new();
+static MALFORMED_LINE_WARN: WarnThrottle = WarnThrottle::new();
 
 /// Parse one line of a JSONL capture into a [`TapEvent`].
 /// Blank lines are silently skipped at the caller; lines that
@@ -99,7 +100,14 @@ pub async fn run_replay_file<P: AsRef<std::path::Path>>(
                 accepted += 1;
             }
             Some(Err(e)) => {
-                tracing::warn!("tap-replay: line {line_no}: {e}");
+                MALFORMED_LINE_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap-replay: line {line_no}: {e}{suffix}")
+                });
                 skipped += 1;
             }
         }

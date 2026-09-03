@@ -22,6 +22,7 @@ use super::{
 };
 
 static OTLP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
+static OTLP_ACCEPT_WARN: WarnThrottle = WarnThrottle::new();
 static DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
 
 /// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
@@ -280,7 +281,14 @@ pub async fn run_otlp_listener(
         let (sock, peer) = match listener.accept().await {
             Ok(pair) => pair,
             Err(e) => {
-                tracing::warn!("tap-otlp: accept failed: {e}");
+                OTLP_ACCEPT_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap-otlp: accept failed: {e}{suffix}")
+                });
                 continue;
             }
         };

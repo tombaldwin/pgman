@@ -250,13 +250,27 @@ impl WarnThrottle {
     /// line to log. Only invoked when this call actually wins
     /// the window — suppressed calls never build the string.
     pub(crate) fn warn(&self, msg: impl FnOnce(u64) -> String) {
+        if let Some(suppressed) = self.take(now_unix_micros()) {
+            tracing::warn!("{}", msg(suppressed));
+        }
+    }
+
+    /// The throttling decision itself, split from the logging so it
+    /// can be tested against synthetic timestamps rather than the wall
+    /// clock and a `tracing` subscriber.
+    ///
+    /// Returns `Some(suppressed)` when this call wins its window —
+    /// `suppressed` being how many calls were dropped since the last
+    /// winner, and reset by the win — or `None` when this call is
+    /// itself suppressed.
+    fn take(&self, now: u64) -> Option<u64> {
         use std::sync::atomic::Ordering;
         const WINDOW_MICROS: u64 = 1_000_000;
-        let now = now_unix_micros();
         let last = self.last_warn_micros.load(Ordering::Relaxed);
+
         if last != 0 && now.saturating_sub(last) < WINDOW_MICROS {
             self.suppressed.fetch_add(1, Ordering::Relaxed);
-            return;
+            return None;
         }
         // CAS so two racing callers in the same window don't
         // both win it — the loser just counts as suppressed.
@@ -266,10 +280,9 @@ impl WarnThrottle {
             .is_err()
         {
             self.suppressed.fetch_add(1, Ordering::Relaxed);
-            return;
+            return None;
         }
-        let suppressed = self.suppressed.swap(0, Ordering::Relaxed);
-        tracing::warn!("{}", msg(suppressed));
+        Some(self.suppressed.swap(0, Ordering::Relaxed))
     }
 }
 
@@ -2175,6 +2188,51 @@ mod tests {
         assert_eq!(e.app.as_deref(), Some("e2e-svc"));
         assert_eq!(e.sql.as_deref(), Some("SELECT * FROM end_to_end"));
         assert_eq!(e.duration_micros, Some(20_000));
+    }
+
+    // --- WarnThrottle -----------------------------------
+
+    #[test]
+    fn warn_throttle_emits_once_per_second_and_counts_the_rest() {
+        // The type every attacker-driven warn site now routes
+        // through, and until now the only one with no test of its own.
+        const SEC: u64 = 1_000_000;
+        let t = WarnThrottle::new();
+
+        // First call always wins, with nothing suppressed behind it.
+        assert_eq!(t.take(10 * SEC), Some(0));
+        // Everything inside the window is suppressed and counted.
+        assert_eq!(t.take(10 * SEC + 1), None);
+        assert_eq!(t.take(10 * SEC + SEC / 2), None);
+        assert_eq!(t.take(11 * SEC - 1), None);
+        // Exactly a second later the window is over — and the winner
+        // is handed the count of what it stands in for.
+        assert_eq!(t.take(11 * SEC), Some(3));
+        // …which the win resets, so the next line doesn't re-report
+        // the same suppressed calls.
+        assert_eq!(t.take(12 * SEC), Some(0));
+
+        // A quiet minute doesn't bank credit: one line, not sixty.
+        assert_eq!(t.take(72 * SEC), Some(0));
+        assert_eq!(t.take(72 * SEC + 1), None);
+    }
+
+    #[test]
+    fn warn_throttle_windows_are_per_site() {
+        // One `static` per log site, so a transport being flooded
+        // cannot silence another's warnings — the reason these are
+        // not one shared limiter.
+        const SEC: u64 = 1_000_000;
+        let a = WarnThrottle::new();
+        let b = WarnThrottle::new();
+
+        assert_eq!(a.take(5 * SEC), Some(0));
+        assert_eq!(a.take(5 * SEC + 1), None);
+        // `b` has said nothing yet, so it is not in a window at all.
+        assert_eq!(b.take(5 * SEC + 1), Some(0));
+        // And `a`'s suppressed count is its own.
+        assert_eq!(a.take(6 * SEC), Some(1));
+        assert_eq!(b.take(6 * SEC + 1), Some(0));
     }
 
     #[tokio::test]
