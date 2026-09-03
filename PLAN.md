@@ -251,8 +251,8 @@ Then Release day below.
 
 What it was:
 
-1. **CHANGELOG**: annotate `[0.1.0]` as "version bump only — never
-   tagged or published". First tag is **v0.2.0**.
+1. **CHANGELOG**: the first tag is **v0.1.0** (never published, so no
+   bump); on release day fold Unreleased into `[0.1.0] — <date>`.
 2. **README**: regenerate `demo.gif` from the Phase 1 wedge flow;
    rewrite Install (brew tap / cargo install / tarball) and Upgrade.
 3. **docs/**: `keys.md`, `commands.md`, `configuration.md`,
@@ -267,12 +267,26 @@ What it was:
 7. Hand the product page what it needs: hero gif, install command,
    GitHub link, drop "Coming soon".
 
+## Release panel — 2026-09-03 · **run, acted on, re-review pending**
+
+Five reviewers (release risk, security, first-time user, correctness,
+positioning). Three said NO-GO. Security reproduced four blockers end
+to end: a cloned repo could point `PGPASSWORD` at any host on
+auto-connect; the statement splitter could be defeated by a
+double-quoted identifier or a `$` in an alias so a DROP ran past a
+block guard; password redaction leaked passwords containing `/` or
+`@`; a mistyped `sslmode` silently accepted any certificate.
+Correctness found an unresolved `${DB_PASSWORD}` sent as the literal
+string and fourteen more. Every finding is fixed on main with a test
+that was demonstrated failing first; the CHANGELOG has the list. The
+security and correctness reviewers re-review before the tag.
+
 ## Release day
 
 ```
-git tag v0.2.0 && git push --tags       # after CI is green on the SHA
-gh release edit v0.2.0 --draft=false    # after checking the 4 tarballs
-scripts/update-formula.sh v0.2.0        # commit + push both repos
+git tag v0.1.0 && git push --tags       # after CI is green on the SHA
+gh release edit v0.1.0 --draft=false    # after checking the 4 tarballs
+scripts/update-formula.sh v0.1.0        # commit + push both repos
 brew tap tombaldwin/tap && brew install pgman
 ```
 
@@ -283,5 +297,5 @@ brew tap tombaldwin/tap && brew install pgman
   route.
 - Mutation testing (`mutants.yml` / `scripts/sweep.sh`).
 - `unwrap_used` / `expect_used` deny lints.
-- `cargo-semver-checks` — meaningful once 0.2.0 is on crates.io.
+- `cargo-semver-checks` — meaningful once 0.1.0 is on crates.io.
 - Everything in `BACKLOG.md → Open` that is a feature.

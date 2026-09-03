@@ -73,7 +73,7 @@ Sleep 400ms
 # N+1 signature nplus1.rs clusters on. Typed at a fast override speed;
 # these lines are long and the ambient TypingSpeed would blow the
 # runtime budget.
-Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total from orders o where o.customer_id=?"
+Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.customer_id=?"
 Enter
 Type@12ms "2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]"
 Enter
