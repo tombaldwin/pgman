@@ -6096,7 +6096,9 @@ fn demo_batch_the_splitter_cannot_verify_is_refused() {
 #[test]
 fn demo_batch_runs_the_statements_it_checked_not_the_raw_buffer() {
     // What reaches the server is the re-join of the verified statements, so
-    // there is no text in flight that the classifier never saw.
+    // there is no text in flight that the classifier never saw — and no text
+    // the operator wrote that silently went missing either, which is why the
+    // comments are still in it.
     let mut a = crate::demo::app(Theme::default());
     run_in_demo(
         &mut a,
@@ -6107,7 +6109,7 @@ fn demo_batch_runs_the_statements_it_checked_not_the_raw_buffer() {
     assert!(pending.is_batch);
     assert_eq!(
         pending.sql,
-        "SELECT 1;\nUPDATE users SET active = false WHERE id = 1"
+        "SELECT 1;\n/* note */ UPDATE users SET active = false WHERE id = 1 -- tail"
     );
 }
 

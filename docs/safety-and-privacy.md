@@ -65,10 +65,13 @@
   dollar-quoted bodies — where a `$` following an identifier character
   is an identifier character, not a quote opener — and `--` / nested
   `/* … */` comments. Identifier characters follow Postgres's own rule,
-  so every byte from 0x80 up continues an identifier and a multibyte
-  name such as `é$b$c` or `中$b$c` is one identifier rather than a name
-  followed by a dollar-quote opener, and a `--` comment ends at a
-  carriage return as well as a newline.
+  so every byte from 0x80 up — and `$`, which continues an identifier
+  though it cannot start one — keeps an identifier going: `é$b$c`,
+  `中$b$c` and `a$e` are each one identifier rather than a name followed
+  by a quote opener. A `--` comment ends at a carriage return as well as
+  a newline. Comments stay *in* the statement they sit in, because
+  `/*+ IndexScan(t idx) */` is a pg_hint_plan directive the server acts
+  on, and what runs is the re-joined statements rather than the buffer.
   `safety::split_verified` then checks the result:
   every construct must close, and re-joining the pieces must reproduce
   the input. **A script the splitter cannot verify is refused outright**
