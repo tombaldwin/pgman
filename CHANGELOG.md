@@ -37,9 +37,13 @@ and breaking changes.
   bind-parameter trace logging), Postgres/RDS server logs, and pasted
   JDBC statement + parameters; N+1 detection; a pasted log is recognised
   in the editor; `pgman --log PATH` opens straight into the picks.
-- **Editor** — syntax highlighting, identifier and keyword completion,
-  `pg_format`, history, undo/redo, saved queries with `:param` prompts,
-  `$EDITOR`, `\watch`, DBUnit fixture apply and capture.
+- **Editor** — Enter runs a statement that ends in `;` (psql's rule),
+  Alt-Enter runs regardless; opens five lines tall and grows with its
+  content; syntax highlighting, identifier and keyword completion,
+  auto-indent, Ctrl-F formatting (built-in, `pg_format` when
+  installed; never on run or paste), history, undo/redo, saved queries
+  with `:param` prompts, `$EDITOR`, `\watch`, DBUnit fixture apply and
+  capture.
 - **Safety** — read-only by default, `statement_timeout`, per-database
   guards (block / confirm / allow) on every statement, DML wrapped in a
   rollback transaction, `EXPLAIN ANALYZE` always rolled back, and a
