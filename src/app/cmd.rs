@@ -188,6 +188,16 @@ impl App {
             // without a `pending_run`, and its y/n would no-op.
             origin = Mode::Editor;
         }
+        if origin == Mode::Help {
+            // The bar opened over the help overlay. Its origin is
+            // where the operator was BEFORE help, not `Help` itself:
+            // `:help` from here re-opened help with `return_to =
+            // Help`, and Esc then closed help into help — no way back
+            // to the editor.
+            origin = self.help.return_to.take().unwrap_or(Mode::Normal);
+            self.help.origin = None;
+            self.help.scroll = 0;
+        }
         self.command_bar = Some(CommandBarUi {
             input: TextInput::new(),
             origin,

@@ -6553,6 +6553,38 @@ fn every_help_topic_closes_back_to_where_the_bar_was_opened_from() {
 }
 
 #[test]
+fn help_from_the_bar_opened_over_help_returns_to_where_help_was_opened_from() {
+    // Editor → F1 → `:help` → Esc used to land in Help again: the bar
+    // captured `Help` as its origin, so `:help` re-opened help with
+    // `return_to = Help`, and every Esc closed help into help.
+    for line in ["help", "help editor", "help tap"] {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = Mode::Editor;
+        a.on_key(KeyEvent::from(KeyCode::F(1)));
+        assert_eq!(a.mode, Mode::Help);
+        a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+        assert_eq!(a.mode, Mode::CommandBar, "':' must open the bar over help");
+        type_str(&mut a, line);
+        a.on_key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(a.mode, Mode::Help, "`:{line}` must open help");
+        a.on_key(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(
+            a.mode,
+            Mode::Editor,
+            "`:{line}` from help opened from the editor must close back to the editor"
+        );
+    }
+    // Esc out of the bar itself also goes back to the editor, not to
+    // a help overlay the bar already dismissed.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::from(KeyCode::F(1)));
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Editor);
+}
+
+#[test]
 fn command_names_are_case_insensitive_all_the_way_through() {
     // `:ABOUT` matched on the lowercased name and worked; everything
     // delegated to the backslash parser was handed the RAW line, so
