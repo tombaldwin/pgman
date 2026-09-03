@@ -6467,6 +6467,47 @@ fn command_readonly_moves_the_flag_when_the_profile_does_not_pin_it() {
     assert_eq!(a.last_error.as_deref(), Some("usage: :readonly on|off"));
 }
 
+#[test]
+fn connect_in_demo_changes_nothing_before_it_refuses() {
+    // `start_connect` refuses `--demo` — but `connect_to_pick` had
+    // already swapped the dsn, its origin, the safety profile and the
+    // mode by the time it got there, so the demo session was left
+    // pointing at a connection it never opened. (No tokio runtime
+    // here on purpose: reaching `start_connect`'s spawn would panic,
+    // which is half the assertion.)
+    let mut a = crate::demo::app(Theme::default());
+    a.conn_pick.picks = vec![DataSourcePick {
+        name: "dataSource (application)".into(),
+        origin: "Spring",
+        dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    }];
+    let before_dsn = a.dsn.clone();
+    let before_origin = a.dsn_origin.clone();
+    let before_read_only = a.read_only;
+
+    // Driven from the editor so the mode assertion means something —
+    // `connect_to_pick` forced `Mode::Normal` before refusing.
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c dataSource".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+
+    assert_eq!(a.dsn, before_dsn, "the demo's dsn must not be replaced");
+    assert_eq!(a.dsn_origin, before_origin);
+    assert_eq!(a.read_only, before_read_only);
+    assert_eq!(
+        a.mode,
+        Mode::Editor,
+        "and the operator stays where they were"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("--demo has no server — restart without --demo to connect")
+    );
+}
+
 #[tokio::test]
 async fn command_readonly_on_survives_the_next_connect() {
     // `connect_to_pick` recomputes `read_only` from the picked

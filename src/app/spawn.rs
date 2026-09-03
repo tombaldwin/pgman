@@ -263,7 +263,20 @@ impl App {
     /// `origin` is the human-readable provenance shown in the status
     /// line / help ("picked X data source 'Y'", or a `\c`-driven
     /// database swap). Callers must check `refuse_if_unresolved` first.
+    ///
+    /// `--demo` is refused here, before anything moves. `start_connect`
+    /// refuses it too, but by then this function had already swapped
+    /// `dsn`, `dsn_origin`, `read_only` and `statement_timeout_ms` and
+    /// dropped the operator into `Mode::Normal` — so `:connect` in a
+    /// demo session reported "no server" while leaving the App
+    /// pointing at a connection it never opened, with the *new*
+    /// database's safety profile installed over the demo's.
     pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
+        if self.demo {
+            self.last_status =
+                Some("--demo has no server — restart without --demo to connect".into());
+            return;
+        }
         let profile = self.safety_config.profile_for(&dsn.dbname);
         // The new database's profile decides the floor; a session
         // `:readonly on` still applies on top of it. Without the
