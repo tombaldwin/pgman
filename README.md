@@ -58,9 +58,11 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 - **N+1 detection.** Cluster reconstructed queries by shape to surface
   loop-driven selects.
 
-Two ways in: paste a log into the editor and press F8 (or `ctrl-l`), or skip
+Three ways in: paste a log into the editor and press F8 (or `ctrl-l`); skip
 the paste and launch straight into the reconstructed queries with
-`pgman --log app.log`. Walkthrough: [`docs/logs-to-sql.md`](docs/logs-to-sql.md).
+`pgman --log app.log`; or, with no log at all, paste a `?`-placeholder
+statement plus its typed parameter list. Walkthrough:
+[`docs/logs-to-sql.md`](docs/logs-to-sql.md).
 
 Run it inside a Spring project and it picks up `spring.datasource.*` to connect.
 
