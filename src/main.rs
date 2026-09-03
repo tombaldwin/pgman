@@ -93,6 +93,12 @@ struct Cli {
     /// Append every incoming tap event to PATH as JSONL, for later --tap-replay.
     #[arg(long, value_name = "PATH", help_heading = "JDBC tap")]
     tap_record: Option<std::path::PathBuf>,
+
+    /// Don't auto-enable the tap listener in a Java project (pom.xml /
+    /// build.gradle in the launch directory). An explicit --tap-listen
+    /// still binds.
+    #[arg(long, help_heading = "JDBC tap", conflicts_with = "tap_listen")]
+    no_tap: bool,
 }
 
 #[tokio::main]
@@ -308,15 +314,22 @@ async fn main() -> anyhow::Result<()> {
     // collector, so we don't surprise-bind it. The startup log
     // is explicit about what got auto-enabled.
     let tap_listen_effective: Option<String> = cli.tap_listen.clone().or_else(|| {
-        if java_project_detected {
+        if java_project_detected && !cli.no_tap {
             tracing::info!(
-                "tap: Java project detected — auto-enabling --tap-listen :7432 (pass --tap-listen explicitly to override)"
+                "tap: Java project detected — auto-enabling --tap-listen :7432 (--no-tap to disable, --tap-listen to override)"
             );
             Some(":7432".into())
+        } else if java_project_detected {
+            tracing::info!("tap: Java project detected, --no-tap given — no listener");
+            None
         } else {
             None
         }
     });
+    // Auto-enabled, as opposed to asked for: the operator is told on the
+    // status line. An ingest port they did not ask for — loopback, but
+    // open — is not something the log alone should carry.
+    let tap_auto_enabled = cli.tap_listen.is_none() && tap_listen_effective.is_some();
     //
     // Both --tap-listen and --tap-otlp share one adapter task
     // that translates `tap::TapEvent` → `AppMsg::TapEvent`
@@ -570,6 +583,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 });
                 tracing::info!("tap: listening on {addr} (tcp)");
+                if tap_auto_enabled {
+                    application.last_status = Some(tap_auto_status_line(&addr));
+                }
             }
             Err(e) => {
                 eprintln!("invalid --tap-listen {addr_raw:?}: {e}");
@@ -645,6 +661,13 @@ async fn main() -> anyhow::Result<()> {
     let result = application.run(&mut term).await;
     drop(term); // restore the terminal before surfacing any error
     result
+}
+
+/// The status line shown when the tap listener was bound without being
+/// asked for. Pure so the wording is pinned: the port, why it is open,
+/// and the flag that stops it.
+fn tap_auto_status_line(addr: &std::net::SocketAddr) -> String {
+    format!("tap listener on {addr} (auto: Java project detected) · --no-tap to disable")
 }
 
 /// Parse the `--tap-listen` value. Accepts `host:port`, `:port`
@@ -1643,6 +1666,27 @@ mod main_tests {
     fn parse_tap_addr_rejects_garbage() {
         let err = parse_tap_addr("not-an-address").unwrap_err();
         assert!(err.contains("port"), "expected port-parse error: {err}");
+    }
+
+    #[test]
+    fn the_auto_enabled_tap_status_line_names_port_reason_and_off_switch() {
+        let addr: std::net::SocketAddr = "127.0.0.1:7432".parse().unwrap();
+        assert_eq!(
+            tap_auto_status_line(&addr),
+            "tap listener on 127.0.0.1:7432 (auto: Java project detected) · --no-tap to disable"
+        );
+    }
+
+    #[test]
+    fn no_tap_parses_and_conflicts_with_an_explicit_listener() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["pgman", "--no-tap"]).expect("parses");
+        assert!(cli.no_tap);
+        assert!(
+            Cli::try_parse_from(["pgman", "--no-tap", "--tap-listen", ":7432"]).is_err(),
+            "asking for a listener and refusing the auto one is a contradiction"
+        );
+        assert!(!Cli::try_parse_from(["pgman"]).expect("parses").no_tap);
     }
 
     #[test]
