@@ -31,4 +31,4 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   F5 run · ctrl-z undo · ctrl-y redo · ctrl-r history · F1 +5 more
+ RO   TAP   N+1 ×1   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +6 more

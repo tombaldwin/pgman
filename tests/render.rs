@@ -1096,7 +1096,7 @@ fn stale_command_bar_does_not_hide_the_editor_footer() {
         "stale command bar drawn over the editor footer: {footer:?}"
     );
     assert!(
-        footer.contains("F5 run"),
+        footer.contains("⏎ runs after ;"),
         "editor footer hint missing: {footer:?}"
     );
 }

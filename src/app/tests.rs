@@ -2956,10 +2956,10 @@ fn log_pick_enter_in_cluster_view_loads_a_runnable_member_not_the_template() {
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor.buffer, "select * from item where order_id=101");
+    assert_eq!(a.editor.buffer, "select * from item where order_id=101;");
     assert_eq!(
         a.last_status.as_deref(),
-        Some("loaded query · 37 char(s)"),
+        Some("loaded query · 38 char(s)"),
         "a bound member is an ordinary load"
     );
 }
@@ -2976,7 +2976,7 @@ fn log_pick_enter_on_a_cluster_with_no_bound_member_loads_the_template_and_says_
     a.on_key(KeyEvent::from(KeyCode::Char('c')));
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.mode, Mode::Editor);
-    assert_eq!(a.editor.buffer, "select * from item where order_id=?");
+    assert_eq!(a.editor.buffer, "select * from item where order_id=?;");
     assert_eq!(a.last_status.as_deref(), Some(LOG_PICK_UNBOUND_STATUS));
     assert!(
         a.last_error.is_none(),
@@ -2997,7 +2997,7 @@ fn log_pick_enter_in_all_queries_view_says_when_the_pick_is_a_template() {
     a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
     a.mode = Mode::LogPick;
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    assert_eq!(a.editor.buffer, "select * from item where order_id=?");
+    assert_eq!(a.editor.buffer, "select * from item where order_id=?;");
     assert_eq!(a.last_status.as_deref(), Some(LOG_PICK_UNBOUND_STATUS));
 }
 
@@ -8123,4 +8123,177 @@ fn auto_closers_stack_tracks_inserts_and_deletes() {
     assert!(!s.is_empty());
     s.sync(7);
     assert!(s.is_empty());
+}
+
+// -- Enter runs a terminated statement; Alt-Enter runs regardless --
+
+fn editor_with(buffer: &str) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = buffer.into();
+    a.editor.cursor = a.editor.buffer.len();
+    a
+}
+
+/// With no client connected `request_run` answers "not connected" —
+/// the same signal the Ctrl-Enter / Ctrl-J tests above key on.
+fn reached_request_run(a: &App) -> bool {
+    a.last_error
+        .as_deref()
+        .map(|e| e.contains("not connected"))
+        .unwrap_or(false)
+}
+
+#[test]
+fn enter_runs_is_true_only_for_a_terminated_statement_or_a_backslash_command() {
+    assert!(enter_runs("select 1;"));
+    assert!(
+        enter_runs("select 1;  \n"),
+        "trailing whitespace after the ; is still terminated"
+    );
+    assert!(enter_runs("\\l"));
+    assert!(enter_runs("  \\d users"));
+    assert!(!enter_runs("select 1"));
+    assert!(
+        !enter_runs("select 1; -- and then"),
+        "a ; mid-buffer is not a terminator"
+    );
+    assert!(!enter_runs(""));
+    assert!(!enter_runs("   "));
+}
+
+#[test]
+fn ensure_terminated_appends_a_semicolon_only_when_one_is_missing() {
+    assert_eq!(ensure_terminated("select 1"), "select 1;");
+    assert_eq!(ensure_terminated("select 1  "), "select 1;");
+    assert_eq!(ensure_terminated("select 1;"), "select 1;");
+    assert_eq!(ensure_terminated("\\l"), "\\l");
+    assert_eq!(ensure_terminated(""), "", "an empty pick stays empty");
+    assert_eq!(ensure_terminated("  "), "  ");
+}
+
+#[test]
+fn enter_on_a_terminated_statement_runs_it() {
+    let mut a = editor_with("select 1;");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(
+        reached_request_run(&a),
+        "Enter after ; should hit request_run; last_error = {:?}",
+        a.last_error
+    );
+    assert_eq!(a.editor.buffer, "select 1;", "no newline was inserted");
+}
+
+#[test]
+fn enter_on_an_unterminated_statement_inserts_a_newline() {
+    let mut a = editor_with("select 1");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "select 1\n");
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
+    assert!(a.last_error.is_none(), "nothing ran: {:?}", a.last_error);
+}
+
+#[test]
+fn shift_enter_inserts_a_newline_even_after_a_semicolon() {
+    let mut a = editor_with("select 1;");
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    assert_eq!(a.editor.buffer, "select 1;\n");
+    assert!(a.last_error.is_none());
+}
+
+#[test]
+fn alt_enter_runs_an_unterminated_statement() {
+    let mut a = editor_with("select 1");
+    a.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    assert!(
+        reached_request_run(&a),
+        "Alt-Enter should hit request_run; last_error = {:?}",
+        a.last_error
+    );
+    assert_eq!(a.editor.buffer, "select 1");
+}
+
+#[test]
+fn enter_on_a_backslash_command_runs_it() {
+    // `\l` needs no terminator; dispatch_backslash clears the buffer
+    // on the way through, which is the proof it ran rather than
+    // gaining a newline.
+    let mut a = editor_with("\\l");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "", "the backslash command was dispatched");
+}
+
+fn popup_with(a: &mut App, selected: Option<usize>) {
+    use crate::query::complete::CandidateKind;
+    a.editor.buffer = "SELECT * FROM us".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion = Some(CompletionCycle {
+        start: a.editor.cursor - 2,
+        end: a.editor.cursor,
+        origin: "us".into(),
+        origin_prefix: "us".into(),
+        origin_cursor: a.editor.cursor,
+        candidates: vec![
+            Candidate {
+                display: "users".into(),
+                insert: "users".into(),
+                kind: CandidateKind::Table,
+                context: None,
+            },
+            Candidate {
+                display: "user_logs".into(),
+                insert: "user_logs".into(),
+                kind: CandidateKind::Table,
+                context: None,
+            },
+        ],
+        selected,
+    });
+}
+
+#[test]
+fn enter_with_the_completion_popup_open_accepts_the_first_candidate() {
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "SELECT * FROM users", "no newline, no run");
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
+    assert!(a.completion.is_none(), "the popup closed");
+    assert!(a.last_error.is_none(), "nothing ran: {:?}", a.last_error);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("completion · accepted · table")
+    );
+}
+
+#[test]
+fn enter_with_a_highlighted_candidate_keeps_that_one() {
+    let mut a = editor_with("");
+    popup_with(&mut a, Some(1));
+    // Mirror what the second Tab did: the highlighted insert is in the buffer.
+    a.editor.buffer = "SELECT * FROM user_logs".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.completion.as_mut().unwrap().end = a.editor.cursor;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "SELECT * FROM user_logs");
+    assert!(a.completion.is_none());
+}
+
+#[test]
+fn log_pick_enter_loads_a_terminated_statement() {
+    // The wedge is paste → ctrl-l → pick → Enter → Enter: the second
+    // Enter only runs if the first left a `;` behind.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.log_pick.picks = log_picks_with_a_cluster_of(&["select * from item where order_id=101"]);
+    a.log_pick.clusters = crate::query::nplus1::detect(&a.log_pick.picks);
+    a.mode = Mode::LogPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(
+        enter_runs(&a.editor.buffer),
+        "loaded: {:?}",
+        a.editor.buffer
+    );
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(reached_request_run(&a), "last_error = {:?}", a.last_error);
 }

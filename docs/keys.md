@@ -64,7 +64,8 @@ diff, all of which are also dispatched from this mode.
 
 | Key | Action |
 |---|---|
-| `F5` / `Ctrl-Enter` / `Ctrl-J` | Run the statement (through safety guards) |
+| `Enter` | Run the statement once it ends with `;` (or is a `\` command) — through safety guards; otherwise insert a newline |
+| `Alt-Enter` | Run the statement regardless of the terminator (`F5` / `Ctrl-Enter` / `Ctrl-J` do the same) |
 | `Ctrl-E` / `F6` | EXPLAIN (never executes; opens the EXPLAIN tree) |
 | `Ctrl-A` / `F7` | EXPLAIN ANALYZE (DML wrapped in a rollback transaction) |
 | `Ctrl-C` | Cancel the running query (only while one is in-flight) |
@@ -84,9 +85,9 @@ diff, all of which are also dispatched from this mode.
 | `( [ {` | Autoclose — inserts the matching close, cursor between |
 | `) ] }` | Skips over a matching close immediately ahead of the cursor |
 | `'` / `"` | Autoclose/skip, gated so it doesn't fight SQL `''` escaping or in-word apostrophes |
-| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup |
+| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup; `Enter` accepts the highlighted (or first) candidate |
 | `.` after an identifier | Auto-triggers qualified completion (`users.|`) |
-| `Enter` | Insert newline |
+| `Shift-Enter` | Insert a newline even after a `;` (where the terminal distinguishes it) |
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
 | `Home` / `End` | Start / end of current line |
 | `Esc` | Back to grid (or, with a completion popup open, abandon the popup and restore the typed prefix) |

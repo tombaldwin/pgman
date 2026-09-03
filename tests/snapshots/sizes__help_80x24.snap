@@ -18,7 +18,7 @@ expression: dump(&buf)
 │5   edsger@│     ? / F1        toggle this help (both work from   │           │
 │6   katheri│                   every non-typing mode)             │           │
 │           │     :             command bar — see the ': commands' │           │
-│           │ ↓ 307 more below                                     │           │
+│           │ ↓ 309 more below                                     │           │
 │           │                                                      │           │
 │           └──────────────────────────────────────────────────────┘           │
 │                                                                              │

@@ -2590,7 +2590,9 @@ impl App {
             }),
         }?;
         let unbound = crate::query::nplus1::has_unbound_placeholder(&sql);
-        Some((sql, unbound))
+        // Terminated, so the wedge ends paste → ctrl-l → pick → Enter →
+        // Enter: a bare Enter runs a statement that ends with `;`.
+        Some((editor::ensure_terminated(&sql), unbound))
     }
 
     // -- run dispatch --

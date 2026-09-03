@@ -32,7 +32,7 @@ expression: dump(&buf)
 │                 │     h / l  ← →    move column cursor                                             │                 │
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
 │                 │     /             live row filter (HIDES non-matching rows)                      │                 │
-│                 │ ↓ 197 more below                                                                 │                 │
+│                 │ ↓ 198 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

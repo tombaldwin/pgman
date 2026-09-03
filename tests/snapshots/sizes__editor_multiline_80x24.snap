@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   F5 run · ctrl-z undo · ctrl-y redo · F1 +6 more
+ RO   TAP   N+1 ×1   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · F1 +7 more
