@@ -6096,9 +6096,26 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
     assert!(a.not_connected_message().contains("r to retry"));
 }
 
+/// Point an `App`'s on-exit persistence at a scratch dir so a run-loop
+/// test never writes the operator's real ~/.local/share/pgman.
+fn scratch_persistence(app: &mut App) {
+    let dir = std::env::temp_dir().join(format!(
+        "pgman-apptest-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    app.draft_file = dir.join("draft.sql");
+    app.history_file = dir.join("history.log");
+    app.saved_queries_file = dir.join("saved.toml");
+}
+
 /// A TuiHost that records "draw" into a shared log, so a test can
 /// assert ordering against another recorder that shares the same
 /// log (the injected update-check spawn hook, below) — proving
+
 /// `run_with` fires the update check strictly AFTER the first draw,
 /// not before it.
 struct RecordingTui {
@@ -6124,6 +6141,7 @@ async fn update_check_spawns_after_the_first_draw_never_before() {
 
     let log = Arc::new(Mutex::new(Vec::new()));
     let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    scratch_persistence(&mut app);
     app.mode = Mode::Normal;
     app.update_check_enabled = true;
     let spawn_log = log.clone();
@@ -6165,6 +6183,7 @@ async fn update_check_disabled_never_spawns() {
 
     let spawned = Arc::new(Mutex::new(false));
     let mut app = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    scratch_persistence(&mut app);
     app.mode = Mode::Normal;
     app.update_check_enabled = false;
     let flag = spawned.clone();

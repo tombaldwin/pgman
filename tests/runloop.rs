@@ -27,6 +27,20 @@ fn ctrl_key(c: char) -> Event {
 
 fn settled_app() -> App {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    // The run loop persists the draft, history and saved queries on
+    // exit. Point all three at a scratch dir: these tests must never
+    // write to the operator's real ~/.local/share/pgman.
+    let scratch = std::env::temp_dir().join(format!(
+        "pgman-runloop-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    a.draft_file = scratch.join("draft.sql");
+    a.history_file = scratch.join("history.log");
+    a.saved_queries_file = scratch.join("saved.toml");
     a.splash_visible = false;
     a.splash_until = None;
     a.conn_state = ConnState::Connected {
