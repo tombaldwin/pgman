@@ -84,8 +84,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_body(f, chunks[3], app);
     }
     match zoom {
-        Some(ZoomPane::Editor) => paint_title_suffix(f, chunks[2], ZOOMED_TITLE_SUFFIX, app),
-        Some(ZoomPane::Results) => paint_title_suffix(f, chunks[3], ZOOMED_TITLE_SUFFIX, app),
+        Some(ZoomPane::Editor) => paint_title_suffix(f, chunks[2], ZOOMED_EDITOR_SUFFIX, app),
+        Some(ZoomPane::Results) => paint_title_suffix(f, chunks[3], ZOOMED_RESULTS_SUFFIX, app),
         None => {}
     }
     draw_footer(f, chunks[4], app);
@@ -751,10 +751,12 @@ pub const EDITOR_BORDERS: u16 = 2;
 pub const CRAMPED_BODY: u16 = 12;
 
 /// Appended to the zoomed pane's block title so the missing pane
-/// reads as hidden on purpose, with the key that brings it back.
-const ZOOMED_TITLE_SUFFIX: &str = "· zoomed (alt-z) ";
+/// reads as hidden on purpose, with the key that brings it back: `z`
+/// on the grid; from the editor, where `z` types, `esc` first.
+const ZOOMED_RESULTS_SUFFIX: &str = "· zoomed (z) ";
+const ZOOMED_EDITOR_SUFFIX: &str = "· zoomed (esc, z) ";
 
-/// Which pane `Alt-Z` gives the whole body to.
+/// Which pane the zoom (`z` / `Z` / `Alt-Z`) gives the whole body to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomPane {
     Editor,
@@ -798,8 +800,9 @@ fn halves(area: Rect) -> (Rect, Rect) {
 
 /// Split `body_height` rows between the editor and the results:
 /// `(editor, results)`, always summing to `body_height`. A zoom gives
-/// the whole body to one pane; a manual size (`Alt-=` / `Alt--`, in
-/// content lines) gets its borders added and is clamped to the body;
+/// the whole body to one pane; a manual size (`+` / `-` / `Alt-=` /
+/// `Alt--`, in content lines) gets its borders added and is clamped to
+/// the body;
 /// otherwise the automatic split (`editor_rows`). Pure / testable.
 pub fn pane_split(
     content_lines: usize,
@@ -1325,7 +1328,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · ] [ tabs · alt-z zoom",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · ] [ tabs · z zoom · Z zoom editor",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
@@ -1796,11 +1799,19 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    alt-z         zoom the results · alt-z again restores the split"),
+        row("    z             zoom the results · z again restores the split"),
         &mut lines,
     );
     push(
-        row("    alt-= / --    grow / shrink the editor a line · alt-0 automatic"),
+        row("    Z             zoom the editor · esc then z restores the split"),
+        &mut lines,
+    );
+    push(
+        row("    + / -         grow / shrink the editor a line · 0 automatic"),
+        &mut lines,
+    );
+    push(
+        row("    (alt-z, alt-=, alt--, alt-0 do the same, where delivered)"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);
@@ -1898,11 +1909,15 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    alt-z         zoom the editor · alt-z again restores the split"),
+        row("    alt-z         zoom the editor · alt-z again (or esc then z) restores the split"),
         &mut lines,
     );
     push(
         row("    alt-= / --    grow / shrink the editor a line · alt-0 automatic"),
+        &mut lines,
+    );
+    push(
+        row("    (where the terminal delivers alt · from the grid: Z zooms the editor, + - 0 size it)"),
         &mut lines,
     );
     push(row("    esc           back to grid"), &mut lines);

@@ -41,4 +41,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +5 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +6 more

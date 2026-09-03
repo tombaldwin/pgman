@@ -17,4 +17,4 @@ expression: dump(&buf)
 │4   alan@example.com       team  2026-02-17 19:05:00+00   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
 └──────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · F1 +11 more
+ RO   TAP   N+1 ×1   q quit · ? help · F1 +12 more

@@ -60,10 +60,10 @@ expression: dump(&buf)
 │              │     j / k  ↑ ↓    move selection                                   │              │
 │              │     g / G         first / last row                                 │              │
 │              │     enter         expand selected row (psql \x style)              │              │
-│              │     alt-z         zoom the results · alt-z again restores the      │              │
-│              │                   split                                            │              │
-│              │     alt-= / --    grow / shrink the editor a line · alt-0          │              │
-│              │                   automatic                                        │              │
+│              │     z             zoom the results · z again restores the split    │              │
+│              │     Z             zoom the editor · esc then z restores the split  │              │
+│              │     + / -         grow / shrink the editor a line · 0 automatic    │              │
+│              │     (alt-z, alt-=, alt--, alt-0 do the same, where delivered)      │              │
 │              │                                                                    │              │
 │              │   editor                                                           │              │
 │              │     ↵             run the statement once it ends with ; (guarded)  │              │
@@ -91,7 +91,7 @@ expression: dump(&buf)
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
 │              │     enter         insert newline                                   │              │
-│              │ ↓ 205 more below                                                   │              │
+│              │ ↓ 208 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

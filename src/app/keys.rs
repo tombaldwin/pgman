@@ -842,6 +842,15 @@ impl App {
                 self.select_row(usize::MAX);
             }
             KeyCode::Enter => self.open_row_detail(),
+            // Pane zoom and editor size without a modifier — the same
+            // implementation as the Alt chords in `on_key`, for the
+            // terminals that do not deliver those. Grid only: in the
+            // editor and the prompts these are characters.
+            KeyCode::Char('z') => self.toggle_zoom(),
+            KeyCode::Char('Z') => self.zoom_editor(),
+            KeyCode::Char('+') | KeyCode::Char('=') => self.resize_editor(1),
+            KeyCode::Char('-') | KeyCode::Char('_') => self.resize_editor(-1),
+            KeyCode::Char('0') => self.reset_editor_size(),
             KeyCode::Char('A') => self.mode = Mode::About,
             KeyCode::Char('S') => self.start_schema_browser(),
             KeyCode::Char('T') => self.start_slow_queries(),
