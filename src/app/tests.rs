@@ -1399,12 +1399,80 @@ fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
 }
 
 #[test]
-fn result_diff_d_with_empty_grid_errors() {
+fn result_diff_d_with_empty_grid_is_a_status_not_an_error() {
+    // pgman's own "nothing to do" notice is not a failure: as an error
+    // it grew a `· F2 detail` pointer to an overlay with nothing in it.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = grid_of(&["id"], &[]);
-    a.pin_or_diff_result();
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('D')));
     assert!(a.result_diff.pinned.is_none());
-    assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("no result to diff — run a query first")
+    );
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+}
+
+#[test]
+fn a_client_side_refusal_after_a_server_error_drops_the_stale_sqlstate() {
+    // A server error leaves its SQLSTATE for F2. A refusal pgman itself
+    // produces afterwards (`:readonly off`) carries no server detail —
+    // F2 on it used to open an overlay headed by the previous query's
+    // `SQLSTATE 42P01` under pgman's own message.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.generation = 1;
+    a.on_msg(AppMsg::QueryFailed {
+        generation: 1,
+        error: "relation \"t\" does not exist".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("42P01".into()),
+            severity: Some("ERROR".into()),
+            ..Default::default()
+        }),
+    });
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("42P01"),
+        "fixture check: the server error left its detail"
+    );
+    run_command(&mut a, "readonly off");
+    let err = a.last_error.clone().unwrap_or_default();
+    assert!(
+        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        "fixture check: the refusal landed: {err}"
+    );
+    assert!(
+        a.last_error_detail.is_none(),
+        "F2 would show the previous query's SQLSTATE under pgman's own refusal: {:?}",
+        a.last_error_detail
+    );
+}
+
+#[test]
+fn a_key_that_leaves_the_error_alone_keeps_its_sqlstate() {
+    // The clear is keyed on the error *changing*: navigating around a
+    // server error must not strip the detail F2 is about to show.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.generation = 1;
+    a.on_msg(AppMsg::QueryFailed {
+        generation: 1,
+        error: "relation \"t\" does not exist".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("42P01".into()),
+            ..Default::default()
+        }),
+    });
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("42P01")
+    );
+    a.on_key(KeyEvent::from(KeyCode::F(2)));
+    assert_eq!(a.mode, Mode::ErrorDetail);
 }
 
 #[test]
@@ -1776,7 +1844,9 @@ fn dispatch_fixture_errors_on_empty_grid() {
     a.grid = grid_of(&["id"], &[]);
     a.grid_view.source = Some(("public".into(), "users".into()));
     a.dispatch_fixture(None);
-    assert!(a.last_error.as_deref().unwrap_or("").contains("no result"));
+    // A notice, not an error — same as `D` with nothing to diff.
+    assert!(a.last_status.as_deref().unwrap_or("").contains("no result"));
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
 }
 
 fn write_temp_fixture(tag: &str) -> std::path::PathBuf {
