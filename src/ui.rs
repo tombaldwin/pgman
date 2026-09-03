@@ -1856,7 +1856,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    ctrl-f         pg_format the buffer (requires pgformatter)"),
+        row("    ctrl-f         format the buffer (built-in; pg_format if installed)"),
         &mut lines,
     );
     push(

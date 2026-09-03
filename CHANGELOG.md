@@ -53,6 +53,10 @@ and breaking changes.
   the `\d` family, `\timing`.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
+- **Layout you control** — Alt-Z zooms the editor or the results to the
+  whole screen and back; Alt-= / Alt-- / Alt-0 size the editor; a
+  tab bar that is always there, labelled by each tab's query, with
+  Ctrl-T, Ctrl-W, Alt-N / Alt-P and Alt-1..9.
 - **JDBC tap** — live app-side query observability via OpenTelemetry
   (TCP and UDP listeners for the forthcoming `pgman-tap` JAR), hotspots,
   per-caller and per-pool rollups, transaction view, baseline diff,
