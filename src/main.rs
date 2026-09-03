@@ -911,20 +911,120 @@ fn init_logging() {
     // it doesn't know this file must stay owner-only. Repair every
     // `pgman.log*` in the directory: today's, and any earlier one
     // from before this hardening landed.
-    if let Ok(entries) = std::fs::read_dir(&dir) {
+    chmod_pgman_logs_in(&dir);
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        // …and at midnight UTC the appender rolls to a *new* file,
+        // created the same way and long after this function returned.
+        // `OwnerOnlyRolling` repairs that one too. `tracing_appender`
+        // 0.2's builder has no mode option (`rotation`,
+        // `filename_prefix`, `filename_suffix`, `max_log_files`,
+        // `latest_symlink` — that's all), so wrapping it is the only
+        // place to hook.
+        .with_writer(OwnerOnlyRolling::new(appender, dir))
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .init();
+}
+
+/// `chmod 0600` every `pgman.log*` in `dir`. Names are not predicted:
+/// the rolling appender owns the suffix format, so this matches the
+/// prefix and lets the directory say what exists.
+fn chmod_pgman_logs_in(dir: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with("pgman.log") {
                 chmod_owner_only_if_exists(&entry.path());
             }
         }
     }
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_writer(appender)
-        .with_env_filter(filter)
-        .with_ansi(false)
-        .init();
+}
+
+/// UTC days since the epoch. `tracing_appender`'s daily rotation
+/// switches files on `OffsetDateTime::now_utc()`, so this changes at
+/// exactly the same instant its filename does — which is all the
+/// rollover detection needs, without predicting the name.
+fn utc_day_number() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0)
+}
+
+/// A [`MakeWriter`] wrapping the rolling appender so the file it rolls
+/// to at midnight is `chmod`ed owner-only like the one opened at
+/// startup was. Without it, only the first day's log was `0600` and
+/// every file after it took the umask default.
+///
+/// The check is a `u64` compare per log line; the directory sweep runs
+/// only when the day actually changes. It runs *after* the write, not
+/// before, because the appender creates the new file as part of that
+/// write — sweeping first would find nothing to fix.
+struct OwnerOnlyRolling {
+    inner: tracing_appender::rolling::RollingFileAppender,
+    dir: std::path::PathBuf,
+    /// The day whose file was last repaired. Seeded with today's, since
+    /// `init_logging` has already swept for it.
+    last_day: std::sync::atomic::AtomicU64,
+}
+
+impl OwnerOnlyRolling {
+    fn new(inner: tracing_appender::rolling::RollingFileAppender, dir: std::path::PathBuf) -> Self {
+        Self {
+            inner,
+            dir,
+            last_day: std::sync::atomic::AtomicU64::new(utc_day_number()),
+        }
+    }
+}
+
+/// Sweep `dir` when `day` differs from `last_day`, recording `day` as
+/// handled. Returns `true` when it swept, so a test can drive a day
+/// change without waiting for midnight.
+fn repair_logs_on_day_change(
+    dir: &std::path::Path,
+    last_day: &std::sync::atomic::AtomicU64,
+    day: u64,
+) -> bool {
+    use std::sync::atomic::Ordering;
+    // `swap`, so two threads crossing midnight together sweep once.
+    if last_day.swap(day, Ordering::Relaxed) == day {
+        return false;
+    }
+    chmod_pgman_logs_in(dir);
+    true
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for OwnerOnlyRolling {
+    type Writer = OwnerOnlyWriter<'a>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        OwnerOnlyWriter {
+            inner: self.inner.make_writer(),
+            owner: self,
+        }
+    }
+}
+
+struct OwnerOnlyWriter<'a> {
+    inner:
+        <tracing_appender::rolling::RollingFileAppender as tracing_subscriber::fmt::MakeWriter<
+            'a,
+        >>::Writer,
+    owner: &'a OwnerOnlyRolling,
+}
+
+impl std::io::Write for OwnerOnlyWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        repair_logs_on_day_change(&self.owner.dir, &self.owner.last_day, utc_day_number());
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// `chmod path 0600` on unix, if `path` exists; a no-op otherwise (and
@@ -1719,6 +1819,63 @@ mod main_tests {
 
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "log file mode was {mode:o}, want 0600");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_rollover_file_is_chmodded_when_the_day_changes() {
+        // The reproduction: `init_logging` chmodded only at startup,
+        // so the file the appender rolls to at midnight UTC took the
+        // umask default and stayed there — after one day of uptime,
+        // the log was world-readable again.
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::AtomicU64;
+        let dir = std::env::temp_dir().join(format!("pgman-main-rollover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode_of =
+            |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+
+        // Day 1: swept at startup, so this file is already correct.
+        let today = dir.join("pgman.log.2026-01-01");
+        std::fs::write(&today, "day one").unwrap();
+        std::fs::set_permissions(&today, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let last_day = AtomicU64::new(20_454);
+
+        // Same day: nothing to do, and no directory scan.
+        assert!(!repair_logs_on_day_change(&dir, &last_day, 20_454));
+
+        // Midnight. The appender creates tomorrow's file at the
+        // platform default as part of the write, and the repair runs
+        // after that write — so the file is there to be fixed.
+        let tomorrow = dir.join("pgman.log.2026-01-02");
+        std::fs::write(&tomorrow, "day two").unwrap();
+        std::fs::set_permissions(&tomorrow, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(
+            repair_logs_on_day_change(&dir, &last_day, 20_455),
+            "a day change must trigger the sweep"
+        );
+        assert_eq!(
+            mode_of(&tomorrow),
+            0o600,
+            "the rollover file must be owner-only too"
+        );
+        assert_eq!(mode_of(&today), 0o600, "and the previous day stays 0600");
+
+        // The new day is recorded, so the sweep doesn't repeat per line.
+        assert!(!repair_logs_on_day_change(&dir, &last_day, 20_455));
+
+        // A file that isn't a pgman log is left alone — the sweep
+        // matches the appender's prefix, not everything in the cache
+        // directory.
+        let other = dir.join("update_check.json");
+        std::fs::write(&other, "{}").unwrap();
+        std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(repair_logs_on_day_change(&dir, &last_day, 20_456));
+        assert_eq!(mode_of(&other), 0o644, "unrelated files are not touched");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -184,7 +184,9 @@ file `0600` from the moment it's created rather than writing at a
 looser default mode and `chmod`ing afterward — there is no window
 where a half-written temp file is world-readable. `pgman.log` is
 opened by the logging library, not `write_private`, so it's `chmod`ed
-`0600` separately right after; the config/data/cache directories
+`0600` separately right after — and again when the daily rotation
+opens a new file at midnight UTC, so a pgman left running past
+midnight does not leave the new log at the umask default; the config/data/cache directories
 themselves (`~/.config/pgman/`, `~/.local/share/pgman/`,
 `~/.cache/pgman/`) are `0700`, and pgman repairs that mode on every
 startup even if the directory already existed looser (an old pgman
