@@ -39,7 +39,7 @@ expression: dump(&buf)
 │              │     W             schema wizard / lint (missing PK, mixed-case,    │              │
 │              │                   reserved words …)                                │              │
 │              │     Q             saved queries (named, persisted)                 │              │
-│              │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section │              │
+│              │     ctrl-t / alt-n / alt-1..9  tabs — see the tabs section         │              │
 │              │     T             slow queries (pg_stat_statements top-N)          │              │
 │              │     L             active sessions + locks (pg_stat_activity)       │              │
 │              │     F3            LISTEN/NOTIFY arrivals panel (also reachable     │              │
@@ -61,6 +61,10 @@ expression: dump(&buf)
 │              │     j / k  ↑ ↓    move selection                                   │              │
 │              │     g / G         first / last row                                 │              │
 │              │     enter         expand selected row (psql \x style)              │              │
+│              │     alt-z         zoom the results · alt-z again restores the      │              │
+│              │                   split                                            │              │
+│              │     alt-= / --    grow / shrink the editor a line · alt-0          │              │
+│              │                   automatic                                        │              │
 │              │                                                                    │              │
 │              │   editor                                                           │              │
 │              │     ↵             run the statement once it ends with ; (guarded)  │              │
@@ -88,11 +92,7 @@ expression: dump(&buf)
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
 │              │     enter         insert newline                                   │              │
 │              │     ↑ ↓ ← →       move cursor (col remembered across lines)        │              │
-│              │     home / end    start / end of current line                      │              │
-│              │     ctrl-p / -n   prev / next history entry (history persists      │              │
-│              │                   across restarts)                                 │              │
-│              │     ctrl-u        clear the buffer                                 │              │
-│              │ ↓ 187 more below                                                   │              │
+│              │ ↓ 197 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

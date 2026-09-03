@@ -27,13 +27,13 @@ expression: dump(&buf)
 │                 │     W             schema wizard / lint (missing PK, mixed-case, reserved words   │                 │
 │                 │                   …)                                                             │                 │
 │                 │     Q             saved queries (named, persisted)                               │                 │
-│                 │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section               │                 │
+│                 │     ctrl-t / alt-n / alt-1..9  tabs — see the tabs section                       │                 │
 │                 │     T             slow queries (pg_stat_statements top-N)                        │                 │
 │                 │     L             active sessions + locks (pg_stat_activity)                     │                 │
 │                 │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)    │                 │
 │                 │     h / l  ← →    move column cursor                                             │                 │
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
-│                 │ ↓ 199 more below                                                                 │                 │
+│                 │ ↓ 205 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

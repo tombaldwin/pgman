@@ -10,8 +10,11 @@ has focus, where both are characters you meant to type. `Ctrl-T` (new tab),
 `Ctrl-Tab` / `Ctrl-Shift-Tab` (cycle tabs) and `Alt-1`..`Alt-9` (jump to tab)
 are also global; `Ctrl-W` closes the current tab from any mode *except* while
 typing (editor, filters, search prompts — where `Ctrl-W` would collide with
-`\watch` or word-delete). `A` (about) works from the grid (Normal mode);
-`:about` reaches it from anywhere.
+`\watch` or word-delete). `Alt-N` / `Alt-P` (next / previous tab), `Alt-Z`
+(zoom the focused pane) and `Alt-=` / `Alt--` / `Alt-0` (editor size) work
+from the grid, the editor and every panel, but not from a prompt, filter or
+the command bar. `A` (about) works from the grid (Normal mode); `:about`
+reaches it from anywhere.
 
 ## Connection picker
 
@@ -48,7 +51,10 @@ once a query has run share one key map.
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
 | `F3` | NOTIFY arrivals panel (also reachable from any mode) |
-| `Ctrl-T` / `Ctrl-Tab` / `Alt-1..9` | Tabs — see [Tabs](#tabs) |
+| `Ctrl-T` / `Alt-N` / `Alt-P` / `Alt-1..9` | Tabs — see [Tabs](#tabs) |
+| `Alt-Z` | Zoom the results to the whole body; `Alt-Z` again restores the split exactly as it was |
+| `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
+| `Alt-0` | Back to the automatic editor/results split |
 | `j` / `k` / `↓` / `↑` | Move selection |
 | `h` / `l` / `←` / `→` | Move column cursor |
 | `g` / `Home` | First row |
@@ -90,6 +96,9 @@ diff, all of which are also dispatched from this mode.
 | `Shift-Enter` | Insert a newline even after a `;` (where the terminal distinguishes it) |
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
 | `Home` / `End` | Start / end of current line |
+| `Alt-Z` | Zoom the editor to the whole body; `Alt-Z` again restores the split exactly as it was |
+| `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
+| `Alt-0` | Back to the automatic editor/results split |
 | `Esc` | Back to grid (or, with a completion popup open, abandon the popup and restore the typed prefix) |
 
 Typing a space right after `FROM`, `JOIN`, `INNER`, `LEFT`, `RIGHT`, `FULL`,
@@ -277,17 +286,27 @@ Entered via `Ctrl-R` from the editor. Reverse-incremental, like readline/psql.
 
 ## Tabs
 
-Global except while typing (editor / filter / search prompts).
+The tab bar sits under the header once connected — one row naming each
+tab by the first line of its buffer (`empty` until something is typed),
+the active tab highlighted, `ctrl-t new · ctrl-w close` on the right. It
+hides on a very short terminal (fewer than 12 body rows) while there is
+only one tab.
+
+Global except while typing (filter / search prompts); `Alt-N` / `Alt-P`
+and `Ctrl-Tab` also work from the editor.
 
 | Key | Action |
 |---|---|
 | `Ctrl-T` | Open a new tab (fresh editor + result) |
 | `Ctrl-W` | Close the current tab (no-op on the last one) |
+| `Alt-N` / `Alt-P` | Next / previous tab (wraps; delivered by every terminal, unlike `Ctrl-Tab`) |
 | `Ctrl-Tab` | Next tab |
 | `Ctrl-Shift-Tab` | Previous tab |
 | `Alt-1` .. `Alt-9` | Jump directly to tab N |
 
 Connection, schema cache, history and saved queries are shared across tabs.
+The editor/results split (`Alt-=` / `Alt--` / `Alt-0`) and the zoom
+(`Alt-Z`) are per tab: switching tabs restores each tab's own layout.
 
 ## JDBC tap monitor
 

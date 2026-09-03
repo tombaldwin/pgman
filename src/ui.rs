@@ -1743,7 +1743,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section"),
+        row("    ctrl-t / alt-n / alt-1..9  tabs — see the tabs section"),
         &mut lines,
     );
     push(
@@ -1793,6 +1793,14 @@ pub(crate) fn help_body(
     push(row("    g / G         first / last row"), &mut lines);
     push(
         row("    enter         expand selected row (psql \\x style)"),
+        &mut lines,
+    );
+    push(
+        row("    alt-z         zoom the results · alt-z again restores the split"),
+        &mut lines,
+    );
+    push(
+        row("    alt-= / --    grow / shrink the editor a line · alt-0 automatic"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);
@@ -1885,6 +1893,14 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    ctrl-u        clear the buffer"), &mut lines);
+    push(
+        row("    alt-z         zoom the editor · alt-z again restores the split"),
+        &mut lines,
+    );
+    push(
+        row("    alt-= / --    grow / shrink the editor a line · alt-0 automatic"),
+        &mut lines,
+    );
     push(row("    esc           back to grid"), &mut lines);
     push(Line::from(""), &mut lines);
 
@@ -2166,6 +2182,14 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    alt-1 .. 9    jump directly to tab N"), &mut lines);
+    push(
+        row("    alt-n / alt-p next / previous tab (works in the editor too)"),
+        &mut lines,
+    );
+    push(
+        row("    (the bar names each tab by its buffer's first line · size and zoom are per tab)"),
+        &mut lines,
+    );
     push(
         row("    (connection + schema cache + history + saved queries are SHARED across tabs)"),
         &mut lines,
