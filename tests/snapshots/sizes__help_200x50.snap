@@ -26,7 +26,7 @@ expression: dump(&buf)
 │                             │     S             schema browser (psql `\d` equivalent)                                                                                  │                             │
 │                             │     W             schema wizard / lint (missing PK, mixed-case, reserved words …)                                                        │                             │
 │                             │     Q             saved queries (named, persisted)                                                                                       │                             │
-│                             │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section                                                                       │                             │
+│                             │     ctrl-t / alt-n / alt-1..9  tabs — see the tabs section                                                                               │                             │
 │                             │     T             slow queries (pg_stat_statements top-N)                                                                                │                             │
 │                             │     L             active sessions + locks (pg_stat_activity)                                                                             │                             │
 │                             │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                                            │                             │
@@ -41,7 +41,7 @@ expression: dump(&buf)
 │                             │     m<a-z>        set bookmark at focused (row, col)                                                                                     │                             │
 │                             │     '<a-z>        jump to bookmark                                                                                                       │                             │
 │                             │     j / k  ↑ ↓    move selection                                                                                                         │                             │
-│                             │ ↓ 184 more below                                                                                                                         │                             │
+│                             │ ↓ 190 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │
