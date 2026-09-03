@@ -267,17 +267,22 @@ What it was:
 7. Hand the product page what it needs: hero gif, install command,
    GitHub link, drop "Coming soon".
 
-## Release panel — 2026-09-03 · **GO**
+## Release panel — 2026-09-03 · **Fable panel: GO WITH FIXES, last batch landing**
 
-Five reviewers (release risk, security, first-time user, correctness,
-positioning), four rounds. Round one: three NO-GOs, four reproduced
-security blockers, fifteen correctness findings. Round two: the new
-lexer was ASCII-only, plus twenty-one more. Round three: a trailing
-`--` comment swallowed the re-join separator. Round four: the TUI's
-single-statement path classified the raw buffer. Every finding is fixed
-with a test demonstrated failing first; the last pass attacked the
-split/join path with 29 inputs against a live server and found nothing
-further on it. `CHANGELOG.md` carries the full list. The tag is next.
+Five Opus reviewers ran four rounds (three NO-GOs, ~60 findings, all
+fixed with guards demonstrated failing). Then a four-reviewer Fable
+panel on the same angles found what Opus had missed: the placeholder
+resolver and the DSN parser disagreed on where a host starts; the
+read-only floor was liftable by `set_config`, a quoted GUC, `DO`, or a
+mid-script `COMMIT`; and, driving the release binary against a live
+server by hand, a 100 % CPU hang on the first guarded write, `?` for
+every non-text column type, and quote autoclose corrupting typed
+literals. All fixed with tmux captures before and after. The product
+reviewer's second pass: fourteen of fifteen verified, one partial (a
+second site of the "blames a safety.toml that does not exist" hint),
+six tolerate-level items — the final batch in flight. Lesson recorded
+in the memory note: a review that only reads code and snapshots misses
+the first five minutes against a real server.
 
 ## Release day
 
