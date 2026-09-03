@@ -1,7 +1,8 @@
 # Logs → runnable SQL, in sixty seconds
 
 Paste a log, get back queries you can actually run — bind parameters
-substituted in, ready for `F5`. This walks through it end to end.
+substituted in, terminated, ready for `Enter`. This walks through it end
+to end.
 
 ## What it reads
 
@@ -38,7 +39,8 @@ Three input shapes are recognised:
 ## The sample
 
 Paste this into the editor — it also matches what `pgman --demo` ships,
-so `F5` returns real-looking rows even with no database connected:
+so running a pick returns real-looking rows even with no database
+connected:
 
 ```
 2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.user_id=?
@@ -119,15 +121,18 @@ among near-identical rows in a longer log:
 
 ## Load it and run it
 
-`Enter` loads the highlighted query's runnable SQL into the editor, cursor at
-the end, and drops you back into the editor with a `loaded query · N
-char(s)` status. In the cluster view, `Enter` loads the cluster's first
+`Enter` loads the highlighted query's runnable SQL into the editor — a `;`
+appended if the log had none, cursor at the end — and drops you back into
+the editor with a `loaded query · N char(s)` status. In the cluster view,
+`Enter` loads the cluster's first
 member whose values are all bound — a runnable statement, not the `?`
 template the row shows; when the log bound no values for that shape at all
 (bind logging off), the template loads instead and the status says so:
 `no bound values in the log for this query — ? placeholders remain`. From
-there it's an ordinary pgman query: `F5` runs it (or
-`ctrl-Enter` / `ctrl-J`) through the normal safety guard (see
+there it's an ordinary pgman query: `Enter` runs it — the buffer ends with
+`;`, which is what makes a bare `Enter` run rather than break the line
+(`Alt-Enter`, `F5`, `ctrl-Enter` and `ctrl-J` run it regardless) — through
+the normal safety guard (see
 [docs/safety-and-privacy.md](safety-and-privacy.md)) — same read-only
 defaults, same per-database rules — and the result lands in the grid like any
 other statement. `Esc` or `q` from the picker cancels back to the editor

@@ -14,8 +14,8 @@
 #   select) → ctrl-l to reconstruct (same path as F8 — VHS 0.11 has no
 #   function-key command, see below) → log-pick list (all queries) →
 #   `c` for the N+1 cluster view → `c` back → Enter loads the top query
-#   into the editor → ctrl-j to run it (same path as F5 — see below) →
-#   rows land in the grid → quit.
+#   into the editor, terminated with `;` → Enter runs it (a bare Enter
+#   runs a statement that ends with `;`) → rows land in the grid → quit.
 #
 # Targets `pgman --demo`, the synthetic-data mode baked into the binary,
 # so there's no database and the frame is identical on every render.
@@ -26,10 +26,10 @@
 # back plausible rows shaped by that table's real columns, delivered
 # through the exact same AppMsg::QueryOk path a real client uses.
 #
-# VHS doesn't emit function keys or Ctrl+Enter, so F8 is driven via its
-# `ctrl-l` alias and F5 via its `ctrl-j` alias (both documented in
-# `docs/logs-to-sql.md` — see `App::on_editor_key_inner`,
-# src/app/editor.rs).
+# VHS doesn't emit function keys, so F8 is driven via its `ctrl-l`
+# alias (documented in `docs/logs-to-sql.md` — see
+# `App::on_editor_key_inner`, src/app/editor.rs). The run needs no
+# alias: the loaded query ends with `;`, so Enter runs it.
 
 Output demo.gif
 
@@ -78,7 +78,7 @@ Sleep 400ms
 # Type a 5-line Hibernate log sample: an order lookup, then an
 # order_items lookup that repeats for a second order_id in the same
 # burst — the N+1 signature nplus1.rs clusters on. Both tables are in
-# the --demo fixture schema, so ctrl-j below returns real rows instead
+# the --demo fixture schema, so the run below returns real rows instead
 # of the "no database" notice. Typed at a fast override speed; these
 # lines are long and the ambient TypingSpeed would blow the runtime
 # budget.
@@ -110,15 +110,16 @@ Sleep 1000ms
 
 # Enter loads the top (first) reconstructed query — the order lookup,
 # against the `orders` table — into the editor, bind values
-# substituted in.
+# substituted in and a `;` on the end.
 Enter
 Sleep 1000ms
 
-# ctrl-j — same run path as F5 — executes it. `--demo` has no real
-# connection, but the statement still clears safety::evaluate's guard
-# and comes back through demo::answer with the `orders` table's real
-# columns.
-Ctrl+J
+# Enter again runs it: the buffer ends with `;`, so a bare Enter is
+# the run key (Alt-Enter / F5 would run it unterminated). `--demo` has
+# no real connection, but the statement still clears safety::evaluate's
+# guard and comes back through demo::answer with the `orders` table's
+# real columns.
+Enter
 Sleep 2000ms
 
 # Esc back to Normal mode first — `q` inside the editor just types the
