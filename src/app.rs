@@ -895,6 +895,10 @@ pub struct App {
     /// SQL editor state (buffer, cursor, scroll, undo/redo). Grouped so
     /// tab snapshot / restore is a single struct clone.
     pub editor: EditorState,
+    /// Closers (`)` `]` `}` `'` `"`) autoclose inserted into the
+    /// editor buffer and the operator has not typed over yet — the
+    /// only ones typing the closer skips. See [`editor::AutoClosers`].
+    pub auto_closers: editor::AutoClosers,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -1242,6 +1246,7 @@ impl App {
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
             expanded_on: false,
+            auto_closers: editor::AutoClosers::default(),
             last_error_detail: None,
             pending_terminate: None,
             auto_refresh: false,
