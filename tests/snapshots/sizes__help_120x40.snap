@@ -32,7 +32,7 @@ expression: dump(&buf)
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
 │                 │     /             live row filter (HIDES non-matching rows)                      │                 │
 │                 │     f             find within grid (HIGHLIGHTS / jumps; n/N step matches)        │                 │
-│                 │ ↓ 180 more below                                                                 │                 │
+│                 │ ↓ 196 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

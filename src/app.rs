@@ -1031,6 +1031,10 @@ pub struct App {
     pub last_run_sql: Option<String>,
     /// Result-diff state (pinned baseline, active diff, cursor).
     pub result_diff: ResultDiffUi,
+    /// `:` command-bar state — `Some` exactly while
+    /// `mode == Mode::CommandBar`. Opened by `:` from any
+    /// non-typing mode; see `App::dispatch_command`.
+    pub command_bar: Option<CommandBarUi>,
 
     /// Saved working buffer while navigating history (restored on Ctrl-N past
     /// the newest entry).
@@ -1191,6 +1195,7 @@ impl App {
             sessions: SessionsUi::default(),
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
+            command_bar: None,
             conn_pick: ConnPickUi {
                 picks: data_source_picks,
                 index: 0,
@@ -1542,6 +1547,16 @@ impl App {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let typing_mode = self.mode.is_text_input();
+        // `:` opens the command bar — the one-line footer prompt that
+        // dispatches `:about`, `:readonly off`, `:dt`, … (see
+        // `App::dispatch_command`). Gated on `typing_mode` so a literal
+        // colon still types into the editor and every other prompt
+        // (`Mode::CommandBar` is itself a typing mode, so the bar can't
+        // re-open on top of itself either).
+        if !ctrl && !alt && !typing_mode && matches!(key.code, KeyCode::Char(':')) {
+            self.open_command_bar();
+            return;
+        }
         if ctrl && matches!(key.code, KeyCode::Char('t')) {
             self.new_tab();
             return;
@@ -1603,6 +1618,7 @@ impl App {
             Mode::RenameQueryPrompt => self.on_rename_query_key(key),
             Mode::ParamPrompt => self.on_param_prompt_key(key),
             Mode::ResultDiff => self.on_result_diff_key(key),
+            Mode::CommandBar => self.on_command_bar_key(key),
             Mode::Editor => self.on_editor_key(key),
             Mode::Normal => self.on_normal_key(key),
         }
@@ -2016,6 +2032,7 @@ impl App {
             Mode::GridFilter => Some("grid"),
             Mode::GridFind => Some("grid"),
             Mode::About => Some("grid"),
+            Mode::CommandBar => Some(": commands"),
             Mode::Help => None,
         }
     }

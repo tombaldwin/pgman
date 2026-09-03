@@ -1,5 +1,64 @@
 use super::*;
 
+/// Every command name the `:` bar knows, in the order `:help`
+/// lists them and Tab completes them. Aliases that exist only for
+/// psql muscle memory (`:q`) are deliberately absent — Tab on `:q`
+/// completes to `:quit`, which is the same command spelled in full.
+pub const COMMAND_NAMES: &[&str] = &[
+    "about", "connect", "d", "dn", "dt", "fixture", "help", "i", "l", "quit", "readonly", "report",
+    "timing", "update", "x",
+];
+
+/// Help topics `:help <topic>` accepts, paired with the mode whose
+/// help anchor they scroll to. Reuses `App::help_anchor_for` rather
+/// than naming heading strings twice — a renamed heading can't leave
+/// this table pointing at nothing.
+const HELP_TOPICS: &[(&str, Mode)] = &[
+    ("grid", Mode::Normal),
+    ("editor", Mode::Editor),
+    ("commands", Mode::CommandBar),
+    ("schema", Mode::SchemaBrowser),
+    ("saved", Mode::SavedQueries),
+    ("slow", Mode::SlowQueries),
+    ("sessions", Mode::Sessions),
+    ("tap", Mode::TapMonitor),
+    ("explain", Mode::ExplainTree),
+    ("diff", Mode::ResultDiff),
+    ("wizard", Mode::SchemaLint),
+];
+
+/// Candidate command names for `typed` — every entry of
+/// [`COMMAND_NAMES`] it is a prefix of. Pure; drives Tab completion
+/// in the command bar.
+pub fn command_candidates(typed: &str) -> Vec<&'static str> {
+    COMMAND_NAMES
+        .iter()
+        .copied()
+        .filter(|c| c.starts_with(typed))
+        .collect()
+}
+
+/// Longest common prefix of `items`. `""` for an empty slice — the
+/// caller treats that as "nothing to complete".
+pub fn longest_common_prefix(items: &[&str]) -> String {
+    let Some(first) = items.first() else {
+        return String::new();
+    };
+    let mut end = first.len();
+    for other in &items[1..] {
+        end = end.min(
+            first
+                .char_indices()
+                .zip(other.char_indices())
+                .take_while(|((_, a), (_, b))| a == b)
+                .last()
+                .map(|((i, c), _)| i + c.len_utf8())
+                .unwrap_or(0),
+        );
+    }
+    first[..end].to_string()
+}
+
 impl App {
     /// User requested a run. Classify, evaluate safety, and either run, prompt,
     /// or reject. Multi-statement buffers (e.g. DBUnit scripts) take the batch
@@ -20,6 +79,15 @@ impl App {
             self.editor.cursor = 0;
             self.draft_dirty = true;
         }
+        self.apply_backslash(cmd);
+    }
+
+    /// The action half of [`App::dispatch_backslash`], without the
+    /// editor-buffer clear. The `:` command bar dispatches through
+    /// here: the command came from the bar, not from the buffer, so
+    /// clearing the buffer would throw away the operator's draft SQL.
+    pub(super) fn apply_backslash(&mut self, cmd: crate::query::backslash::BackslashCmd) {
+        use crate::query::backslash::BackslashCmd;
         match cmd {
             BackslashCmd::Describe(target) => {
                 if self.schema_cache.is_empty() {
@@ -74,6 +142,147 @@ impl App {
                 self.last_error = Some(format!("unknown backslash command: {raw}"));
             }
         }
+    }
+
+    /// Open the `:` command bar over the current mode. The mode we
+    /// came from is remembered so Esc (and any command that doesn't
+    /// change the mode itself) puts the operator back where they were.
+    pub(super) fn open_command_bar(&mut self) {
+        self.command_bar = Some(CommandBarUi {
+            input: TextInput::new(),
+            origin: self.mode,
+        });
+        self.mode = Mode::CommandBar;
+    }
+
+    /// Dispatch one command-bar line (without the leading `:`).
+    ///
+    /// `about` / `update` / `help` / `readonly` are the bar's own;
+    /// everything else is handed to the SAME parser the editor's
+    /// backslash commands use, with the `:` swapped for a `\`, so
+    /// `:dt` and `\dt` can't drift apart. `connect` is spelled `c`
+    /// for that parser. An empty line is a no-op (the operator
+    /// pressed Enter on an empty bar).
+    pub(super) fn dispatch_command(&mut self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        let (name, rest) = match line.split_once(char::is_whitespace) {
+            Some((n, r)) => (n, r.trim()),
+            None => (line, ""),
+        };
+        let arg = (!rest.is_empty()).then(|| rest.to_string());
+        match name.to_ascii_lowercase().as_str() {
+            "about" => self.mode = Mode::About,
+            "update" => self.show_update_status(),
+            "help" => self.dispatch_help_topic(arg),
+            "readonly" => self.dispatch_read_only(arg),
+            other => {
+                // `connect` is the bar's spelling of psql's `\c`.
+                let body = if other == "connect" {
+                    format!("c {rest}")
+                } else {
+                    line.to_string()
+                };
+                match crate::query::backslash::parse_backslash_command(&format!("\\{body}")) {
+                    Some(crate::query::backslash::BackslashCmd::Unknown(_)) | None => {
+                        self.last_error =
+                            Some(format!("unknown command :{name} · :help lists them"));
+                    }
+                    Some(cmd) => self.apply_backslash(cmd),
+                }
+            }
+        }
+    }
+
+    /// `:update` — open the About card (which carries the install
+    /// channel and the upgrade command) and say in the footer where
+    /// the check actually got to. "Up to date" is only claimed once
+    /// a check has landed; a run with the check disabled says so
+    /// rather than implying a clean result.
+    fn show_update_status(&mut self) {
+        self.mode = Mode::About;
+        self.last_status = Some(match (&self.update_available, self.update_check_done) {
+            (Some(update), _) => format!(
+                "update available: {} — {}",
+                update.version,
+                crate::update_check::detect_install_channel().upgrade_command()
+            ),
+            (None, true) => format!("up to date · {}", env!("CARGO_PKG_VERSION")),
+            (None, false) if !self.update_check_enabled => {
+                "update check is off for this run — see the About card for the install channel"
+                    .into()
+            }
+            (None, false) => "update check hasn't answered yet".into(),
+        });
+    }
+
+    /// `:help` / `:help <topic>` — open the help overlay, scrolled to
+    /// the section for `<topic>`. Topics map onto the modes whose
+    /// anchors the overlay already knows (`App::help_anchor_for`), so
+    /// there is exactly one list of section names in the codebase.
+    fn dispatch_help_topic(&mut self, topic: Option<String>) {
+        let Some(topic) = topic else {
+            self.open_help_from(self.mode);
+            return;
+        };
+        let wanted = topic.to_ascii_lowercase();
+        match HELP_TOPICS
+            .iter()
+            .find(|(name, _)| *name == wanted)
+            .map(|(_, mode)| *mode)
+        {
+            Some(mode) => self.open_help_from(mode),
+            None => {
+                let names: Vec<&str> = HELP_TOPICS.iter().map(|(n, _)| *n).collect();
+                self.last_error = Some(format!(
+                    "unknown help topic '{topic}' · try: {}",
+                    names.join(", ")
+                ));
+            }
+        }
+    }
+
+    /// `:readonly on|off` — set the read-only flag pgman opens
+    /// connections with, through the same profile lookup
+    /// `App::connect_to_pick` uses.
+    ///
+    /// Turning it OFF is refused when `safety.toml` pins the current
+    /// database read-only: that file is the authority, and a session
+    /// cannot vote itself out of it (same refusal as a `SET
+    /// default_transaction_read_only = off` statement).
+    ///
+    /// The flag is applied at connect (`SET
+    /// default_transaction_read_only`), so a change while a
+    /// connection is live takes effect on the next connect — the
+    /// status line says so rather than implying the running session
+    /// just changed under the operator.
+    fn dispatch_read_only(&mut self, arg: Option<String>) {
+        let want = match arg.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            Some("on") => true,
+            Some("off") => false,
+            _ => {
+                self.last_error = Some("usage: :readonly on|off".into());
+                return;
+            }
+        };
+        let db = self
+            .dsn
+            .as_ref()
+            .map(|d| d.dbname.as_str())
+            .unwrap_or("default");
+        if !want && self.safety_config.profile_for(db).read_only {
+            self.last_error = Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
+            return;
+        }
+        self.read_only = want;
+        let state = if want { "on" } else { "off" };
+        self.last_status = Some(if matches!(self.conn_state, ConnState::Connected { .. }) {
+            format!("read-only {state} · applies at the next connect (:connect); this session keeps what it opened with")
+        } else {
+            format!("read-only {state} · the next connection opens with it {state}")
+        });
     }
 
     /// `\l` handler. Renders `App.databases` — every database on the

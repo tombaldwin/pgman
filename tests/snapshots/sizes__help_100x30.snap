@@ -23,7 +23,7 @@ expression: dump(&buf)
 │              │                   reserved words …)                                │              │
 │              │     Q             saved queries (named, persisted)                 │              │
 │              │     ctrl-t / ctrl-tab / alt-1..9  multi-tab — see the tabs section │              │
-│              │ ↓ 217 more below                                                   │              │
+│              │ ↓ 238 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
