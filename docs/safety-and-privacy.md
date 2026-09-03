@@ -3,17 +3,32 @@
 ## Safety model
 
 - **Read-only by default.** Every safety profile defaults to
-  `read_only = true`, which opens the connection with `SET
-  default_transaction_read_only = on`. A *write* attempted on such a
-  session is rejected by Postgres itself, independent of the
-  client-side guards below. The *setting*, however, is a plain session
-  GUC that any role may change, so Postgres does not protect it: a
-  script could simply turn it off first. pgman blocks that — `SET
-  default_transaction_read_only = off`, `RESET` of it, `RESET ALL` /
-  `DISCARD ALL`, and the `READ WRITE` transaction modes on `SET` /
-  `BEGIN` / `START` are all refused while the profile says read-only,
-  `--yes` included. `statement_timeout_ms` (default 30000) is applied
-  the same way as the read-only flag.
+  `read_only = true`, which opens the connection
+  with `SET default_transaction_read_only = on`.
+  A *write* attempted on such a session is rejected by Postgres itself,
+  independent of the client-side guards below. The *setting*, however,
+  is a plain session GUC that any role may change, so Postgres does not
+  protect it: a script could simply turn it off first. pgman blocks that
+  — `SET default_transaction_read_only = off`, `RESET` of it, `RESET
+  ALL` / `DISCARD ALL`, the `READ WRITE` transaction modes on
+  `SET` / `BEGIN` / `START`, and `set_config()` naming either
+  `transaction_read_only` GUC from *any* statement (`SELECT
+  set_config('default_transaction_read_only', 'off', false)` is `SET`
+  spelled as a read) are all refused while the profile says read-only,
+  `--yes` included. A quoted GUC
+  name (`SET "transaction_read_only" = off`) counts like the bare one,
+  and a `set_config` whose first argument pgman cannot read as a plain
+  name — an expression, a nested call, an `E'…'` string with
+  backslashes — is refused too: a name that cannot be read is not one
+  that can be vouched for. **`DO` and `CALL` are refused outright on a
+  read-only profile.** Their bodies are procedural code (plpgsql) that
+  is a dollar-quoted string to pgman's lexer, so a `SET` inside is
+  invisible; opaque is not the same as safe. And a `--batch` script
+  runs inside one explicit transaction that began read-only (see
+  "`--batch --yes` semantics"), so a setting lifted mid-script by a
+  form the classifier missed reaches no transaction at all.
+  `statement_timeout_ms` (default 30000) is applied the same way as the
+  read-only flag.
 - **Every statement is classified before it runs.** Classification
   is pure and heuristic: it strips comments, looks at the leading
   keyword, and checks whether the statement carries a `WHERE`. It is
@@ -36,8 +51,14 @@
   `pg_ls_dir`, `dblink`, `dblink_exec`. (`COPY … TO/FROM PROGRAM` was
   already `Other`, being neither a `SELECT` nor recognised DDL.)
   Keywords count only where Postgres would read them as keywords:
-  the token scan skips string literals, quoted identifiers,
-  dollar-quoted bodies, and comments.
+  the token scan skips string literals, dollar-quoted bodies, and
+  comments, and it splits identifiers the way Postgres does — `$` and
+  every non-ASCII character continue an identifier, so `DELETE FROM t
+  where$` and `DELETE FROM t whereé` are unqualified deletes (`where$`
+  is a column name, not a clause) rather than guarded ones. A `"…"`
+  quoted identifier counts as the identifier it names, so `SELECT
+  "pg_read_file"('/etc/passwd')` and `pg_catalog."pg_read_file"(…)`
+  are the call, not a read.
 - **Guards.** Each statement category (`insert`, `update`,
   `update_without_where`, `delete`, `delete_without_where`,
   `truncate`, `drop`, `ddl`, `other`) maps to `Allow` / `Confirm` /
@@ -102,7 +123,19 @@
   a guard" below). A safe leading statement does not excuse a later
   one in the same script; the first refusal wins.
   The same split-verification and run-what-was-checked rules apply here
-  as in the editor.
+  as in the editor. A multi-statement script runs inside one explicit
+  transaction — `BEGIN; …; COMMIT`, rolled back if any statement fails
+  (`conn::run_batch_in_tx`) — and under a read-only profile any
+  top-level `BEGIN` / `START TRANSACTION` / `COMMIT` / `END` /
+  `ROLLBACK` / `ABORT` / `PREPARE TRANSACTION` in the script is refused
+  with the read-only message, `--yes` or not: a `COMMIT` would end that
+  transaction and start the next one under whatever the script had made
+  of the session, which is how `…; COMMIT; INSERT …` once got past the
+  floor. On a writable profile transaction control in a script is an
+  ordinary `Confirm`. The text pgman prints — the server's error
+  message, notices, `--format expanded` cells, the statement summary in
+  a refusal — is filtered of control characters before it reaches the
+  terminal (see "What's stored locally").
 - **Optional pre-flight cost preview.** When
   `cost_preview_threshold_rows` is set above 0 for a database, a plain
   `SELECT` (via the normal Run, not `EXPLAIN`) first runs an
@@ -147,8 +180,14 @@ directory, so a parent directory counts too. **Everything found that
 way is untrusted**: the repo's author chose those hosts, not you.
 Nothing discovered connects without a keypress — a single candidate
 lands in the picker exactly like ten, and the row shows the origin,
-`user@host:port/db`, the `sslmode` and any `tunnel → <bastion>` before
-you press enter. `--batch` has no keypress to offer, so it refuses a
+`user@host:port/db`, the `sslmode`, any `tunnel → <bastion>`, and —
+for every credential that comes out of your environment — `password ←
+$NAME` / `user ← $NAME` (the variable's name, never its value) before
+you press enter. Read that row: a discovered URL may say
+`sslmode=disable`, and the row shows exactly that, so a checkout that
+pairs `password_env = "AWS_SECRET_ACCESS_KEY"` with a host of its own
+and no TLS is asking you, in plain text, to send that variable there in
+the clear. `--batch` has no keypress to offer, so it refuses a
 lone discovered candidate too: pass `--dsn`, or `--discovered` to
 accept it deliberately. `PGPASSWORD` is only used with `--dsn`, so a
 discovered connection can never borrow it, and a `${…}` placeholder is
@@ -158,7 +197,13 @@ turn one of your environment variables into a DNS lookup it controls.
 The two components a placeholder *is* resolved in — the username /
 password and the database name — additionally refuse any value that
 introduces a `?`, `&`, `/`, `@` or `=`, so a database name of
-`db?ssh_tunnel=x.evil.example` can't reach past its own component. All
+`db?ssh_tunnel=x.evil.example` can't reach past its own component. And
+because the resolver and the DSN parser find the host by different
+rules (the first `/` versus the last `@` — a password may carry either
+unescaped), the parser gets the last word: after resolving, both the
+template and the result are parsed as DSNs, and unless they agree
+byte-for-byte on host, port, parameters and tunnel — with no `${` in
+the parsed host — the whole URL is refused. All
 three discovered sources go through that same resolution — Spring,
 IntelliJ's `.idea/dataSources.xml` and `.pgman/pgman.toml` — and a
 `${…}` left in any connection-critical field (host, database, user,
@@ -182,7 +227,7 @@ typed choice and behaves as it always has.
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
 | `~/.cache/pgman/pgman.log.YYYY-MM-DD` | Application log, rotated daily. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
-| `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. `--batch --format csv` / `tsv` drop control characters other than `\t`, `\n` and `\r` from cell values for the same reason — the output is written to be piped or `cat`ed, and a value carrying an ESC would otherwise be a terminal-escape-sequence injection at that point. Every value a report renders is escaped for its format, headers included: for Markdown that means `\`, `|`, `` ` ``, `[`, `]` and the HTML-significant characters, so text arriving from a JDBC tap cannot become a link, a live `<script>`, or an extra table column in the shared artifact. |
+| `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. `--batch` drops control characters other than `\t`, `\n` and `\r` from everything it prints that the server or a checkout supplied — `csv` / `tsv` / `expanded` cells and column names, the `error:` line, `[NOTICE]` lines, the statement summary in a refusal, the connect-failure line — for the same reason: the output is written to be piped, `cat`ed or read in a terminal, and a value carrying an ESC would otherwise be a terminal-escape-sequence injection at that point (a `RAISE NOTICE` used to be able to retitle your terminal). Every value a report renders is escaped for its format, headers included: for Markdown that means `\`, `|`, `` ` ``, `[`, `]` and the HTML-significant characters, so text arriving from a JDBC tap cannot become a link, a live `<script>`, or an extra table column in the shared artifact. |
 
 The files pgman itself writes — `draft.sql`, `history.log`,
 `saved.toml`, `update_check.json`, the daily `pgman.log.YYYY-MM-DD`,
@@ -213,8 +258,11 @@ substitute for filesystem hygiene: if your `~` itself isn't otherwise
 locked down (shared account, backup that preserves world-readable
 ACLs, etc.), still treat the files above as no more private than a
 shell history file. `safety.toml` and `pgman.toml` are yours, not
-pgman's — it never writes them, so their permissions are whatever you
-set.
+pgman's: the one time pgman writes `safety.toml` is `--init-config`,
+which creates a commented copy of the built-in defaults (owner-only,
+through the same `write_private`) and refuses to overwrite one that
+exists. `pgman.toml` it never writes. Their permissions are otherwise
+whatever you set.
 
 **Passwords are never written to disk by pgman.** They live only in
 process memory for the duration of the connection, sourced from
@@ -253,14 +301,18 @@ are **unauthenticated ingest**. `--tap-listen`/`--tap-udp` bind
 `127.0.0.1` by default when given a bare port or `:port` (e.g.
 `--tap-listen :7432`); a full `host:port` (e.g. `0.0.0.0:7432`) binds
 exactly what you ask for, with no authentication check at any layer.
-Auto-enabling only ever picks `127.0.0.1:7432` (triggered by detecting
-a Java project in the launch directory) — a non-loopback bind is
-always an explicit, deliberate choice. Only bind a non-loopback
-address on a trusted/firewalled network. Events ingested this way
-(reconstructed SQL, bound-parameter values unless the JAR redacts
-them) are held only in memory (a capped ring buffer) unless you pass
-`--tap-record PATH`, which appends them to a JSONL file you chose
-(created owner-only, `0600`, alongside its parent directory).
+Auto-enabling only ever picks `127.0.0.1:7432` (triggered by a
+`pom.xml` or Gradle build in the launch directory), says so on the
+status line — `tap listener on 127.0.0.1:7432 (auto: Java project
+detected) · --no-tap to disable` — and `--no-tap` turns it off; a
+non-loopback bind is always an explicit, deliberate choice. Only bind
+a non-loopback address on a trusted/firewalled network. Events
+ingested this way (reconstructed SQL, bound-parameter values unless
+the JAR redacts them) are held only in memory — a ring capped at
+2 000 events *and* at 64 MiB of text, oldest out first — unless you
+pass `--tap-record PATH`, which appends them to a JSONL file you chose
+(created owner-only, `0600`, alongside its parent directory) and
+stops, with one warning in the log, once that file reaches 256 MiB.
 Each listener also caps concurrent connections — and closes one
 that goes 30 seconds without completing a frame, so a peer that
 connects and then says nothing cannot hold a connection slot
@@ -272,9 +324,12 @@ entries is cheap to send and expensive to hold —
 and throttles every warning a peer can trigger — malformed
 frames, refused connections, accept failures, idle closes, a
 connection ending in error, and a bad line in a `--tap-replay`
-file — to at most one per second per log site, with a
-suppressed-count on the next line so a hostile or broken client can't
-blow up memory or flood the app log — which itself rolls daily
+file — to at most one per second per log site. The lines that were
+suppressed are counted, and the count is carried on the next line
+that site emits — which only comes if the condition recurs after a
+quiet second; a burst that stops is simply not logged past its first
+line. So a hostile or broken client can't blow up memory or flood the
+app log — which itself rolls daily
 (`pgman.log.YYYY-MM-DD` under `~/.cache/pgman/`, see the table
 above).
 
