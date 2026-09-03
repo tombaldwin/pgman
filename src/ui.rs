@@ -1293,7 +1293,7 @@ pub(crate) fn help_body(
 
     push(
         Line::from(Span::styled(
-            "pgman — keys (F1 help · F2 error detail · F3 notify · ? from grid)",
+            "pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
@@ -1304,7 +1304,14 @@ pub(crate) fn help_body(
 
     heading("grid", &mut lines, &mut anchors);
     push(row("    q             quit (esc here is a no-op so a reflex press doesn't lose the session)"), &mut lines);
-    push(row("    ? / F1        toggle this help"), &mut lines);
+    push(
+        row("    ? / F1        toggle this help (both work from every non-typing mode)"),
+        &mut lines,
+    );
+    push(
+        row("    :             command bar — see the ': commands' section"),
+        &mut lines,
+    );
     push(
         row("    A             about pgman (version, credits)"),
         &mut lines,
