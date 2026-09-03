@@ -2375,7 +2375,9 @@ fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
     a.generation = 1;
     a.on_msg(AppMsg::SlowQueriesLoaded {
         generation: 1,
-        result: Err("ERROR: relation \"pg_stat_statements\" does not exist".into()),
+        result: Err(crate::conn::QueryErr::msg(
+            "relation \"pg_stat_statements\" does not exist",
+        )),
     });
     // Back to Normal + actionable hint in the error.
     assert_eq!(a.mode, Mode::Normal);
@@ -2383,6 +2385,68 @@ fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
     assert!(
         err.contains("CREATE EXTENSION pg_stat_statements"),
         "expected install hint; got: {err}"
+    );
+}
+
+/// What a stock Postgres actually sends for `T`: a `DbError` with
+/// SQLSTATE 42P01 and the relation in the message. The footer names
+/// the relation and hints the extension; F2 has the code to show.
+/// (The load used to arrive as the bare `db error`, so neither did.)
+#[test]
+fn slow_queries_load_failure_keeps_the_server_message_and_detail_for_f2() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SlowQueries;
+    a.generation = 1;
+    a.on_msg(AppMsg::SlowQueriesLoaded {
+        generation: 1,
+        result: Err(crate::conn::QueryErr {
+            msg: "relation \"pg_stat_statements\" does not exist".into(),
+            position: Some(14),
+            detail: Some(crate::conn::QueryErrDetail {
+                code: Some("42P01".into()),
+                severity: Some("ERROR".into()),
+                ..Default::default()
+            }),
+        }),
+    });
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert_eq!(
+        err,
+        "slow queries load failed: relation \"pg_stat_statements\" does not exist (try `CREATE EXTENSION pg_stat_statements`)"
+    );
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("42P01")
+    );
+    // F2 now has something to expand.
+    a.on_key(KeyEvent::from(KeyCode::F(2)));
+    assert_eq!(a.mode, Mode::ErrorDetail);
+}
+
+#[test]
+fn sessions_load_failure_keeps_the_server_message_and_detail_for_f2() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Sessions;
+    a.generation = 1;
+    a.on_msg(AppMsg::SessionsLoaded {
+        generation: 1,
+        result: Err(crate::conn::QueryErr {
+            msg: "permission denied for view pg_stat_activity".into(),
+            position: None,
+            detail: Some(crate::conn::QueryErrDetail {
+                code: Some("42501".into()),
+                ..Default::default()
+            }),
+        }),
+    });
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("sessions load failed: permission denied for view pg_stat_activity")
+    );
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("42501")
     );
 }
 

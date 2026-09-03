@@ -737,7 +737,7 @@ pub async fn connect_and_bootstrap(
         .ok()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
-    let grid = grid_res?;
+    let grid = grid_res.map_err(|e| e.to_string())?;
     Ok(Booted {
         server_version,
         grid,
@@ -1232,16 +1232,20 @@ pub async fn run_in_tx_rollback(
 ///
 /// Streams via `query_raw` and sets `Grid.truncated` if more rows existed
 /// past the cap.
-pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, String> {
-    let stmt = client.prepare(sql).await.map_err(|e| e.to_string())?;
+///
+/// Errors come back as [`QueryErr`] — the server's message with its
+/// SQLSTATE / detail / hint — not `tokio_postgres::Error`'s bare
+/// `db error` Display. The panel loads (`T`, `L`) show the message in
+/// the footer and the rest behind F2; a missing `pg_stat_statements`
+/// is only recognisable from the message.
+pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns: Vec<String> = stmt
         .columns()
         .iter()
         .map(|c| c.name().to_string())
         .collect();
-    let (rows, truncated) = stream_rows(client, &stmt)
-        .await
-        .map_err(|e| e.to_string())?;
+    let (rows, truncated) = stream_rows(client, &stmt).await?;
     Ok(Grid {
         columns,
         rows,

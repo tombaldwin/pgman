@@ -341,9 +341,12 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                 // a genuinely empty one, leaves its column list behind.
                 // That's what tells "nothing run yet" (show the start
                 // card) apart from "ran a query, got zero rows" (still
-                // `(no rows)`); an error also forces the plain message so
-                // it isn't hidden behind a welcome screen.
-                if app.grid.columns.is_empty() && app.last_error.is_none() {
+                // `(no rows)`). An error does not change the answer: it
+                // lives in the footer and behind F2, and a panel (`T`,
+                // `L`, `W`) whose load failed is an overlay — the start
+                // card under it stays, rather than turning into an empty
+                // `result` block for a query nobody ran.
+                if app.grid.columns.is_empty() {
                     draw_landing(f, area, app);
                 } else {
                     f.render_widget(

@@ -74,12 +74,12 @@ pub enum AppMsg {
     /// `pg_stat_statements` snapshot finished loading.
     SlowQueriesLoaded {
         generation: u64,
-        result: Result<Vec<crate::query::slow_queries::SlowQueryRow>, String>,
+        result: Result<Vec<crate::query::slow_queries::SlowQueryRow>, crate::conn::QueryErr>,
     },
     /// `pg_stat_activity` snapshot finished loading.
     SessionsLoaded {
         generation: u64,
-        result: Result<Vec<crate::query::sessions::SessionRow>, String>,
+        result: Result<Vec<crate::query::sessions::SessionRow>, crate::conn::QueryErr>,
     },
     /// Schema-lint live-query checks (LINT101+) finished. Merged
     /// into `schema_lint_findings` if the operator is still on
