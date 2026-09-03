@@ -59,6 +59,11 @@ pub enum BackslashCmd {
     /// (replacing it) without running it. `None` when no path
     /// was given.
     Include(Option<String>),
+    /// A recognised command whose *argument* is wrong. Carries the
+    /// message to show verbatim — the parser knows what was expected,
+    /// the dispatcher doesn't. Distinct from `Unknown`, which is a
+    /// command nobody recognises.
+    Invalid(String),
     /// Anything else starting with `\`. The dispatcher uses the
     /// inner string to compose a useful error.
     Unknown(String),
@@ -105,32 +110,55 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
         // discovered data-source names contain spaces
         // (`dataSource (application)`), and the whitespace split
         // would have handed back `dataSource` — a name no pick has.
-        "c" => BackslashCmd::Connect(quoted_arg(body, cmd)),
+        "c" => match quoted_arg(body, cmd) {
+            Ok(arg) => BackslashCmd::Connect(arg),
+            Err(e) => BackslashCmd::Invalid(e),
+        },
         "i" => BackslashCmd::Include(arg1.map(str::to_string)),
         _ => BackslashCmd::Unknown(raw),
     })
 }
 
+/// Message for a `\c` whose argument is more than one bare word.
+pub const CONNECT_ONE_NAME: &str = "\\c takes one name — quote it if it has spaces: \\c \"my db\"";
+
 /// The argument following `cmd` in `body`, honouring a
 /// double-quoted span so a name containing spaces survives:
 /// `c "dataSource (application)"` yields `dataSource (application)`.
 ///
-/// Unquoted, it is the first whitespace-delimited word, exactly as
-/// `split_whitespace` would have produced — so nothing that parsed
-/// before parses differently now. An unterminated quote takes the
-/// rest of the line (the intent is unambiguous, and refusing would
-/// only make the operator retype it); an empty argument, or an
-/// empty quoted string, is `None`.
-fn quoted_arg(body: &str, cmd: &str) -> Option<String> {
-    let rest = body.get(cmd.len()..)?.trim();
+/// Unquoted, it must be exactly one word. Taking the first and
+/// dropping the rest is what `split_whitespace().next()` did, and it
+/// meant `\c my db` silently connected to a *different* database
+/// called `my` — the one class of typo where guessing is worse than
+/// asking. Extra text after a closing quote (`\c "a" b`) is refused
+/// for the same reason.
+///
+/// An unterminated quote still takes the rest of the line (the intent
+/// is unambiguous, and refusing would only make the operator retype
+/// it); an empty argument, or an empty quoted string, is `Ok(None)`.
+fn quoted_arg(body: &str, cmd: &str) -> Result<Option<String>, String> {
+    let Some(rest) = body.get(cmd.len()..) else {
+        return Ok(None);
+    };
+    let rest = rest.trim();
     if let Some(after_open) = rest.strip_prefix('"') {
-        let inside = match after_open.split_once('"') {
-            Some((inside, _)) => inside,
-            None => after_open,
+        let (inside, trailing) = match after_open.split_once('"') {
+            Some((inside, trailing)) => (inside, trailing.trim()),
+            None => (after_open, ""),
         };
-        return (!inside.is_empty()).then(|| inside.to_string());
+        if !trailing.is_empty() {
+            return Err(CONNECT_ONE_NAME.to_string());
+        }
+        return Ok((!inside.is_empty()).then(|| inside.to_string()));
     }
-    rest.split_whitespace().next().map(str::to_string)
+    let mut words = rest.split_whitespace();
+    let Some(first) = words.next() else {
+        return Ok(None);
+    };
+    if words.next().is_some() {
+        return Err(CONNECT_ONE_NAME.to_string());
+    }
+    Ok(Some(first.to_string()))
 }
 
 /// How a connect-by-name argument resolved against the discovered
@@ -331,11 +359,24 @@ mod tests {
             parse_backslash_command("\\c prod"),
             Some(BackslashCmd::Connect(Some("prod".into())))
         );
-        // Extra tokens past the name ignored.
+    }
+
+    #[test]
+    fn parse_connect_refuses_a_trailing_unquoted_word() {
+        // `\c my db` used to connect to a *different* database called
+        // `my` — the first word, with the rest dropped on the floor.
+        // Guessing there is worse than asking.
         assert_eq!(
-            parse_backslash_command("\\c prod extra"),
-            Some(BackslashCmd::Connect(Some("prod".into())))
+            parse_backslash_command("\\c my db"),
+            Some(BackslashCmd::Invalid(CONNECT_ONE_NAME.into()))
         );
+        // Same for text after a closing quote.
+        assert_eq!(
+            parse_backslash_command("\\c \"my db\" extra"),
+            Some(BackslashCmd::Invalid(CONNECT_ONE_NAME.into()))
+        );
+        // The message says how to fix it.
+        assert!(CONNECT_ONE_NAME.contains("quote it if it has spaces"));
     }
 
     #[test]

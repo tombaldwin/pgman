@@ -83,9 +83,14 @@ impl App {
     pub(super) fn dispatch_backslash(&mut self, cmd: crate::query::backslash::BackslashCmd) {
         use crate::query::backslash::BackslashCmd;
         // Clear the buffer immediately so a second F5 doesn't
-        // run the same command twice. `\timing` is the exception:
-        // operators often toggle it back off in the same buffer.
-        let clear_buffer = !matches!(cmd, BackslashCmd::Timing(_) | BackslashCmd::Expanded(_));
+        // run the same command twice. `\timing` / `\x` are exceptions:
+        // operators often toggle them back off in the same buffer.
+        // `Invalid` is too — its message says how to fix what the
+        // operator typed, which is no help once the text is gone.
+        let clear_buffer = !matches!(
+            cmd,
+            BackslashCmd::Timing(_) | BackslashCmd::Expanded(_) | BackslashCmd::Invalid(_)
+        );
         if clear_buffer {
             self.editor.buffer.clear();
             self.editor.cursor = 0;
@@ -150,6 +155,9 @@ impl App {
             }
             BackslashCmd::Connect(target) => self.dispatch_connect(target),
             BackslashCmd::Include(target) => self.dispatch_include(target),
+            BackslashCmd::Invalid(message) => {
+                self.last_error = Some(message);
+            }
             BackslashCmd::Unknown(raw) => {
                 self.last_error = Some(format!("unknown backslash command: {raw}"));
             }
