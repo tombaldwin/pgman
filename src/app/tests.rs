@@ -7056,3 +7056,202 @@ fn a_leading_separator_cannot_downgrade_a_block_to_a_confirm() {
         );
     }
 }
+
+// -- decision modals own the keyboard ---------------------------------
+
+/// A `Confirm`-mode app holding a guarded DELETE, the way `request_run`
+/// leaves it. Two tabs open so the tab chords have somewhere to go.
+fn confirm_modal_app() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.new_tab();
+    assert_eq!(a.tabs.len(), 2);
+    a.pending_run = Some(PendingRun {
+        sql: "DELETE FROM orders".into(),
+        kind: RunKind::Run,
+        decision: crate::safety::Decision {
+            kind: crate::safety::StatementKind::Delete { has_where: false },
+            guard: crate::safety::Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
+        is_batch: false,
+        summary: None,
+    });
+    a.last_error = Some("relation \"orders\" does not exist".into());
+    a.mode = Mode::Confirm;
+    a
+}
+
+fn tx_decision_app() -> App {
+    let mut a = confirm_modal_app();
+    a.pending_run = None;
+    a.tx_open = true;
+    a.mode = Mode::TxDecision;
+    a
+}
+
+fn confirm_terminate_app() -> App {
+    let mut a = confirm_modal_app();
+    a.pending_run = None;
+    a.pending_terminate = Some(4242);
+    a.mode = Mode::ConfirmTerminate;
+    a
+}
+
+/// Every global chord that used to walk out of a decision modal.
+fn modal_escape_keys() -> Vec<(&'static str, KeyEvent)> {
+    vec![
+        ("F2", KeyEvent::from(KeyCode::F(2))),
+        ("F3", KeyEvent::from(KeyCode::F(3))),
+        ("F4", KeyEvent::from(KeyCode::F(4))),
+        (":", KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT)),
+        (
+            "ctrl-t",
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        ),
+        (
+            "ctrl-w",
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        ),
+        (
+            "ctrl-tab",
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL),
+        ),
+        (
+            "ctrl-shift-backtab",
+            KeyEvent::new(
+                KeyCode::BackTab,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        ),
+        (
+            "alt-1",
+            KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT),
+        ),
+        (
+            "alt-2",
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT),
+        ),
+    ]
+}
+
+#[test]
+fn tx_decision_modal_ignores_every_global_escape_chord() {
+    for (name, key) in modal_escape_keys() {
+        let mut a = tx_decision_app();
+        let tabs_before = a.active_tab;
+        a.on_key(key);
+        assert_eq!(a.mode, Mode::TxDecision, "{name} escaped TxDecision");
+        assert!(a.tx_open, "{name} dropped tx_open");
+        assert_eq!(a.active_tab, tabs_before, "{name} switched tabs");
+        assert!(a.command_bar.is_none(), "{name} opened the command bar");
+    }
+    // The modal's own keys still work.
+    let mut a = tx_decision_app();
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_ne!(a.mode, Mode::TxDecision, "n must still answer the modal");
+}
+
+#[test]
+fn confirm_modal_ignores_every_global_escape_chord_except_colon() {
+    for (name, key) in modal_escape_keys() {
+        if name == ":" {
+            continue;
+        }
+        let mut a = confirm_modal_app();
+        let tabs_before = a.active_tab;
+        a.on_key(key);
+        assert_eq!(a.mode, Mode::Confirm, "{name} escaped Confirm");
+        assert!(a.pending_run.is_some(), "{name} dropped the pending run");
+        assert_eq!(a.active_tab, tabs_before, "{name} switched tabs");
+    }
+    // `:` is the documented exception: it cancels the guarded run
+    // on the way into the bar, so nothing is left armed behind it.
+    let mut a = confirm_modal_app();
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    assert_eq!(a.mode, Mode::CommandBar);
+    assert!(a.pending_run.is_none(), "':' from Confirm cancels the run");
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Editor, "esc must not land on an empty modal");
+    // And the modal's own keys still work.
+    let mut a = confirm_modal_app();
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a.pending_run.is_none());
+}
+
+#[test]
+fn confirm_terminate_modal_ignores_every_global_escape_chord() {
+    for (name, key) in modal_escape_keys() {
+        let mut a = confirm_terminate_app();
+        let tabs_before = a.active_tab;
+        a.on_key(key);
+        assert_eq!(
+            a.mode,
+            Mode::ConfirmTerminate,
+            "{name} escaped ConfirmTerminate"
+        );
+        assert_eq!(a.pending_terminate, Some(4242), "{name} dropped the pid");
+        assert_eq!(a.active_tab, tabs_before, "{name} switched tabs");
+        assert!(a.command_bar.is_none(), "{name} opened the command bar");
+    }
+    let mut a = confirm_terminate_app();
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(a.mode, Mode::Sessions, "n must still answer the modal");
+    assert_eq!(a.pending_terminate, None);
+}
+
+#[test]
+fn f1_from_a_decision_modal_still_opens_help_and_returns_to_it() {
+    let mut a = tx_decision_app();
+    a.on_key(KeyEvent::from(KeyCode::F(1)));
+    assert_eq!(a.mode, Mode::Help);
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::TxDecision, "help must hand the modal back");
+    assert!(a.tx_open);
+}
+
+#[tokio::test]
+async fn reconnect_drops_everything_a_decision_modal_was_holding() {
+    // `\c` reaches `start_connect` directly. Whatever a modal held
+    // belongs to the connection being dropped: the server rolls the
+    // open tx back, the guarded run was classified against the old
+    // database, the pid means nothing on the new one. Left set,
+    // `tx_open` refused `\watch` for the rest of the session.
+    let mut a = App::new(
+        Theme::default(),
+        Some(crate::conn::Dsn::parse("postgres://app@old-host/app").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.tx_open = true;
+    a.pending_terminate = Some(4242);
+    a.pending_run = Some(PendingRun {
+        sql: "DELETE FROM orders".into(),
+        kind: RunKind::Run,
+        decision: crate::safety::Decision {
+            kind: crate::safety::StatementKind::Delete { has_where: false },
+            guard: crate::safety::Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
+        is_batch: false,
+        summary: None,
+    });
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c other_db".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        matches!(a.conn_state, ConnState::Connecting),
+        "the reconnect must have started"
+    );
+    assert!(!a.tx_open, "tx_open survived a reconnect");
+    assert!(a.pending_run.is_none(), "pending_run survived a reconnect");
+    assert!(
+        a.pending_terminate.is_none(),
+        "pending_terminate survived a reconnect"
+    );
+}
