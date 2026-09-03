@@ -267,19 +267,19 @@ What it was:
 7. Hand the product page what it needs: hero gif, install command,
    GitHub link, drop "Coming soon".
 
-## Release panel — 2026-09-03 · **run, acted on, re-review pending**
+## Release panel — 2026-09-03 · **two rounds run, final check in progress**
 
 Five reviewers (release risk, security, first-time user, correctness,
-positioning). Three said NO-GO. Security reproduced four blockers end
-to end: a cloned repo could point `PGPASSWORD` at any host on
-auto-connect; the statement splitter could be defeated by a
-double-quoted identifier or a `$` in an alias so a DROP ran past a
-block guard; password redaction leaked passwords containing `/` or
-`@`; a mistyped `sslmode` silently accepted any certificate.
-Correctness found an unresolved `${DB_PASSWORD}` sent as the literal
-string and fourteen more. Every finding is fixed on main with a test
-that was demonstrated failing first; the CHANGELOG has the list. The
-security and correctness reviewers re-review before the tag.
+positioning). Round one: three NO-GOs, security reproduced four
+blockers end to end (hostile-checkout auto-connect with `PGPASSWORD`;
+a statement-splitter bypass past `drop = "block"`; passwords with `/`
+or `@` leaking to the log; a mistyped `sslmode` accepting any
+certificate), correctness found fifteen more. All fixed in five
+security batches and five UX batches, each guard demonstrated failing
+first. Round two (security + correctness re-review): the new lexer was
+ASCII-only so a non-ASCII alias reopened the bypass, plus twenty-one
+smaller findings; all fixed in three batches. The security reviewer's
+final targeted check on those is running; GO there means tag.
 
 ## Release day
 
