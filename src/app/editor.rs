@@ -17,6 +17,9 @@ impl App {
         // Drop any active completion cycle — a paste mid-cycle is a hard
         // commit / reset boundary.
         self.completion = None;
+        // Pasted text is inserted verbatim and no closer in it is
+        // ours to skip over.
+        self.auto_closers.clear();
         self.editor_dirty();
         // Normalise line endings to LF: most terminals deliver CRLF on
         // Windows or `\r` from old-Mac sources. Don't collapse blank
@@ -180,35 +183,49 @@ impl App {
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 self.editor_dirty();
-                if matches!(c, '(' | '[' | '{') {
+                let at = self.editor.cursor;
+                if let Some(close) = closer_of(c) {
                     editor_insert_pair(&mut self.editor.buffer, &mut self.editor.cursor, c);
-                } else if matches!(c, ')' | ']' | '}')
-                    && editor_maybe_skip_close(&self.editor.buffer, &mut self.editor.cursor, c)
+                    self.auto_closers.shift_insert(at, 2);
+                    self.auto_closers.push(at + 1, close);
+                } else if matches!(c, ')' | ']' | '}' | '\'' | '"')
+                    && self.auto_closers.take_at(at, c, &self.editor.buffer)
                 {
-                    // Skipped over the matching close.
-                } else if matches!(c, '\'' | '"')
-                    && editor_maybe_skip_quote(&self.editor.buffer, &mut self.editor.cursor, c)
-                {
-                    // Skipped over the matching quote.
+                    // Skipped over a closer *we* inserted at exactly this
+                    // offset. A closer the operator typed — or one that
+                    // was here before a paste, an undo, a completion —
+                    // is never skipped: that was how `'shipped'` became
+                    // `'shipped''`.
+                    self.editor.cursor += c.len_utf8();
                 } else if matches!(c, '\'' | '"')
                     && editor_maybe_pair_quote(&mut self.editor.buffer, &mut self.editor.cursor, c)
                 {
-                    // Paired and placed cursor between the quotes.
+                    self.auto_closers.shift_insert(at, 2);
+                    self.auto_closers.push(at + 1, c);
                 } else {
                     editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, c);
+                    self.auto_closers.shift_insert(at, c.len_utf8());
                 }
             }
             KeyCode::Enter => {
                 self.editor_dirty();
+                let at = self.editor.cursor;
                 editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, '\n');
+                self.auto_closers.shift_insert(at, 1);
             }
             KeyCode::Backspace => {
                 self.editor_dirty();
+                let end = self.editor.cursor;
                 editor_backspace(&mut self.editor.buffer, &mut self.editor.cursor);
+                self.auto_closers.shift_delete(self.editor.cursor, end);
             }
             KeyCode::Delete => {
                 self.editor_dirty();
+                let before = self.editor.buffer.len();
                 editor_delete(&mut self.editor.buffer, &mut self.editor.cursor);
+                let removed = before - self.editor.buffer.len();
+                self.auto_closers
+                    .shift_delete(self.editor.cursor, self.editor.cursor + removed);
             }
             KeyCode::Left => {
                 self.editor.preferred_col = None;
@@ -385,6 +402,7 @@ impl App {
         self.editor.cursor = prev.cursor.min(self.editor.buffer.len());
         self.editor.preferred_col = None;
         self.history_pos = None;
+        self.auto_closers.clear();
         // Undo replaced the buffer wholesale; any active completion cycle's
         // byte offsets now point past the restored (shorter) buffer. Drop it
         // so the next Tab starts fresh rather than `replace_range`-ing out of
@@ -412,6 +430,7 @@ impl App {
         self.editor.cursor = next.cursor.min(self.editor.buffer.len());
         self.editor.preferred_col = None;
         self.history_pos = None;
+        self.auto_closers.clear();
         // See editor_undo: a buffer swap invalidates the completion cycle's
         // stored offsets.
         self.completion = None;
@@ -426,6 +445,9 @@ impl App {
         let Some(cycle) = self.completion.take() else {
             return;
         };
+        // The restore below rewrites a range; pending closers past it
+        // would be off by the difference.
+        self.auto_closers.clear();
         // If the operator backspaced past the cycle's start, the
         // stored range no longer points at valid bytes — bail on
         // the restore but still drop the cycle. Same for cursor: a
@@ -467,6 +489,11 @@ impl App {
         // the cycle, which we own here.
         self.history_pos = None;
         self.editor.preferred_col = None;
+        // Wherever a branch below `replace_range`s the identifier under
+        // the cursor, the pending closers are cleared first: one past
+        // the range would be off by the difference in length. The
+        // popup-only branches leave them alone — the `AND ` auto-trigger
+        // fires inside a literal too, and its closer must stay skippable.
 
         if let Some(cycle) = self.completion.clone() {
             if cycle.candidates.is_empty() {
@@ -480,6 +507,7 @@ impl App {
                 Some(i) => (i + 1) % cycle.candidates.len(),
             };
             let cand = cycle.candidates[next].clone();
+            self.auto_closers.clear();
             self.editor
                 .buffer
                 .replace_range(cycle.start..cycle.end, &cand.insert);
@@ -548,6 +576,7 @@ impl App {
             .find(|c| !c.insert.is_empty() && c.insert.eq_ignore_ascii_case(&id.prefix))
         {
             let cand = exact.clone();
+            self.auto_closers.clear();
             self.editor
                 .buffer
                 .replace_range(prefix_start..replace_end, &cand.insert);
@@ -589,6 +618,7 @@ impl App {
         //    around so Esc undoes the auto-insert.
         if cands.len() == 1 {
             let cand = cands[0].clone();
+            self.auto_closers.clear();
             self.editor
                 .buffer
                 .replace_range(prefix_start..replace_end, &cand.insert);
@@ -624,6 +654,9 @@ impl App {
             // text — don't insert anything yet.
             id.prefix.clone()
         };
+        if insert_text != self.editor.buffer[prefix_start..replace_end] {
+            self.auto_closers.clear();
+        }
         self.editor
             .buffer
             .replace_range(prefix_start..replace_end, &insert_text);
@@ -669,32 +702,115 @@ pub fn editor_insert_pair(buffer: &mut String, cursor: &mut usize, c: char) -> b
     true
 }
 
-/// Skip-over for close-brackets: if the character immediately
-/// after the cursor matches `c`, advance the cursor past it
-/// instead of inserting a literal. Mirrors what most editors do
-/// for `()` autoclose — typing `(` then `)` yields `()` with the
-/// cursor between, then the second `)` just exits the pair.
-/// Returns `true` when the skip happened (no insert needed).
-pub fn editor_maybe_skip_close(buffer: &str, cursor: &mut usize, c: char) -> bool {
-    if !matches!(c, ')' | ']' | '}') {
-        return false;
+/// The closer [`editor_insert_pair`] adds for an opening bracket.
+pub fn closer_of(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
     }
-    let bytes = buffer.as_bytes();
-    if *cursor < bytes.len() && bytes[*cursor] == c as u8 {
-        *cursor += 1;
-        return true;
+}
+
+/// The closers autoclose inserted and the operator has not yet typed
+/// over: `(byte offset, char)`, oldest first. Typing the matching
+/// closer with the cursor at exactly that offset skips over it; any
+/// other closer is a literal insert. The stack follows the typing
+/// path's edits — an insert before an entry shifts it, a delete
+/// across it drops it — and is cleared wholesale by anything that
+/// replaces buffer text some other way (paste, undo / redo,
+/// completion, history, an external editor): a buffer whose length
+/// moved without the stack hearing about it is treated as unknown.
+///
+/// The old rule skipped any quote that followed a letter or digit
+/// as an "in-word apostrophe" and *inserted* the closer instead, so
+/// hand-typed `'shipped'` came out `'shipped''` — the closer the
+/// editor had added stayed behind. Pure / testable.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AutoClosers {
+    entries: Vec<(usize, char)>,
+    /// Buffer length after the last edit this stack was told about.
+    seen_len: usize,
+}
+
+impl AutoClosers {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
-    false
+
+    /// Forget every pending closer.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Drop the stack if the buffer changed length behind its back
+    /// (an edit outside the typing path). Call before handling a key.
+    pub fn sync(&mut self, buffer_len: usize) {
+        if buffer_len != self.seen_len {
+            self.clear();
+            self.seen_len = buffer_len;
+        }
+    }
+
+    /// Record the buffer length the stack is now consistent with.
+    /// Call after handling a key.
+    pub fn note_len(&mut self, buffer_len: usize) {
+        self.seen_len = buffer_len;
+    }
+
+    /// A closer autoclose just inserted at byte `offset`.
+    pub fn push(&mut self, offset: usize, close: char) {
+        self.entries.push((offset, close));
+    }
+
+    /// `len` bytes were inserted at `at`: every closer at or past it
+    /// moves right.
+    pub fn shift_insert(&mut self, at: usize, len: usize) {
+        for (offset, _) in &mut self.entries {
+            if *offset >= at {
+                *offset += len;
+            }
+        }
+    }
+
+    /// Bytes `start..end` were deleted: a closer inside the range is
+    /// gone, one past it moves left.
+    pub fn shift_delete(&mut self, start: usize, end: usize) {
+        self.entries
+            .retain(|(offset, _)| !(start..end).contains(offset));
+        for (offset, _) in &mut self.entries {
+            if *offset >= end {
+                *offset -= end - start;
+            }
+        }
+    }
+
+    /// Is `close` a pending closer at exactly byte `at`, still
+    /// present in `buffer`? Consumes it (and any entry behind the
+    /// cursor, which typing can no longer reach) when it is.
+    pub fn take_at(&mut self, at: usize, close: char, buffer: &str) -> bool {
+        let present = buffer.get(at..).is_some_and(|rest| rest.starts_with(close));
+        let hit = present
+            && self
+                .entries
+                .iter()
+                .any(|&(offset, c)| offset == at && c == close);
+        if hit {
+            self.entries.retain(|&(offset, _)| offset > at);
+        }
+        hit
+    }
 }
 
 /// Quote autoclose: when `c` is `'` or `"`, decide whether to
 /// insert a paired quote (cursor between) versus a single literal
-/// character. The gate is conservative: only pair when both
-/// neighbours look like quote-boundaries (whitespace, EOB, or
-/// punctuation that isn't `_`). That keeps the feature out of
-/// SQL string-literal escaping (`'don''t'`) and out of mid-word
-/// contractions in comments (`it's`), where a paired quote
-/// would just be in the way.
+/// character. The gate is conservative: only pair when the
+/// character before is not an identifier character (a quote after
+/// a letter or digit is an apostrophe in a word — `don't` — or a
+/// doubled `''` escape) and the character after is neither an
+/// identifier character nor any quote (typing `'` in front of an
+/// existing `'` or `"` closes or escapes it; a pair there would
+/// leave a stray closer behind).
 ///
 /// Returns `true` when the pair was inserted; `false` lets the
 /// caller fall back to inserting the literal character.
@@ -708,39 +824,13 @@ pub fn editor_maybe_pair_quote(buffer: &mut String, cursor: &mut usize, c: char)
     };
     let next_ok = match char_after(buffer, *cursor) {
         None => true,
-        Some(n) => !n.is_alphanumeric() && n != '_' && n != c,
+        Some(n) => !n.is_alphanumeric() && n != '_' && !matches!(n, '\'' | '"'),
     };
     if !(prev_ok && next_ok) {
         return false;
     }
     buffer.insert(*cursor, c);
     buffer.insert(*cursor + 1, c);
-    *cursor += 1;
-    true
-}
-
-/// Skip-over for quotes: same idea as `editor_maybe_skip_close`
-/// but for `'` / `"`. Advances past a matching next-char quote
-/// **only** when the previous char is also a quote-boundary
-/// (EOB / whitespace / non-word punctuation). The prev gate is
-/// what keeps SQL `''` escaping intact — inside a string literal
-/// (`'don|'`) the prev char is alphanumeric, so we fall through
-/// to a literal insert and let the operator build `'don''t'`.
-pub fn editor_maybe_skip_quote(buffer: &str, cursor: &mut usize, c: char) -> bool {
-    if !matches!(c, '\'' | '"') {
-        return false;
-    }
-    let bytes = buffer.as_bytes();
-    if !(*cursor < bytes.len() && bytes[*cursor] == c as u8) {
-        return false;
-    }
-    let prev_ok = match char_before(buffer, *cursor) {
-        None => true,
-        Some(p) => !p.is_alphanumeric() && p != '_',
-    };
-    if !prev_ok {
-        return false;
-    }
     *cursor += 1;
     true
 }

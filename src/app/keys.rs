@@ -889,7 +889,13 @@ impl App {
             }
             _ => EditorActionKind::Other,
         };
+        // Autoclose's pending-closer stack only hears about edits the
+        // typing path makes; a buffer that changed length any other
+        // way (history, saved query, external editor, reformat) means
+        // its offsets are stale.
+        self.auto_closers.sync(self.editor.buffer.len());
         self.on_editor_key_inner(key);
+        self.auto_closers.note_len(self.editor.buffer.len());
         if self.editor.buffer != pre_buf {
             self.push_undo(pre_buf, pre_cur, kind);
         }

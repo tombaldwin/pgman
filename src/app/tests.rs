@@ -273,25 +273,6 @@ fn editor_insert_pair_refuses_non_opener_chars() {
 }
 
 #[test]
-fn editor_maybe_skip_close_advances_over_matching_char() {
-    // Buffer is `()`, cursor between → typing `)` advances past.
-    let buf = String::from("()");
-    let mut cur = 1;
-    assert!(editor_maybe_skip_close(&buf, &mut cur, ')'));
-    assert_eq!(cur, 2);
-}
-
-#[test]
-fn editor_maybe_skip_close_passes_through_when_no_match() {
-    // `(x` with cursor at end — typing `)` should NOT skip
-    // (and the caller falls back to a literal insert).
-    let buf = String::from("(x");
-    let mut cur = 2;
-    assert!(!editor_maybe_skip_close(&buf, &mut cur, ')'));
-    assert_eq!(cur, 2);
-}
-
-#[test]
 fn editor_maybe_pair_quote_pairs_single_quote_at_token_boundary() {
     // Empty buffer — both neighbours are EOB, prev/next ok.
     let mut buf = String::new();
@@ -351,37 +332,6 @@ fn editor_maybe_pair_quote_refuses_non_quote_chars() {
     let mut cur = 0;
     assert!(!editor_maybe_pair_quote(&mut buf, &mut cur, 'x'));
     assert_eq!(buf, "");
-}
-
-#[test]
-fn editor_maybe_skip_quote_advances_over_matching_quote() {
-    // Buffer `''` with cursor between — typing `'` advances past.
-    let buf = String::from("''");
-    let mut cur = 1;
-    assert!(editor_maybe_skip_quote(&buf, &mut cur, '\''));
-    assert_eq!(cur, 2);
-}
-
-#[test]
-fn editor_maybe_skip_quote_passes_through_when_no_match() {
-    // `'x` with cursor between — typing `'` should NOT skip.
-    let buf = String::from("'x");
-    let mut cur = 1;
-    assert!(!editor_maybe_skip_quote(&buf, &mut cur, '\''));
-    assert_eq!(cur, 1);
-}
-
-#[test]
-fn editor_maybe_skip_quote_does_not_skip_when_prev_is_word_char() {
-    // Buffer `'don'` with cursor at 4 (between `n` and `'`).
-    // Operator is mid-literal trying to escape — refusing to
-    // skip lets pair_quote's prev-gate also refuse, so the
-    // typing path falls through to a literal `'` insert and
-    // builds `'don''` toward `'don''t'`.
-    let buf = String::from("'don'");
-    let mut cur = 4;
-    assert!(!editor_maybe_skip_quote(&buf, &mut cur, '\''));
-    assert_eq!(cur, 4);
 }
 
 #[test]
@@ -7535,4 +7485,140 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
     assert_eq!(a.editor.buffer, "select 1");
+}
+
+// ----- Quote / bracket autoclose: hand-typed SQL comes out as typed ----
+
+fn editor_app() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a
+}
+
+/// Typing a whole statement key by key yields exactly that text —
+/// the closer autoclose inserted is skipped over, not left behind.
+/// These three are the product-review inputs verbatim: they came out
+/// as `…'shipped''`, `'{"a":1}''"}'`, and a mangled `select 'a;b' x`.
+#[test]
+fn typing_a_quoted_literal_key_by_key_yields_exactly_the_typed_text() {
+    for sql in [
+        "select * from orders where status = 'shipped'",
+        "'{\"a\":1}'",
+        "select 'a;b' x",
+        "select \"col\" from t where a = (1) and b in ('x', 'y')",
+        // `AND ` / `FROM ` auto-trigger the completion popup inside the
+        // literal; the pending closer must survive a popup that only
+        // opened (nothing was inserted).
+        "select 'a and b from c' as s",
+    ] {
+        let mut a = editor_app();
+        type_str(&mut a, sql);
+        assert_eq!(a.editor.buffer, sql, "typed {sql:?}");
+        assert_eq!(a.editor.cursor, sql.len());
+        assert!(
+            a.auto_closers.is_empty(),
+            "every closer was typed over: {:?}",
+            a.auto_closers
+        );
+    }
+}
+
+/// An apostrophe inside a word is an apostrophe, not a pair: `don't`
+/// in a comment stays `don't`, and the SQL `''` escape typed inside a
+/// literal builds `'don''t'` exactly as typed.
+#[test]
+fn an_apostrophe_inside_a_word_is_never_paired() {
+    for sql in ["-- don't do this", "select 'don''t'", "select 'it''s' as s"] {
+        let mut a = editor_app();
+        type_str(&mut a, sql);
+        assert_eq!(a.editor.buffer, sql, "typed {sql:?}");
+    }
+}
+
+/// A closer that reached the buffer any other way — a bracketed
+/// paste — is not ours: typing a quote in front of it inserts a
+/// literal quote, and the paste itself is untouched.
+#[test]
+fn a_bracketed_paste_is_untouched_and_its_closers_are_not_skipped() {
+    let mut a = editor_app();
+    a.on_paste("select 'a;b' x".to_string());
+    assert_eq!(a.editor.buffer, "select 'a;b' x");
+    assert!(a.auto_closers.is_empty());
+    // Move back inside the literal (before the closing quote) and
+    // type a quote: the pasted closer is not skipped.
+    for _ in 0..3 {
+        a.on_key(KeyEvent::from(KeyCode::Left));
+    }
+    a.on_key(KeyEvent::from(KeyCode::Char('\'')));
+    assert_eq!(a.editor.buffer, "select 'a;b'' x");
+}
+
+/// Deleting an auto-inserted closer forgets it: the next closer typed
+/// is a literal. And an insert before a pending closer keeps the
+/// skip pointed at the right byte.
+#[test]
+fn a_deleted_auto_closer_is_forgotten_and_an_insert_before_it_shifts_it() {
+    let mut a = editor_app();
+    a.on_key(KeyEvent::from(KeyCode::Char('(')));
+    assert_eq!(a.editor.buffer, "()");
+    a.on_key(KeyEvent::from(KeyCode::Delete));
+    assert_eq!(a.editor.buffer, "(");
+    a.on_key(KeyEvent::from(KeyCode::Char(')')));
+    assert_eq!(a.editor.buffer, "()", "the typed `)` is a literal insert");
+    assert_eq!(a.editor.cursor, 2);
+
+    let mut a = editor_app();
+    type_str(&mut a, "f(");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    type_str(&mut a, "  1, 'é'");
+    assert_eq!(a.editor.buffer, "f(\n  1, 'é')");
+    a.on_key(KeyEvent::from(KeyCode::Char(')')));
+    assert_eq!(
+        a.editor.buffer, "f(\n  1, 'é')",
+        "skipped the shifted closer"
+    );
+    assert_eq!(a.editor.cursor, a.editor.buffer.len());
+}
+
+/// Undo replaces the buffer wholesale: nothing pending survives it.
+#[test]
+fn undo_forgets_pending_auto_closers() {
+    let mut a = editor_app();
+    a.on_key(KeyEvent::from(KeyCode::Char('(')));
+    assert!(!a.auto_closers.is_empty());
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    assert_eq!(a.editor.buffer, "");
+    assert!(a.auto_closers.is_empty());
+}
+
+#[test]
+fn auto_closers_stack_tracks_inserts_and_deletes() {
+    let mut s = AutoClosers::default();
+    s.push(1, ')');
+    s.shift_insert(1, 3); // typed "abc" at 1 → closer now at 4
+    assert!(!s.take_at(1, ')', "(abc)"));
+    assert!(s.take_at(4, ')', "(abc)"));
+    assert!(s.is_empty());
+
+    let mut s = AutoClosers::default();
+    s.push(1, '\'');
+    s.push(3, '\'');
+    s.shift_delete(2, 4); // deleted the bytes holding the second closer
+    assert!(!s.take_at(3, '\'', "''"));
+    assert!(s.take_at(1, '\'', "''"));
+
+    // Present in the stack but no longer in the buffer: not a skip.
+    let mut s = AutoClosers::default();
+    s.push(0, '"');
+    assert!(!s.take_at(0, '"', "x"));
+    assert!(!s.take_at(0, '"', ""));
+
+    // A length change the stack was not told about drops it.
+    let mut s = AutoClosers::default();
+    s.push(0, ')');
+    s.note_len(2);
+    s.sync(2);
+    assert!(!s.is_empty());
+    s.sync(7);
+    assert!(s.is_empty());
 }
