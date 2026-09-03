@@ -8562,6 +8562,8 @@ fn auto_indent_is_one_undo_step_with_the_newline() {
     assert_eq!(a.editor.buffer, "select\n  ");
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
     assert_eq!(a.editor.buffer, "select");
+}
+
 // ---- Alt-Z zoom, Alt-= / Alt-- / Alt-0 editor size ----------------------
 
 fn alt(c: char) -> KeyEvent {
