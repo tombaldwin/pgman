@@ -11,12 +11,13 @@ expression: dump(&buf)
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s┌──────────────────────────────────────────────────────────────────────────────────┐─────────────────┐
 │id  email        │                                                                                  │                 │
-│1   ada@example.c│ pgman — keys (F1 help · F2 error detail · F3 notify · ? from grid)               │                 │
+│1   ada@example.c│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)            │                 │
 │2   linus@example│                                                                                  │                 │
 │3   grace@example│   grid                                                                           │                 │
 │4   alan@example.│     q             quit (esc here is a no-op so a reflex press doesn't lose the   │                 │
 │5   edsger@exampl│                   session)                                                       │                 │
-│6   katherine@exa│     ? / F1        toggle this help                                               │                 │
+│6   katherine@exa│     ? / F1        toggle this help (both work from every non-typing mode)        │                 │
+│                 │     :             command bar — see the ': commands' section                     │                 │
 │                 │     A             about pgman (version, credits)                                 │                 │
 │                 │     e / i / tab   focus editor                                                   │                 │
 │                 │     c             change connection (opens the picker mid-session)               │                 │
@@ -31,8 +32,7 @@ expression: dump(&buf)
 │                 │     h / l  ← →    move column cursor                                             │                 │
 │                 │     s             cycle sort on focused column (off → ASC → DESC)                │                 │
 │                 │     /             live row filter (HIDES non-matching rows)                      │                 │
-│                 │     f             find within grid (HIGHLIGHTS / jumps; n/N step matches)        │                 │
-│                 │ ↓ 196 more below                                                                 │                 │
+│                 │ ↓ 197 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │
