@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -7,9 +8,9 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
 │  WHE┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
-│  ORD│▼ public  (3)                     schema: public                                      │     │
+│  ORD│▼ public  (4)                     schema: public                                      │     │
 └─────│  ▼ orders  (5 col, 1 cons)                                                           │─────┘
-┌ resu│      · user_id : bigint NOT NULL 3 table(s)                                          │─────┐
+┌ resu│      · user_id : bigint NOT NULL 4 table(s)                                          │─────┐
 │id  e│      · status : varchar(20) NOT…                                                     │     │
 │1   a│  ▼ users  (4 col, 1 cons)        enter to expand — then arrow / j/k into the tables  │     │
 │2   l│      ◆ users_pkey                                                                    │     │

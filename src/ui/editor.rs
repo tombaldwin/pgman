@@ -284,6 +284,13 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
         )];
 
         let line_end_byte = line_start_byte + line_text.len();
+        // A line wider than the pane is cut one column short of the
+        // border and marked with `…` — nothing in pgman truncates
+        // silently. (`Paragraph` has no horizontal scroll; the cut is
+        // the pane's own.)
+        let budget = (inner.width as usize).saturating_sub(prompt.len());
+        let (visible_len, cut) = visible_line_end(line_text, budget);
+        let visible_end_byte = line_start_byte + visible_len;
         if focused {
             // Cursor split — we still need to overlay the REVERSED
             // glyph on top of whatever syntax colour the byte sits in.
@@ -296,13 +303,15 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             } else {
                 usize::MAX
             };
+            // Past the cut there is no cell to reverse.
+            let cursor_shown = i == cur_line && (!cut || byte_at_col < visible_len);
             push_highlighted_line(
                 &mut spans,
                 buf,
                 &highlight_spans,
                 line_start_byte,
-                line_end_byte,
-                if i == cur_line {
+                visible_end_byte,
+                if cursor_shown {
                     Some(byte_at_col)
                 } else {
                     None
@@ -311,9 +320,12 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             );
         } else {
             spans.push(Span::styled(
-                line_text.to_string(),
+                line_text[..visible_len].to_string(),
                 Style::default().fg(text_color),
             ));
+        }
+        if cut {
+            spans.push(Span::styled("…", Style::default().fg(theme.muted)));
         }
         lines.push(Line::from(spans));
         // +1 for the newline we split on (except after the last line).
@@ -353,6 +365,26 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
             }
         }
     }
+}
+
+/// How much of one editor line fits in `budget` columns: the byte length
+/// to show and whether it was cut. A line that fits shows whole; one
+/// that does not is cut one column short so the `…` marker fits in the
+/// last column, never splitting a wide glyph. Pure / testable.
+pub(crate) fn visible_line_end(line: &str, budget: usize) -> (usize, bool) {
+    if super::display_width(line) <= budget {
+        return (line.len(), false);
+    }
+    let keep = budget.saturating_sub(1);
+    let mut used = 0;
+    for (i, c) in line.char_indices() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+        if used + w > keep {
+            return (i, true);
+        }
+        used += w;
+    }
+    (line.len(), true)
 }
 
 /// One completion-popup row's pieces, sized to fit within `inner_w`
@@ -677,6 +709,23 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visible_line_end_cuts_one_column_short_for_the_marker() {
+        assert_eq!(visible_line_end("select 1", 20), (8, false));
+        assert_eq!(visible_line_end("select 1", 8), (8, false));
+        // 7 columns: 6 kept + the `…`.
+        assert_eq!(visible_line_end("select 1", 7), (6, true));
+        assert_eq!(visible_line_end("", 0), (0, false));
+        assert_eq!(visible_line_end("ab", 1), (0, true));
+        // A wide glyph that would straddle the cut is dropped whole:
+        // budget 4 → 3 columns to keep → only one 2-column glyph fits.
+        assert_eq!(visible_line_end("東京都", 4), (3, true));
+        // Byte offsets land on char boundaries.
+        let (end, cut) = visible_line_end("café au lait", 6);
+        assert!(cut);
+        assert!("café au lait".is_char_boundary(end));
+    }
 
     #[test]
     fn fit_completion_row_fits_unchanged_when_there_is_room() {

@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,9 +10,9 @@ expression: dump(&buf)
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
 └───────────┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────┘
-┌ result · 6│▼ public  (3)                                                        schema: public                                                                                           │───────────┐
+┌ result · 6│▼ public  (4)                                                        schema: public                                                                                           │───────────┐
 │id  email  │  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │           │
-│1   ada@exa│      · user_id : bigint NOT NULL                                    3 table(s)                                                                                               │           │
+│1   ada@exa│      · user_id : bigint NOT NULL                                    4 table(s)                                                                                               │           │
 │2   linus@e│      · status : varchar(20) NOT NULL                                                                                                                                         │           │
 │3   grace@e│  ▼ users  (4 col, 1 cons)                                           enter to expand — then arrow / j/k into the tables                                                       │           │
 │4   alan@ex│      ◆ users_pkey                                                                                                                                                            │           │

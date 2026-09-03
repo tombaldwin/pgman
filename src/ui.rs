@@ -456,6 +456,46 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     );
 }
 
+/// Wrap prose to `width` columns at word boundaries — greedy, a word
+/// wider than the whole line hard-split by display columns — one
+/// entry per output row; existing newlines start a new row. Where
+/// [`wrap_value`] chunks a cell value by characters (right for data,
+/// which has no words to honour), a finding's sentence chunked that
+/// way read `no index leads with t / he first FK column`. Pure /
+/// testable.
+pub(crate) fn wrap_words(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![s.to_string()];
+    }
+    let mut out = Vec::new();
+    for raw in s.split('\n') {
+        let raw = raw.strip_suffix('\r').unwrap_or(raw);
+        let mut row = String::new();
+        for word in raw.split_whitespace() {
+            let w = display_width(word);
+            if !row.is_empty() && display_width(&row) + 1 + w > width {
+                out.push(std::mem::take(&mut row));
+            }
+            if w > width {
+                // Hard-split an over-long word, `width` columns per row.
+                for piece in wrap_value(word, width) {
+                    if !row.is_empty() {
+                        out.push(std::mem::take(&mut row));
+                    }
+                    row = piece;
+                }
+                continue;
+            }
+            if !row.is_empty() {
+                row.push(' ');
+            }
+            row.push_str(word);
+        }
+        out.push(row);
+    }
+    out
+}
+
 /// `pgman.log.YYYY-MM-DD` — the file `tracing_appender`'s daily roller
 /// (UTC dates) writes for the instant `unix_secs`; the name the failure
 /// card points at. Pure / testable.
@@ -963,13 +1003,30 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .as_ref()
         .filter(|_| app.mode == Mode::CommandBar);
     let line = if let Some(bar) = bar {
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
             Span::styled(
                 bar.input.text().to_string(),
                 Style::default().fg(theme.text),
             ),
-        ])
+        ];
+        // Tab's candidate list sits beside the input, muted, whole
+        // names only (`fit_hints` drops what does not fit).
+        if let Some(list) = &app.command_bar_completions {
+            const GAP: &str = "   ";
+            let used = badge_width as usize
+                + display_width(" :")
+                + display_width(bar.input.text())
+                + display_width(GAP);
+            let fitted = fit_hints(list, (area.width as usize).saturating_sub(used));
+            if !fitted.is_empty() {
+                spans.push(Span::styled(
+                    format!("{GAP}{fitted}"),
+                    Style::default().fg(theme.muted),
+                ));
+            }
+        }
+        Line::from(spans)
     } else if let Some(err) = &app.last_error {
         let icon = " ⚠ ";
         // The "F2 detail" pointer is the load-bearing part of this line

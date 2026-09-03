@@ -295,6 +295,9 @@ impl App {
             self.mode = Mode::Normal;
             return;
         };
+        // Any key moves on from what the last Tab listed; Tab sets it
+        // again below.
+        self.command_bar_completions = None;
         match key.code {
             KeyCode::Esc => {
                 self.mode = bar.origin;
@@ -347,24 +350,25 @@ impl App {
             return;
         }
         let candidates = crate::app::cmd::command_candidates(&typed);
-        match candidates.len() {
-            0 => {
-                self.last_status = Some(format!("no command starts with :{typed}"));
-            }
+        // Shown beside the bar, not in `last_status`: the bar owns the
+        // footer while it is open, so a status set here was never seen
+        // — `:` then Tab listed every command to nobody.
+        self.command_bar_completions = match candidates.len() {
+            0 => Some(format!("no command starts with :{typed}")),
             1 => {
                 // `with_text` leaves the cursor at the end — right
                 // where the argument goes.
                 bar.input = TextInput::with_text(format!("{} ", candidates[0]));
-                self.last_status = None;
+                None
             }
             _ => {
                 let prefix = crate::app::cmd::longest_common_prefix(&candidates);
                 if prefix.len() > typed.len() {
                     bar.input = TextInput::with_text(prefix);
                 }
-                self.last_status = Some(candidates.join(" "));
+                Some(candidates.join(" · "))
             }
-        }
+        };
     }
 
     pub(super) fn on_saved_queries_key(&mut self, key: KeyEvent) {

@@ -924,6 +924,11 @@ pub struct App {
     /// The mode F2 was pressed in; `Mode::ErrorDetail` closes back
     /// into it. `None` outside the overlay.
     pub error_detail_return_to: Option<Mode>,
+    /// What Tab in the `:` bar had to say — the candidate commands
+    /// (` · `-joined) or "no command starts with …" — shown beside the
+    /// bar's input. The bar owns the footer while it is open, so a
+    /// status line would never be seen; cleared by the next keystroke.
+    pub command_bar_completions: Option<String>,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -1273,6 +1278,7 @@ impl App {
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
             error_detail_return_to: None,
+            command_bar_completions: None,
             last_error_detail: None,
             pending_terminate: None,
             auto_refresh: false,
@@ -2241,7 +2247,7 @@ impl App {
     /// back to top-of-document.
     pub fn help_anchor_for(mode: Mode) -> Option<&'static str> {
         match mode {
-            Mode::Normal => Some("grid"),
+            Mode::Normal => None,
             Mode::Editor => Some("editor"),
             Mode::HistorySearch => Some("editor"),
             Mode::Confirm => Some("confirm"),

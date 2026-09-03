@@ -430,12 +430,12 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
         rendered.contains("ada@example.com"),
         "grid data missing:\n{rendered}"
     );
-    // Schema browser opens against the fixture cache (3 tables,
+    // Schema browser opens against the fixture cache (4 tables,
     // collapsed under the public schema node).
     a.mode = Mode::SchemaBrowser;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("public") && rendered.contains("3 table(s)"),
+        rendered.contains("public") && rendered.contains("4 table(s)"),
         "schema browser missing:\n{rendered}"
     );
     // Tap monitor shows the synthetic events.
@@ -1220,4 +1220,41 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
     // The hint knows no password was supplied.
     let text = dump(&render(&mut a, 100, 24));
     assert!(text.contains("PGPASSWORD"), "{text}");
+}
+
+/// An editor line wider than the pane ends in `…` at the border, not
+/// in a silent cut.
+#[test]
+fn editor_marks_a_line_cut_at_the_right_border() {
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("select {} from t", "x".repeat(80));
+    a.editor.cursor = 0;
+    let buf = render(&mut a, 40, 16);
+    let row = row_text(&buf, 2);
+    assert!(
+        row.ends_with("…│"),
+        "expected the cut marker before the border: {row:?}"
+    );
+    // A line that fits is untouched.
+    a.editor.buffer = "select 1".into();
+    let buf = render(&mut a, 40, 16);
+    let row = row_text(&buf, 2);
+    assert!(row.contains("select 1") && !row.contains('…'), "{row:?}");
+}
+
+/// `:` then Tab shows the command list beside the bar — the bar owns
+/// the footer, so the old status-line listing was never visible.
+#[test]
+fn command_bar_tab_shows_the_candidates_beside_the_input() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char(':')));
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let buf = render(&mut a, 120, 16);
+    let footer = row_text(&buf, 15);
+    assert!(
+        footer.contains(":") && footer.contains("about · connect · d · dn · dt"),
+        "{footer:?}"
+    );
 }
