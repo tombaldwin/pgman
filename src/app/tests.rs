@@ -7288,3 +7288,32 @@ async fn a_guarded_run_cannot_survive_from_confirm_to_a_reconnect() {
         "a guarded run classified against the old database survived the reconnect"
     );
 }
+
+#[test]
+fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
+    // `:rea` half-typed when an auto-tx write's `QueryOk` lands: the
+    // mode jumps to TxDecision underneath the bar. The bar is only
+    // ever taken by its own key handler, so it used to sit in the
+    // footer forever. The next key — any key — drops it.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    type_str(&mut a, "rea");
+    assert_eq!(a.mode, Mode::CommandBar);
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: Grid::default(),
+        kind_label: "run".into(),
+        tx_open_after: true,
+    });
+    assert_eq!(a.mode, Mode::TxDecision);
+    assert!(a.tx_open);
+    // A key the modal ignores — it must still clear the stale bar and
+    // must NOT be swallowed by the bar's own handler.
+    a.on_key(KeyEvent::from(KeyCode::Char('x')));
+    assert_eq!(a.mode, Mode::TxDecision);
+    assert!(
+        a.command_bar.is_none(),
+        "the stale `:rea` bar survived a key press in TxDecision"
+    );
+}
