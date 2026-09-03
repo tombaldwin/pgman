@@ -438,6 +438,7 @@ fn scr_tunnel_prompt() -> App {
         dsn: Dsn::parse("postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com")
             .unwrap(),
         origin: "picked project data source 'via-bastion'".into(),
+        creds: Default::default(),
     });
     a
 }
