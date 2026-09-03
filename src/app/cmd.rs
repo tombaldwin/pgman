@@ -318,9 +318,13 @@ impl App {
     /// `\c` / `\c <name>` handler.
     ///
     /// No argument: open the connection picker (same as the `c` key).
-    /// `<name>` matching a picker entry: reconnect to it, through the
-    /// exact same path the picker's Enter key uses
-    /// (`App::connect_to_pick`). `<name>` matching nothing: swap
+    /// `<name>` resolving to a picker entry (`match_pick_name`: exact,
+    /// else a unique case-insensitive prefix — several matches are
+    /// listed rather than guessed): reconnect to it, through the exact
+    /// same path the picker's Enter key uses (`App::connect_to_pick`).
+    /// A name containing spaces — which is most discovered ones,
+    /// `dataSource (application)` — is given double-quoted.
+    /// `<name>` matching nothing: swap
     /// `dbname` on the CURRENT dsn and reconnect through that same
     /// path — `Dsn::dbname` is a plain `String` field, so the swap is
     /// trivial and doesn't require reconstructing host/user/etc. With
@@ -330,13 +334,31 @@ impl App {
             self.start_connection_change();
             return;
         };
-        if let Some(pick) = self
+        use crate::query::backslash::{match_pick_name, NameMatch};
+        let names: Vec<&str> = self
             .conn_pick
             .picks
             .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(&name))
-            .cloned()
-        {
+            .map(|p| p.name.as_str())
+            .collect();
+        let resolved = match match_pick_name(&name, &names) {
+            NameMatch::One(i) => Some(i),
+            NameMatch::Ambiguous(hits) => {
+                // Picking one of them would be picking which database
+                // the operator connects to. List them instead, and say
+                // how to name one exactly.
+                let listed: Vec<String> =
+                    hits.iter().map(|&i| format!("\"{}\"", names[i])).collect();
+                self.last_error = Some(format!(
+                    "connect '{name}' is ambiguous — {} data sources start with it: {} · quote the full name",
+                    hits.len(),
+                    listed.join(", ")
+                ));
+                return;
+            }
+            NameMatch::None => None,
+        };
+        if let Some(pick) = resolved.map(|i| self.conn_pick.picks[i].clone()) {
             if self.refuse_if_unresolved(&pick) {
                 return;
             }

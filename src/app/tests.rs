@@ -4948,25 +4948,121 @@ async fn conn_pick_enter_on_a_lone_pick_connects() {
 
 #[tokio::test]
 async fn backslash_c_with_matching_name_connects_to_that_pick() {
+    // A discovered-shaped name: Spring picks are named after the
+    // bean and the file they came from, so they contain spaces and
+    // parentheses. Double quotes are how you address one exactly.
     let pick = DataSourcePick {
-        name: "staging".into(),
-        origin: "test",
+        name: "dataSource (application)".into(),
+        origin: "Spring",
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
-    a.editor.buffer = "\\c staging".into();
+    a.editor.buffer = "\\c \"dataSource (application)\"".into();
     a.editor.cursor = a.editor.buffer.len();
     a.on_key(KeyEvent::from(KeyCode::F(5)));
     assert_eq!(
         a.dsn.as_ref().map(|d| d.dbname.as_str()),
-        Some("staging_db")
+        Some("staging_db"),
+        "the quoted name must reach the pick, not a `dataSource` nobody has"
     );
     assert_eq!(a.mode, Mode::Normal);
     let origin = a.dsn_origin.as_deref().unwrap_or("");
-    assert!(origin.contains("staging"), "got: {origin}");
+    assert!(origin.contains("dataSource (application)"), "got: {origin}");
+}
+
+#[tokio::test]
+async fn backslash_c_resolves_a_unique_prefix_of_a_discovered_name() {
+    let picks = vec![
+        DataSourcePick {
+            name: "dataSource (application)".into(),
+            origin: "Spring",
+            dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "reports (application)".into(),
+            origin: "Spring",
+            dsn: Some(crate::conn::Dsn::parse("postgres://app@db/reports_db").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+    ];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c rep".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert_eq!(
+        a.dsn.as_ref().map(|d| d.dbname.as_str()),
+        Some("reports_db")
+    );
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+}
+
+#[test]
+fn backslash_c_with_an_ambiguous_prefix_lists_the_candidates_and_connects_to_nothing() {
+    // Choosing one would be choosing which database the operator
+    // connects to. (No tokio runtime here on purpose: reaching
+    // `start_connect`'s spawn would panic, which is the assertion.)
+    let picks = vec![
+        DataSourcePick {
+            name: "dataSource (application)".into(),
+            origin: "Spring",
+            dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+        DataSourcePick {
+            name: "dataSource (application-test)".into(),
+            origin: "Spring",
+            dsn: Some(crate::conn::Dsn::parse("postgres://app@db/test_db").unwrap()),
+            unresolved: Vec::new(),
+            unresolved_host: Vec::new(),
+        },
+    ];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\c dataSource".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        matches!(a.conn_state, ConnState::Disconnected),
+        "an ambiguous name must not connect to either"
+    );
+    let err = a.last_error.as_deref().expect("an ambiguity error");
+    assert!(err.contains("ambiguous"), "got: {err}");
+    assert!(err.contains("\"dataSource (application)\""), "got: {err}");
+    assert!(
+        err.contains("\"dataSource (application-test)\""),
+        "got: {err}"
+    );
+    assert!(err.contains("quote the full name"), "got: {err}");
+}
+
+#[test]
+fn connect_command_addresses_a_quoted_pick_the_same_way_backslash_c_does() {
+    let pick = DataSourcePick {
+        name: "dataSource (application)".into(),
+        origin: "Spring",
+        dsn: Some(crate::conn::Dsn::parse("postgres://${DB_USER}@db/app_db").unwrap()),
+        unresolved: vec!["DB_USER".to_string()],
+        unresolved_host: Vec::new(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    // The unresolved placeholder is the refusal we can observe
+    // without a runtime — what matters is that the quoted name
+    // reached the pick at all.
+    run_command(&mut a, "connect \"dataSource (application)\"");
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some(
+            "unresolved placeholder ${DB_USER} — export it, or put the connection in .pgman/pgman.toml"
+        )
+    );
 }
 
 #[tokio::test]
