@@ -403,6 +403,15 @@ pub struct TabSnapshot {
     /// against another tab's result (different grid at the same index).
     /// Cleared when the tab's grid is replaced (see QueryOk / Booted).
     pub bookmarks: std::collections::HashMap<char, GridBookmark>,
+    /// Editor height in content lines set by hand (`Alt-=` / `Alt--`);
+    /// `None` is the automatic split (`ui::editor_rows`). Per-tab so
+    /// a tab sized for a long statement keeps its size while another
+    /// tab stays on the default.
+    pub editor_lines: Option<u16>,
+    /// `Alt-Z`: the focused pane (editor in Editor mode, results
+    /// otherwise) takes the whole body. Per-tab; toggling it off
+    /// returns to `editor_lines` / the automatic split untouched.
+    pub zoomed: bool,
 }
 
 /// One row of the bootstrap "every database's name + size" overview

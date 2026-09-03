@@ -8562,4 +8562,138 @@ fn auto_indent_is_one_undo_step_with_the_newline() {
     assert_eq!(a.editor.buffer, "select\n  ");
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
     assert_eq!(a.editor.buffer, "select");
+// ---- Alt-Z zoom, Alt-= / Alt-- / Alt-0 editor size ----------------------
+
+fn alt(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+}
+
+/// An `App` that has been "rendered" once at 80×24: the body is 22
+/// rows, which is what the resize chords clamp against.
+fn sized_app(mode: Mode) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = mode;
+    a.body_rows = 22;
+    a
+}
+
+#[test]
+fn alt_z_toggles_zoom_and_leaves_the_manual_size_alone() {
+    let mut a = sized_app(Mode::Editor);
+    a.editor_lines = Some(9);
+    a.on_key(alt('z'));
+    assert!(a.zoomed);
+    assert_eq!(a.editor_lines, Some(9));
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("editor zoomed"));
+    a.on_key(alt('z'));
+    assert!(!a.zoomed, "the second alt-z restores the split");
+    assert_eq!(a.editor_lines, Some(9), "…exactly as it was");
+    let mut g = sized_app(Mode::Normal);
+    g.on_key(alt('z'));
+    assert!(g.zoomed);
+    assert!(g
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("results zoomed"));
+}
+
+#[test]
+fn alt_equals_grows_from_the_automatic_size_and_alt_minus_shrinks() {
+    let mut a = sized_app(Mode::Editor);
+    // Body 22 opens the editor at five lines; the first grow is 6.
+    a.on_key(alt('='));
+    assert_eq!(a.editor_lines, Some(6));
+    a.on_key(alt('+'));
+    assert_eq!(a.editor_lines, Some(7), "alt-+ is alt-= on a US layout");
+    a.on_key(alt('-'));
+    a.on_key(alt('-'));
+    a.on_key(alt('-'));
+    assert_eq!(a.editor_lines, Some(4));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("editor 4 lines · alt-0 auto")
+    );
+    a.on_key(alt('0'));
+    assert_eq!(a.editor_lines, None);
+    assert_eq!(a.last_status.as_deref(), Some("editor auto-sized"));
+}
+
+#[test]
+fn editor_size_clamps_to_one_line_and_to_a_body_that_keeps_a_results_row() {
+    let mut a = sized_app(Mode::Normal);
+    a.editor_lines = Some(2);
+    a.on_key(alt('-'));
+    a.on_key(alt('-'));
+    a.on_key(alt('-'));
+    assert_eq!(a.editor_lines, Some(1));
+    assert!(a.last_status.as_deref().unwrap().contains("minimum"));
+    // 22 rows − 2 editor borders − 3 for the results frame = 17.
+    a.editor_lines = Some(16);
+    a.on_key(alt('='));
+    a.on_key(alt('='));
+    assert_eq!(a.editor_lines, Some(17));
+    assert!(a.last_status.as_deref().unwrap().contains("alt-z to zoom"));
+    // Before the first frame nothing is known about the body: the
+    // size still moves, from a floor of one line.
+    let mut fresh = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    fresh.on_key(alt('='));
+    assert_eq!(fresh.editor_lines, Some(1));
+}
+
+#[test]
+fn zoom_and_editor_size_are_per_tab() {
+    let mut a = sized_app(Mode::Normal);
+    a.on_key(alt('='));
+    a.on_key(alt('z'));
+    assert_eq!((a.editor_lines, a.zoomed), (Some(6), true));
+    a.new_tab();
+    assert_eq!(
+        (a.editor_lines, a.zoomed),
+        (None, false),
+        "a fresh tab starts on the automatic split, unzoomed"
+    );
+    a.on_key(alt('-'));
+    assert_eq!(a.editor_lines, Some(4));
+    a.on_key(alt('1'));
+    assert_eq!(
+        (a.editor_lines, a.zoomed),
+        (Some(6), true),
+        "tab 1 comes back with its own size and zoom"
+    );
+    a.on_key(alt('2'));
+    assert_eq!((a.editor_lines, a.zoomed), (Some(4), false));
+    a.close_active_tab();
+    assert_eq!((a.editor_lines, a.zoomed), (Some(6), true));
+}
+
+#[test]
+fn zoom_and_size_chords_are_inert_in_prompts_and_decision_modals() {
+    // A grid filter has the keyboard: alt-z must neither zoom nor
+    // type a `z`.
+    let mut a = sized_app(Mode::GridFilter);
+    a.grid_view.filter = Some("pro".into());
+    a.on_key(alt('z'));
+    a.on_key(alt('='));
+    assert!(!a.zoomed);
+    assert_eq!(a.editor_lines, None);
+    assert_eq!(a.grid_view.filter.as_deref(), Some("pro"));
+    // The command bar likewise.
+    let mut b = sized_app(Mode::Normal);
+    b.on_key(KeyEvent::from(KeyCode::Char(':')));
+    assert_eq!(b.mode, Mode::CommandBar);
+    b.on_key(alt('z'));
+    assert!(!b.zoomed);
+    assert_eq!(b.mode, Mode::CommandBar);
+    // A guarded statement is waiting on y/n: the modal owns the keys.
+    let mut c = sized_app(Mode::Confirm);
+    c.on_key(alt('z'));
+    c.on_key(alt('-'));
+    assert!(!c.zoomed);
+    assert_eq!(c.editor_lines, None);
+    assert_eq!(c.mode, Mode::Confirm);
 }

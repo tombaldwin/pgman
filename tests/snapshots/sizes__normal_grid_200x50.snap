@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -51,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · alt-z zoom

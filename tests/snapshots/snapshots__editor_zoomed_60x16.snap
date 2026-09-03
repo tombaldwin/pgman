@@ -1,0 +1,21 @@
+---
+source: tests/snapshots.rs
+assertion_line: 799
+expression: text
+---
+ pgman │ test  connected · pg 16.0
+┌ editor · zoomed (alt-z) ─────────────────────────────────┐
+│> SELECT id, email                                        │
+│  FROM users                                              │
+│  WHERE active = true                                     │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+ RO   editor zoomed · alt-z restores the split

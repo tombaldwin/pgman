@@ -1038,3 +1038,53 @@ fn editor_rows_never_exceeds_the_body() {
     );
     assert_eq!(editor_rows(usize::MAX, u16::MAX), 26214);
 }
+
+// -- pane_split: zoom and manual size over the automatic split --
+
+#[test]
+fn pane_split_without_zoom_or_size_is_the_automatic_split() {
+    assert_eq!(pane_split(1, None, None, 22), (7, 15));
+    assert_eq!(pane_split(100, None, None, 22), (8, 14));
+    assert_eq!(pane_split(1, None, None, 14), (3, 11));
+}
+
+#[test]
+fn pane_split_zoom_gives_the_whole_body_to_one_pane() {
+    assert_eq!(pane_split(1, None, Some(ZoomPane::Editor), 22), (22, 0));
+    assert_eq!(pane_split(1, None, Some(ZoomPane::Results), 22), (0, 22));
+    assert_eq!(
+        pane_split(1, Some(9), Some(ZoomPane::Results), 22),
+        (0, 22),
+        "zoom wins over a manual size"
+    );
+    assert_eq!(pane_split(1, None, Some(ZoomPane::Editor), 0), (0, 0));
+}
+
+#[test]
+fn pane_split_manual_size_adds_borders_and_clamps_to_the_body() {
+    assert_eq!(pane_split(1, Some(9), None, 22), (11, 11));
+    assert_eq!(pane_split(1, Some(1), None, 22), (3, 19));
+    assert_eq!(
+        pane_split(1, Some(40), None, 22),
+        (22, 0),
+        "a size from a taller terminal is cut to this one"
+    );
+    assert_eq!(
+        pane_split(1, Some(1), None, 2),
+        (2, 0),
+        "a two-row body cannot hold three rows"
+    );
+    assert_eq!(pane_split(1, Some(u16::MAX), None, 22), (22, 0));
+}
+
+#[test]
+fn pane_split_always_sums_to_the_body() {
+    for body in [0u16, 1, 2, 3, 11, 12, 19, 20, 22, 48] {
+        for manual in [None, Some(1), Some(5), Some(60)] {
+            for zoom in [None, Some(ZoomPane::Editor), Some(ZoomPane::Results)] {
+                let (e, r) = pane_split(3, manual, zoom, body);
+                assert_eq!(e + r, body, "body {body} manual {manual:?} zoom {zoom:?}");
+            }
+        }
+    }
+}

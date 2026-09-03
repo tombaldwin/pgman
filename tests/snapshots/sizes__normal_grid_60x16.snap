@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -17,4 +18,4 @@ expression: dump(&buf)
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · F1 +8 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · F1 +9 more

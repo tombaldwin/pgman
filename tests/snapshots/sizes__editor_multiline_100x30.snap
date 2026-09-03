@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -31,4 +32,4 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +6 more
+ RO   TAP   N+1 ×1   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +7 more

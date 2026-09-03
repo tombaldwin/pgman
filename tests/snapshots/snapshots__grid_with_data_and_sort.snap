@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 164
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -15,4 +16,4 @@ expression: dump(&buf)
 │                                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
- RO   q quit · ? help · e editor · S schema · F1 +7 more
+ RO   q quit · ? help · e editor · S schema · F1 +8 more

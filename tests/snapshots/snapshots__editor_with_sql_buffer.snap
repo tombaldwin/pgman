@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 143
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -17,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +6 more
+ RO   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +7 more
