@@ -2026,6 +2026,7 @@ fn conn_pick_esc_is_a_noop_does_not_quit() {
             dsn: Some(dsn.clone()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "b".into(),
@@ -2033,6 +2034,7 @@ fn conn_pick_esc_is_a_noop_does_not_quit() {
             dsn: Some(dsn),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -2054,6 +2056,7 @@ fn conn_pick_enter_refuses_a_pick_with_an_unresolved_placeholder() {
         dsn: Some(Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap()),
         unresolved: vec!["DB_USER".to_string()],
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::ConnPick;
@@ -2087,6 +2090,7 @@ fn conn_pick_enter_refuses_a_placeholder_in_the_host_with_its_own_message() {
         dsn: Some(Dsn::parse("postgres://svc@${DB_HOST}:5432/orders").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: vec!["DB_HOST".to_string()],
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::ConnPick;
@@ -2118,6 +2122,7 @@ fn conn_pick_enter_refuses_an_unmarked_placeholder_still_sitting_in_the_dsn() {
         dsn: Some(dsn),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::ConnPick;
@@ -2190,6 +2195,7 @@ fn conn_pick_enter_refuses_a_pick_with_no_usable_dsn() {
         dsn: None,
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::ConnPick;
@@ -2209,6 +2215,7 @@ fn backslash_c_by_name_refuses_a_pick_with_an_unresolved_placeholder() {
         dsn: Some(Dsn::parse("postgres://${DB_USER}@db.internal:5432/orders").unwrap()),
         unresolved: vec!["DB_USER".to_string()],
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -4942,6 +4949,7 @@ fn backslash_c_with_no_arg_opens_picker() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -4964,6 +4972,7 @@ fn demo_mode_never_opens_a_connection_via_backslash_c() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db.example.com/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     });
     a.mode = Mode::Editor;
     a.editor.buffer = "\\c staging".into();
@@ -5044,6 +5053,7 @@ fn tunnel_pick() -> DataSourcePick {
         ),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }
 }
 
@@ -5156,6 +5166,7 @@ async fn conn_pick_enter_on_a_lone_pick_connects() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db.example.com/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     assert_eq!(a.mode, Mode::ConnPick, "lands in the picker, not connected");
@@ -5179,6 +5190,7 @@ async fn backslash_c_with_matching_name_connects_to_that_pick() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/staging_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Editor;
@@ -5204,6 +5216,7 @@ async fn backslash_c_resolves_a_unique_prefix_of_a_discovered_name() {
             dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "reports (application)".into(),
@@ -5211,6 +5224,7 @@ async fn backslash_c_resolves_a_unique_prefix_of_a_discovered_name() {
             dsn: Some(crate::conn::Dsn::parse("postgres://app@db/reports_db").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -5237,6 +5251,7 @@ fn backslash_c_with_an_ambiguous_prefix_lists_the_candidates_and_connects_to_not
             dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "dataSource (application-test)".into(),
@@ -5244,6 +5259,7 @@ fn backslash_c_with_an_ambiguous_prefix_lists_the_candidates_and_connects_to_not
             dsn: Some(crate::conn::Dsn::parse("postgres://app@db/test_db").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -5273,6 +5289,7 @@ fn connect_command_addresses_a_quoted_pick_the_same_way_backslash_c_does() {
         dsn: Some(crate::conn::Dsn::parse("postgres://${DB_USER}@db/app_db").unwrap()),
         unresolved: vec!["DB_USER".to_string()],
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     // The unresolved placeholder is the refusal we can observe
@@ -5660,6 +5677,7 @@ fn start_connection_change_with_picks_opens_picker() {
         dsn: Some(Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     a.mode = Mode::Normal;
@@ -5997,6 +6015,7 @@ fn preload_log_overrides_conn_pick_startup_mode() {
             dsn: Some(Dsn::parse("postgres://localhost/a").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "b".into(),
@@ -6004,6 +6023,7 @@ fn preload_log_overrides_conn_pick_startup_mode() {
             dsn: Some(Dsn::parse("postgres://localhost/b").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
@@ -6052,6 +6072,7 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@prod-db:5432/main").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     });
     assert!(a.not_connected_message().contains("c to choose"));
     a.conn_state = ConnState::Failed("boom".into());
@@ -6698,6 +6719,7 @@ fn connect_in_demo_changes_nothing_before_it_refuses() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let before_dsn = a.dsn.clone();
     let before_origin = a.dsn_origin.clone();
@@ -6738,6 +6760,7 @@ async fn command_readonly_on_survives_the_next_connect() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/app_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let mut a = App::new(Theme::default(), None, picks, cfg);
     assert!(!a.read_only, "fixture check: the profile does not pin it");
@@ -6776,6 +6799,7 @@ async fn command_readonly_off_does_not_survive_into_a_pinned_database() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@db/locked_db").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     }];
     let mut a = App::new(Theme::default(), None, picks, cfg);
     run_command(&mut a, "readonly off");
@@ -6910,6 +6934,7 @@ fn p_on_the_failure_screen_opens_the_picker_with_a_single_candidate() {
         dsn: Some(crate::conn::Dsn::parse("postgres://app@discovered-host/main").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(
         Theme::default(),
@@ -7087,6 +7112,7 @@ fn the_tunnel_prompt_still_cancels_on_question_mark_and_colon() {
             ),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         };
         let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
         a.splash_visible = false;

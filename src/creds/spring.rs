@@ -657,7 +657,12 @@ pub fn placeholder_bodies(s: &str) -> Vec<String> {
 /// split userinfo from host[:port] without being fooled by a default
 /// value like `${DB_USER:me@example.com}`.
 fn last_top_level_at(s: &str) -> Option<usize> {
-    let mut found = None;
+    top_level_positions(s, b'@').last().copied()
+}
+
+/// Byte offsets of every `needle` in `s` that sits outside any `${…}`.
+fn top_level_positions(s: &str, needle: u8) -> Vec<usize> {
+    let mut found = Vec::new();
     let mut depth = 0u32;
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -669,12 +674,45 @@ fn last_top_level_at(s: &str) -> Option<usize> {
                 continue;
             }
             b'}' if depth > 0 => depth -= 1,
-            b'@' if depth == 0 => found = Some(i),
+            b if b == needle && depth == 0 => found.push(i),
             _ => {}
         }
         i += 1;
     }
     found
+}
+
+/// The environment-variable *names* a URL's userinfo resolves from, as
+/// `(user, password)`. Provenance for the picker row — names, never
+/// values. The userinfo is found by this module's own rule (it is the
+/// component this module resolves), split at its first top-level `:`.
+pub fn userinfo_env_names(url: &str) -> (Vec<String>, Vec<String>) {
+    let Some(scheme_end) = url.find("://") else {
+        return (Vec::new(), Vec::new());
+    };
+    let rest = &url[scheme_end + 3..];
+    let authority = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    let Some(at) = last_top_level_at(authority) else {
+        return (Vec::new(), Vec::new());
+    };
+    let userinfo = &authority[..at];
+    let (user, password) = match top_level_positions(userinfo, b':').first() {
+        Some(&i) => (&userinfo[..i], &userinfo[i + 1..]),
+        None => (userinfo, ""),
+    };
+    (placeholder_env_names(user), placeholder_env_names(password))
+}
+
+/// The environment-variable names behind the placeholders in `s`: the
+/// body up to its `:default`, if it has one. `${DB_USER:me}` → `DB_USER`.
+pub fn placeholder_env_names(s: &str) -> Vec<String> {
+    placeholder_bodies(s)
+        .into_iter()
+        .map(|body| match body.split_once(':') {
+            Some((name, _)) => name.to_string(),
+            None => body,
+        })
+        .collect()
 }
 
 /// Find the index (relative to `s`, the text right after an opening
@@ -1299,6 +1337,28 @@ dataSource:
             resolve_url_placeholders("jdbc:postgresql://h:5432/app?sslmode=require", |_| None);
         assert!(got.is_clean());
         assert_eq!(got.value, "jdbc:postgresql://h:5432/app?sslmode=require");
+    }
+
+    #[test]
+    fn userinfo_env_names_split_user_from_password_and_strip_defaults() {
+        let names = |url: &str| userinfo_env_names(url);
+        let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            names("jdbc:postgresql://${DB_USER:me}:${DB_PW}@h/db?x=${Y}"),
+            (v(&["DB_USER"]), v(&["DB_PW"]))
+        );
+        assert_eq!(names("postgres://${U}@h/db"), (v(&["U"]), v(&[])));
+        assert_eq!(
+            names("postgres://u:${A}${B}@h/db"),
+            (v(&[]), v(&["A", "B"]))
+        );
+        // A `:` inside a default is not the user/password split.
+        assert_eq!(names("postgres://${A:x:y}:${B}@h"), (v(&["A"]), v(&["B"])));
+        // Nothing env-sourced, nothing to say.
+        assert_eq!(names("postgres://u:p@h/${DB}"), (v(&[]), v(&[])));
+        assert_eq!(names("postgres://h/db"), (v(&[]), v(&[])));
+        assert_eq!(names("${URL}"), (v(&[]), v(&[])));
+        assert_eq!(placeholder_env_names("${A:d} ${B} plain"), v(&["A", "B"]));
     }
 
     /// The security-review reproduction: this resolver cut the authority

@@ -187,6 +187,7 @@ fn change_connection_opens_picker_when_picks_exist() {
         dsn: Some(Dsn::parse("postgres://app@db/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let mut a = App::new(
         Theme::default(),
@@ -213,6 +214,7 @@ fn a_single_discovered_pick_lands_in_the_picker_and_does_not_connect() {
         dsn: Some(Dsn::parse("postgres://app@db.example.com/x").unwrap()),
         unresolved: Vec::new(),
         unresolved_host: Vec::new(),
+        creds: Default::default(),
     };
     let a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
     assert_eq!(

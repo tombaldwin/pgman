@@ -412,6 +412,7 @@ fn scr_conn_pick() -> App {
             dsn: Some(Dsn::parse("postgres://app@prod-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
         DataSourcePick {
             name: "staging".into(),
@@ -419,6 +420,7 @@ fn scr_conn_pick() -> App {
             dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+            creds: Default::default(),
         },
     ];
     a.conn_pick.index = 0;
