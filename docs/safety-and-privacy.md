@@ -2,20 +2,19 @@
 
 ## Safety model
 
-- **Read-only by default.** Every `SafetyProfile` defaults to
-  `read_only = true` (`src/safety.rs`), which opens the connection
-  with `SET default_transaction_read_only = on` (`src/conn.rs::connect_inner`).
-  A *write* attempted on such a session is rejected by Postgres itself,
-  independent of the client-side guards below. The *setting*, however,
-  is a plain session GUC that any role may change, so Postgres does not
-  protect it: a script could simply turn it off first. pgman blocks that
-  — `SET default_transaction_read_only = off`, `RESET` of it, `RESET
-  ALL` / `DISCARD ALL`, and the `READ WRITE` transaction modes on
-  `SET` / `BEGIN` / `START` are all refused while the profile says
-  read-only, `--yes` included
-  (`safety::attempts_read_only_escape`). `statement_timeout_ms`
-  (default 30000) is applied the same way as the read-only flag.
-- **Every statement is classified before it runs.** `safety::classify`
+- **Read-only by default.** Every safety profile defaults to
+  `read_only = true`, which opens the connection with `SET
+  default_transaction_read_only = on`. A *write* attempted on such a
+  session is rejected by Postgres itself, independent of the
+  client-side guards below. The *setting*, however, is a plain session
+  GUC that any role may change, so Postgres does not protect it: a
+  script could simply turn it off first. pgman blocks that — `SET
+  default_transaction_read_only = off`, `RESET` of it, `RESET ALL` /
+  `DISCARD ALL`, and the `READ WRITE` transaction modes on `SET` /
+  `BEGIN` / `START` are all refused while the profile says read-only,
+  `--yes` included. `statement_timeout_ms` (default 30000) is applied
+  the same way as the read-only flag.
+- **Every statement is classified before it runs.** Classification
   is pure and heuristic: it strips comments, looks at the leading
   keyword, and checks whether the statement carries a `WHERE`. It is
   deliberately over-cautious on ambiguous input — a CTE fronting a
@@ -42,7 +41,7 @@
 - **Guards.** Each statement category (`insert`, `update`,
   `update_without_where`, `delete`, `delete_without_where`,
   `truncate`, `drop`, `ddl`, `other`) maps to `Allow` / `Confirm` /
-  `Block` in the active `SafetyProfile` (`~/.config/pgman/safety.toml`,
+  `Block` in the active safety profile (`~/.config/pgman/safety.toml`,
   optionally overridden per-database, and **tightened** — never
   relaxed — by a project's `.pgman/pgman.toml`; see below).
   `SELECT` always resolves to `Allow` and never
@@ -58,8 +57,8 @@
   restrictive* guard across every statement in it, and shows a
   per-kind summary in the confirm prompt.
 - **Statement splitting, and what happens when it can't be trusted.**
-  The script is split by one lexer (`safety::scan`), shared by the
-  splitter and the comment stripper so the two cannot disagree. It
+  The script is split by one lexer, shared by the splitter and the
+  comment stripper so the two cannot disagree. It
   tracks string literals (`''` escapes), `E'…'` escape strings
   (backslash escapes), `"…"` quoted identifiers (`""` escapes),
   dollar-quoted bodies — where a `$` following an identifier character
@@ -72,8 +71,8 @@
   a newline. Comments stay *in* the statement they sit in, because
   `/*+ IndexScan(t idx) */` is a pg_hint_plan directive the server acts
   on, and what runs is the re-joined statements rather than the buffer.
-  `safety::split_verified` then checks the result:
-  every construct must close, and re-joining the pieces must reproduce
+  The split is then verified: every construct must close, and
+  re-joining the pieces must reproduce
   the input. **A script the splitter cannot verify is refused outright**
   ("could not split this script safely — run the statements one at a
   time"), because a guard computed from guessed statement boundaries
@@ -93,11 +92,11 @@
 - **`EXPLAIN` (without `ANALYZE`) bypasses guards entirely** — it
   never executes the inner statement, so there's nothing to guard.
 - **`--batch --yes` semantics.** Non-interactive batch mode
-  (`pgman --batch --sql "…"`) runs the same `classify`/guard pipeline
-  as the editor (`batch::check_batch_safety`), evaluated statement-by-
-  statement before ever opening the connection. `Guard::Allow` always
-  proceeds. `Guard::Confirm` is refused unless `--yes` is passed.
-  `Guard::Block` is refused **regardless of `--yes`** — the only way
+  (`pgman --batch --sql "…"`) runs the same classify/guard pipeline
+  as the editor, evaluated statement-by-statement before ever opening
+  the connection. An `Allow` guard always proceeds. A `Confirm` guard
+  is refused unless `--yes` is passed. A `Block` guard is refused
+  **regardless of `--yes`** — the only way
   to permit a blocked statement in batch mode is to change its guard
   to `confirm` in `~/.config/pgman/safety.toml` first (see "Changing
   a guard" below). A safe leading statement does not excuse a later
@@ -181,23 +180,23 @@ typed choice and behaves as it always has.
 | `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. |
 | `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
-| `~/.cache/pgman/pgman.log` | Application log. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
+| `~/.cache/pgman/pgman.log.YYYY-MM-DD` | Application log, rotated daily. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
 | `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. `--batch --format csv` / `tsv` drop control characters other than `\t`, `\n` and `\r` from cell values for the same reason — the output is written to be piped or `cat`ed, and a value carrying an ESC would otherwise be a terminal-escape-sequence injection at that point. Every value a report renders is escaped for its format, headers included: for Markdown that means `\`, `|`, `` ` ``, `[`, `]` and the HTML-significant characters, so text arriving from a JDBC tap cannot become a link, a live `<script>`, or an extra table column in the shared artifact. |
 
 The files pgman itself writes — `draft.sql`, `history.log`,
-`saved.toml`, `update_check.json`, `pgman.log`, and `\report`/
-`\fixture` output — are `0600` (owner read/write only) regardless of
-your umask; `draft.sql`, `history.log`, `saved.toml`,
+`saved.toml`, `update_check.json`, the daily `pgman.log.YYYY-MM-DD`,
+and `\report`/`\fixture` output — are `0600` (owner read/write only)
+regardless of your umask; `draft.sql`, `history.log`, `saved.toml`,
 `update_check.json`, and `\report`/`\fixture` output go through
-pgman's own atomic writer (`util::write_private`), which opens the
-file `0600` from the moment it's created rather than writing at a
-looser default mode and `chmod`ing afterward — there is no window
-where a half-written temp file is world-readable. `pgman.log` is
-opened by the logging library, not `write_private`, so it's `chmod`ed
-`0600` separately right after — and again when the daily rotation
-opens a new file at midnight UTC, so a pgman left running past
-midnight does not leave the new log at the umask default; the config/data/cache directories
+pgman's own atomic writer, which opens the file `0600` from the
+moment it's created rather than writing at a looser default mode and
+`chmod`ing afterward — there is no window where a half-written temp
+file is world-readable. The log file is opened separately by the
+logging library, so it's `chmod`ed `0600` right after — and again
+each time the daily rotation opens a new file at midnight UTC, so a
+pgman left running past midnight does not leave the new log at the
+umask default; the config/data/cache directories
 themselves (`~/.config/pgman/`, `~/.local/share/pgman/`,
 `~/.cache/pgman/`) are `0700`, and pgman repairs that mode on every
 startup even if the directory already existed looser (an old pgman
@@ -281,8 +280,7 @@ above).
 
 ## TLS
 
-`sslmode` follows libpq's semantics (`src/conn.rs::apply_ssl_mode`,
-`build_tls_connector`):
+`sslmode` follows libpq's semantics:
 
 | `sslmode` | Encrypted | Certificate verified |
 | --- | --- | --- |
@@ -301,52 +299,48 @@ come from the OS keychain (`rustls-native-certs`) unioned with the
 Mozilla bundle (`webpki-roots`), so a fresh container with no
 populated system trust store still connects to RDS.
 
-**An unrecognised `sslmode` is a hard `Dsn::parse` error, not a silent
+**An unrecognised `sslmode` is a hard parse error, not a silent
 downgrade.** Values are trimmed and ASCII-lowercased before matching
 (so `VERIFY-FULL`, and a value with a stray trailing space or `\r`
 from a Windows-authored config file, are accepted and normalised) —
 but anything outside the six modes above (a typo like `verify_full`,
-an empty `sslmode=`) refuses to parse. Before this fix, an unrecognised
-value fell through to `prefer` (encrypt without verifying, and fall
-back to plaintext if the server declines) with only a `tracing::warn!`
-that the alternate screen never surfaces — the weakest mode of the
-five, chosen silently.
+an empty `sslmode=`) refuses to parse. An unrecognised value never
+silently falls back to the weakest mode chosen without telling you.
 
 ## Redaction of connection strings
 
 Every place a DSN could be logged or shown routes through one of two
-pure redactors (`src/conn.rs`):
+pure redactors:
 
-- **`Dsn::redacted()`** — used for a successfully-parsed DSN. Renders
-  `postgres://user:***@host:port/db`, appending `via ssh://user@host`
-  when a tunnel is configured. The password is masked; nothing else
-  is.
-- **`redact_url()`** — used on the fallback path, for a
-  connection-string-shaped value that failed to parse (so
-  `Dsn::redacted()` isn't available). Masks inline userinfo
-  (`user:pass@` → `***@`) and any `password=`/`pwd=`/`passwd=` query
-  parameter, case-insensitively.
+- **The parsed-DSN redactor** — used for a successfully-parsed DSN.
+  Renders `postgres://user:***@host:port/db`, appending `via
+  ssh://user@host` when a tunnel is configured. The password is
+  masked; nothing else is.
+- **The fallback redactor** — used for a connection-string-shaped
+  value that failed to parse (so the form above isn't available).
+  Masks inline userinfo (`user:pass@` → `***@`) and any
+  `password=`/`pwd=`/`passwd=` query parameter, case-insensitively.
 
-Both redactors — and `Dsn::parse` itself — split the authority using
+Both redactors — and DSN parsing itself — split the authority using
 the *last* `@`, not the first. A password may contain `/`, `@`, `?` or
 `#` unescaped (common with generated cloud-provider credentials);
 using the first `@` as the userinfo boundary used to both mis-parse
-the DSN and let the tail of such a password leak past `redact_url`'s
-masking. The search for that `@` stops at the first `?`/`#` **after
-the path's first `/`**, since before the path a `?` is still password
-material — cutting at the first `?` anywhere made
+the DSN and let the tail of such a password leak past the fallback
+redactor's masking. The search for that `@` stops at the first `?`/`#`
+**after the path's first `/`**, since before the path a `?` is still
+password material — cutting at the first `?` anywhere made
 `postgres://u:p?ss@host/db` parse `p` as the port and redact to
 itself.
 
-`redact_url` goes further than the parser, because it runs on strings
-that *failed* to parse: it cuts at the last `@` that could be a
-userinfo boundary (one followed by the host, and so by the path's
-`/`), rather than the parser's answer. A password mixing `@`, `/` and
-`?` cannot be split back out by any rule, and this is what guarantees
-none of it is printed anyway; the cost when the guess goes the other
-way is a masked host in one log line.
+The fallback redactor goes further than the parser, because it runs
+on strings that *failed* to parse: it cuts at the last `@` that could
+be a userinfo boundary (one followed by the host, and so by the
+path's `/`), rather than the parser's answer. A password mixing `@`,
+`/` and `?` cannot be split back out by any rule, and this is what
+guarantees none of it is printed anyway; the cost when the guess goes
+the other way is a masked host in one log line.
 
-**Percent-encoding.** `Dsn::parse` percent-decodes `user` and
+**Percent-encoding.** DSN parsing percent-decodes `user` and
 `password` (leniently — a malformed `%XX` escape is kept literal
 rather than erroring), matching libpq's URI-connection-string
 behaviour. A raw `?` or `#` in a password is now
@@ -356,12 +350,15 @@ a `?` is genuinely un-splittable (it is still fully redacted). `host` and `dbnam
 percent-decoded.
 
 Discovery logging (project connections, Spring picks, IntelliJ picks)
-always goes through one of these before hitting `tracing::info!`, so
-`~/.cache/pgman/pgman.log` never carries a resolved password — see
-CLAUDE.md's "never log credentials" rule, which this codebase treats
-as a hard constraint rather than a guideline.
+always goes through one of these redactors before being written, so
+the daily `pgman.log.YYYY-MM-DD` never carries a resolved password.
 
 ## Reporting a vulnerability
 
 See [`SECURITY.md`](../SECURITY.md) — do not open a public issue for
 security problems.
+
+## Implementation notes
+
+Classification and guards live in `src/safety.rs`; DSN parsing,
+redaction, and TLS mode handling live in `src/conn.rs`.
