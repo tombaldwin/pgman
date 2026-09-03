@@ -1097,3 +1097,36 @@ fn stale_command_bar_does_not_hide_the_editor_footer() {
         "editor footer hint missing: {footer:?}"
     );
 }
+
+/// The confirm modal sizes itself to its wrapped content. Counting a
+/// CJK literal in chars under-budgeted it by a row, and the row that
+/// fell off the bottom was the `y = run · n / esc = cancel` line — the
+/// only thing the modal is asking for.
+#[test]
+fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
+    use pgman::app::{PendingRun, RunKind};
+    use pgman::safety::{Decision, Guard, StatementKind};
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.pending_run = Some(PendingRun {
+        sql: format!("UPDATE notes SET body = '{}'", "東".repeat(60)),
+        kind: RunKind::Run,
+        decision: Decision {
+            kind: StatementKind::Update { has_where: false },
+            guard: Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
+        is_batch: false,
+        summary: None,
+    });
+    a.mode = Mode::Confirm;
+    let buf = render(&mut a, 80, 24);
+    let text = dump(&buf);
+    assert!(
+        text.contains("y = run"),
+        "the modal's y/n line fell off the bottom:\n{text}"
+    );
+}
