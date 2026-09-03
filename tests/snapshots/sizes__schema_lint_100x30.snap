@@ -8,6 +8,7 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  W┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────┐   │
 │  O│no findings — schema looks clean                                                          │   │
+│   │                                                                                          │   │
 └───│                                                                                          │───┘
 ┌ re│                                                                                          │───┐
 │id │                                                                                          │   │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

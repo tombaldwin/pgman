@@ -8,8 +8,9 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WH┌ NOTIFY arrivals — j/k · y yank · c clear · q close ────────────────────────────────────┐    │
 │  OR│  channel                  pid  payload                                                 │    │
-└────│  orders_channel          4321  order:9001 shipped                                      │────┘
-┌ res│  cache_invalidate        4322  users                                                   │────┐
+│    │  orders_channel          4321  order:9001 shipped                                      │    │
+└────│  cache_invalidate        4322  users                                                   │────┘
+┌ res│                                                                                        │────┐
 │id  │                                                                                        │    │
 │1   │                                                                                        │    │
 │2   │                                                                                        │    │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4   │                                                                                        │    │
 │5   │                                                                                        │    │
 │6   │                                                                                        │    │
-│    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │

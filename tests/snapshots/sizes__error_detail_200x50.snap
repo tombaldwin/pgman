@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
+│                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│id  email     ┌ error detail — F2 / esc / q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐              │
-│1   ada@exampl│ ERROR · SQLSTATE 23505                                                                                                                                                 │              │
-│2   linus@exam│                                                                                                                                                                        │              │
-│3   grace@exam│    message: duplicate key value violates unique constraint "users_email_key"                                                                                           │              │
-│4   alan@examp│     detail: Key (email)=(ada@example.com) already exists.                                                                                                              │              │
-│5   edsger@exa│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                                                                                            │              │
-│6   katherine@│                                                                                                                                                                        │              │
-│              │affected object:                                                                                                                                                        │              │
+┌ result · 6 ro┌ error detail — F2 / esc / q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐──────────────┐
+│id  email     │ ERROR · SQLSTATE 23505                                                                                                                                                 │              │
+│1   ada@exampl│                                                                                                                                                                        │              │
+│2   linus@exam│    message: duplicate key value violates unique constraint "users_email_key"                                                                                           │              │
+│3   grace@exam│     detail: Key (email)=(ada@example.com) already exists.                                                                                                              │              │
+│4   alan@examp│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                                                                                            │              │
+│5   edsger@exa│                                                                                                                                                                        │              │
+│6   katherine@│affected object:                                                                                                                                                        │              │
 │              │     schema: public                                                                                                                                                     │              │
 │              │      table: users                                                                                                                                                      │              │
 │              │ constraint: users_email_key                                                                                                                                            │              │

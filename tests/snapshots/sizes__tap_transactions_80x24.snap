@@ -8,8 +8,9 @@ expression: dump(&buf)
 │  ┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · … ─────────┐   │
 │  │  state        stmts    fps        span     db-time  pool          txn │   │
 │  │  open             6      1     125.0ms       2.7ms  primary       c… ·│   │
-└──│  open             1      1         0µs       1.8ms  primary       (… ·│───┘
-┌ r│  open             1      1         0µs       310µs  primary       (… ·│───┐
+│  │  open             1      1         0µs       1.8ms  primary       (… ·│   │
+└──│  open             1      1         0µs       310µs  primary       (… ·│───┘
+┌ r│                                                                       │───┐
 │id│                                                                       │   │
 │1 │                                                                       │   │
 │2 │                                                                       │   │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4 │                                                                       │   │
 │5 │                                                                       │   │
 │6 │                                                                       │   │
-│  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │

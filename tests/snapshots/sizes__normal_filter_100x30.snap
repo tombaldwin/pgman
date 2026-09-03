@@ -8,13 +8,13 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
 │  ORDER BY created_at DESC;                                                                       │
+│                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 3/6 row(s) (filtered) ──────────────────────────────────────────────────────────────────┐
 │id  email                  plan  created_at                                                       │
 │1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
 │3   grace@example.com      pro   2026-02-01 08:30:00+00                                           │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                                           │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

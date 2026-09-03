@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  W┌ JDBC tap — 8 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · … ───┐   │
 │  O│   calls    err        p50        p95        p99  fingerprint · last caller               │   │
-└───│       6      0      450µs      495µs      495µs  select * from order… · OrderService.load│───┘
-┌ re│       1      0      1.8ms      1.8ms      1.8ms  select id, user_id,… · OrderService.list│───┐
-│id │       1      0      310µs      310µs      310µs  select id, email, p… · UserController.sh│   │
+│   │       6      0      450µs      495µs      495µs  select * from order… · OrderService.load│   │
+└───│       1      0      1.8ms      1.8ms      1.8ms  select id, user_id,… · OrderService.list│───┘
+┌ re│       1      0      310µs      310µs      310µs  select id, email, p… · UserController.sh│───┐
+│id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
 │3  │                                                                                          │   │
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHE┌ error detail — F2 / esc / q close ───────────────────────────────┐     │
 │  ORD│ ERROR · SQLSTATE 23505                                           │     │
-└─────│                                                                  │─────┘
-┌ resu│    message: duplicate key value violates unique constraint "use  │─────┐
-│id  e│             rs_email_key"                                        │     │
-│1   a│     detail: Key (email)=(ada@example.com) already exists.        │     │
-│2   l│      where: SQL statement "INSERT INTO users (email, plan) VALU  │     │
-│3   g│             ES ($1, $2)"                                         │     │
-│4   a│                                                                  │     │
-│5   e│affected object:                                                  │     │
-│6   k│     schema: public                                               │     │
-│     │      table: users                                                │     │
+│     │                                                                  │     │
+└─────│    message: duplicate key value violates unique constraint "use  │─────┘
+┌ resu│             rs_email_key"                                        │─────┐
+│id  e│     detail: Key (email)=(ada@example.com) already exists.        │     │
+│1   a│      where: SQL statement "INSERT INTO users (email, plan) VALU  │     │
+│2   l│             ES ($1, $2)"                                         │     │
+│3   g│                                                                  │     │
+│4   a│affected object:                                                  │     │
+│5   e│     schema: public                                               │     │
+│6   k│      table: users                                                │     │
 │     │ constraint: users_email_key                                      │     │
 │     │                                                                  │     │
 │     └──────────────────────────────────────────────────────────────────┘     │

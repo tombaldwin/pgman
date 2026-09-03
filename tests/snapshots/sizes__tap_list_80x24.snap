@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  ┌ JDBC tap — 8 queries · 0 heartbeats · view: list · v cycle · … ───────┐   │
 │  │    duration       rows  app                   sql / kind              │   │
 │  │       1.8ms          1  shop-api              SELECT id, user_id, sta…│   │
-└──│       420µs          1  shop-api              SELECT * FROM order_ite…│───┘
-┌ r│       435µs          1  shop-api              SELECT * FROM order_ite…│───┐
-│id│       450µs          1  shop-api              SELECT * FROM order_ite…│   │
-│1 │       465µs          1  shop-api              SELECT * FROM order_ite…│   │
-│2 │       480µs          1  shop-api              SELECT * FROM order_ite…│   │
-│3 │       495µs          1  shop-api              SELECT * FROM order_ite…│   │
-│4 │       310µs          1  shop-api              SELECT id, email, plan …│   │
+│  │       420µs          1  shop-api              SELECT * FROM order_ite…│   │
+└──│       435µs          1  shop-api              SELECT * FROM order_ite…│───┘
+┌ r│       450µs          1  shop-api              SELECT * FROM order_ite…│───┐
+│id│       465µs          1  shop-api              SELECT * FROM order_ite…│   │
+│1 │       480µs          1  shop-api              SELECT * FROM order_ite…│   │
+│2 │       495µs          1  shop-api              SELECT * FROM order_ite…│   │
+│3 │       310µs          1  shop-api              SELECT id, email, plan …│   │
+│4 │                                                                       │   │
 │5 │                                                                       │   │
 │6 │                                                                       │   │
-│  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │

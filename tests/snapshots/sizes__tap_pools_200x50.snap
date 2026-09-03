@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────┌ JDBC tap — 8 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────────┐───────┘
-┌ result│  conns   peak   calls    err        busy        p95  pool · app                                                                                                                      │───────┐
-│id  ema│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                                                                                              │       │
+│       ┌ JDBC tap — 8 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────────┐       │
+└───────│  conns   peak   calls    err        busy        p95  pool · app                                                                                                                      │───────┘
+┌ result│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                                                                                              │───────┐
+│id  ema│                                                                                                                                                                                      │       │
 │1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

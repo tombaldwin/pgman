@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY crea┌ about ───────────────────────────────────────┐               │
-└───────────────│                                              │───────────────┘
-┌ result · 6 row│                                              │───────────────┐
-│id  email      │              pgman 0.1.0 · beta              │               │
-│1   ada@example│       installed via a standalone binary      │               │
-│2   linus@examp│   k9s-style Postgres TUI for Java/AWS shops  │               │
-│3   grace@examp│            server: pg 16.2 (demo)            │               │
-│4   alan@exampl│                                              │               │
-│5   edsger@exam│       by Tom Baldwin / Polymorphism Ltd      │               │
-│6   katherine@e│          license: MIT OR Apache-2.0          │               │
 │               │                                              │               │
+└───────────────│                                              │───────────────┘
+┌ result · 6 row│              pgman 0.1.0 · beta              │───────────────┐
+│id  email      │       installed via a standalone binary      │               │
+│1   ada@example│   k9s-style Postgres TUI for Java/AWS shops  │               │
+│2   linus@examp│            server: pg 16.2 (demo)            │               │
+│3   grace@examp│                                              │               │
+│4   alan@exampl│       by Tom Baldwin / Polymorphism Ltd      │               │
+│5   edsger@exam│          license: MIT OR Apache-2.0          │               │
+│6   katherine@e│                                              │               │
 │               │           esc / enter / A to close           │               │
 │               │                                              │               │
 │               └──────────────────────────────────────────────┘               │

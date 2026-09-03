@@ -4,17 +4,17 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> SELECT id, email, plan, created_at                      │
-│  FROM u┌────────────────────────────────────────┐        │
-│  WHERE │                                        │        │
-│  ORDER │ pgman — keys (? / F1 help · : commands │        │
-└────────│ · F2 error detail · F3 notify)         │────────┘
-┌ result │                                        │────────┐
-│id  emai│   grid                                 │        │
-│1   ada@│ ↓ 439 more below                       │00+00   │
-│2   linu│                                        │00+00   │
-│3   grac└────────────────────────────────────────┘00+00   │
-│4   alan@example.com       team  2026-02-17 19:05:00+00   │
+│  FROM users                                              │
+│  WHERE ┌────────────────────────────────────────┐        │
+│  ORDER │                                        │        │
+└────────│ pgman — keys (? / F1 help · : commands │────────┘
+┌ result │ · F2 error detail · F3 notify)         │────────┐
+│id  emai│                                        │        │
+│1   ada@│   grid                                 │00+00   │
+│2   linu│ ↓ 439 more below                       │00+00   │
+│3   grac│                                        │00+00   │
+│4   alan└────────────────────────────────────────┘00+00   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   esc / ?  close help

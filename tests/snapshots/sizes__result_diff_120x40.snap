@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
 │  OR┌ Result diff — A: public.users (6 rows) vs B: public.users (6 rows) · key: id · r re-pin · c clear · q close┐    │
-└────│+1 added   -1 removed   ~1 changed   =4 unchanged                                                           │────┘
-┌ res│                                                                                                            │────┐
-│id  │  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00                                                   │    │
-│1   │  ~ [1] email: ada@example.com → ada+updated@example.com                                                    │    │
-│3   │  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00                                                  │    │
+│    │+1 added   -1 removed   ~1 changed   =4 unchanged                                                           │    │
+└────│                                                                                                            │────┘
+┌ res│  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00                                                   │────┐
+│id  │  ~ [1] email: ada@example.com → ada+updated@example.com                                                    │    │
+│1   │  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00                                                  │    │
+│3   │                                                                                                            │    │
 │4   │                                                                                                            │    │
 │5   │                                                                                                            │    │
 │6   │                                                                                                            │    │
 │7   │                                                                                                            │    │
-│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

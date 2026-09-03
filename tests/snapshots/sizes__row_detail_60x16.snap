@@ -4,17 +4,17 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> SEL┌ row 1 of 6 · field 1/4 ──────────────────────┐     │
-│  FRO│                                              │     │
-│  WHE│ id         │ 1                               │     │
-│  ORD│ email      │ ada@example.com                 │     │
-└─────│ plan       │ pro                             │─────┘
-┌ resu│ created_at │ 2026-01-04 09:12:00+00          │─────┐
-│id  e│                                              │     │
+│  FRO┌ row 1 of 6 · field 1/4 ──────────────────────┐     │
+│  WHE│                                              │     │
+│  ORD│ id         │ 1                               │     │
+└─────│ email      │ ada@example.com                 │─────┘
+┌ resu│ plan       │ pro                             │─────┐
+│id  e│ created_at │ 2026-01-04 09:12:00+00          │     │
 │1   a│                                              │00   │
 │2   l│                                              │00   │
 │3   g│                                              │00   │
-│4   a└──────────────────────────────────────────────┘00   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│4   a│                                              │00   │
+│5   e└──────────────────────────────────────────────┘00   │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   ↑↓ / j/k field · F1 +5 more

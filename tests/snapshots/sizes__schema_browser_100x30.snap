@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHE┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
 │  ORD│▼ public  (4)                     schema: public                                      │     │
-└─────│  ▼ item  (4 col, 1 cons)                                                             │─────┘
-┌ resu│      · id : bigint NOT NULL      4 table(s)                                          │─────┐
-│id  e│      · order_id : bigint NOT NU…                                                     │     │
-│1   a│      · sku : varchar(40) NOT NU… enter to expand — then arrow / j/k into the tables  │     │
-│2   l│      · qty : integer NOT NULL                                                        │     │
-│3   g│      ◆ item_pkey                                                                     │     │
-│4   a│  ▼ order_items  (5 col, 1 cons)                                                      │     │
-│5   e│      · id : bigint NOT NULL                                                          │     │
-│6   k│      · order_id : bigint NOT NU…                                                     │     │
-│     │      · sku : varchar(40) NOT NU…                                                     │     │
+│     │  ▼ item  (4 col, 1 cons)                                                             │     │
+└─────│      · id : bigint NOT NULL      4 table(s)                                          │─────┘
+┌ resu│      · order_id : bigint NOT NU…                                                     │─────┐
+│id  e│      · sku : varchar(40) NOT NU… enter to expand — then arrow / j/k into the tables  │     │
+│1   a│      · qty : integer NOT NULL                                                        │     │
+│2   l│      ◆ item_pkey                                                                     │     │
+│3   g│  ▼ order_items  (5 col, 1 cons)                                                      │     │
+│4   a│      · id : bigint NOT NULL                                                          │     │
+│5   e│      · order_id : bigint NOT NU…                                                     │     │
+│6   k│      · sku : varchar(40) NOT NU…                                                     │     │
 │     │      · qty : integer NOT NULL                                                        │     │
 │     │      · price_cents : integer NO…                                                     │     │
 │     │      ◆ order_items_pkey                                                              │     │

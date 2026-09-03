@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────┌ JDBC tap — 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────────────────────────────┐───────┘
-┌ result│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                                                                                                   │───────┐
-│id  ema│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                                                                                              │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│no changes since baseline — nothing new, no regressions, no disappearances.                                                                                                           │       │
+│       ┌ JDBC tap — 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────────────────────────────┐       │
+└───────│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                                                                                                   │───────┘
+┌ result│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                                                                                              │───────┐
+│id  ema│                                                                                                                                                                                      │       │
+│1   ada│no changes since baseline — nothing new, no regressions, no disappearances.                                                                                                           │       │
+│2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
-│id  email                  plan  created_at                                   │
-│1   ┌ save query · enter persist · esc cancel ───────────────────────────┐    │
-│2   │name:                                                               │    │
-│3   │select-id-email-plan-created_at                                     │    │
-│4   │                                                                    │    │
-│5   └────────────────────────────────────────────────────────────────────┘    │
+│id  ┌ save query · enter persist · esc cancel ───────────────────────────┐    │
+│1   │name:                                                               │    │
+│2   │select-id-email-plan-created_at                                     │    │
+│3   │                                                                    │    │
+│4   └────────────────────────────────────────────────────────────────────┘    │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00                       │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

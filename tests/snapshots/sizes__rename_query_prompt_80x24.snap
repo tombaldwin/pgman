@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FR┌ saved queries — enter load · r rename · d delete · / search · q clo┐    │
 │  WH│  pro-users                     SELECT id, email, created_at FROM us│    │
 │  OR│  order-by-id                   SELECT * FROM orders WHERE id = :ord│    │
-└────│  daily-revenue                 SELECT date_trunc('day', created_at)│────┘
+│    │  daily-revenue                 SELECT date_trunc('day', created_at)│    │
+└────│                                                                    │────┘
 ┌ res│                                                                    │────┐
-│id  │                                                                    │    │
-│1   ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐    │
-│2   │new name:                                                           │    │
-│3   │pro-users                                                           │    │
-│4   │                                                                    │    │
-│5   └────────────────────────────────────────────────────────────────────┘    │
+│id  ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐    │
+│1   │new name:                                                           │    │
+│2   │pro-users                                                           │    │
+│3   │                                                                    │    │
+│4   └────────────────────────────────────────────────────────────────────┘    │
+│5   │                                                                    │    │
 │6   │                                                                    │    │
-│    │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │

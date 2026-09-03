@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,11 +8,11 @@ expression: dump(&buf)
 │  F│                                                                      │   │
 │  W│ ▼ { 3 }                                                              │   │
 │  O│   "id": 1                                                            │   │
-└───│   ▼ "meta": { 1 }                                                    │───┘
-┌ re│     "k": "v"                                                         │───┐
-│dat│   ▼ "tags": [ 2 ]                                                    │   │
-│{"i│     [0]: "a"                                                         │   │
-│   │     [1]: "b"                                                         │   │
+│   │   ▼ "meta": { 1 }                                                    │   │
+└───│     "k": "v"                                                         │───┘
+┌ re│   ▼ "tags": [ 2 ]                                                    │───┐
+│dat│     [0]: "a"                                                         │   │
+│{"i│     [1]: "b"                                                         │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │

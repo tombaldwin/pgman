@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  W┌ JDBC tap — 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · … ───────┐   │
 │  O│    duration       rows  app                   sql / kind                                 │   │
-└───│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHE…│───┘
-┌ re│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───┐
-│id │       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│1  │       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│2  │       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│3  │       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│4  │       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│5  │       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id…│   │
+│   │       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHE…│   │
+└───│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───┘
+┌ re│       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───┐
+│id │       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
+│1  │       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
+│2  │       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
+│3  │       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
+│4  │       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id…│   │
+│5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

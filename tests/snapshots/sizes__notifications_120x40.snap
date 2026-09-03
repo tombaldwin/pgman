@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
 │  ORD┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────┐     │
-└─────│  channel                  pid  payload                                                                   │─────┘
-┌ resu│  orders_channel          4321  order:9001 shipped                                                        │─────┐
-│id  e│  cache_invalidate        4322  users                                                                     │     │
+│     │  channel                  pid  payload                                                                   │     │
+└─────│  orders_channel          4321  order:9001 shipped                                                        │─────┘
+┌ resu│  cache_invalidate        4322  users                                                                     │─────┐
+│id  e│                                                                                                          │     │
 │1   a│                                                                                                          │     │
 │2   l│                                                                                                          │     │
 │3   g│                                                                                                          │     │
 │4   a│                                                                                                          │     │
 │5   e│                                                                                                          │     │
 │6   k│                                                                                                          │     │
-│     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │

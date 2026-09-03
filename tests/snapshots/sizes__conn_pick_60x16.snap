@@ -4,7 +4,6 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> SELECT id, email, plan, created_at                      │
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
 │  ORDER BY created_at DESC;                               │
@@ -15,6 +14,7 @@ expression: dump(&buf)
 ││  [IntelliJ] staging  app@staging-db:5432/main  sslmod… ││
 ││                                                        ││
 ││  nothing here connects until you press enter           ││
+││  PGPASSWORD is only used with --dsn                    ││
 │└────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   ↑↓ / j/k navigate · F1 +3 more

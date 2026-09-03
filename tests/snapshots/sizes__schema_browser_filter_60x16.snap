@@ -1,21 +1,20 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> S┌ schema browser — q / esc close ──────────────────┐   │
-│  F│▼ public  (4)               schema: public        │   │
-│  W│  ▼ orders  (5 col, 1 cons)                       │   │
-│  O│      · user_id : bigint N… 4 table(s)            │   │
-└───│      · status : varchar(2…                       │───┘
-┌ re│  ▼ users  (4 col, 1 cons)  enter to expand — the…│───┐
-│id │      ◆ users_pkey                                │   │
-│1  │                                                  │   │
+│  F┌ schema browser — q / esc close ──────────────────┐   │
+│  W│▼ public  (4)               schema: public        │   │
+│  O│  ▼ orders  (5 col, 1 cons)                       │   │
+└───│      · user_id : bigint N… 4 table(s)            │───┘
+┌ re│      · status : varchar(2…                       │───┐
+│id │  ▼ users  (4 col, 1 cons)  enter to expand — the…│   │
+│1  │      ◆ users_pkey                                │   │
 │2  │                                                  │   │
 │3  │                                                  │   │
-│4  └──────────────────────────────────────────────────┘   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│4  │                                                  │   │
+│5  └──────────────────────────────────────────────────┘   │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   filter: /us  · enter accept · esc clear

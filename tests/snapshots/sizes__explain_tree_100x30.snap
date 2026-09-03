@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHE┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────┐     │
 │  ORD│▼ Hash Join · 50.00ms · 4500 rows                                                     │     │
-└─────│    Hash Cond: (o.user_id = u.id)                                                     │─────┘
-┌ resu│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │─────┐
-│id  e│  ▼ Hash · 5.00ms                                                                     │     │
-│1   a│    · Seq Scan on users u · 4.00ms                                                    │     │
+│     │    Hash Cond: (o.user_id = u.id)                                                     │     │
+└─────│  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │─────┘
+┌ resu│  ▼ Hash · 5.00ms                                                                     │─────┐
+│id  e│    · Seq Scan on users u · 4.00ms                                                    │     │
+│1   a│                                                                                      │     │
 │2   l│                                                                                      │     │
 │3   g│                                                                                      │     │
 │4   a│                                                                                      │     │
 │5   e│                                                                                      │     │
 │6   k│                                                                                      │     │
-│     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │

@@ -1213,8 +1213,10 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
         );
     }
     // Narrow: the path is middle-ellipsised on its row, never wrapped
-    // onto an unpadded continuation row.
-    let text = dump(&render(&mut a, 30, 24));
+    // onto an unpadded continuation row. Rendered tall enough that the
+    // card keeps its logs row under the five-line editor — at 30
+    // columns every other row wraps, and the card does not shrink.
+    let text = dump(&render(&mut a, 30, 30));
     let logs_row = text.lines().find(|l| l.contains("logs")).unwrap();
     assert!(logs_row.contains('…'), "{logs_row:?}");
     // The hint knows no password was supplied.

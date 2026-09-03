@@ -8,6 +8,7 @@ expression: dump(&buf)
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                           │
+│                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────────────────────────┐
 │id  email                  plan  created_at                                                                           │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4   alan@example.com       team  2026-02-17 19:05:00+00                                                               │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00                                                               │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                                                               │
-│                                                                                                                      │
 │                                                                                                                      │
 │                        ┌ load 'order-by-id' · param 1/1 · enter next · esc cancel ──────────┐                        │
 │                        │value for :order_id                                                 │                        │

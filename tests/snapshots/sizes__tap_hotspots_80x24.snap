@@ -8,8 +8,9 @@ expression: dump(&buf)
 │  ┌ JDBC tap — 8 queries · 0 heartbeats · view: hotspots · … ─────────────┐   │
 │  │   calls    err        p50        p95        p99  fingerprint · last ca│   │
 │  │       6      0      450µs      495µs      495µs  select * … · OrderSer│   │
-└──│       1      0      1.8ms      1.8ms      1.8ms  select id… · OrderSer│───┘
-┌ r│       1      0      310µs      310µs      310µs  select id… · UserCont│───┐
+│  │       1      0      1.8ms      1.8ms      1.8ms  select id… · OrderSer│   │
+└──│       1      0      310µs      310µs      310µs  select id… · UserCont│───┘
+┌ r│                                                                       │───┐
 │id│                                                                       │   │
 │1 │                                                                       │   │
 │2 │                                                                       │   │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4 │                                                                       │   │
 │5 │                                                                       │   │
 │6 │                                                                       │   │
-│  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
