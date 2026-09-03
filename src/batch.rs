@@ -56,6 +56,7 @@ pub struct Opts {
 /// messages — keeps a multi-line body from flooding the terminal.
 fn stmt_summary(stmt: &str) -> String {
     let line = stmt.lines().next().unwrap_or("").trim();
+    let line = terminal_safe(line);
     let mut s: String = line.chars().take(60).collect();
     if line.chars().count() > 60 {
         s.push('…');
@@ -203,7 +204,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     let checked = match check_batch_safety(&opts.safety, &opts.db, &opts.sql, opts.assume_yes) {
         Ok(statements) => statements,
         Err(msg) => {
-            eprintln!("error: {msg}");
+            eprintln!("error: {}", terminal_safe(&msg));
             return Ok(1);
         }
     };
@@ -220,7 +221,12 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // vanish whenever the exit wins the race. Awaited below.
     let notice_task = tokio::spawn(async move {
         while let Some(n) = notice_rx.recv().await {
-            eprintln!("[{}] {}", n.severity, n.message);
+            // Server-supplied text, straight to the terminal: filter it.
+            eprintln!(
+                "[{}] {}",
+                terminal_safe(&n.severity),
+                terminal_safe(&n.message)
+            );
         }
     });
     let (notification_tx, mut notification_rx) =
@@ -260,7 +266,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 0
             }
             Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {msg}");
+                eprintln!("error: {}", terminal_safe(&msg));
                 1
             }
         }
@@ -294,7 +300,7 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 0
             }
             Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {msg}");
+                eprintln!("error: {}", terminal_safe(&msg));
                 1
             }
         }
@@ -374,6 +380,47 @@ fn push_delim_row(buf: &mut String, fields: &[String], delim: char, csv_quote: b
 /// these since the same review; CSV and TSV had not caught up.
 fn is_renderable(c: char) -> bool {
     !c.is_control() || matches!(c, '\t' | '\n' | '\r')
+}
+
+/// `s` with every control character other than `\t`, `\n` and `\r`
+/// dropped — for text that goes to the terminal rather than into a file:
+/// server error messages, notices, `--format expanded` cells, the
+/// statement summary in a refusal. A `RAISE NOTICE` carrying
+/// `\x1b]0;pwned\x07` reached the terminal raw; it now goes through the
+/// same filter CSV / TSV cells do ([`is_renderable`]).
+pub fn terminal_safe(s: &str) -> String {
+    s.chars().filter(|c| is_renderable(*c)).collect()
+}
+
+#[cfg(test)]
+mod terminal_safe_tests {
+    use super::*;
+
+    #[test]
+    fn control_characters_are_dropped_and_line_structure_kept() {
+        assert_eq!(
+            terminal_safe("[NOTICE] \x1b]0;pwned\x07 done\nhint:\tx\r"),
+            "[NOTICE] ]0;pwned done\nhint:\tx\r"
+        );
+        assert_eq!(terminal_safe("\u{0}\u{9b}plain"), "plain");
+    }
+
+    #[test]
+    fn expanded_format_filters_column_names_and_values() {
+        let g = Grid {
+            columns: vec!["c\x1b[31m".into()],
+            rows: vec![vec!["v\x1b]0;pwned\x07".into()]],
+            truncated: false,
+        };
+        let out = format_expanded(&g);
+        assert!(!out.contains('\x1b') && !out.contains('\x07'), "{out:?}");
+        assert!(out.contains("c[31m | v]0;pwned"), "{out:?}");
+    }
+
+    #[test]
+    fn the_statement_summary_in_a_refusal_is_filtered_too() {
+        assert_eq!(stmt_summary("DROP\x1b]0;x\x07 TABLE t"), "DROP]0;x TABLE t");
+    }
 }
 
 fn push_csv_field(buf: &mut String, field: &str) {
@@ -613,12 +660,14 @@ pub fn format_expanded(grid: &Grid) -> String {
         out.push('\n');
         for (col, value) in grid.columns.iter().zip(row.iter()) {
             let pad = col_w.saturating_sub(col.chars().count());
-            out.push_str(col);
+            // Cells and column names are database content headed for a
+            // terminal — the same filter the CSV / TSV cells go through.
+            out.push_str(&terminal_safe(col));
             for _ in 0..pad {
                 out.push(' ');
             }
             out.push_str(" | ");
-            out.push_str(value);
+            out.push_str(&terminal_safe(value));
             out.push('\n');
         }
     }
