@@ -832,7 +832,8 @@ impl App {
             KeyCode::Char('N') => self.filter_step(false),
             KeyCode::Char('g') | KeyCode::Home => self.select_row(0),
             KeyCode::Char('G') | KeyCode::End => {
-                self.select_row(self.grid.row_count().saturating_sub(1));
+                // `select_row` clamps to the visible (filtered) set.
+                self.select_row(usize::MAX);
             }
             KeyCode::Enter => self.open_row_detail(),
             KeyCode::Char('A') => self.mode = Mode::About,
