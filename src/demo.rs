@@ -120,7 +120,7 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
             .columns_meta_by_table
             .contains_key(&(schema.clone(), name.clone()))
     });
-    match table {
+    let full = match table {
         Some((_, name)) if name == "users" => {
             let (columns, rows) = users_result();
             Grid {
@@ -137,8 +137,159 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
                 .unwrap_or_default();
             generated_rows(&name, &cols)
         }
-        None => notice_grid(),
+        // The notice is a one-column answer about the demo itself, not
+        // about the statement — projecting it would be nonsense.
+        None => return notice_grid(),
+    };
+    match select_list_of(sql) {
+        Some(list) => project_columns(list, full),
+        None => full,
     }
+}
+
+/// The SELECT list of `sql` — the text between a leading `SELECT` and
+/// the first top-level `FROM` — or `None` when `sql` isn't a plain
+/// SELECT. A SELECT with no FROM at all (`SELECT 1`) yields the whole
+/// remainder.
+///
+/// Only top-level `FROM` counts: parenthesised subqueries and string
+/// literals are skipped, so `SELECT (SELECT 1 FROM t) AS x FROM u`
+/// still cuts at the outer one.
+fn select_list_of(sql: &str) -> Option<&str> {
+    let after_select = {
+        let s = sql.trim_start();
+        let head = s.get(..6)?;
+        if !head.eq_ignore_ascii_case("select") {
+            return None;
+        }
+        let rest = &s[6..];
+        if !rest.starts_with(char::is_whitespace) {
+            return None;
+        }
+        rest
+    };
+    let mut depth = 0usize;
+    let mut in_string = false;
+    for (i, c) in after_select.char_indices() {
+        match c {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            'f' | 'F' if !in_string && depth == 0 && word_at(after_select, i, "from") => {
+                return Some(after_select[..i].trim());
+            }
+            _ => {}
+        }
+    }
+    Some(after_select.trim())
+}
+
+/// True when `word` sits at byte offset `at` in `text` as a whole
+/// word — i.e. neither neighbour is an identifier character.
+fn word_at(text: &str, at: usize, word: &str) -> bool {
+    let before_ok = text[..at]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !is_ident_char(c));
+    let Some(rest) = text.get(at..) else {
+        return false;
+    };
+    if rest.len() < word.len() || !rest[..word.len()].eq_ignore_ascii_case(word) {
+        return false;
+    }
+    let after_ok = rest[word.len()..]
+        .chars()
+        .next()
+        .is_none_or(|c| !is_ident_char(c));
+    before_ok && after_ok
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Narrow `grid` to the columns a simple SELECT list names, so
+/// `SELECT id, status FROM orders` doesn't answer with every column
+/// the table has.
+///
+/// Deliberately conservative — the whole grid comes back unchanged
+/// unless every item is a bare (optionally alias-qualified) column
+/// name that the grid actually carries. `*`, an expression, a
+/// function call, a `DISTINCT`, a name the grid doesn't have: all
+/// keep every column, because a demo that quietly drops a column the
+/// operator asked for teaches the wrong thing about the real one.
+pub fn project_columns(select_list: &str, grid: Grid) -> Grid {
+    let items = split_top_level_commas(select_list);
+    if items.is_empty() {
+        return grid;
+    }
+    let mut wanted = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(name) = column_name_of(item) else {
+            return grid;
+        };
+        let Some(idx) = grid
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(name))
+        else {
+            return grid;
+        };
+        wanted.push(idx);
+    }
+    Grid {
+        columns: wanted.iter().map(|&i| grid.columns[i].clone()).collect(),
+        rows: grid
+            .rows
+            .iter()
+            .map(|row| {
+                wanted
+                    .iter()
+                    .map(|&i| row.get(i).cloned().unwrap_or_default())
+                    .collect()
+            })
+            .collect(),
+        truncated: grid.truncated,
+    }
+}
+
+/// `item` as a plain column name: `id`, `o.id`, `public.o.id` — the
+/// last dot-separated segment. `None` for anything else (`*`, `o.*`,
+/// `count(*)`, `a + b`, `id AS x`), which is the caller's signal to
+/// keep every column.
+fn column_name_of(item: &str) -> Option<&str> {
+    let item = item.trim();
+    if item.is_empty() || !item.chars().all(|c| is_ident_char(c) || c == '.') {
+        return None;
+    }
+    let last = item.rsplit('.').next()?;
+    (!last.is_empty() && !last.chars().next()?.is_ascii_digit()).then_some(last)
+}
+
+/// Split a SELECT list on commas that aren't inside parentheses or a
+/// string literal.
+fn split_top_level_commas(list: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut start = 0usize;
+    for (i, c) in list.char_indices() {
+        match c {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            ',' if !in_string && depth == 0 => {
+                out.push(&list[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = &list[start..];
+    if !tail.trim().is_empty() || !out.is_empty() {
+        out.push(tail);
+    }
+    out
 }
 
 /// A one-row notice: what `answer` falls back to for anything it
@@ -560,5 +711,106 @@ mod tests {
             &cache,
         );
         assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
+    }
+
+    #[test]
+    fn select_list_of_cuts_at_the_top_level_from() {
+        assert_eq!(select_list_of("select a, b from t"), Some("a, b"));
+        assert_eq!(
+            select_list_of("  SELECT  o.id  FROM orders o"),
+            Some("o.id")
+        );
+        // No FROM at all — the whole remainder is the list.
+        assert_eq!(select_list_of("select 1"), Some("1"));
+        // A FROM inside a subquery or a string literal must not cut.
+        assert_eq!(
+            select_list_of("select (select 1 from t) as x from u"),
+            Some("(select 1 from t) as x")
+        );
+        assert_eq!(
+            select_list_of("select 'from me' as note from t"),
+            Some("'from me' as note")
+        );
+        // `fromage` is not the keyword.
+        assert_eq!(select_list_of("select fromage from t"), Some("fromage"));
+        // Not a SELECT.
+        assert_eq!(select_list_of("update users set a = 1"), None);
+        assert_eq!(select_list_of("selected"), None);
+        assert_eq!(select_list_of(""), None);
+    }
+
+    #[test]
+    fn project_columns_narrows_to_the_named_columns() {
+        let grid = Grid {
+            columns: vec!["id".into(), "user_id".into(), "status".into()],
+            rows: vec![
+                vec!["1".into(), "7".into(), "shipped".into()],
+                vec!["2".into(), "8".into(), "pending".into()],
+            ],
+            truncated: false,
+        };
+        let out = project_columns("id, status", grid);
+        assert_eq!(out.columns, vec!["id".to_string(), "status".to_string()]);
+        assert_eq!(out.rows[0], vec!["1".to_string(), "shipped".to_string()]);
+        assert_eq!(out.rows[1], vec!["2".to_string(), "pending".to_string()]);
+    }
+
+    #[test]
+    fn project_columns_keeps_every_column_for_anything_it_cannot_read() {
+        let grid = || Grid {
+            columns: vec!["id".into(), "user_id".into(), "status".into()],
+            rows: vec![vec!["1".into(), "7".into(), "shipped".into()]],
+            truncated: false,
+        };
+        let all = vec![
+            "id".to_string(),
+            "user_id".to_string(),
+            "status".to_string(),
+        ];
+        // `*` and `t.*`
+        assert_eq!(project_columns("*", grid()).columns, all);
+        assert_eq!(project_columns("o.*", grid()).columns, all);
+        // An expression, a function call, an alias.
+        assert_eq!(project_columns("id + 1", grid()).columns, all);
+        assert_eq!(project_columns("count(*)", grid()).columns, all);
+        assert_eq!(project_columns("id AS pk", grid()).columns, all);
+        assert_eq!(project_columns("distinct id", grid()).columns, all);
+        // A column the grid doesn't have: dropping the ones it DOES
+        // have would answer a different question than the one asked.
+        assert_eq!(project_columns("id, total", grid()).columns, all);
+        assert_eq!(project_columns("", grid()).columns, all);
+    }
+
+    #[test]
+    fn project_columns_reads_alias_qualified_names_case_insensitively() {
+        let grid = Grid {
+            columns: vec!["id".into(), "Status".into()],
+            rows: vec![vec!["1".into(), "shipped".into()]],
+            truncated: true,
+        };
+        let out = project_columns("o.ID , o.status", grid);
+        assert_eq!(out.columns, vec!["id".to_string(), "Status".to_string()]);
+        assert!(out.truncated, "the cap flag travels with the projection");
+    }
+
+    #[test]
+    fn answer_projects_the_select_list_of_a_generated_table() {
+        let cache = schema_cache();
+        let full = answer("select * from orders", &cache);
+        assert_eq!(full.columns.len(), 5, "orders has five columns");
+        let narrowed = answer("select o.id, o.total_cents from orders o", &cache);
+        assert_eq!(
+            narrowed.columns,
+            vec!["id".to_string(), "total_cents".to_string()],
+            "the demo must answer the columns that were asked for"
+        );
+        assert_eq!(narrowed.rows.len(), full.rows.len());
+        assert!(narrowed.rows.iter().all(|r| r.len() == 2));
+        // The canned users result projects the same way.
+        let users = answer("select email from users", &cache);
+        assert_eq!(users.columns, vec!["email".to_string()]);
+        // And the "no table I know" notice is never projected.
+        let notice = answer("select nothing from mystery", &cache);
+        assert_eq!(notice.columns, vec!["demo".to_string()]);
     }
 }

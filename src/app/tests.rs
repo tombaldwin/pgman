@@ -6382,3 +6382,28 @@ fn p_on_the_failure_screen_opens_the_picker_with_a_single_candidate() {
     assert_eq!(a.mode, Mode::ConnPick, "p must open the picker");
     assert_eq!(a.conn_pick.index, 0);
 }
+
+#[test]
+fn demo_timing_reports_an_elapsed_figure_like_a_live_run() {
+    // `spawn_run_demo` never started the clock, so `\timing on` in
+    // --demo printed no elapsed line at all — the one mode whose whole
+    // job is to look exactly like a real session.
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "\\timing on");
+    assert!(a.timing_on);
+    run_in_demo(&mut a, "SELECT id FROM users");
+    assert!(
+        a.query_started.is_some(),
+        "the clock must be running when the answer is built"
+    );
+    pump_one_demo_msg(&mut a);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.contains(" ms"),
+        "timing on must add an elapsed figure: {status:?}"
+    );
+    assert!(
+        a.query_started.is_none(),
+        "and the QueryOk handler must consume it"
+    );
+}
