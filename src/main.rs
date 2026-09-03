@@ -40,6 +40,10 @@ struct Cli {
     #[arg(long)]
     demo: bool,
 
+    /// Write a commented default safety.toml under the config dir, then exit.
+    #[arg(long)]
+    init_config: bool,
+
     /// Preload the editor with a Hibernate or Postgres log from PATH
     /// (`-` for stdin) and reconstruct it into the query picker.
     #[arg(long, value_name = "PATH")]
@@ -91,6 +95,11 @@ async fn main() -> anyhow::Result<()> {
     // before we set up logging / probe the terminal.
     if cli.upgrade {
         return upgrade::run();
+    }
+
+    // `--init-config` is a one-shot file write, not a TUI path either.
+    if cli.init_config {
+        std::process::exit(init_config());
     }
 
     // `--batch` is the other non-TUI path. Don't init the rolling-file
@@ -795,6 +804,30 @@ fn resolve_dsn_arg(cli: &Cli) -> Result<Option<String>, String> {
         (Some(flag), _) => Ok(Some(flag.clone())),
         (None, Some(pos)) => Ok(Some(pos.clone())),
         (None, None) => Ok(None),
+    }
+}
+
+/// Write a commented default `safety.toml` under the config dir
+/// (`--init-config`). Refuses to overwrite an existing file. Returns
+/// the process exit code.
+fn init_config() -> i32 {
+    let path = util::config_file("safety.toml");
+    if path.exists() {
+        eprintln!(
+            "--init-config: {} already exists; refusing to overwrite it",
+            path.display()
+        );
+        return 1;
+    }
+    match util::write_private(&path, safety::DEFAULT_SAFETY_TOML) {
+        Ok(()) => {
+            println!("wrote {}", path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("--init-config: could not write {}: {e}", path.display());
+            1
+        }
     }
 }
 
@@ -1736,5 +1769,42 @@ mod main_tests {
     fn resolve_dsn_arg_is_none_when_neither_given() {
         let cli = Cli::default();
         assert_eq!(resolve_dsn_arg(&cli).unwrap(), None);
+    }
+
+    // --- DEFAULT_SAFETY_TOML round-trips to SafetyConfig::default() ----
+
+    #[test]
+    fn default_safety_toml_round_trips_to_the_real_default() {
+        let cfg: safety::SafetyConfig =
+            toml::from_str(safety::DEFAULT_SAFETY_TOML).expect("DEFAULT_SAFETY_TOML must parse");
+        let want = safety::SafetyConfig::default();
+        assert_eq!(cfg.default.read_only, want.default.read_only);
+        assert_eq!(
+            cfg.default.statement_timeout_ms,
+            want.default.statement_timeout_ms
+        );
+        assert_eq!(cfg.default.auto_tx, want.default.auto_tx);
+        assert_eq!(
+            cfg.default.cost_preview_threshold_rows,
+            want.default.cost_preview_threshold_rows
+        );
+        assert_eq!(cfg.default.clean_mode, want.default.clean_mode);
+        assert_eq!(cfg.default.guards.insert, want.default.guards.insert);
+        assert_eq!(cfg.default.guards.update, want.default.guards.update);
+        assert_eq!(
+            cfg.default.guards.update_without_where,
+            want.default.guards.update_without_where
+        );
+        assert_eq!(cfg.default.guards.delete, want.default.guards.delete);
+        assert_eq!(
+            cfg.default.guards.delete_without_where,
+            want.default.guards.delete_without_where
+        );
+        assert_eq!(cfg.default.guards.truncate, want.default.guards.truncate);
+        assert_eq!(cfg.default.guards.drop, want.default.guards.drop);
+        assert_eq!(cfg.default.guards.ddl, want.default.guards.ddl);
+        assert_eq!(cfg.default.guards.other, want.default.guards.other);
+        assert!(cfg.databases.is_empty());
+        assert!(want.databases.is_empty());
     }
 }
