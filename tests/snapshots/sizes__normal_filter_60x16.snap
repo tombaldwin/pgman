@@ -1,10 +1,9 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
- 1 SELECT id, email,…             ctrl-t new · ctrl-w close
+ 1 SELECT id, email,…               ] [ switch · ctrl-t new
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
@@ -18,4 +17,4 @@ expression: dump(&buf)
 │                                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · F1 +9 more
+ RO   TAP   N+1 ×1   q quit · ? help · F1 +11 more

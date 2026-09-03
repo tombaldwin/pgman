@@ -3,7 +3,7 @@ source: tests/sizes.rs
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
- 1 SELECT id, email,…             ctrl-t new · ctrl-w close
+ 1 SELECT id, email,…               ] [ switch · ctrl-t new
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │  FROM users                                              │
 │  WHERE ┌────────────────────────────────────────┐        │
@@ -12,7 +12,7 @@ expression: dump(&buf)
 ┌ result │ · F2 error detail · F3 notify)         │────────┐
 │id  emai│                                        │        │
 │1   ada@│   grid                                 │00+00   │
-│2   linu│ ↓ 457 more below                       │00+00   │
+│2   linu│ ↓ 466 more below                       │00+00   │
 │3   grac│                                        │00+00   │
 │4   alan└────────────────────────────────────────┘00+00   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │

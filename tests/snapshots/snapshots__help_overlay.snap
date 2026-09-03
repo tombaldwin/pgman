@@ -3,7 +3,7 @@ source: tests/snapshots.rs
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
- 1 empty                                                                  ctrl-t new · ctrl-w close
+ 1 empty                                                     ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                                      │
 │                                                                                                  │
@@ -38,7 +38,7 @@ expression: dump(&buf)
 │              │     W             schema wizard / lint (missing PK, mixed-case,    │              │
 │              │                   reserved words …)                                │              │
 │              │     Q             saved queries (named, persisted)                 │              │
-│              │     ctrl-t / alt-n / alt-1..9  tabs — see the tabs section         │              │
+│              │     ] / [  1..9   next / prev tab · tab N — see the tabs section   │              │
 │              │     T             slow queries (pg_stat_statements top-N)          │              │
 │              │     L             active sessions + locks (pg_stat_activity)       │              │
 │              │     F3            LISTEN/NOTIFY arrivals panel (also reachable     │              │
@@ -91,7 +91,7 @@ expression: dump(&buf)
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
 │              │     enter         insert newline                                   │              │
-│              │ ↓ 198 more below                                                   │              │
+│              │ ↓ 205 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

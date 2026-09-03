@@ -8761,3 +8761,157 @@ fn alt_n_on_a_single_tab_is_a_no_op() {
     assert_eq!(a.tabs.len(), 1);
     assert_eq!(a.last_status, None);
 }
+
+// ---- `]` / `[` / 1..9 / ctrl-]: tabs without Alt --------------------------
+
+/// Three tabs labelled t1 / t2 / t3, the third active, in `mode`.
+fn three_tabs(mode: Mode) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.editor.buffer = "t1".into();
+    a.new_tab();
+    a.editor.buffer = "t2".into();
+    a.new_tab();
+    a.editor.buffer = "t3".into();
+    a.mode = mode;
+    a
+}
+
+#[test]
+fn bracket_keys_cycle_tabs_from_the_grid_and_wrap() {
+    let mut a = three_tabs(Mode::Normal);
+    assert_eq!(a.active_tab, 2);
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str()),
+        (0, "t1"),
+        "wraps forward"
+    );
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str()),
+        (2, "t3"),
+        "wraps backward"
+    );
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (1, "t2"));
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+#[test]
+fn digit_keys_jump_to_a_tab_and_say_so_past_the_last_one() {
+    let mut a = three_tabs(Mode::Normal);
+    press(&mut a, KeyCode::Char('1'));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (0, "t1"));
+    press(&mut a, KeyCode::Char('3'));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (2, "t3"));
+    press(&mut a, KeyCode::Char('7'));
+    assert_eq!(a.active_tab, 2, "no seventh tab: stays put");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("no tab 7 · 3 open · ctrl-t opens one")
+    );
+    // `0` is not a tab (it is the editor-size reset).
+    a.last_status = None;
+    press(&mut a, KeyCode::Char('0'));
+    assert_eq!(a.active_tab, 2);
+    assert!(!a.last_status.as_deref().unwrap_or("").contains("no tab"));
+}
+
+#[test]
+fn brackets_and_digits_switch_tabs_from_the_sessions_and_slow_query_panels() {
+    for mode in [Mode::Sessions, Mode::SlowQueries] {
+        let mut a = three_tabs(mode);
+        press(&mut a, KeyCode::Char('['));
+        assert_eq!((a.active_tab, a.mode), (1, mode), "{mode:?}");
+        press(&mut a, KeyCode::Char(']'));
+        assert_eq!((a.active_tab, a.mode), (2, mode), "{mode:?}");
+        press(&mut a, KeyCode::Char('1'));
+        assert_eq!((a.active_tab, a.mode), (0, mode), "{mode:?}");
+    }
+}
+
+#[test]
+fn schema_browser_keeps_its_brackets_but_digits_still_switch_tabs() {
+    let mut a = three_tabs(Mode::SchemaBrowser);
+    press(&mut a, KeyCode::Char(']'));
+    press(&mut a, KeyCode::Char('['));
+    assert_eq!(a.active_tab, 2, "[ ] are the browser's schema jump");
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    press(&mut a, KeyCode::Char('1'));
+    assert_eq!((a.active_tab, a.mode), (0, Mode::SchemaBrowser));
+}
+
+#[test]
+fn brackets_and_digits_type_in_the_editor_and_the_prompts() {
+    let mut a = three_tabs(Mode::Editor);
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
+    press(&mut a, KeyCode::Char('1'));
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.editor.buffer, "1]", "typed, not a tab switch");
+    assert_eq!(a.active_tab, 2);
+    // A grid filter: `[` and `1` narrow the filter, nothing else.
+    let mut b = three_tabs(Mode::Normal);
+    b.grid = sample_grid();
+    b.reset_grid_view();
+    press(&mut b, KeyCode::Char('/'));
+    assert_eq!(b.mode, Mode::GridFilter);
+    press(&mut b, KeyCode::Char('['));
+    press(&mut b, KeyCode::Char('1'));
+    assert_eq!(b.active_tab, 2);
+    assert_eq!(b.grid_view.filter.as_deref(), Some("[1"));
+    assert_eq!(b.mode, Mode::GridFilter);
+}
+
+#[test]
+fn a_pending_bookmark_takes_the_next_key_before_the_tab_bindings() {
+    // `m` then `1` used to jump to tab 1 instead of cancelling the
+    // mark; `'` then `]` likewise.
+    let mut a = three_tabs(Mode::Normal);
+    press(&mut a, KeyCode::Char('m'));
+    press(&mut a, KeyCode::Char('1'));
+    assert_eq!(a.active_tab, 2, "the digit answered the mark prompt");
+    assert!(!a.pending_mark_set);
+    press(&mut a, KeyCode::Char('\''));
+    press(&mut a, KeyCode::Char(']'));
+    assert_eq!(a.active_tab, 2);
+    assert!(!a.pending_mark_jump);
+    assert_eq!(a.last_status.as_deref(), Some("no bookmark at ']'"));
+}
+
+#[test]
+fn ctrl_bracket_is_next_tab_from_the_editor_in_both_terminal_encodings() {
+    let mut a = three_tabs(Mode::Editor);
+    a.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str(), a.mode),
+        (0, "t1", Mode::Editor),
+        "kitty-protocol shape: ctrl + ]"
+    );
+    // The legacy 0x1D byte reaches crossterm as Ctrl-5.
+    a.on_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::CONTROL));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str()),
+        (1, "t2"),
+        "legacy shape: ctrl + 5"
+    );
+    assert_eq!(a.editor.buffer, "t2", "nothing was typed");
+    // From the grid too, but not from a prompt.
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL));
+    assert_eq!(a.active_tab, 2);
+    a.mode = Mode::SaveQueryPrompt;
+    a.on_key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL));
+    assert_eq!(a.active_tab, 2, "inert while a prompt has the keyboard");
+}
+
+#[test]
+fn tab_index_for_digit_maps_one_to_nine_only() {
+    use super::tabs::tab_index_for_digit;
+    assert_eq!(tab_index_for_digit('1'), Some(0));
+    assert_eq!(tab_index_for_digit('9'), Some(8));
+    assert_eq!(tab_index_for_digit('0'), None);
+    assert_eq!(tab_index_for_digit('a'), None);
+    assert_eq!(tab_index_for_digit(']'), None);
+}

@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn tab_bar_hint_drops_whole_pieces_from_the_right_to_fit() {
+    let full = "] [ switch · ctrl-t new · ctrl-w close";
+    assert_eq!(tab_bar_hint(80).as_deref(), Some(full));
+    assert_eq!(
+        tab_bar_hint(display_width(full) + 1).as_deref(),
+        Some(full),
+        "exactly the hint plus its gap fits"
+    );
+    assert_eq!(
+        tab_bar_hint(display_width(full)).as_deref(),
+        Some("] [ switch · ctrl-t new"),
+        "one column short: the close key goes, whole"
+    );
+    assert_eq!(tab_bar_hint(11).as_deref(), Some("] [ switch"));
+    assert_eq!(tab_bar_hint(10), None, "not even the switch key fits");
+}
+
+#[test]
 fn centered_pct_does_not_overflow_on_a_wide_terminal() {
     use ratatui::layout::Rect;
     // Regression: `area.width * w` was a u16 multiply that overflowed once a
