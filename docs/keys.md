@@ -6,11 +6,13 @@ the grid / connection picker; `Esc` closes overlays but is a no-op in Normal
 mode (a reflex press can't drop the session). `F1` (help), `F2` (error
 detail), `F3` (notifications) and `F4` (JDBC tap monitor) work from **any**
 mode, as do `?` (help) and `:` (the command bar) — except while a text input
-has focus, where both are characters you meant to type. `Ctrl-T` (new tab),
-`Ctrl-Tab` / `Ctrl-Shift-Tab` (cycle tabs) and `Alt-1`..`Alt-9` (jump to tab)
-are also global; `Ctrl-W` closes the current tab from any mode *except* while
+has focus, where both are characters you meant to type. `]` / `[` (next /
+previous tab) and `1`..`9` (jump to tab) work from the grid and every panel
+but not while typing; `Ctrl-]` (next tab) and `Ctrl-T` (new tab) work from
+the editor too; `Ctrl-W` closes the current tab from any mode *except* while
 typing (editor, filters, search prompts — where `Ctrl-W` would collide with
-`\watch` or word-delete). `Alt-N` / `Alt-P` (next / previous tab), `Alt-Z`
+`\watch` or word-delete). `Ctrl-Tab` / `Ctrl-Shift-Tab`, `Alt-N` / `Alt-P`
+and `Alt-1`..`Alt-9` do the same where the terminal delivers them. `Alt-Z`
 (zoom the focused pane) and `Alt-=` / `Alt--` / `Alt-0` (editor size) work
 from the grid, the editor and every panel, but not from a prompt, filter or
 the command bar. `A` (about) works from the grid (Normal mode); `:about`
@@ -51,7 +53,7 @@ once a query has run share one key map.
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
 | `F3` | NOTIFY arrivals panel (also reachable from any mode) |
-| `Ctrl-T` / `Alt-N` / `Alt-P` / `Alt-1..9` | Tabs — see [Tabs](#tabs) |
+| `]` / `[` / `1`..`9` / `Ctrl-T` | Next / previous tab, jump to tab N, new tab — see [Tabs](#tabs) |
 | `Alt-Z` | Zoom the results to the whole body; `Alt-Z` again restores the split exactly as it was |
 | `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
 | `Alt-0` | Back to the automatic editor/results split |
@@ -96,6 +98,7 @@ diff, all of which are also dispatched from this mode.
 | `Shift-Enter` | Insert a newline even after a `;` (where the terminal distinguishes it) |
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
 | `Home` / `End` | Start / end of current line |
+| `Ctrl-]` | Next tab (`Ctrl-Tab` / `Alt-N` too, where the terminal delivers them) |
 | `Alt-Z` | Zoom the editor to the whole body; `Alt-Z` again restores the split exactly as it was |
 | `Alt-=` (or `Alt-+`) / `Alt--` | Grow / shrink the editor by one line (the results keep at least one row) |
 | `Alt-0` | Back to the automatic editor/results split |
@@ -288,21 +291,25 @@ Entered via `Ctrl-R` from the editor. Reverse-incremental, like readline/psql.
 
 The tab bar sits under the header once connected — one row naming each
 tab by the first line of its buffer (`empty` until something is typed),
-the active tab highlighted, `ctrl-t new · ctrl-w close` on the right. It
-hides on a very short terminal (fewer than 12 body rows) while there is
+the active tab highlighted, `] [ switch · ctrl-t new · ctrl-w close` on
+the right (whole pieces drop from the right when the tabs need the room).
+It hides on a very short terminal (fewer than 12 body rows) while there is
 only one tab.
 
-Global except while typing (filter / search prompts); `Alt-N` / `Alt-P`
-and `Ctrl-Tab` also work from the editor.
+`]` / `[` and the digits work from the grid and every panel, but not while
+typing (the editor, filters, prompts) — from the editor, `Ctrl-]` steps to
+the next tab. The schema browser keeps `[` / `]` for its own schema jump;
+the digits still switch tabs there.
 
 | Key | Action |
 |---|---|
+| `]` / `[` | Next / previous tab (wraps) |
+| `1` .. `9` | Jump directly to tab N (a digit past the last tab says how many are open) |
+| `Ctrl-]` | Next tab — also from the editor, where `]` is a character |
 | `Ctrl-T` | Open a new tab (fresh editor + result) |
 | `Ctrl-W` | Close the current tab (no-op on the last one) |
-| `Alt-N` / `Alt-P` | Next / previous tab (wraps; delivered by every terminal, unlike `Ctrl-Tab`) |
-| `Ctrl-Tab` | Next tab |
-| `Ctrl-Shift-Tab` | Previous tab |
-| `Alt-1` .. `Alt-9` | Jump directly to tab N |
+| `Ctrl-Tab` / `Ctrl-Shift-Tab` | Next / previous tab, where the terminal delivers them |
+| `Alt-N` / `Alt-P`, `Alt-1` .. `Alt-9` | The same, where the terminal delivers Alt chords (iTerm on a Mac needs the option key set to `Esc+`) |
 
 Connection, schema cache, history and saved queries are shared across tabs.
 The editor/results split (`Alt-=` / `Alt--` / `Alt-0`) and the zoom

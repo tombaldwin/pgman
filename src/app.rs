@@ -1917,17 +1917,57 @@ impl App {
             self.cycle_tab(false);
             return;
         }
+        // `Ctrl-]` — next tab from the editor and every non-typing
+        // panel. Alt chords are optional on a Mac (iTerm sends them as
+        // Esc or as an accented letter unless told otherwise) and
+        // Ctrl-Tab is not delivered by every terminal, but the 0x1D
+        // byte Ctrl-] produces reaches every program. crossterm's
+        // legacy parser reports that byte as Ctrl-5 (the classic
+        // Ctrl-4..7 → 0x1C..0x1F encoding) and the kitty protocol as
+        // Ctrl-]: both shapes are the same key. Off in the prompts and
+        // filters for the reason the digit jump below is.
+        if ctrl
+            && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'))
+            && (!typing_mode || self.mode == Mode::Editor)
+            && !self.tunnel_prompt_open()
+        {
+            self.cycle_tab(true);
+            return;
+        }
         // Gated like Ctrl-W: from a typing prompt (save-as name,
         // rename, param, filter…) a tab jump swapped the editor buffer
         // out from under the prompt, and Enter then saved the OTHER
         // tab's SQL under the name just typed.
         if alt && !typing_mode {
             if let KeyCode::Char(c) = key.code {
-                if let Some(d) = c.to_digit(10) {
-                    if d >= 1 && (d as usize) <= self.tabs.len() {
-                        self.switch_to_tab((d as usize) - 1);
-                        return;
-                    }
+                if self.jump_to_tab_digit(c) {
+                    return;
+                }
+            }
+        }
+        // Tabs without a modifier: `]` / `[` next / previous and
+        // `1`..`9` jump, from the grid and every non-typing panel.
+        // These are the primary bindings — the chords above are kept
+        // for terminals that deliver them. The schema browser keeps
+        // `[` / `]` for its own schema-to-schema jump; the digits still
+        // switch tabs there (the browser is not per-tab state). Letters
+        // type in the editor and the prompts, so those are out — and
+        // so is the keypress after `m` / `'`, which names a bookmark
+        // (or cancels the pending one) rather than a tab.
+        let mark_pending = self.pending_mark_set || self.pending_mark_jump;
+        if !ctrl && !alt && !typing_mode && !mark_pending && !self.tunnel_prompt_open() {
+            if let KeyCode::Char(c) = key.code {
+                let bracket_is_mine = self.mode != Mode::SchemaBrowser;
+                if c == ']' && bracket_is_mine {
+                    self.cycle_tab(true);
+                    return;
+                }
+                if c == '[' && bracket_is_mine {
+                    self.cycle_tab(false);
+                    return;
+                }
+                if self.jump_to_tab_digit(c) {
+                    return;
                 }
             }
         }

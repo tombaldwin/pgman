@@ -136,6 +136,36 @@ impl App {
         };
         self.switch_to_tab(next);
     }
+
+    /// A digit key names a tab: `1`..`9` jump to it (`0` is not a tab
+    /// — it resets the editor size). A digit past the open tabs is
+    /// still consumed, with a status saying how many there are, so the
+    /// keypress does not fall through to the panel underneath. Returns
+    /// whether the key was a tab digit at all.
+    pub(super) fn jump_to_tab_digit(&mut self, c: char) -> bool {
+        let Some(idx) = tab_index_for_digit(c) else {
+            return false;
+        };
+        if idx >= self.tabs.len() {
+            self.last_status = Some(format!(
+                "no tab {} · {} open · ctrl-t opens one",
+                idx + 1,
+                self.tabs.len()
+            ));
+        } else {
+            self.switch_to_tab(idx);
+        }
+        true
+    }
+}
+
+/// The 0-based tab a digit key names: `'1'` → 0 … `'9'` → 8. `'0'`
+/// and non-digits name nothing. Pure / testable.
+pub(crate) fn tab_index_for_digit(c: char) -> Option<usize> {
+    match c.to_digit(10) {
+        Some(d) if d >= 1 => Some(d as usize - 1),
+        _ => None,
+    }
 }
 
 /// Fewest content lines the editor can be shrunk to by hand.

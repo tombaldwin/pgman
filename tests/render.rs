@@ -1432,13 +1432,13 @@ fn tab_bar_is_visible_with_a_single_tab_once_connected() {
         "row 1 is the tab bar: {bar:?}"
     );
     assert!(
-        bar.ends_with("ctrl-t new · ctrl-w close"),
+        bar.ends_with("] [ switch · ctrl-t new · ctrl-w close"),
         "the tab keys are right-aligned: {bar:?}"
     );
-    assert_eq!(
-        bar.len(),
-        80usize.min(bar.len()),
-        "never wider than the terminal"
+    // Columns, not bytes: the hint's `·` separators are multi-byte.
+    assert!(
+        bar.chars().count() <= 80,
+        "never wider than the terminal: {bar:?}"
     );
     assert!(
         row_text(&buf, 2).starts_with('┌'),

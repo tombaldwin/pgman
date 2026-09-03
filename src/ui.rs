@@ -1306,7 +1306,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "ctrl-c cancel running query"
                 }
                 Mode::Editor => {
-                    "⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · ctrl-y redo · ctrl-r history · tab complete · ctrl-l log · alt-z zoom · esc"
+                    "⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · ctrl-y redo · ctrl-r history · tab complete · ctrl-l log · ctrl-] tab · alt-z zoom · esc"
                 }
                 Mode::HistorySearch => {
                     "type to search · ctrl-r next-older · ctrl-d delete · enter accept · esc cancel"
@@ -1325,7 +1325,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · alt-z zoom",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · ] [ tabs · alt-z zoom",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
@@ -1743,7 +1743,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    ctrl-t / alt-n / alt-1..9  tabs — see the tabs section"),
+        row("    ] / [  1..9   next / prev tab · tab N — see the tabs section"),
         &mut lines,
     );
     push(
@@ -1893,6 +1893,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    ctrl-u        clear the buffer"), &mut lines);
+    push(
+        row("    ctrl-]        next tab (ctrl-tab / alt-n too, where the terminal delivers them)"),
+        &mut lines,
+    );
     push(
         row("    alt-z         zoom the editor · alt-z again restores the split"),
         &mut lines,
@@ -2178,12 +2182,20 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    ctrl-tab      next tab · ctrl-shift-tab  previous"),
+        row("    ] / [         next / previous tab (wraps) — from the grid and every panel"),
         &mut lines,
     );
-    push(row("    alt-1 .. 9    jump directly to tab N"), &mut lines);
+    push(row("    1 .. 9        jump directly to tab N"), &mut lines);
     push(
-        row("    alt-n / alt-p next / previous tab (works in the editor too)"),
+        row("    ctrl-]        next tab — the one that also works from the editor"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-tab / ctrl-shift-tab · alt-n / alt-p · alt-1..9"),
+        &mut lines,
+    );
+    push(
+        row("                  the same, where the terminal delivers them (iTerm needs option = esc+)"),
         &mut lines,
     );
     push(
@@ -2356,16 +2368,29 @@ fn draw_tab_bar(f: &mut Frame, area: Rect, app: &App) {
         ));
         spans.push(Span::raw(" "));
     }
-    let hint_width = display_width(TAB_BAR_HINT) + 1;
-    if used + hint_width <= width {
+    if let Some(hint) = tab_bar_hint(width.saturating_sub(used)) {
+        let hint_width = display_width(&hint) + 1;
         spans.push(Span::raw(" ".repeat(width - used - hint_width)));
-        spans.push(Span::styled(TAB_BAR_HINT, muted));
+        spans.push(Span::styled(hint, muted));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Right-aligned on the tab bar: the keys that open and close tabs.
-const TAB_BAR_HINT: &str = "ctrl-t new · ctrl-w close";
+/// Right-aligned on the tab bar, most important first: how to switch,
+/// open and close tabs. Whole pieces drop from the right when the tabs
+/// need the room, so a crowded bar still says `] [ switch`.
+const TAB_BAR_HINT_PIECES: &[&str] = &["] [ switch", "ctrl-t new", "ctrl-w close"];
+
+/// The tab-bar hint that fits in `free` columns, one of which is the
+/// gap before it: the longest prefix of `TAB_BAR_HINT_PIECES` joined
+/// with ` · `, or `None` when not even the first piece fits. Pure /
+/// testable.
+pub(crate) fn tab_bar_hint(free: usize) -> Option<String> {
+    (1..=TAB_BAR_HINT_PIECES.len())
+        .rev()
+        .map(|n| TAB_BAR_HINT_PIECES[..n].join(" · "))
+        .find(|hint| display_width(hint) < free)
+}
 
 /// Display columns a tab label may take on the bar, widest first:
 /// the budgets `tab_bar_cells` tries in turn until every tab fits,

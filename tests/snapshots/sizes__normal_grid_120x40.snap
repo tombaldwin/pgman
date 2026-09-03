@@ -1,10 +1,9 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
- 1 SELECT id, email,…                                                                         ctrl-t new · ctrl-w close
+ 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
@@ -42,4 +41,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +4 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +5 more

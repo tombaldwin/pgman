@@ -1,10 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 431
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
- 1 empty                                                                            ctrl-t new · ctrl-w close
+ 1 empty                                                               ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
 │> (┌ active sessions — pg_stat_activity — r refresh · q close ─────────────────────────────────────────┐    │
 └───│     pid  user/app              state         age(s)   blocked  query                              │────┘

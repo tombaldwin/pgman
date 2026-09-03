@@ -1,10 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 143
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
- 1 SELECT id, email                                   ctrl-t new · ctrl-w close
+ 1 SELECT id, email                      ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor ──────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email                                                            │
 │  FROM users                                                                  │
@@ -18,4 +17,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +7 more
+ RO   ⏎ runs after ; · alt-⏎ runs · ctrl-e EXPLAIN · ctrl-z undo · F1 +8 more
