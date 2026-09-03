@@ -1635,6 +1635,38 @@ impl App {
             self.open_help_from(self.mode);
             return;
         }
+        // A decision modal owns the keyboard. `Confirm` holds a
+        // guarded statement, `TxDecision` an OPEN transaction and
+        // `ConfirmTerminate` a pid: every global chord below (F2/F3/F4,
+        // `:`, the tab chords) used to walk out of them, and the panel
+        // it opened then closed into Normal with `tx_open` still true
+        // and no way back to the y/n — `\watch` refused for the rest
+        // of the session. Only the modal's own keys (and F1 / `?`,
+        // which return to it) get through. `:` from `Confirm` is the
+        // one exception: `open_command_bar` explicitly cancels the
+        // pending run on the way in, so nothing dangles.
+        let modal_open = matches!(
+            self.mode,
+            Mode::TxDecision | Mode::Confirm | Mode::ConfirmTerminate
+        );
+        if modal_open {
+            let colon = !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                && matches!(key.code, KeyCode::Char(':'));
+            if !(colon && self.mode == Mode::Confirm) {
+                let pre_mode = self.mode;
+                match self.mode {
+                    Mode::Confirm => self.on_confirm_key(key),
+                    Mode::TxDecision => self.on_tx_decision_key(key),
+                    _ => self.on_confirm_terminate_key(key),
+                }
+                if self.mode != pre_mode {
+                    self.note_mode_entry(self.mode);
+                }
+                return;
+            }
+        }
         // F2 expands the most-recent query failure into the rich
         // error overlay (severity / code / detail / hint / affected
         // schema/table/column/constraint). No-op when there's

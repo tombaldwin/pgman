@@ -35,6 +35,15 @@ impl App {
         // connection. This is the single choke point for all reconnects.
         self.query_running = false;
         self.query_started = None;
+        // Same for anything a decision modal was holding: an open
+        // transaction belongs to the connection being dropped (the
+        // server rolls it back), a guarded run was classified against
+        // the old database, and a pid is meaningless on the new one.
+        // Left set, `tx_open` refused `\watch` for the rest of the
+        // session and `pending_run` could fire against the wrong DB.
+        self.tx_open = false;
+        self.pending_run = None;
+        self.pending_terminate = None;
         self.conn_state = ConnState::Connecting;
         let tx = self.msg_tx.clone();
         let generation = self.generation;
