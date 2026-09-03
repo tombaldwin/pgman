@@ -1619,6 +1619,125 @@ mod main_tests {
         );
     }
 
+    // --- the resolver and the parser must agree on the host ---------------
+    //
+    // The security-review reproduction, through each of the three
+    // discovery sources. `creds::spring::resolve_url_placeholders` cut
+    // the authority at the first `/` and saw this placeholder in the
+    // path; `conn::Dsn::parse` cuts at the last `@` and made it the host
+    // — so the environment variable left the machine as a DNS lookup.
+
+    const AUTHORITY_LEAK_JDBC: &str = "jdbc:postgresql://x@db.example/app@\
+         ${PGMAN_TEST_MAIN_AUTH_LEAK}.attacker.invalid:55432/db";
+
+    /// Every source must report the placeholder as host-tainting, keep the
+    /// resolved value out of the pick entirely, and (when it kept a DSN at
+    /// all) keep the parser's host free of the value.
+    fn assert_authority_leak_refused(pick: &DataSourcePick) {
+        assert_eq!(
+            pick.unresolved_host,
+            vec!["PGMAN_TEST_MAIN_AUTH_LEAK".to_string()],
+            "must be refused as host-tainting: {pick:?}"
+        );
+        let debug = format!("{pick:?}");
+        assert!(
+            !debug.contains("LEAKED"),
+            "the value must not reach the pick: {debug}"
+        );
+        assert!(
+            pick.name
+                .contains("unresolved ${PGMAN_TEST_MAIN_AUTH_LEAK}"),
+            "and the picker must say so: {}",
+            pick.name
+        );
+    }
+
+    #[test]
+    fn spring_refuses_a_url_whose_host_the_parser_reads_differently() {
+        let base = spring_project_with(
+            "authority-leak",
+            &format!("spring.datasource.url={AUTHORITY_LEAK_JDBC}\n"),
+        );
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_AUTH_LEAK", "LEAKED");
+        }
+        let mut picks = Vec::new();
+        discover_spring_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(picks.len(), 1, "got: {picks:?}");
+        assert_authority_leak_refused(&picks[0]);
+    }
+
+    #[test]
+    fn intellij_refuses_a_url_whose_host_the_parser_reads_differently() {
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_AUTH_LEAK", "LEAKED");
+        }
+        let source = creds::intellij::IntellijDataSource {
+            name: "shop".into(),
+            uuid: "u1".into(),
+            jdbc_url: Some(AUTHORITY_LEAK_JDBC.to_string()),
+            user: None,
+        };
+        let (resolved, _, unresolved, unresolved_host) =
+            resolve_intellij_placeholders(&source, None);
+        assert!(unresolved.is_empty(), "{unresolved:?}");
+        assert_eq!(
+            unresolved_host,
+            vec!["PGMAN_TEST_MAIN_AUTH_LEAK".to_string()]
+        );
+        assert_eq!(
+            resolved.jdbc_url.as_deref(),
+            Some(AUTHORITY_LEAK_JDBC),
+            "the URL must stay literal"
+        );
+        // And through the whole discovery path, file and all.
+        let base = std::env::temp_dir().join(format!(
+            "pgman-main-idea-authority-leak-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".idea")).unwrap();
+        std::fs::write(
+            base.join(".idea/dataSources.xml"),
+            format!(
+                "<project><component name=\"DataSourceManagerImpl\">\
+                 <data-source name=\"shop\" uuid=\"u1\">\
+                 <jdbc-url>{AUTHORITY_LEAK_JDBC}</jdbc-url>\
+                 </data-source></component></project>"
+            ),
+        )
+        .unwrap();
+        let mut picks = Vec::new();
+        discover_intellij_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(picks.len(), 1, "got: {picks:?}");
+        assert_authority_leak_refused(&picks[0]);
+    }
+
+    #[test]
+    fn project_refuses_a_url_whose_host_the_parser_reads_differently() {
+        unsafe {
+            std::env::set_var("PGMAN_TEST_MAIN_AUTH_LEAK", "LEAKED");
+        }
+        let c = project::Connection {
+            name: "shop".into(),
+            url: AUTHORITY_LEAK_JDBC
+                .strip_prefix("jdbc:")
+                .unwrap()
+                .to_string(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: None,
+        };
+        let pick = project_connection_pick(&c).expect("a marked pick, not a skip");
+        assert_authority_leak_refused(&pick);
+        assert!(
+            pick.dsn.as_ref().is_none_or(|d| !d.host.contains("LEAKED")),
+            "{pick:?}"
+        );
+    }
+
     /// A discovered pick for the `batch_dsn_from_picks` tests.
     fn batch_pick(name: &str, url: &str) -> DataSourcePick {
         DataSourcePick {
