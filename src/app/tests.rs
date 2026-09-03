@@ -6188,3 +6188,71 @@ fn command_candidates_and_common_prefix_are_pure_and_total() {
     assert_eq!(longest_common_prefix(&["report", "readonly"]), "re");
     assert_eq!(longest_common_prefix(&["abc", "xyz"]), "");
 }
+
+// ---------------------------------------------------------------
+// `?` opens help from any mode that isn't taking literal text
+// ---------------------------------------------------------------
+
+#[test]
+fn question_mark_opens_help_from_every_panel_mode() {
+    // Before this, only the grid honoured `?` — from Sessions or the
+    // tap monitor it did nothing at all, and the footer's "? help"
+    // pointer was wrong everywhere but Normal.
+    for (mode, anchor) in [
+        (Mode::Normal, "grid"),
+        (Mode::Sessions, "active sessions"),
+        (Mode::SlowQueries, "slow queries"),
+        (Mode::TapMonitor, "jdbc tap"),
+        (Mode::SchemaBrowser, "schema browser"),
+        (Mode::ConnPick, "conn pick"),
+        (Mode::RowDetail, "row detail"),
+    ] {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.mode = mode;
+        a.on_key(KeyEvent::from(KeyCode::Char('?')));
+        assert_eq!(a.mode, Mode::Help, "? must open help from {mode:?}");
+        assert_eq!(
+            a.help.origin,
+            Some(mode),
+            "and the overlay must open at that mode's section"
+        );
+        assert_eq!(App::help_anchor_for(mode), Some(anchor));
+        // `?` closes it again, back where it came from.
+        a.on_key(KeyEvent::from(KeyCode::Char('?')));
+        assert_eq!(a.mode, mode);
+    }
+}
+
+#[test]
+fn question_mark_types_a_literal_question_mark_while_a_text_input_has_focus() {
+    // A `?` in the editor is a JDBC placeholder; in a filter it's a
+    // character to match on. Neither may pop the help overlay.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::from(KeyCode::Char('?')));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "?");
+
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = Grid {
+        columns: vec!["q".into()],
+        rows: vec![vec!["a?b".into()]],
+        truncated: false,
+    };
+    a.reset_grid_view();
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('/')));
+    assert_eq!(a.mode, Mode::GridFilter);
+    a.on_key(KeyEvent::from(KeyCode::Char('?')));
+    assert_eq!(a.mode, Mode::GridFilter, "still filtering");
+    assert_eq!(a.grid_view.filter.as_deref(), Some("?"));
+
+    // And not from the command bar either — `:help ?` would be typed
+    // there, not dispatched by the key.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    a.on_key(KeyEvent::from(KeyCode::Char('?')));
+    assert_eq!(a.mode, Mode::CommandBar);
+    assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("?"));
+}
