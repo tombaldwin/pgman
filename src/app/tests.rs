@@ -6396,6 +6396,34 @@ fn every_help_topic_closes_back_to_where_the_bar_was_opened_from() {
 }
 
 #[test]
+fn command_names_are_case_insensitive_all_the_way_through() {
+    // `:ABOUT` matched on the lowercased name and worked; everything
+    // delegated to the backslash parser was handed the RAW line, so
+    // `:DT` became `\DT` and came back "unknown command".
+    let mut upper = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut upper, "DT");
+    assert!(
+        upper.last_error.is_none(),
+        ":DT must be the same command as :dt, got {:?}",
+        upper.last_error
+    );
+    let mut lower = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut lower, "dt");
+    assert_eq!(upper.mode, lower.mode);
+    assert_eq!(upper.last_status, lower.last_status);
+
+    // The ARGUMENT keeps its case — paths and data-source names are
+    // case-sensitive even when the command name isn't.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    run_command(&mut a, "I /Tmp/Mixed-Case.sql");
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(
+        err.contains("/Tmp/Mixed-Case.sql"),
+        "the path must survive verbatim: {err:?}"
+    );
+}
+
+#[test]
 fn unknown_command_names_itself_and_points_at_help() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     run_command(&mut a, "foo");
