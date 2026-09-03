@@ -784,7 +784,8 @@ impl App {
             // is a no-op so an extra press from inside a closed overlay
             // is harmless.
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('?') => self.open_help_from(Mode::Normal),
+            // `?` is handled globally in `on_key` (every non-typing
+            // mode opens help on it), so there is no arm for it here.
             KeyCode::Char('e') | KeyCode::Char('i') | KeyCode::Tab => {
                 self.mode = Mode::Editor;
             }

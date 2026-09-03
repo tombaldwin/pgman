@@ -1509,6 +1509,22 @@ impl App {
             self.open_help_from(self.mode);
             return;
         }
+        // `?` is F1's twin — the key operators reach for first, and the
+        // one ebman binds globally. It works from every mode EXCEPT
+        // those taking literal text, where `?` is a character the
+        // operator meant to type (a `LIKE '%?%'` in the editor, a `?`
+        // in a filter). Help itself closes on `?`, handled by
+        // `on_help_key`.
+        if matches!(key.code, KeyCode::Char('?'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && self.mode != Mode::Help
+            && !self.mode.is_text_input()
+        {
+            self.open_help_from(self.mode);
+            return;
+        }
         // F2 expands the most-recent query failure into the rich
         // error overlay (severity / code / detail / hint / affected
         // schema/table/column/constraint). No-op when there's
