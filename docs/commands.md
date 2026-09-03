@@ -31,6 +31,9 @@ behaviour without being parsed as backslash text.
   (so `\c rep` reaches `reports (application)`). Several matches are
   listed rather than guessed. Discovered names contain spaces, so a name
   can also be given **double-quoted**: `\c "dataSource (application)"`.
+  An unquoted name with a space in it is an error rather than a guess —
+  `\c my db` says `\c takes one name — quote it if it has spaces` instead
+  of connecting to a database called `my`.
   If no entry matches, swaps `dbname` on the *current* DSN to `<name>`
   and reconnects. Errors if there's no active connection to swap and no
   matching entry.
