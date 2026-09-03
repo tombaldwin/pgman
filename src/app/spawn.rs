@@ -205,6 +205,20 @@ impl App {
             ));
             return true;
         }
+        // Belt and braces. Every discovery source is supposed to have
+        // marked its own placeholders above; this catches the one that
+        // didn't. It matters because an unmarked `${…}` is not inert:
+        // as a hostname it becomes a DNS lookup to whatever the
+        // resolver makes of the literal text, and as a password it
+        // goes on the wire.
+        if let Some((field, body)) = crate::app::dsn_placeholder_field(pick.dsn.as_ref()) {
+            self.last_error = Some(format!(
+                "${{{body}}} is still a literal placeholder in the {field} of '{}' — \
+                 export it, or put the connection in .pgman/pgman.toml",
+                pick.name
+            ));
+            return true;
+        }
         if pick.dsn.is_none() {
             // Belt and braces: discovery only keeps a DSN-less pick when
             // something above is also set, so this shouldn't be

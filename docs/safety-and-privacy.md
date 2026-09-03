@@ -157,7 +157,11 @@ turn one of your environment variables into a DNS lookup it controls.
 The two components a placeholder *is* resolved in — the username /
 password and the database name — additionally refuse any value that
 introduces a `?`, `&`, `/`, `@` or `=`, so a database name of
-`db?ssh_tunnel=x.evil.example` can't reach past its own component.
+`db?ssh_tunnel=x.evil.example` can't reach past its own component. All
+three discovered sources go through that same resolution — Spring,
+IntelliJ's `.idea/dataSources.xml` and `.pgman/pgman.toml` — and a
+`${…}` left in any connection-critical field (host, database, user,
+password, tunnel target, URL parameter) is refused rather than sent.
 A project's `[safety]` block can only *tighten* your personal
 `~/.config/pgman/safety.toml`, never relax it. And a discovered
 `ssh_tunnel` asks before pgman runs `ssh` with your keys, because that

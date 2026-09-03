@@ -205,16 +205,17 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("project root: {}", root.display());
             project_safety = project_cfg.safety;
             for c in &project_cfg.connections {
-                match project::connection_to_dsn(c) {
-                    Some(d) => {
-                        tracing::info!("  project connection '{}' → {}", c.name, d.redacted());
-                        data_source_picks.push(DataSourcePick {
-                            name: c.name.clone(),
-                            origin: "project",
-                            dsn: Some(d),
-                            unresolved: Vec::new(),
-                            unresolved_host: Vec::new(),
-                        });
+                match project_connection_pick(c) {
+                    Some(pick) => {
+                        tracing::info!(
+                            "  project connection '{}' → {}",
+                            pick.name,
+                            pick.dsn
+                                .as_ref()
+                                .map(|d| d.redacted())
+                                .unwrap_or_else(|| conn::redact_url(&c.url))
+                        );
+                        data_source_picks.push(pick);
                     }
                     None => tracing::warn!(
                         "  project connection '{}' has unparseable url '{}'; skipping",
@@ -648,14 +649,8 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     if let Ok(cwd) = std::env::current_dir() {
         if let Some((_, cfg)) = project::load_from(&cwd) {
             for c in &cfg.connections {
-                if let Some(d) = project::connection_to_dsn(c) {
-                    picks.push(DataSourcePick {
-                        name: c.name.clone(),
-                        origin: "project",
-                        dsn: Some(d),
-                        unresolved: Vec::new(),
-                        unresolved_host: Vec::new(),
-                    });
+                if let Some(pick) = project_connection_pick(c) {
+                    picks.push(pick);
                 }
             }
         }
@@ -695,6 +690,15 @@ fn batch_dsn_from_picks(picks: Vec<DataSourcePick>) -> Result<conn::Dsn, String>
             if let Some(name) = pick.unresolved.first() {
                 return Err(format!(
                     "unresolved placeholder ${{{name}}} — export it, or put the connection in .pgman/pgman.toml"
+                ));
+            }
+            // Same belt-and-braces the TUI applies, from the same
+            // helper, so batch can't accept a DSN the picker refuses.
+            if let Some((field, body)) = app::dsn_placeholder_field(pick.dsn.as_ref()) {
+                return Err(format!(
+                    "${{{body}}} is still a literal placeholder in the {field} of '{}' — \
+                     export it, or put the connection in .pgman/pgman.toml",
+                    pick.name
                 ));
             }
             let dsn = pick.dsn.ok_or_else(|| {
@@ -1079,7 +1083,16 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
     }
     for s in sources {
         let meta = local_meta.get(&s.uuid);
-        let dsns = creds::intellij::expand_to_dsns(&s, meta);
+        // `.idea/dataSources.xml` is committed like every other
+        // discovered file, so it gets the same `${…}` treatment a
+        // Spring pick gets: resolvable in the userinfo and the
+        // database name, never in the host / port / params, and
+        // marked-and-refused when a name isn't set. Before this, a
+        // `<jdbc-url>` carrying `${DB_PASSWORD}` was connectable and
+        // the literal text went on the wire.
+        let (resolved, meta_resolved, unresolved, unresolved_host) =
+            resolve_intellij_placeholders(&s, meta);
+        let dsns = creds::intellij::expand_to_dsns(&resolved, meta_resolved.as_ref());
         for (suffix, dsn) in dsns {
             let mut label = if s.name.is_empty() {
                 "(unnamed)".to_string()
@@ -1090,16 +1103,80 @@ fn discover_intellij_datasources(cwd: &std::path::Path, picks: &mut Vec<DataSour
                 // Multi-database disambiguation: "postgres@localhost (shop)"
                 label.push_str(&format!(" ({db})"));
             }
+            if !unresolved.is_empty() || !unresolved_host.is_empty() {
+                let list = unresolved
+                    .iter()
+                    .chain(unresolved_host.iter())
+                    .map(|n| format!("${{{n}}}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                label = format!("{label} — unresolved {list}");
+            }
             tracing::info!("  → pick {} = {}", label, dsn.redacted());
             picks.push(DataSourcePick {
                 name: label,
                 origin: "IntelliJ",
                 dsn: Some(dsn),
-                unresolved: Vec::new(),
-                unresolved_host: Vec::new(),
+                unresolved: unresolved.clone(),
+                unresolved_host: unresolved_host.clone(),
             });
         }
     }
+}
+
+/// Resolve the `${…}` placeholders in one IntelliJ data source and its
+/// per-user metadata, returning the resolved copies plus the bodies
+/// that couldn't (or mustn't) be resolved.
+///
+/// The JDBC URL goes through `creds::spring::resolve_url_placeholders`
+/// — the same host/port/params refusal and the same structural check
+/// the Spring path uses. The user names are plain values, so they
+/// resolve like any other Spring value. The database names from
+/// `dataSources.local.xml` are the DSN's path component, so they
+/// resolve too.
+#[allow(clippy::type_complexity)]
+fn resolve_intellij_placeholders(
+    source: &creds::intellij::IntellijDataSource,
+    meta: Option<&creds::intellij::IntellijLocalMeta>,
+) -> (
+    creds::intellij::IntellijDataSource,
+    Option<creds::intellij::IntellijLocalMeta>,
+    Vec<String>,
+    Vec<String>,
+) {
+    let mut unresolved = Vec::new();
+    let mut unresolved_host = Vec::new();
+    let mut resolved = source.clone();
+    if let Some(raw) = source.jdbc_url.as_deref() {
+        let url = creds::spring::resolve_url_placeholders(raw, |n| std::env::var(n).ok());
+        unresolved.extend(url.missing);
+        unresolved_host.extend(url.in_host);
+        resolved.jdbc_url = Some(url.value);
+    }
+    if let Some(u) = source.user.as_deref().filter(|u| !u.is_empty()) {
+        let (value, missing) = resolve_spring_value(u);
+        unresolved.extend(missing);
+        resolved.user = Some(value);
+    }
+    let meta_resolved = meta.map(|m| {
+        let mut out = m.clone();
+        if let Some(u) = m.user.as_deref().filter(|u| !u.is_empty()) {
+            let (value, missing) = resolve_spring_value(u);
+            unresolved.extend(missing);
+            out.user = Some(value);
+        }
+        out.databases = m
+            .databases
+            .iter()
+            .map(|d| {
+                let (value, missing) = resolve_spring_value(d);
+                unresolved.extend(missing);
+                value
+            })
+            .collect();
+        out
+    });
+    (resolved, meta_resolved, unresolved, unresolved_host)
 }
 
 /// Resolve `${NAME}` / `${NAME:default}` placeholders in a Spring
@@ -1114,6 +1191,57 @@ fn resolve_spring_value(value: &str) -> (String, Vec<String>) {
         Ok(resolved) => (resolved, Vec::new()),
         Err(missing) => (value.to_string(), missing),
     }
+}
+
+/// Turn one `.pgman/pgman.toml` `[[connections]]` entry into a pick,
+/// running it through the same `${…}` resolution and marking a Spring
+/// pick gets.
+///
+/// `.pgman/pgman.toml` is committed to the repo — every argument in
+/// `resolve_url_placeholders` about who chose the host applies here
+/// too, and until this existed a `url = "postgres://u:${PW}@h/db"`
+/// sailed past every check and went on the wire as the literal text
+/// `${PW}`. `ssh_tunnel` is not resolved at all: it names a machine
+/// pgman will run `ssh` to, so a placeholder there is host-tainting
+/// by the same rule that protects the URL's host.
+///
+/// `None` when the URL doesn't parse *and* there is nothing
+/// unresolved to explain — the caller logs and skips that, as before.
+fn project_connection_pick(c: &project::Connection) -> Option<DataSourcePick> {
+    let url = creds::spring::resolve_url_placeholders(&c.url, |n| std::env::var(n).ok());
+    let mut unresolved = url.missing;
+    let mut unresolved_host = url.in_host;
+    let mut resolved = c.clone();
+    resolved.url = url.value;
+    if let Some(u) = c.user.as_deref().filter(|u| !u.is_empty()) {
+        let (value, missing) = resolve_spring_value(u);
+        unresolved.extend(missing);
+        resolved.user = Some(value);
+    }
+    if let Some(t) = c.ssh_tunnel.as_deref().filter(|t| !t.is_empty()) {
+        unresolved_host.extend(creds::spring::placeholder_bodies(t));
+    }
+    let dsn = project::connection_to_dsn(&resolved);
+    if dsn.is_none() && unresolved.is_empty() && unresolved_host.is_empty() {
+        return None;
+    }
+    let mut name = c.name.clone();
+    if !unresolved.is_empty() || !unresolved_host.is_empty() {
+        let list = unresolved
+            .iter()
+            .chain(unresolved_host.iter())
+            .map(|n| format!("${{{n}}}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        name = format!("{name} — unresolved {list}");
+    }
+    Some(DataSourcePick {
+        name,
+        origin: "project",
+        dsn,
+        unresolved,
+        unresolved_host,
+    })
 }
 
 /// Scan `src/main/resources/application*.properties` for datasource
@@ -1583,6 +1711,84 @@ mod main_tests {
         std::fs::create_dir_all(&resources).unwrap();
         std::fs::write(resources.join("application.properties"), properties_body).unwrap();
         base
+    }
+
+    #[test]
+    fn intellij_password_placeholder_is_marked_not_sent_as_a_literal() {
+        // `.idea/dataSources.xml` is committed like every other
+        // discovered file. Its `${…}` used to be copied straight into
+        // the DSN, so `${PW}` went on the wire as the password.
+        let base = std::env::temp_dir().join(format!("pgman-main-idea-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(".idea")).unwrap();
+        std::fs::write(
+            base.join(".idea/dataSources.xml"),
+            "<project><component name=\"DataSourceManagerImpl\">\
+             <data-source name=\"shop\" uuid=\"u1\">\
+             <jdbc-url>jdbc:postgresql://svc:${PGMAN_TEST_MAIN_IDEA_PW}@db:5432/shop</jdbc-url>\
+             </data-source></component></project>",
+        )
+        .unwrap();
+        // Deliberately not set — this is the "unresolved" case.
+        let mut picks = Vec::new();
+        discover_intellij_datasources(&base, &mut picks);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(picks.len(), 1, "got: {picks:?}");
+        assert_eq!(
+            picks[0].unresolved,
+            vec!["PGMAN_TEST_MAIN_IDEA_PW".to_string()],
+            "the placeholder must be marked: {picks:?}"
+        );
+        assert!(
+            picks[0]
+                .name
+                .contains("unresolved ${PGMAN_TEST_MAIN_IDEA_PW}"),
+            "and named in the picker: {}",
+            picks[0].name
+        );
+        assert!(
+            app::dsn_placeholder_field(picks[0].dsn.as_ref()).is_some(),
+            "belt and braces: the DSN itself still reads as placeholder-carrying"
+        );
+    }
+
+    #[test]
+    fn project_connection_password_placeholder_is_marked_not_connectable() {
+        // `.pgman/pgman.toml` is committed too, and its URL used to go
+        // to `Dsn::parse` unresolved — a literal `${PW}` password.
+        let c = project::Connection {
+            name: "dev".into(),
+            url: "postgres://svc:${PGMAN_TEST_MAIN_TOML_PW}@db:5432/shop".into(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: None,
+        };
+        let pick = project_connection_pick(&c).expect("a marked pick, not a skip");
+        assert_eq!(pick.unresolved, vec!["PGMAN_TEST_MAIN_TOML_PW".to_string()]);
+        assert!(pick.name.contains("unresolved ${PGMAN_TEST_MAIN_TOML_PW}"));
+        assert!(
+            batch_dsn_from_picks(vec![pick]).is_err(),
+            "and batch must refuse it rather than send the literal text"
+        );
+    }
+
+    #[test]
+    fn project_connection_ssh_tunnel_placeholder_is_never_resolved() {
+        // The tunnel target is a machine pgman runs `ssh` to — the
+        // same host rule that protects the URL's host applies.
+        let c = project::Connection {
+            name: "bastioned".into(),
+            url: "postgres://svc@db:5432/shop".into(),
+            user: None,
+            password_env: None,
+            ssh_tunnel: Some("${PGMAN_TEST_MAIN_BASTION}.evil.example".into()),
+        };
+        let pick = project_connection_pick(&c).expect("a marked pick");
+        assert_eq!(
+            pick.unresolved_host,
+            vec!["PGMAN_TEST_MAIN_BASTION".to_string()]
+        );
     }
 
     #[test]
