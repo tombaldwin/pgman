@@ -144,10 +144,17 @@ pub enum ReportFormat {
 /// changes cleanly.
 pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
     let mut out = String::with_capacity(4096);
-    out.push_str(&format!("# {}\n\n", snapshot.title));
-    out.push_str(&format!("_generated at {}_\n\n", snapshot.generated_at));
+    // Escaped like every other value in the document. These three
+    // carry outside text too — the title can name a project, the
+    // connection is a redacted DSN with a host in it — and the HTML
+    // renderer has always escaped them.
+    out.push_str(&format!("# {}\n\n", md_escape(&snapshot.title)));
+    out.push_str(&format!(
+        "_generated at {}_\n\n",
+        md_escape(&snapshot.generated_at)
+    ));
     if let Some(conn) = &snapshot.connection {
-        out.push_str(&format!("**Connection:** `{conn}`\n\n"));
+        out.push_str(&format!("**Connection:** `{}`\n\n", md_escape(conn)));
     }
     // Summary block — gives the reader the gist before they
     // scroll. Always present; counts may all be zero on a
@@ -592,8 +599,20 @@ fn md_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
+            // `\` first in the reader's mind, though the match is
+            // per-char so order cannot matter: without it, `a\|b`
+            // escaped to `a\\|b`, where the `\\` is a literal
+            // backslash and the `|` goes back to splitting the cell.
+            '\\' => out.push_str("\\\\"),
             '|' => out.push_str("\\|"),
             '`' => out.push_str("\\`"),
+            // `[text](url)` renders as a link, and the URL can be a
+            // `javascript:` one — escaping `<`/`>` does not touch it.
+
+            // `[text](url)` renders as a link, and the URL can be a
+            // `javascript:` one — escaping `<`/`>` does not touch it.
+            '[' => out.push_str("\\["),
+            ']' => out.push_str("\\]"),
             // HTML-passthrough renderers would happily run
             // <script> from a cell. Substitute the HTML
             // entities — well-rendered everywhere we care
@@ -1019,6 +1038,56 @@ mod tests {
     }
 
     #[test]
+    fn md_escape_escapes_the_backslash_that_would_re_arm_a_pipe() {
+        // `a\|b` used to escape to `a\\|b`. A reader sees `\\` as one
+        // literal backslash, and the `|` after it is bare again — so
+        // the cell splits and the row shifts, which is the whole
+        // reason `|` is escaped in the first place.
+        assert_eq!(md_escape(r"a\|b"), r"a\\\|b");
+        assert_eq!(md_escape(r"C:\path"), r"C:\\path");
+    }
+
+    #[test]
+    fn md_escape_neutralises_link_syntax() {
+        // `<`/`>` escaping does nothing for `[text](url)`, which is a
+        // link in every Markdown renderer — and the URL can be a
+        // `javascript:` one.
+        assert_eq!(
+            md_escape("[click me](javascript:alert(1))"),
+            r"\[click me\](javascript:alert(1))"
+        );
+        // A reference-style link needs the brackets gone too.
+        assert_eq!(md_escape("[x]: http://evil"), r"\[x\]: http://evil");
+    }
+
+    #[test]
+    fn markdown_headers_are_escaped() {
+        // The title, timestamp and connection are outside text like
+        // every table cell — the HTML renderer has always escaped
+        // them; the Markdown one did not, so a `|`, a link, or a
+        // `<script>` in any of the three went through verbatim.
+        let mut snap = empty_snapshot();
+        snap.title = "Report [x](javascript:alert(1)) <script>".to_string();
+        snap.generated_at = "2026-01-01 | <b>now</b>".to_string();
+        snap.connection = Some("postgres://***@host/db?a=[b]".to_string());
+        let md = render_markdown(&snap);
+
+        assert!(
+            md.contains(r"# Report \[x\](javascript:alert(1)) &lt;script&gt;"),
+            "title not escaped: {md}"
+        );
+        assert!(
+            md.contains(r"_generated at 2026-01-01 \| &lt;b&gt;now&lt;/b&gt;_"),
+            "timestamp not escaped: {md}"
+        );
+        assert!(
+            md.contains(r"**Connection:** `postgres://***@host/db?a=\[b\]`"),
+            "connection not escaped: {md}"
+        );
+        assert!(!md.contains("<script>"), "raw HTML survived: {md}");
+    }
+
+    #[test]
     fn md_escape_leaves_normal_text_unchanged() {
         let s = "SELECT * FROM users WHERE id = ?";
         assert_eq!(md_escape(s), s);
@@ -1038,7 +1107,9 @@ mod tests {
         // sequence). A malicious `example_sql` / `fingerprint`
         // / `last_caller` from the JVM tap must not survive
         // into the exported file.
-        assert_eq!(md_escape("\x1b[31mred\x1b[0m"), "[31mred[0m");
+        // The `[` left behind by the dropped ESC is itself escaped
+        // now, so the remnant cannot start a Markdown link either.
+        assert_eq!(md_escape("\x1b[31mred\x1b[0m"), r"\[31mred\[0m");
         // BEL (\x07) — audible/visual bell, same "control
         // character from an untrusted source" class.
         assert_eq!(md_escape("ding\x07"), "ding");
