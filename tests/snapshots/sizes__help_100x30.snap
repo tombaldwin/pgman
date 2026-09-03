@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -24,7 +23,7 @@ expression: dump(&buf)
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │
 │              │     S             schema browser (psql `\d` equivalent)            │              │
-│              │ ↓ 253 more below                                                   │              │
+│              │ ↓ 254 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

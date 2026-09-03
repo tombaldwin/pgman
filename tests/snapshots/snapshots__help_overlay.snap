@@ -1,6 +1,5 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 223
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -83,7 +82,8 @@ expression: dump(&buf)
 │              │     ctrl-x         open the buffer in $EDITOR (\e)                 │              │
 │              │     ctrl-s         save the current buffer as a named saved query  │              │
 │              │     ctrl-o         open the saved-queries panel (load one in)      │              │
-│              │     ctrl-f         pg_format the buffer (requires pgformatter)     │              │
+│              │     ctrl-f         format the buffer (built-in; pg_format if       │              │
+│              │                    installed)                                      │              │
 │              │     ctrl-l / F8   parse buffer as log → pick a reconstructed query │              │
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
 │              │                   script                                           │              │
@@ -91,8 +91,7 @@ expression: dump(&buf)
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
 │              │     enter         insert newline                                   │              │
-│              │     ↑ ↓ ← →       move cursor (col remembered across lines)        │              │
-│              │ ↓ 197 more below                                                   │              │
+│              │ ↓ 198 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
