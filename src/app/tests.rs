@@ -4671,9 +4671,9 @@ fn f2_after_failure_opens_error_detail_with_rich_fields() {
     });
     a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
     assert_eq!(a.mode, Mode::ErrorDetail);
-    // Close → back to Normal.
+    // Close → back where F2 was pressed (the editor).
     a.on_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
-    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.mode, Mode::Editor);
 }
 
 #[test]
@@ -7549,6 +7549,39 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
     assert_eq!(a.editor.buffer, "select 1");
+}
+
+// ----- F2 error detail returns to where it was opened -----------------
+
+/// F2 from the editor, Esc: back in the editor, and the next key typed
+/// is text — not a Normal-mode hotkey.
+#[test]
+fn error_detail_closes_back_into_the_mode_it_was_opened_from() {
+    let mut a = editor_app();
+    a.editor.buffer = "select 1".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.last_error = Some("syntax error at or near \"1\"".into());
+    a.on_key(KeyEvent::from(KeyCode::F(2)));
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Editor, "Esc must return to the editor");
+    a.on_key(KeyEvent::from(KeyCode::Char('e')));
+    assert_eq!(a.editor.buffer, "select 1e", "the key went into the buffer");
+
+    // `q` and F2 close the same way; from Normal it stays Normal.
+    for close in [KeyCode::Char('q'), KeyCode::F(2)] {
+        let mut a = editor_app();
+        a.last_error = Some("boom".into());
+        a.on_key(KeyEvent::from(KeyCode::F(2)));
+        a.on_key(KeyEvent::from(close));
+        assert_eq!(a.mode, Mode::Editor);
+    }
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.last_error = Some("boom".into());
+    a.on_key(KeyEvent::from(KeyCode::F(2)));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Normal);
 }
 
 // ----- Quote / bracket autoclose: hand-typed SQL comes out as typed ----

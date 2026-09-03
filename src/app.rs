@@ -899,6 +899,9 @@ pub struct App {
     /// editor buffer and the operator has not typed over yet — the
     /// only ones typing the closer skips. See [`editor::AutoClosers`].
     pub auto_closers: editor::AutoClosers,
+    /// The mode F2 was pressed in; `Mode::ErrorDetail` closes back
+    /// into it. `None` outside the overlay.
+    pub error_detail_return_to: Option<Mode>,
     /// Past run statements, newest at the end.
     pub history: Vec<String>,
     /// Position in `history` while navigating with Ctrl-P/Ctrl-N. `None` =
@@ -1247,6 +1250,7 @@ impl App {
             timing_on: false,
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
+            error_detail_return_to: None,
             last_error_detail: None,
             pending_terminate: None,
             auto_refresh: false,
@@ -1698,6 +1702,11 @@ impl App {
         // nothing to show.
         if matches!(key.code, KeyCode::F(2)) && self.mode != Mode::ErrorDetail {
             if self.last_error_detail.is_some() || self.last_error.is_some() {
+                // Remember where F2 was pressed so closing the overlay
+                // lands back there — the way help does. Landing in
+                // Normal from the editor turned the next keys typed
+                // into hotkeys.
+                self.error_detail_return_to = Some(self.mode);
                 self.mode = Mode::ErrorDetail;
             } else {
                 self.last_status = Some("no error to expand".into());
