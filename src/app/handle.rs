@@ -262,11 +262,7 @@ impl App {
                         .sessions
                         .cursor
                         .min(self.sessions.rows.len().saturating_sub(1));
-                    self.last_status = Some(format!(
-                        "sessions · {} total · {} blocked",
-                        self.sessions.rows.len(),
-                        blocked
-                    ));
+                    self.last_status = Some(sessions_status(self.sessions.rows.len(), blocked));
                 }
                 Err(e) => {
                     tracing::warn!(

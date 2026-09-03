@@ -1258,3 +1258,22 @@ fn command_bar_tab_shows_the_candidates_beside_the_input() {
         "{footer:?}"
     );
 }
+
+/// `L` on a quiet server: the panel body and the footer both say
+/// "only this session" rather than `0 total · 0 blocked`, which read
+/// as a failed load.
+#[test]
+fn sessions_panel_on_a_quiet_server_says_only_this_session() {
+    let mut a = settle_app();
+    a.mode = Mode::Sessions;
+    // The state `SessionsLoaded { result: Ok(vec![]) }` leaves behind
+    // (the handler itself is covered in the unit tests).
+    a.sessions.rows = Vec::new();
+    a.last_status = Some(pgman::app::sessions_status(0, 0));
+    let text = dump(&render(&mut a, 120, 30));
+    assert!(
+        text.matches("only this session").count() >= 2,
+        "expected the phrase in the panel body and the footer:\n{text}"
+    );
+    assert!(!text.contains("0 total"), "{text}");
+}

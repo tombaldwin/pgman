@@ -7557,6 +7557,46 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     assert_eq!(a.editor.buffer, "select 1");
 }
 
+// ----- A quiet server is "only this session", not "0 total" -----------
+
+#[test]
+fn sessions_status_says_only_this_session_when_nothing_else_is_connected() {
+    assert_eq!(sessions_status(0, 0), "sessions · only this session");
+    assert_eq!(sessions_status(0, 0), SESSIONS_ONLY_THIS_SESSION);
+    assert_eq!(sessions_status(3, 1), "sessions · 3 total · 1 blocked");
+    assert_eq!(sessions_status(1, 0), "sessions · 1 total · 0 blocked");
+}
+
+#[test]
+fn sessions_loaded_with_no_other_backend_reports_only_this_session() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Sessions;
+    a.generation = 1;
+    a.on_msg(AppMsg::SessionsLoaded {
+        generation: 1,
+        result: Ok(Vec::new()),
+    });
+    assert_eq!(a.mode, Mode::Sessions, "the panel stays open");
+    assert_eq!(a.last_status.as_deref(), Some(SESSIONS_ONLY_THIS_SESSION));
+    a.on_msg(AppMsg::SessionsLoaded {
+        generation: 1,
+        result: Ok(vec![crate::query::sessions::SessionRow {
+            pid: 4242,
+            user: "app".into(),
+            application: "svc".into(),
+            state: "active".into(),
+            wait_event: None,
+            blocked_by: String::new(),
+            query: "SELECT 1".into(),
+            age_secs: 0.5,
+        }]),
+    });
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("sessions · 1 total · 0 blocked")
+    );
+}
+
 // ----- `:` then Tab lists every command where it can be seen ----------
 
 #[test]
