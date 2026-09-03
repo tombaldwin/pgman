@@ -2660,6 +2660,14 @@ impl App {
             self.dispatch_backslash(cmd);
             return;
         }
+        // One execution at a time. A second F5 while the first is in
+        // flight used to pipeline a second run on the same client — an
+        // INSERT pressed twice ran twice. Ctrl-C is the way to get the
+        // client back.
+        if self.query_running {
+            self.last_status = Some("a query is already running · ctrl-c cancels it".into());
+            return;
+        }
         // `--demo` never has a real client — but a statement typed or
         // pasted there should still go through the exact same guard,
         // batch-split, and pending-confirm machinery a live session
