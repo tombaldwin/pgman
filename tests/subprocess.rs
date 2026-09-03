@@ -8,12 +8,79 @@
 //! scripts. They live under `tests/` rather than a build script so
 //! they're inspectable and easy to update without touching Cargo.
 
-use pgman::app::{external_edit_via, pg_format_via};
+use pgman::app::{external_edit_via, find_on_path_in, pg_format_via, App};
 
 /// Absolute path to one of the `tests/bin/*` stub binaries.
 fn stub(name: &str) -> String {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     format!("{manifest_dir}/tests/bin/{name}")
+}
+
+/// The `tests/bin/` directory itself, as a one-entry `PATH`.
+fn stub_dir() -> std::ffi::OsString {
+    format!("{}/tests/bin", env!("CARGO_MANIFEST_DIR")).into()
+}
+
+fn editor_app(buffer: &str) -> App {
+    let mut a = App::new(
+        pgman::theme::Theme::default(),
+        None,
+        Vec::new(),
+        pgman::safety::SafetyConfig::default(),
+    );
+    a.editor.buffer = buffer.to_string();
+    a.editor.cursor = a.editor.buffer.len();
+    a
+}
+
+/// Ctrl-F with a `pg_format` on the given PATH: the real subprocess
+/// runs (the stub is a shell script that has to be spawned), and the
+/// status names it. The stub is copied to a throwaway directory under
+/// the name the lookup wants, `pg_format`.
+#[test]
+fn reformat_uses_pg_format_when_it_is_on_path() {
+    let dir = std::env::temp_dir().join(format!("pgman-pgfmt-sub-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(stub("fake_pg_format"), dir.join("pg_format")).unwrap();
+    let mut a = editor_app("select 1");
+    a.reformat_buffer_with_path(Some(dir.as_os_str()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(a.editor.buffer, "-- FORMATTED BY FAKE PG_FORMAT\nselect 1");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.starts_with("formatted via pg_format"),
+        "got: {status:?}"
+    );
+}
+
+/// Same buffer, `pg_format` not on PATH: the built-in formatter runs
+/// and the status says so. No error — the operator is not told to
+/// install anything.
+#[test]
+fn reformat_falls_back_to_built_in_when_pg_format_is_absent() {
+    let mut a = editor_app("select 1");
+    let empty: std::ffi::OsString = std::env::temp_dir().into();
+    a.reformat_buffer_with_path(Some(&empty));
+    assert_eq!(a.editor.buffer, "SELECT\n  1");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.starts_with("formatted (built-in)"),
+        "got: {status:?}"
+    );
+    assert!(a.last_error.is_none(), "last_error = {:?}", a.last_error);
+    // And with no PATH at all.
+    let mut a = editor_app("select 1");
+    a.reformat_buffer_with_path(None);
+    assert_eq!(a.editor.buffer, "SELECT\n  1");
+}
+
+#[test]
+fn find_on_path_in_resolves_the_stub_only_where_it_lives() {
+    let found = find_on_path_in("fake_pg_format", &stub_dir()).expect("stub on PATH");
+    assert_eq!(found.to_string_lossy(), stub("fake_pg_format"));
+    let empty: std::ffi::OsString = std::env::temp_dir().into();
+    assert!(find_on_path_in("fake_pg_format", &empty).is_none());
 }
 
 /// Serializes every test in this file that calls `external_edit_via`.

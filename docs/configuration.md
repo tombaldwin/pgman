@@ -105,6 +105,11 @@ ssh_tunnel = "tom@bastion.example.com"  # asks for confirmation before use
 [safety.databases.production]
 read_only = true
 statement_timeout_ms = 5000
+
+# How Ctrl-F lays a statement out (see below).
+[editor]
+indent = 2          # spaces per level, 1–16; also what Enter auto-indents by
+keywords = "upper"  # "upper" | "lower" | "preserve"
 ```
 
 Each field takes the stricter of the personal and project value:
@@ -113,6 +118,13 @@ smaller non-zero value, guards take the stricter of allow < confirm <
 block. A `[safety]` block is a *complete* profile — any field it omits
 reverts to pgman's own strict default, not your personal one. `--batch`
 applies the same merge.
+
+`[editor]` has exactly those two knobs. Formatting happens only when
+you press `Ctrl-F` — never on run, never on paste — and uses `pg_format`
+when it is on `PATH` (which ignores these knobs), the built-in formatter
+otherwise. A buffer with a dollar-quoted body (`$$ … $$`) is refused
+rather than reflowed; string literals, quoted names and comments always
+come back byte-for-byte.
 
 ## Discovery order and precedence
 

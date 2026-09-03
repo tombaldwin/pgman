@@ -141,9 +141,9 @@ impl App {
             // open auto_tx — watch would otherwise pile up runs on
             // a paused session.
             KeyCode::Char('w') if ctrl => self.start_watch(),
-            // Ctrl-F → pretty-print the buffer via `pg_format`.
-            // Errors when pg_format isn't installed and points the
-            // operator at the install command for their OS.
+            // Ctrl-F → pretty-print the buffer: `pg_format` when it
+            // is on PATH, the built-in formatter otherwise. The only
+            // key that formats — never run, never paste.
             KeyCode::Char('f') if ctrl => self.reformat_buffer(),
             // Ctrl-X → `\e` external editor. Sets a flag so the main
             // `run()` loop can do the suspend / spawn / resume dance
