@@ -190,7 +190,11 @@ midnight does not leave the new log at the umask default; the config/data/cache 
 themselves (`~/.config/pgman/`, `~/.local/share/pgman/`,
 `~/.cache/pgman/`) are `0700`, and pgman repairs that mode on every
 startup even if the directory already existed looser (an old pgman
-version, a backup restore, a stale umask). That's a floor, not a
+version, a backup restore, a stale umask) — unless the path is a
+**symlink**, in which case pgman leaves the mode alone entirely
+rather than following the link and re-permissioning a directory it
+does not own; if you point `~/.cache/pgman` at a shared volume, its
+mode stays yours to set. That's a floor, not a
 substitute for filesystem hygiene: if your `~` itself isn't otherwise
 locked down (shared account, backup that preserves world-readable
 ACLs, etc.), still treat the files above as no more private than a

@@ -86,11 +86,30 @@ pub fn create_dir_all_private(dir: &Path) -> io::Result<()> {
 /// one is left untouched by a plain recursive create. Every place
 /// pgman first touches `config_dir()` / `data_dir()` / `cache_dir()`
 /// (or a subdirectory under them) should go through this instead.
+///
+/// **A symlink is never repaired.** `set_permissions` follows links,
+/// so when `dir` is one — an operator who symlinked
+/// `~/.cache/pgman` onto a shared volume, say — the repair landed on
+/// the *target*, silently tightening a directory pgman does not own to
+/// `0700`. Doing nothing is right in both directions: pgman must not
+/// re-mode someone else's directory, and it cannot assert privacy over
+/// a path whose target it doesn't control. Creating and writing still
+/// work; the mode is the operator's to answer for.
 pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
     create_dir_all_private(dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        // `symlink_metadata`, not `metadata`: the latter follows the
+        // link and would report the target's type, which is exactly
+        // the case being avoided.
+        if std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+            tracing::debug!(
+                "not repairing the mode of {}: it is a symlink, and its target is not pgman's to chmod",
+                dir.display()
+            );
+            return Ok(());
+        }
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
@@ -381,6 +400,46 @@ mod tests {
         assert_eq!(mode, 0o700, "dir mode was {mode:o}, want 0700");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_never_chmods_through_a_symlink() {
+        // The reproduction: with `~/.cache/pgman` symlinked onto a
+        // shared 0777 directory, startup's repair followed the link
+        // and chmodded the *target* to 0700 — pgman silently
+        // re-permissioning a directory it does not own.
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "pgman-util-ensure-private-symlink-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("shared");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let link = root.join("pgman");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        ensure_private_dir(&link).expect("must not fail on a symlinked directory");
+
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o777,
+            "the symlink target must not be re-moded; got {mode:o}"
+        );
+        // The link itself is still a link — nothing replaced it.
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        // And writing through it still works, which is the point of
+        // not failing outright.
+        std::fs::write(link.join("probe"), b"ok").expect("writes still work");
+        assert!(target.join("probe").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ---- XDG overrides ----
