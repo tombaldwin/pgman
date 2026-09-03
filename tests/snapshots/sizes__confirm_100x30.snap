@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -13,14 +14,14 @@ expression: dump(&buf)
 │id  email                  plan  created_at                                                       │
 │1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
 │2   linus@example.com      free  2026-01-09 14:48:00+00                                           │
-│3   grace@example.co┌ confirm ──────────────────────────────────────────────┐                     │
-│4   alan@example.com│run (DELETE without WHERE) · will wrap in transaction  │                     │
-│5   edsger@example.c│                                                       │                     │
-│6   katherine@exampl│DELETE FROM orders                                     │                     │
-│                    │                                                       │                     │
-│                    │y = run · n / esc = cancel                             │                     │
-│                    └───────────────────────────────────────────────────────┘                     │
-│                                                                                                  │
+│3   grace@exam┌ confirm ───────────────────────────────────────────────────────────┐              │
+│4   alan@examp│run (DELETE without WHERE) · will be refused — this session is      │              │
+│5   edsger@exa│read-only                                                           │              │
+│6   katherine@│                                                                    │              │
+│              │DELETE FROM orders                                                  │              │
+│              │                                                                    │              │
+│              │y = run · n / esc = cancel                                          │              │
+│              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

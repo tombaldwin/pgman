@@ -6674,10 +6674,13 @@ fn the_editor_blocks_every_lift_of_the_read_only_floor_without_a_prompt() {
     ] {
         a.last_error = None;
         run_in_demo(&mut a, sql);
-        assert_eq!(
-            a.last_error.as_deref(),
-            Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL),
-            "{sql}"
+        // Which of the two refusal texts appears depends on whether the
+        // machine running the test has a `safety.toml`; either is the
+        // read-only-escape refusal (see `read_only_escape_refusal`).
+        let err = a.last_error.clone().unwrap_or_default();
+        assert!(
+            err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+            "{sql}: {err}"
         );
         assert!(a.pending_run.is_none(), "{sql}: a block never prompts");
         assert_ne!(a.mode, Mode::Confirm, "{sql}");
@@ -6697,9 +6700,10 @@ fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     );
     run_command(&mut a, "readonly off");
     assert!(a.read_only, "the flag must not move");
-    assert_eq!(
-        a.last_error.as_deref(),
-        Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL)
+    let err = a.last_error.clone().unwrap_or_default();
+    assert!(
+        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        "{err}"
     );
 }
 
@@ -7549,6 +7553,39 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
     assert_eq!(a.editor.buffer, "select 1");
+}
+
+// ----- read-only refusal names a file only when there is one ----------
+
+#[test]
+fn read_only_escape_refusal_blames_the_file_only_when_it_exists() {
+    assert_eq!(
+        read_only_escape_refusal(true),
+        crate::safety::READ_ONLY_ESCAPE_REFUSAL
+    );
+    assert_eq!(
+        read_only_escape_refusal(false),
+        "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database"
+    );
+    assert!(!read_only_escape_refusal(false).contains("by safety.toml"));
+}
+
+/// `:readonly off` under a read-only profile is refused with one of
+/// the two forms — which one depends on the config dir of the machine
+/// running the test, so only the pure chooser above pins the text.
+#[test]
+fn readonly_off_under_a_read_only_profile_is_refused_with_a_next_step() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char(':')));
+    type_str(&mut a, "readonly off");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let err = a.last_error.clone().unwrap_or_default();
+    assert!(
+        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        "{err}"
+    );
+    assert!(a.read_only, "the setting did not change");
 }
 
 // ----- F2 error detail returns to where it was opened -----------------

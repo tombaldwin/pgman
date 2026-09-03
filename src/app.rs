@@ -47,12 +47,34 @@ const BOOTSTRAP_SQL: &str = "select datname as database, \
 /// wrong line of `safety.toml`.
 pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
     if decision.read_only_escape {
-        return safety::READ_ONLY_ESCAPE_REFUSAL.to_string();
+        return read_only_escape_refusal(safety_toml_exists());
     }
     format!(
         "blocked by safety: {} on '{db}' · change the guard in safety.toml to allow it",
         decision.kind.describe()
     )
+}
+
+/// The refusal for turning read-only off from inside the session
+/// (`:readonly off`, `SET default_transaction_read_only = off`, …).
+/// With a `safety.toml` on disk the profile is the operator's own and
+/// the file is where to change it ([`safety::READ_ONLY_ESCAPE_REFUSAL`]).
+/// Without one, read-only is the built-in default — blaming a file
+/// that does not exist sent the operator looking for it; say instead
+/// how to get one. Pure / testable.
+pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
+    if safety_toml_exists {
+        safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
+    } else {
+        "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database".to_string()
+    }
+}
+
+/// Is there a `safety.toml` in the config dir? Decides which
+/// [`read_only_escape_refusal`] to show; checked at message time
+/// because the profile itself does not record where it came from.
+fn safety_toml_exists() -> bool {
+    crate::util::config_file("safety.toml").exists()
 }
 
 /// Parse `BOOTSTRAP_SQL`'s result grid (`database`, `size` columns) into
@@ -2847,7 +2869,7 @@ impl App {
                 // A script that opens by turning read-only off gets told so:
                 // the per-kind summary would blame the wrong statement.
                 self.last_error = Some(if synthesized.read_only_escape {
-                    safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
+                    read_only_escape_refusal(safety_toml_exists())
                 } else {
                     format!("batch blocked by safety: {summary}")
                 });

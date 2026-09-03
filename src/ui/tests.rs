@@ -665,6 +665,26 @@ fn end_ellipsis_never_overruns_a_cjk_budget() {
     assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
 }
 
+// ----- Confirm card: no transaction promised on a read-only session ----
+
+#[test]
+fn confirm_wrap_note_says_refused_under_read_only_instead_of_wrapping() {
+    use super::panels::confirm_wrap_note;
+    assert_eq!(
+        confirm_wrap_note(true, true),
+        " · will be refused — this session is read-only"
+    );
+    assert_eq!(
+        confirm_wrap_note(true, false),
+        " · will be refused — this session is read-only"
+    );
+    assert_eq!(
+        confirm_wrap_note(false, true),
+        " · will wrap in transaction"
+    );
+    assert_eq!(confirm_wrap_note(false, false), "");
+}
+
 // ----- Fitter termination (the read-only refusal hang) -------------------
 
 /// The exact message a guarded `DELETE` produced under the default

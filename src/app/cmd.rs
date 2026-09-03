@@ -337,7 +337,7 @@ impl App {
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
         if !want && self.safety_config.profile_for(db).read_only {
-            self.last_error = Some(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
+            self.last_error = Some(read_only_escape_refusal(safety_toml_exists()));
             return;
         }
         self.read_only = want;

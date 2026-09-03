@@ -151,6 +151,20 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// The confirm card's note on what happens after `y`. A write under a
+/// read-only session is not going to be wrapped in anything — Postgres
+/// refuses it (`default_transaction_read_only = on`) — so promising a
+/// transaction there was the wrong thing to confirm. Pure / testable.
+pub(crate) fn confirm_wrap_note(read_only: bool, wrap_in_tx: bool) -> &'static str {
+    if read_only {
+        " · will be refused — this session is read-only"
+    } else if wrap_in_tx {
+        " · will wrap in transaction"
+    } else {
+        ""
+    }
+}
+
 /// Modal for a guarded run. Shows the statement, the safety classification,
 /// and asks y/n.
 pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
@@ -162,11 +176,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
         Some(s) => s.clone(),
         None => pending.decision.kind.describe(),
     };
-    let wrap_note = if pending.decision.wrap_in_tx {
-        " · will wrap in transaction"
-    } else {
-        ""
-    };
+    let wrap_note = confirm_wrap_note(app.read_only, pending.decision.wrap_in_tx);
     // For batch runs the SQL can be long — show the first 8 lines and an
     // ellipsis. Single statements show as-is.
     let sql_preview = if pending.is_batch {
