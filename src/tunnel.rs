@@ -178,19 +178,19 @@ impl SshTunnel {
             Some(u) => format!("{u}@{}", spec.host),
             None => spec.host.clone(),
         };
+        let args = build_ssh_args(spec, &forward, &bastion);
+        // The argv verbatim — options, the forward, `--`, the bastion.
+        // Nothing in it is a credential (BatchMode means keys / agent
+        // only), so logging it whole is the honest record of what ran,
+        // `--` included.
+        tracing::info!("opening SSH tunnel: ssh {}", args.join(" "));
         let mut cmd = Command::new("ssh");
-        cmd.args(build_ssh_args(spec, &forward, &bastion));
+        cmd.args(&args);
         // Keep stdin closed so ssh doesn't try to interact; capture stderr
         // for the failure diagnostic; ignore stdout (ssh -N is silent).
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        tracing::info!(
-            "opening SSH tunnel: ssh {} (-L {forward})",
-            // log the bastion target only — no creds involved (we never
-            // pass passwords; BatchMode requires keys / agent).
-            bastion
-        );
         let child = cmd
             .spawn()
             .map_err(|e| format!("failed to spawn ssh: {e}"))?;
@@ -464,6 +464,59 @@ mod tests {
     }
 
     // --- ssh argv hardening -------------------------------------------------
+
+    #[test]
+    fn ssh_argv_shape_is_pinned_exactly() {
+        // The whole argv, in order: every `-o` and the `-p` / `-L` before
+        // the `--`, the `--` immediately before the destination, nothing
+        // after it. An option after the destination would be a hostname
+        // to ssh, and a destination starting with `-` without the `--`
+        // would be an option — so the shape is the guard, and it is
+        // pinned as a whole.
+        let spec = SshTunnelSpec::parse("tom@bastion:2222").unwrap();
+        assert_eq!(
+            super::build_ssh_args(&spec, "127.0.0.1:5555:db.internal:5432", "tom@bastion"),
+            [
+                "-N",
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-p",
+                "2222",
+                "-L",
+                "127.0.0.1:5555:db.internal:5432",
+                "--",
+                "tom@bastion",
+            ]
+        );
+        // No port: no `-p` pair, everything else identical.
+        let spec = SshTunnelSpec::parse("bastion").unwrap();
+        assert_eq!(
+            super::build_ssh_args(&spec, "fwd", "bastion"),
+            [
+                "-N",
+                "-T",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "ServerAliveCountMax=3",
+                "-L",
+                "fwd",
+                "--",
+                "bastion",
+            ]
+        );
+    }
 
     #[test]
     fn ssh_args_put_double_dash_immediately_before_the_destination() {
