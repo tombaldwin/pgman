@@ -935,6 +935,11 @@ pub struct CommandBarUi {
     /// Mode to return to on Esc / after a command that doesn't
     /// change the mode itself.
     pub origin: Mode,
+    /// Set when opening the bar cancelled a pending guarded run (`:`
+    /// pressed over `Mode::Confirm`). Both close paths clear the
+    /// status line, so without this the "cancelled" notice set at
+    /// open would be wiped before the operator ever saw it.
+    pub cancelled_run: bool,
 }
 
 /// Connection-picker state — the candidate data sources surfaced at

@@ -147,10 +147,31 @@ impl App {
     /// Open the `:` command bar over the current mode. The mode we
     /// came from is remembered so Esc (and any command that doesn't
     /// change the mode itself) puts the operator back where they were.
+    ///
+    /// Opening the bar over the guarded-run confirmation *cancels*
+    /// that run. `:` is not one of the modal's keys, so the statement
+    /// was never confirmed — but `pending_run` used to survive
+    /// anyway, and it is a `\watch` blocker
+    /// (`watch_should_fire`): F5 on a DELETE, `:about`, Esc, and
+    /// `\watch` then refused to fire for the rest of the session with
+    /// no visible modal to explain why. Cancelling matches the `n` /
+    /// Esc path, down to the status text and the return to the
+    /// editor.
     pub(super) fn open_command_bar(&mut self) {
+        let mut origin = self.mode;
+        let cancelled_run = origin == Mode::Confirm;
+        if cancelled_run {
+            self.pending_run = None;
+            self.last_status = Some("cancelled".to_string());
+            // Esc out of the bar must not land back on a modal with
+            // nothing behind it — `draw_confirm` renders nothing
+            // without a `pending_run`, and its y/n would no-op.
+            origin = Mode::Editor;
+        }
         self.command_bar = Some(CommandBarUi {
             input: TextInput::new(),
-            origin: self.mode,
+            origin,
+            cancelled_run,
         });
         self.mode = Mode::CommandBar;
     }

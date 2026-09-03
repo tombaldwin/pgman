@@ -70,7 +70,8 @@ the editor and in filters) opens a one-line prompt in the footer. `Enter`
 runs, `Esc` cancels back to where you were, `Tab` completes the command name
 — a unique name fills in whole, several are listed in the status line. The
 editor buffer is never touched: unlike the backslash form, the command isn't
-the buffer.
+the buffer. Opening the bar over a guarded-run confirmation cancels that run
+(the statement was never confirmed) and says `cancelled` once the bar closes.
 
 | Command | `\` equivalent | What it does |
 |---|---|---|

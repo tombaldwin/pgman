@@ -284,7 +284,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.mode = bar.origin;
-                self.last_status = None;
+                self.last_status = self.command_bar_close_status(&bar);
             }
             KeyCode::Enter => {
                 let line = bar.input.trimmed().to_string();
@@ -293,7 +293,9 @@ impl App {
                 // that doesn't (`:timing on`) leaves the operator
                 // where they were.
                 self.mode = bar.origin;
-                self.last_status = None;
+                // Set BEFORE dispatch so a command with something to
+                // say still overwrites it.
+                self.last_status = self.command_bar_close_status(&bar);
                 self.last_error = None;
                 self.dispatch_command(&line);
             }
@@ -306,6 +308,16 @@ impl App {
                 self.command_bar = Some(bar);
             }
         }
+    }
+
+    /// What the status line should say once the `:` bar closes.
+    /// Normally nothing — the bar occupied the footer, and whatever
+    /// was there before it is stale. The exception is a bar that
+    /// cancelled a guarded run on the way in
+    /// (`App::open_command_bar`): that notice has to outlive the bar
+    /// or the operator never sees it.
+    fn command_bar_close_status(&self, bar: &CommandBarUi) -> Option<String> {
+        bar.cancelled_run.then(|| "cancelled".to_string())
     }
 
     /// Tab in the command bar: complete the command NAME against the
