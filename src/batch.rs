@@ -287,11 +287,27 @@ fn push_delim_row(buf: &mut String, fields: &[String], delim: char, csv_quote: b
     buf.push('\n');
 }
 
+/// `false` for a control character that has no place in a rendered
+/// cell. `\t`, `\n` and `\r` are excluded because both formats already
+/// have rules for them (CSV quotes the field, TSV escapes them);
+/// everything else — ESC, BEL, NUL, the rest of C0 and C1 — is dropped.
+///
+/// Cell values are database content, and `pgman --batch --format csv`
+/// is written to be piped or `cat`ed. An ESC that survives into stdout
+/// is a terminal-escape-sequence injection at that point, exactly as it
+/// would be in a `\report` export — `report::md_escape` has dropped
+/// these since the same review; CSV and TSV had not caught up.
+fn is_renderable(c: char) -> bool {
+    !c.is_control() || matches!(c, '\t' | '\n' | '\r')
+}
+
 fn push_csv_field(buf: &mut String, field: &str) {
+    // Unchanged: none of the characters that force quoting are ones
+    // `is_renderable` drops, so stripping cannot change this answer.
     let needs_quote = field.chars().any(|c| matches!(c, ',' | '"' | '\n' | '\r'));
     if needs_quote {
         buf.push('"');
-        for c in field.chars() {
+        for c in field.chars().filter(|c| is_renderable(*c)) {
             if c == '"' {
                 buf.push_str("\"\"");
             } else {
@@ -300,7 +316,7 @@ fn push_csv_field(buf: &mut String, field: &str) {
         }
         buf.push('"');
     } else {
-        buf.push_str(field);
+        buf.extend(field.chars().filter(|c| is_renderable(*c)));
     }
 }
 
@@ -311,6 +327,9 @@ fn push_tsv_field(buf: &mut String, field: &str) {
             '\n' => buf.push_str("\\n"),
             '\r' => buf.push_str("\\r"),
             '\\' => buf.push_str("\\\\"),
+            // After the three above, every remaining control
+            // character is dropped rather than rendered.
+            _ if c.is_control() => {}
             _ => buf.push(c),
         }
     }
@@ -575,6 +594,38 @@ mod tests {
         let g = grid(&["a", "b"], &[&["x\ty", "z\nw"], &["back\\slash", "ok"]]);
         let out = format_tsv(&g);
         assert_eq!(out, "a\tb\nx\\ty\tz\\nw\nback\\\\slash\tok\n");
+    }
+
+    #[test]
+    fn csv_and_tsv_strip_terminal_escape_sequences() {
+        // A cell is database content, and `--format csv` is written to
+        // be piped or `cat`ed. `\x1b]0;x\x07` is an OSC sequence that
+        // retitles the terminal; anything else in C0/C1 is the same
+        // class of problem. The three the formats already have rules
+        // for (`\t`, `\n`, `\r`) keep them.
+        let g = grid(
+            &["id", "note"],
+            &[
+                &["1", "before\x1b]0;pwned\x07after"],
+                &["2", "nul\0bel\x07"],
+                // Still quoted, and the ESC inside it still goes.
+                &["3", "a,\x1bb"],
+            ],
+        );
+        let csv = format_csv(&g);
+        assert_eq!(csv, "id,note\n1,before]0;pwnedafter\n2,nulbel\n3,\"a,b\"\n");
+        assert!(!csv.contains('\x1b'), "ESC survived: {csv:?}");
+        assert!(!csv.contains('\x07'), "BEL survived: {csv:?}");
+
+        let tsv = format_tsv(&g);
+        assert!(!tsv.contains('\x1b'), "ESC survived: {tsv:?}");
+        assert!(!tsv.contains('\x07'), "BEL survived: {tsv:?}");
+        assert!(!tsv.contains('\0'), "NUL survived: {tsv:?}");
+
+        // The three with existing rules are untouched by the strip.
+        let keep = grid(&["a"], &[&["x\ty\nz\r"]]);
+        assert_eq!(format_tsv(&keep), "a\nx\\ty\\nz\\r\n");
+        assert_eq!(format_csv(&keep), "a\n\"x\ty\nz\r\"\n");
     }
 
     #[test]
