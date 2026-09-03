@@ -457,3 +457,24 @@ fn batch_refuses_to_turn_the_read_only_session_writable() {
         );
     }
 }
+
+#[test]
+fn batch_connect_failure_carries_the_same_hint_the_tui_shows() {
+    // `--dsn` with a deliberately wrong password. The docker-compose
+    // Postgres sets POSTGRES_PASSWORD, so host connections require
+    // scram/md5 auth — a wrong password genuinely fails rather than
+    // silently succeeding.
+    let wrong =
+        "postgres://pgman_test:definitely-the-wrong-password@127.0.0.1:55432/pgman_test?sslmode=disable";
+    let out = Command::new(pgman_binary())
+        .args(["--batch", "--dsn", wrong, "--sql", "SELECT 1"])
+        .output()
+        .expect("spawn pgman");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.starts_with("connect failed:"), "got: {stderr}");
+    assert!(
+        stderr.contains("hint: wrong password"),
+        "the batch path should carry the same hint conn::connect_hint gives the TUI: {stderr}"
+    );
+}
