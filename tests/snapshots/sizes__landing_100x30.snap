@@ -1,11 +1,14 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                                      │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌ start ───────────────────────────────────────────────────────────────────────────────────────────┐
 │ connected to shop on localhost:5432 · pg 16.2 · RO                                               │
@@ -19,10 +22,6 @@ expression: dump(&buf)
 │ recent                                                                                           │
 │   SELECT * FROM users WHERE id = 42;                                                             │
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                                          │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  W┌ JDBC tap — 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · … ───┐   │
 │  O│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                       │   │
-└───│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                  │───┘
-┌ re│                                                                                          │───┐
-│id │no changes since baseline — nothing new, no regressions, no disappearances.               │   │
+│   │current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                  │   │
+└───│                                                                                          │───┘
+┌ re│no changes since baseline — nothing new, no regressions, no disappearances.               │───┐
+│id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
 │3  │                                                                                          │   │
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

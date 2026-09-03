@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
 │  ORDE┌ error detail — F2 / esc / q close ────────────────────────────────────────────────┐       │
-└──────│ ERROR · SQLSTATE 23505                                                            │───────┘
-┌ resul│                                                                                   │───────┐
-│id  em│    message: duplicate key value violates unique constraint "users_email_key"      │       │
-│1   ad│     detail: Key (email)=(ada@example.com) already exists.                         │       │
-│2   li│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"       │       │
-│3   gr│                                                                                   │       │
-│4   al│affected object:                                                                   │       │
-│5   ed│     schema: public                                                                │       │
-│6   ka│      table: users                                                                 │       │
-│      │ constraint: users_email_key                                                       │       │
+│      │ ERROR · SQLSTATE 23505                                                            │       │
+└──────│                                                                                   │───────┘
+┌ resul│    message: duplicate key value violates unique constraint "users_email_key"      │───────┐
+│id  em│     detail: Key (email)=(ada@example.com) already exists.                         │       │
+│1   ad│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"       │       │
+│2   li│                                                                                   │       │
+│3   gr│affected object:                                                                   │       │
+│4   al│     schema: public                                                                │       │
+│5   ed│      table: users                                                                 │       │
+│6   ka│ constraint: users_email_key                                                       │       │
 │      │                                                                                   │       │
 │      │                                                                                   │       │
 │      │                                                                                   │       │

@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FR┌ EXPLAIN plan — q / esc close ──────────────────────────────────────┐    │
 │  WH│▼ Hash Join · 50.00ms · 4500 rows                                   │    │
 │  OR│    Hash Cond: (o.user_id = u.id)                                   │    │
-└────│  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │────┘
-┌ res│  ▼ Hash · 5.00ms                                                   │────┐
-│id  │    · Seq Scan on users u · 4.00ms                                  │    │
+│    │  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │    │
+└────│  ▼ Hash · 5.00ms                                                   │────┘
+┌ res│    · Seq Scan on users u · 4.00ms                                  │────┐
+│id  │                                                                    │    │
 │1   │                                                                    │    │
 │2   │                                                                    │    │
 │3   │                                                                    │    │
 │4   │                                                                    │    │
 │5   │                                                                    │    │
 │6   │                                                                    │    │
-│    │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │

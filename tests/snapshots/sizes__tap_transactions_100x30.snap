@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  W┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · v cycle · … ──────────────────┐   │
 │  O│  state        stmts    fps        span     db-time  pool          txn / conn · last sql  │   │
-└───│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * f…│───┘
-┌ re│  open             1      1         0µs       1.8ms  primary       (autocommi… · select id│───┐
-│id │  open             1      1         0µs       310µs  primary       (autocommi… · select id│   │
+│   │  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * f…│   │
+└───│  open             1      1         0µs       1.8ms  primary       (autocommi… · select id│───┘
+┌ re│  open             1      1         0µs       310µs  primary       (autocommi… · select id│───┐
+│id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
 │3  │                                                                                          │   │
 │4  │                                                                                          │   │
 │5  │                                                                                          │   │
 │6  │                                                                                          │   │
-│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

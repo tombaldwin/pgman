@@ -4,14 +4,14 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> ┌ data · row 1 of 1 · field 1/1 · JSON ──────────────┐  │
+│  ┌ data · row 1 of 1 · field 1/1 · JSON ──────────────┐  │
 │  │                                                    │  │
 │  │ ▼ { 3 }                                            │  │
-│  │   "id": 1                                          │  │
-└──│   ▼ "meta": { 1 }                                  │──┘
-┌ r│     "k": "v"                                       │──┐
-│da│   ▼ "tags": [ 2 ]                                  │  │
-│{"│     [0]: "a"                                       │  │
+└──│   "id": 1                                          │──┘
+┌ r│   ▼ "meta": { 1 }                                  │──┐
+│da│     "k": "v"                                       │  │
+│{"│   ▼ "tags": [ 2 ]                                  │  │
+│  │     [0]: "a"                                       │  │
 │  │     [1]: "b"                                       │  │
 │  │                                                    │  │
 │  │                                                    │  │

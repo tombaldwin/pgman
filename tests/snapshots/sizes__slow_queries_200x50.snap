@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────┘
-┌ result│    total ms    mean ms     calls      rows  query                                                                                                                                    │───────┐
-│id  ema│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                                                                                                  │       │
-│1   ada│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                                                                                              │       │
+│       ┌ slow queries — pg_stat_statements — r refresh · enter copy · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
+└───────│    total ms    mean ms     calls      rows  query                                                                                                                                    │───────┘
+┌ result│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                                                                                                  │───────┐
+│id  ema│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                                                                                              │       │
+│1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

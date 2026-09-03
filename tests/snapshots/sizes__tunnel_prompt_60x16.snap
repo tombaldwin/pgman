@@ -4,7 +4,6 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> SELECT id, email, plan, created_at                      │
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
 │  ORDER BY created_at DESC;                               │
@@ -16,5 +15,6 @@ expression: dump(&buf)
 ││  pgman runs the system ssh binary with your keys, agent││
 ││  ~/.ssh/config — before any Postgres traffic, so a fail││
 ││  database login would not stop it.                     ││
+││                                                        ││
 └└────────────────────────────────────────────────────────┘┘
  RO   TAP   N+1 ×1   y proceed · any other key cancels

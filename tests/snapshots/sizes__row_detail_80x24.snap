@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM ┌ row 1 of 6 · field 1/4 ──────────────────────────────────────┐       │
 │  WHERE│                                                              │       │
 │  ORDER│ id         │ 1                                               │       │
-└───────│ email      │ ada@example.com                                 │───────┘
-┌ result│ plan       │ pro                                             │───────┐
-│id  ema│ created_at │ 2026-01-04 09:12:00+00                          │       │
+│       │ email      │ ada@example.com                                 │       │
+└───────│ plan       │ pro                                             │───────┘
+┌ result│ created_at │ 2026-01-04 09:12:00+00                          │───────┐
+│id  ema│                                                              │       │
 │1   ada│                                                              │       │
 │2   lin│                                                              │       │
 │3   gra│                                                              │       │
 │4   ala│                                                              │       │
 │5   eds│                                                              │       │
 │6   kat│                                                              │       │
-│       │                                                              │       │
 │       │                                                              │       │
 │       │                                                              │       │
 │       │                                                              │       │

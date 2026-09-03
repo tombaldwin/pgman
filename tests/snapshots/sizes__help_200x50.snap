@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
+│                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│id  email                  pl┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐                             │
-│1   ada@example.com        pr│                                                                                                                                          │                             │
-│2   linus@example.com      fr│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                                                                    │                             │
-│3   grace@example.com      pr│                                                                                                                                          │                             │
-│4   alan@example.com       te│   grid                                                                                                                                   │                             │
-│5   edsger@example.com     fr│     q             quit (esc here is a no-op so a reflex press doesn't lose the session)                                                  │                             │
-│6   katherine@example.com  pr│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
-│                             │     :             command bar — see the ': commands' section                                                                             │                             │
+┌ result · 6 row(s) ──────────┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐─────────────────────────────┐
+│id  email                  pl│                                                                                                                                          │                             │
+│1   ada@example.com        pr│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                                                                    │                             │
+│2   linus@example.com      fr│                                                                                                                                          │                             │
+│3   grace@example.com      pr│   grid                                                                                                                                   │                             │
+│4   alan@example.com       te│     q             quit (esc here is a no-op so a reflex press doesn't lose the session)                                                  │                             │
+│5   edsger@example.com     fr│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
+│6   katherine@example.com  pr│     :             command bar — see the ': commands' section                                                                             │                             │
 │                             │     A             about pgman (version, credits)                                                                                         │                             │
 │                             │     e / i / tab   focus editor                                                                                                           │                             │
 │                             │     c             change connection (opens the picker mid-session)                                                                       │                             │

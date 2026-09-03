@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
 │  ORDER BY cre┌────────────────────────────────────────────────────────────────────┐              │
-└──────────────│                                                                    │──────────────┘
-┌ result · 6 ro│ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │──────────────┐
-│id  email     │ notify)                                                            │              │
-│1   ada@exampl│                                                                    │              │
-│2   linus@exam│   grid                                                             │              │
-│3   grace@exam│     q             quit (esc here is a no-op so a reflex press      │              │
-│4   alan@examp│                   doesn't lose the session)                        │              │
-│5   edsger@exa│     ? / F1        toggle this help (both work from every           │              │
-│6   katherine@│                   non-typing mode)                                 │              │
-│              │     :             command bar — see the ': commands' section       │              │
+│              │                                                                    │              │
+└──────────────│ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │──────────────┘
+┌ result · 6 ro│ notify)                                                            │──────────────┐
+│id  email     │                                                                    │              │
+│1   ada@exampl│   grid                                                             │              │
+│2   linus@exam│     q             quit (esc here is a no-op so a reflex press      │              │
+│3   grace@exam│                   doesn't lose the session)                        │              │
+│4   alan@examp│     ? / F1        toggle this help (both work from every           │              │
+│5   edsger@exa│                   non-typing mode)                                 │              │
+│6   katherine@│     :             command bar — see the ': commands' section       │              │
 │              │     A             about pgman (version, credits)                   │              │
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │

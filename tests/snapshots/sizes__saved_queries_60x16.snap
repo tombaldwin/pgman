@@ -4,17 +4,17 @@ expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> S┌ saved queries — enter load · r rename · d delete ┐   │
-│  F│  pro-users                     SELECT id, email, │   │
-│  W│  order-by-id                   SELECT * FROM orde│   │
-│  O│  daily-revenue                 SELECT date_trunc(│   │
-└───│                                                  │───┘
+│  F┌ saved queries — enter load · r rename · d delete ┐   │
+│  W│  pro-users                     SELECT id, email, │   │
+│  O│  order-by-id                   SELECT * FROM orde│   │
+└───│  daily-revenue                 SELECT date_trunc(│───┘
 ┌ re│                                                  │───┐
-│id │  pro-users                                       │   │
-│1  │  SELECT id, email, created_at                    │   │
-│2  │  FROM users                                      │   │
-│3  │  WHERE plan = 'pro'                              │   │
-│4  └──────────────────────────────────────────────────┘   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│id │                                                  │   │
+│1  │  pro-users                                       │   │
+│2  │  SELECT id, email, created_at                    │   │
+│3  │  FROM users                                      │   │
+│4  │  WHERE plan = 'pro'                              │   │
+│5  └──────────────────────────────────────────────────┘   │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   saved queries · 3 entries

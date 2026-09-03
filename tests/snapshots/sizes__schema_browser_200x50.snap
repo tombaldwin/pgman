@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────────┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────┘
-┌ result · 6│▼ public  (4)                                                        schema: public                                                                                           │───────────┐
-│id  email  │  ▼ item  (4 col, 1 cons)                                                                                                                                                     │           │
-│1   ada@exa│      · id : bigint NOT NULL                                         4 table(s)                                                                                               │           │
-│2   linus@e│      · order_id : bigint NOT NULL                                                                                                                                            │           │
-│3   grace@e│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
-│4   alan@ex│      · qty : integer NOT NULL                                                                                                                                                │           │
-│5   edsger@│      ◆ item_pkey                                                                                                                                                             │           │
-│6   katheri│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
-│           │      · id : bigint NOT NULL                                                                                                                                                  │           │
+│           ┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
+└───────────│▼ public  (4)                                                        schema: public                                                                                           │───────────┘
+┌ result · 6│  ▼ item  (4 col, 1 cons)                                                                                                                                                     │───────────┐
+│id  email  │      · id : bigint NOT NULL                                         4 table(s)                                                                                               │           │
+│1   ada@exa│      · order_id : bigint NOT NULL                                                                                                                                            │           │
+│2   linus@e│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
+│3   grace@e│      · qty : integer NOT NULL                                                                                                                                                │           │
+│4   alan@ex│      ◆ item_pkey                                                                                                                                                             │           │
+│5   edsger@│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
+│6   katheri│      · id : bigint NOT NULL                                                                                                                                                  │           │
 │           │      · order_id : bigint NOT NULL                                                                                                                                            │           │
 │           │      · sku : varchar(40) NOT NULL                                                                                                                                            │           │
 │           │      · qty : integer NOT NULL                                                                                                                                                │           │

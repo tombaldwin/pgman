@@ -8,8 +8,9 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└───────┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────┘
-┌ result│no findings — schema looks clean                                                                                                                                                      │───────┐
+│       ┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
+└───────│no findings — schema looks clean                                                                                                                                                      │───────┘
+┌ result│                                                                                                                                                                                      │───────┐
 │id  ema│                                                                                                                                                                                      │       │
 │1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

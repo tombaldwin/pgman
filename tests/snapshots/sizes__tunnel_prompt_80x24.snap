@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
+│                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
 │id  email                  plan  created_at                                   │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                       │
-│2 ┌ open an ssh tunnel? ───────────────────────────────────────────────────┐  │
-│3 │  ssh tom@bastion.example.com → db.internal:5432                        │  │
-│4 │                                                                        │  │
-│5 │  picked project data source 'via-bastion' wants an ssh session first.  │  │
-│6 │  pgman runs the system ssh binary with your keys, agent and            │  │
-│  │  ~/.ssh/config — before any Postgres traffic, so a failed              │  │
+│1 ┌ open an ssh tunnel? ───────────────────────────────────────────────────┐  │
+│2 │  ssh tom@bastion.example.com → db.internal:5432                        │  │
+│3 │                                                                        │  │
+│4 │  picked project data source 'via-bastion' wants an ssh session first.  │  │
+│5 │  pgman runs the system ssh binary with your keys, agent and            │  │
+│6 │  ~/.ssh/config — before any Postgres traffic, so a failed              │  │
 │  │  database login would not stop it.                                     │  │
 │  │                                                                        │  │
 │  │  y proceed · any other key cancels                                     │  │

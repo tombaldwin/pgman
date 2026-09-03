@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHERE pla┌──────────────────────────────────────────────────────┐           │
 │  ORDER BY │                                                      │           │
-└───────────│ pgman — keys (? / F1 help · : commands · F2 error    │───────────┘
-┌ result · 6│ detail · F3 notify)                                  │───────────┐
-│id  email  │                                                      │           │
-│1   ada@exa│   grid                                               │           │
-│2   linus@e│     q             quit (esc here is a no-op so a     │           │
-│3   grace@e│                   reflex press doesn't lose the      │           │
-│4   alan@ex│                   session)                           │           │
-│5   edsger@│     ? / F1        toggle this help (both work from   │           │
-│6   katheri│                   every non-typing mode)             │           │
-│           │     :             command bar — see the ': commands' │           │
+│           │ pgman — keys (? / F1 help · : commands · F2 error    │           │
+└───────────│ detail · F3 notify)                                  │───────────┘
+┌ result · 6│                                                      │───────────┐
+│id  email  │   grid                                               │           │
+│1   ada@exa│     q             quit (esc here is a no-op so a     │           │
+│2   linus@e│                   reflex press doesn't lose the      │           │
+│3   grace@e│                   session)                           │           │
+│4   alan@ex│     ? / F1        toggle this help (both work from   │           │
+│5   edsger@│                   every non-typing mode)             │           │
+│6   katheri│     :             command bar — see the ': commands' │           │
 │           │ ↓ 309 more below                                     │           │
 │           │                                                      │           │
 │           └──────────────────────────────────────────────────────┘           │

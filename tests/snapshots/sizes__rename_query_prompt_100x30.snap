@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHE┌ saved queries — enter load · r rename · d delete · / search · q close ───────────────┐     │
 │  ORD│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = '│     │
-└─────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;            │─────┘
-┌ resu│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        su│─────┐
+│     │  order-by-id                   SELECT * FROM orders WHERE id = :order_id;            │     │
+└─────│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        su│─────┘
+┌ resu│                                                                                      │─────┐
 │id  e│                                                                                      │     │
 │1   a│                                                                                      │     │
 │2   l│                                                                                      │     │
-│3   g│                                                                                      │     │
-│4   a│        ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐        │     │
-│5   e│        │new name:                                                           │        │     │
-│6   k│        │pro-users                                                           │        │     │
-│     │  pro-us│                                                                    │        │     │
+│3   g│        ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐        │     │
+│4   a│        │new name:                                                           │        │     │
+│5   e│        │pro-users                                                           │        │     │
+│6   k│  pro-us│                                                                    │        │     │
 │     │  SELECT└────────────────────────────────────────────────────────────────────┘        │     │
 │     │  FROM users                                                                          │     │
 │     │  WHERE plan = 'pro'                                                                  │     │

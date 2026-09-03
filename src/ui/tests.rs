@@ -955,3 +955,86 @@ mod fitter_properties {
         }
     }
 }
+
+// -- editor_rows: the editor's share of the body --
+
+#[test]
+fn editor_rows_opens_five_lines_tall_on_a_body_of_twenty_or_more() {
+    // 80×24 leaves a 22-row body: five content lines plus two borders.
+    assert_eq!(editor_rows(1, 22), 7);
+    assert_eq!(editor_rows(1, 20), 7, "the boundary is inclusive");
+    assert_eq!(
+        editor_rows(5, 20),
+        7,
+        "five lines fit the opening size exactly"
+    );
+    assert_eq!(
+        editor_rows(1, 48),
+        7,
+        "a tall body still opens at five lines"
+    );
+}
+
+#[test]
+fn editor_rows_grows_with_content_up_to_forty_percent_of_the_body() {
+    assert_eq!(
+        editor_rows(6, 20),
+        8,
+        "six lines: one past the opening size"
+    );
+    assert_eq!(editor_rows(7, 20), 8, "40 % of 20 is 8 rows — the cap");
+    assert_eq!(
+        editor_rows(100, 22),
+        8,
+        "80×24: 40 % of 22 rounds down to 8"
+    );
+    assert_eq!(editor_rows(100, 48), 19, "200×50: 40 % of 48 is 19");
+}
+
+#[test]
+fn editor_rows_opens_at_one_line_below_twenty_but_still_grows() {
+    assert_eq!(
+        editor_rows(1, 19),
+        3,
+        "under 20 the opening size drops to one line"
+    );
+    assert_eq!(editor_rows(4, 19), 6);
+    assert_eq!(editor_rows(100, 19), 7, "40 % of 19 rounds down to 7");
+    // 60×16 leaves a 14-row body.
+    assert_eq!(editor_rows(1, 14), 3);
+    assert_eq!(
+        editor_rows(4, 14),
+        5,
+        "40 % of 14 is 5: three content lines"
+    );
+    assert_eq!(
+        editor_rows(1, 12),
+        3,
+        "12 is the first body that grows at all"
+    );
+    assert_eq!(editor_rows(10, 12), 4, "40 % of 12 is 4");
+}
+
+#[test]
+fn editor_rows_is_one_line_on_a_cramped_body_whatever_the_buffer_holds() {
+    assert_eq!(editor_rows(1, 11), 3);
+    assert_eq!(editor_rows(50, 11), 3, "no growth under 12 rows");
+    assert_eq!(editor_rows(1, 3), 3);
+}
+
+#[test]
+fn editor_rows_never_exceeds_the_body() {
+    assert_eq!(
+        editor_rows(1, 2),
+        2,
+        "a two-row body cannot hold three rows"
+    );
+    assert_eq!(editor_rows(1, 0), 0);
+    assert_eq!(editor_rows(usize::MAX, 22), 8, "a huge buffer still clamps");
+    assert_eq!(
+        editor_rows(1, u16::MAX),
+        7,
+        "the 40 % arithmetic must not overflow"
+    );
+    assert_eq!(editor_rows(usize::MAX, u16::MAX), 26214);
+}

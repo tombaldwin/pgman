@@ -8,8 +8,9 @@ expression: dump(&buf)
 │  ┌ JDBC tap — 8 queries · 0 heartbeats · view: baseline · v cycle · … ───┐   │
 │  │baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture    │   │
 │  │current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures│   │
-└──│                                                                       │───┘
-┌ r│no changes since baseline — nothing new, no regressions, no disappearan│───┐
+│  │                                                                       │   │
+└──│no changes since baseline — nothing new, no regressions, no disappearan│───┘
+┌ r│                                                                       │───┐
 │id│                                                                       │   │
 │1 │                                                                       │   │
 │2 │                                                                       │   │
@@ -17,7 +18,6 @@ expression: dump(&buf)
 │4 │                                                                       │   │
 │5 │                                                                       │   │
 │6 │                                                                       │   │
-│  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │

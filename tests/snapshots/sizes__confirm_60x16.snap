@@ -1,21 +1,20 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
-│> SELECT id, email, plan, created_at                      │
 │  FROM users                                              │
-│  WHERE ┌ confirm ───────────────────────────────┐        │
-│  ORDER │run (DELETE without WHERE) · will be    │        │
-└────────│refused — this session is read-only     │────────┘
-┌ result │                                        │────────┐
-│id  emai│DELETE FROM orders                      │        │
-│1   ada@│                                        │00+00   │
-│2   linu│y = run · n / esc = cancel              │00+00   │
-│3   grac└────────────────────────────────────────┘00+00   │
-│4   alan@example.com       team  2026-02-17 19:05:00+00   │
+│  WHERE plan = 'pro'                                      │
+│  ORDER ┌ confirm ───────────────────────────────┐        │
+└────────│run (DELETE without WHERE) · will be    │────────┘
+┌ result │refused — this session is read-only     │────────┐
+│id  emai│                                        │        │
+│1   ada@│DELETE FROM orders                      │00+00   │
+│2   linu│                                        │00+00   │
+│3   grac│y = run · n / esc = cancel              │00+00   │
+│4   alan└────────────────────────────────────────┘00+00   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   N+1 ×1   y run · n / esc cancel

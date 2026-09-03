@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-└─────────┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐─────────┘
-┌ result ·│  channel                  pid  payload                                                                                                                                           │─────────┐
-│id  email│  orders_channel          4321  order:9001 shipped                                                                                                                                │         │
-│1   ada@e│  cache_invalidate        4322  users                                                                                                                                             │         │
+│         ┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐         │
+└─────────│  channel                  pid  payload                                                                                                                                           │─────────┘
+┌ result ·│  orders_channel          4321  order:9001 shipped                                                                                                                                │─────────┐
+│id  email│  cache_invalidate        4322  users                                                                                                                                             │         │
+│1   ada@e│                                                                                                                                                                                  │         │
 │2   linus│                                                                                                                                                                                  │         │
 │3   grace│                                                                                                                                                                                  │         │
 │4   alan@│                                                                                                                                                                                  │         │
 │5   edsge│                                                                                                                                                                                  │         │
 │6   kathe│                                                                                                                                                                                  │         │
-│         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │

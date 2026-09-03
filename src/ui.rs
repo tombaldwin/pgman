@@ -39,14 +39,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let area = f.area();
-    // Dynamic editor height: grow with the buffer up to a cap, with a min so
-    // the focused empty editor still has a visible content line.
-    let editor_lines = app.editor.buffer.matches('\n').count() + 1;
-    let editor_height: u16 = (editor_lines as u16 + 2).clamp(3, 12);
     // Tab bar: one extra line iff we have more than one tab.
     // Keeps the single-tab default UX byte-identical to the
     // pre-multi-tab layout.
     let tabbar_height: u16 = if app.tabs.len() > 1 { 1 } else { 0 };
+    // Everything between the header row and the footer row is the
+    // editor's and the grid's to share — see `editor_rows`.
+    let body_height = area.height.saturating_sub(2 + tabbar_height);
+    let editor_lines = app.editor.buffer.matches('\n').count() + 1;
+    let editor_height = editor_rows(editor_lines, body_height);
     let chunks = Layout::vertical([
         Constraint::Length(1),             // header
         Constraint::Length(tabbar_height), // optional tab bar
@@ -662,6 +663,41 @@ pub(crate) fn footer_text(s: &str) -> String {
         out.push(if c.is_control() { ' ' } else { c });
     }
     out
+}
+
+/// Rows the editor block takes — its two border rows included — for a
+/// buffer of `content_lines` when the header and footer have left
+/// `body_height` rows to the editor and the result grid together.
+///
+/// A one-line editor on a 24-row terminal reads as a single-line
+/// prompt, so on any body of 20 rows or more the editor opens five
+/// content lines tall and grows with its content up to 40 % of the
+/// body; the grid takes the rest. A body under 12 rows has no room to
+/// spare and gets one content line whatever the buffer holds. In
+/// between, the editor opens at one line and still grows to the 40 %
+/// cap. Never fewer than one content line, and never taller than the
+/// body itself. Pure / testable.
+pub fn editor_rows(content_lines: usize, body_height: u16) -> u16 {
+    const BORDERS: u16 = 2;
+    const OPEN_LINES: u16 = 5;
+    const OPEN_BODY: u16 = 20;
+    const CRAMPED_BODY: u16 = 12;
+    if body_height < CRAMPED_BODY {
+        return (1 + BORDERS).min(body_height);
+    }
+    // Widened: `body_height * 2` overflows u16 past 32767 rows.
+    let cap = u16::try_from(u32::from(body_height) * 2 / 5)
+        .unwrap_or(u16::MAX)
+        .max(1 + BORDERS);
+    let floor = if body_height >= OPEN_BODY {
+        OPEN_LINES + BORDERS
+    } else {
+        1 + BORDERS
+    };
+    let wanted = u16::try_from(content_lines)
+        .unwrap_or(u16::MAX)
+        .saturating_add(BORDERS);
+    wanted.clamp(floor, cap)
 }
 
 /// Fit a ` · `-joined hint string into `width` columns without ever

@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,16 +8,16 @@ expression: dump(&buf)
 │  FR┌ schema browser — q / esc close ────────────────────────────────────┐    │
 │  WH│▼ public  (4)               schema: public                          │    │
 │  OR│  ▼ item  (4 col, 1 cons)                                           │    │
-└────│      · id : bigint NOT NU… 4 table(s)                              │────┘
-┌ res│      · order_id : bigint …                                         │────┐
-│id  │      · sku : varchar(40) … enter to expand — then arrow / j/k into…│    │
-│1   │      · qty : integer NOT …                                         │    │
-│2   │      ◆ item_pkey                                                   │    │
-│3   │  ▼ order_items  (5 col, 1…                                         │    │
-│4   │      · id : bigint NOT NU…                                         │    │
-│5   │      · order_id : bigint …                                         │    │
-│6   │      · sku : varchar(40) …                                         │    │
-│    │      · qty : integer NOT …                                         │    │
+│    │      · id : bigint NOT NU… 4 table(s)                              │    │
+└────│      · order_id : bigint …                                         │────┘
+┌ res│      · sku : varchar(40) … enter to expand — then arrow / j/k into…│────┐
+│id  │      · qty : integer NOT …                                         │    │
+│1   │      ◆ item_pkey                                                   │    │
+│2   │  ▼ order_items  (5 col, 1…                                         │    │
+│3   │      · id : bigint NOT NU…                                         │    │
+│4   │      · order_id : bigint …                                         │    │
+│5   │      · sku : varchar(40) …                                         │    │
+│6   │      · qty : integer NOT …                                         │    │
 │    │      · price_cents : inte…                                         │    │
 │    │      ◆ order_items_pkey                                            │    │
 │    │  ▼ orders  (5 col, 1 cons)                                         │    │

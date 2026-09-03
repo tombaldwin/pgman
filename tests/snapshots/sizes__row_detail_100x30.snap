@@ -8,16 +8,16 @@ expression: dump(&buf)
 │  FROM users                                                                                      │
 │  WHERE p┌ row 1 of 6 · field 1/4 ──────────────────────────────────────────────────────┐         │
 │  ORDER B│                                                                              │         │
-└─────────│ id         │ 1                                                               │─────────┘
-┌ result ·│ email      │ ada@example.com                                                 │─────────┐
-│id  email│ plan       │ pro                                                             │         │
-│1   ada@e│ created_at │ 2026-01-04 09:12:00+00                                          │         │
+│         │ id         │ 1                                                               │         │
+└─────────│ email      │ ada@example.com                                                 │─────────┘
+┌ result ·│ plan       │ pro                                                             │─────────┐
+│id  email│ created_at │ 2026-01-04 09:12:00+00                                          │         │
+│1   ada@e│                                                                              │         │
 │2   linus│                                                                              │         │
 │3   grace│                                                                              │         │
 │4   alan@│                                                                              │         │
 │5   edsge│                                                                              │         │
 │6   kathe│                                                                              │         │
-│         │                                                                              │         │
 │         │                                                                              │         │
 │         │                                                                              │         │
 │         │                                                                              │         │
