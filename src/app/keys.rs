@@ -178,6 +178,25 @@ impl App {
         }
     }
 
+    /// Write `saved_queries` to `saved_queries_file` now — the
+    /// immediate persist behind Ctrl-S save, `d` delete and rename,
+    /// so a crash later in the session doesn't lose the change (the
+    /// on-quit save is the safety net, not the primary).
+    ///
+    /// Never under `--demo`: the demo's list is the synthetic fixture
+    /// set, and writing it would replace the operator's real
+    /// `saved.toml` with sample queries. The in-memory change still
+    /// happens, so the demo behaves; it just doesn't persist. A
+    /// failed write surfaces as `"<what> failed: …"` in the footer.
+    pub(super) fn persist_saved_queries(&mut self, what: &str) {
+        if self.demo {
+            return;
+        }
+        if let Err(e) = crate::saved::save_to(&self.saved_queries_file, &self.saved_queries) {
+            self.last_error = Some(format!("{what} failed: {e}"));
+        }
+    }
+
     pub(super) fn on_save_query_prompt_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -197,12 +216,7 @@ impl App {
                     name: name.clone(),
                     body,
                 });
-                // Persist immediately so a crash doesn't lose it
-                // (the on-quit save is the safety net, not the
-                // primary).
-                if let Err(e) = crate::saved::save_to(&saved_queries_path(), &self.saved_queries) {
-                    self.last_error = Some(format!("save failed: {e}"));
-                }
+                self.persist_saved_queries("save");
                 self.last_status = Some(format!(
                     "saved query '{name}' ({})",
                     if replaced { "replaced" } else { "new" }
@@ -402,11 +416,7 @@ impl App {
                     .map(|q| q.name.clone())
                 {
                     self.saved_queries.remove(&name);
-                    if let Err(e) =
-                        crate::saved::save_to(&saved_queries_path(), &self.saved_queries)
-                    {
-                        self.last_error = Some(format!("delete failed: {e}"));
-                    }
+                    self.persist_saved_queries("delete");
                     let last_after = self.visible_saved_indices().len().saturating_sub(1);
                     if self.saved_ui.cursor > last_after {
                         self.saved_ui.cursor = last_after;
@@ -464,11 +474,7 @@ impl App {
                 let from = self.saved_ui.rename_from.clone();
                 match self.saved_queries.rename(&from, &to) {
                     Ok(true) => {
-                        if let Err(e) =
-                            crate::saved::save_to(&saved_queries_path(), &self.saved_queries)
-                        {
-                            self.last_error = Some(format!("rename save failed: {e}"));
-                        }
+                        self.persist_saved_queries("rename save");
                         self.last_status = Some(format!("renamed '{from}' → '{to}'"));
                         self.saved_ui.rename_buf.clear();
                         self.saved_ui.rename_from.clear();
