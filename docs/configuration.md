@@ -110,6 +110,15 @@ per-category guard table. Guards key off `classify()`'s heuristic
 statement classification — see `docs/safety-and-privacy.md` for how
 that works and its known imprecision.
 
+**`pgman --init-config`** writes exactly the file shown above — every
+field spelled out and commented at its built-in default — to
+`util::config_file("safety.toml")` (honouring `XDG_CONFIG_HOME`), mode
+`0600`, then exits. It refuses to overwrite an existing file (prints why
+on stderr and exits `1`) rather than clobbering edits you've already
+made; delete or rename the file first if you want a fresh copy. This is
+the fastest way to get a first `safety.toml` in place — the alternative
+is copying the block above by hand.
+
 ## `<repo>/.pgman/pgman.toml` (project-committed)
 
 Intended to be committed to git so a team shares the same list of

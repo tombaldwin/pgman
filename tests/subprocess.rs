@@ -241,3 +241,49 @@ fn positional_dsn_and_dsn_flag_must_agree() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("disagree"), "got: {stderr}");
 }
+
+#[test]
+fn init_config_writes_a_default_and_refuses_to_overwrite() {
+    let home = std::env::temp_dir().join(format!("pgman-init-config-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_pgman"))
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .arg("--init-config")
+            .output()
+            .expect("spawn pgman")
+    };
+
+    let first = run();
+    assert!(
+        first.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let path = home.join(".config/pgman/safety.toml");
+    assert!(path.exists(), "safety.toml should have been written");
+    let contents = std::fs::read_to_string(&path).unwrap();
+    assert!(contents.contains("[default]"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "safety.toml mode was {mode:o}, want 0600");
+    }
+
+    let second = run();
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        !second.status.success(),
+        "a second --init-config must refuse to overwrite"
+    );
+    assert_eq!(second.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(stderr.contains("already exists"), "got: {stderr}");
+}

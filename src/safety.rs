@@ -165,6 +165,67 @@ impl SafetyConfig {
     }
 }
 
+/// The file `--init-config` writes to `~/.config/pgman/safety.toml`
+/// (`util::config_file("safety.toml")`) when none exists yet — every
+/// field spelled out and commented with its built-in default, so a
+/// first-time user has something to edit rather than a blank page.
+/// Parsing this must produce exactly `SafetyConfig::default()`; see
+/// `main.rs`'s `default_safety_toml_round_trips_to_the_real_default`
+/// test.
+pub const DEFAULT_SAFETY_TOML: &str = r#"# pgman's personal safety config — see docs/configuration.md
+#
+# [default] is the profile for any database with no entry of its own.
+# Every field below shows its built-in default — delete or edit only
+# the ones you want to change; anything left out falls back to this
+# same default.
+
+[default]
+# Open the connection with `default_transaction_read_only = on`. A
+# write attempted on a read-only session is rejected by Postgres
+# itself, on top of the client-side guards below.
+read_only = true
+
+# Session `statement_timeout`, in milliseconds. 0 disables it.
+statement_timeout_ms = 30000
+
+# Wrap writes (anything that isn't a plain SELECT) in an explicit
+# transaction and leave it open on success — pgman then prompts
+# commit (y) / rollback (n / Esc) before you can run anything else.
+auto_tx = true
+
+# Row-count threshold above which a SELECT triggers a pre-flight
+# EXPLAIN cost preview + confirm prompt. 0 disables the check
+# (default) — opt-in per profile.
+cost_preview_threshold_rows = 0
+
+# Which strategy `\fixture` apply (Ctrl-D) uses to empty a table
+# before inserting: "truncate" (fast, needs TRUNCATE privilege) or
+# "delete_from" (slower, works without it, respects triggers).
+clean_mode = "truncate"
+
+# Per-statement-category guard: "allow" | "confirm" | "block".
+[default.guards]
+insert = "confirm"
+update = "confirm"
+update_without_where = "block"   # UPDATE with no WHERE — touches every row
+delete = "confirm"
+delete_without_where = "block"   # DELETE with no WHERE — empties the table
+truncate = "confirm"
+drop = "block"
+ddl = "confirm"                  # ALTER / CREATE / GRANT / VACUUM / …
+other = "confirm"                # anything unrecognised (e.g. MERGE)
+
+# Per-database override — only list what differs from [default].
+# Uncomment and edit to tighten a specific database, e.g.:
+#
+# [databases.production]
+# read_only = true
+# statement_timeout_ms = 5000
+#
+# [databases.production.guards]
+# truncate = "block"
+"#;
+
 /// The outcome of checking one statement against a database's profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {

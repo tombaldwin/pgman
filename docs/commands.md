@@ -77,6 +77,7 @@ than the raw crossterm error a bare terminal probe used to surface.
 | `--dsn <DSN>` | Connect using a `postgres://` DSN. |
 | `--theme <THEME>` | Colour theme: `dark` \| `light` \| `high-contrast` (default `dark`). |
 | `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. |
+| `--init-config` | Write a commented default `safety.toml` under the config dir (honouring `XDG_CONFIG_HOME`), `0600`, then exit. Refuses to overwrite an existing file (exit `1`, says so on stderr) rather than clobbering your edits. |
 | `--log <PATH>` | Preload the editor with a Hibernate or Postgres server log from `PATH` (`-` for stdin) and open straight into the reconstructed-query picker — same as pasting the log and pressing `Ctrl-L` / `F8`. |
 | `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. |
 | `--sql <SQL>` | The statement to run in `--batch` mode; omit to read stdin until EOF. |
@@ -125,3 +126,14 @@ live tail instead of a file with `-`:
 ```
 tail -c 2M myapp-hibernate.log | pgman --log -
 ```
+
+### `--init-config` example
+
+```
+pgman --init-config
+```
+
+Writes a fully-commented `safety.toml` (every field at its built-in
+default) to the config dir and exits — see
+[Configuration](configuration.md#configpgmansafetytoml) for the file it
+writes and what each field does.
