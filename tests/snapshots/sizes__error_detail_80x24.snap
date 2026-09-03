@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -25,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ⚠ duplicate key value vi…aint "users_email_key" · F2 detail
+ RO   TAP   N+1 ×1   ⚠ duplicate key value… "users_email_key" · F2 detail

@@ -665,6 +665,85 @@ fn end_ellipsis_never_overruns_a_cjk_budget() {
     assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
 }
 
+// ----- Prose segments are cut at word boundaries ------------------------
+
+#[test]
+fn looks_like_sql_tells_a_statement_from_prose_about_one() {
+    assert!(looks_like_sql(
+        "terminate pid 1234? \"UPDATE accounts SET balance = 0\""
+    ));
+    assert!(looks_like_sql(
+        "SELECT * FROM orders WHERE status = 'shipped'"
+    ));
+    assert!(looks_like_sql("delete from item where id = 1"));
+    assert!(looks_like_sql("INSERT INTO t VALUES (1)"));
+    assert!(looks_like_sql("'select 1'"));
+    // Prose that merely mentions the keywords.
+    assert!(!looks_like_sql("run (DELETE without WHERE)"));
+    assert!(!looks_like_sql(
+        "blocked by safety: DELETE without WHERE on 'main'"
+    ));
+    assert!(!looks_like_sql(
+        "hint: this connection is read-only by safety.toml (/x/safety.toml, read_only) — see docs/configuration.md"
+    ));
+    assert!(!looks_like_sql(
+        "cannot execute DELETE in a read-only transaction"
+    ));
+}
+
+#[test]
+fn middle_ellipsis_cuts_prose_at_word_boundaries_keeping_the_last_word() {
+    assert_eq!(
+        middle_ellipsis("run (DELETE without WHERE)", 20),
+        "run (DELETE… WHERE)"
+    );
+    let hint = "hint: this connection is read-only by safety.toml (/x/safety.toml, read_only) — see docs/configuration.md";
+    let got = middle_ellipsis(hint, 50);
+    assert_eq!(got, "hint: this connection is… docs/configuration.md");
+    assert!(display_width(&got) <= 50);
+    // Never a cut inside a word once `… docs/configuration.md` (the
+    // ellipsis, a space, the last word) fits at all: the marker always
+    // borders a space or a word edge. Narrower than that there is no
+    // word boundary to honour and the character cut takes over.
+    let floor = 2 + display_width("docs/configuration.md");
+    for width in floor..hint.len() {
+        let got = middle_ellipsis(hint, width);
+        assert!(display_width(&got) <= width, "{width}: {got:?}");
+        if let Some(i) = got.find('…') {
+            let before = got[..i].chars().next_back();
+            let after = got[i + '…'.len_utf8()..].chars().next();
+            assert!(
+                !(before.is_some_and(char::is_alphanumeric)
+                    && after.is_some_and(char::is_alphanumeric)),
+                "mid-word cut at width {width}: {got:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn middle_ellipsis_keeps_the_character_cut_for_a_statement() {
+    // Both ends of the SQL survive, words or not.
+    assert_eq!(
+        middle_ellipsis("SELECT * FROM orders WHERE status = 'shipped'", 20),
+        "SELECT * F…'shipped'"
+    );
+    // A single over-long word has no boundary to cut at: falls back.
+    assert_eq!(middle_ellipsis("abcdefghijklmnop", 7), "abc…nop");
+}
+
+#[test]
+fn fit_status_never_cuts_a_prose_segment_mid_word() {
+    let text = "confirm: run (DELETE without WHERE) · y run · n / esc cancel";
+    let fitted = fit_status(text, 45);
+    assert!(display_width(&fitted) <= 45);
+    assert!(fitted.ends_with("y run · n / esc cancel"));
+    assert!(
+        !fitted.contains("w…hout") && fitted.contains("… WHERE)"),
+        "{fitted:?}"
+    );
+}
+
 // ----- Confirm card: no transaction promised on a read-only session ----
 
 #[test]

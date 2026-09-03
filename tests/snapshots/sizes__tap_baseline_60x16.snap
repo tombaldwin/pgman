@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -17,4 +18,4 @@ expression: dump(&buf)
 │4└─────────────────────────────────────────────────────┘  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
 └──────────────────────────────────────────────────────────┘
- RO   TAP   tap base…aptured · 3 fingerprint(s) · 8 event(s)
+ RO   TAP   tap… captured · 3 fingerprint(s) · 8 event(s)
