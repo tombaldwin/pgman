@@ -5,6 +5,31 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### From the release panel (2026-09-03) — post-release
+- **ebman parity, deferred**: a `pgman query 'SQL' --json` subcommand
+  alias for `--batch --sql … --format json`; a `--read-write` opt-in flag
+  mirroring ebman's `--read-only`; the `D` key means describe in ebman
+  and diff here; a Ctrl-K command palette on top of the `:` bar.
+- **Tap aggregate memo on a real generation counter.** The memo added
+  by the security batch keys on a content fingerprint (length + first
+  and last timestamps) from a `thread_local`, because the ring's push
+  and clear sites were outside that task's file scope. A `ring_generation:
+  u64` bumped on every mutation is the stronger design; the fingerprint
+  cannot false-hit but goes cold when a task migrates workers.
+- **Update-check response cap is not streaming.** The 64 KiB cap checks
+  `Content-Length` before and the body length after; a chunked response
+  with no length buffers before the check. Needs reqwest's `stream`
+  feature and a `take` — one Cargo feature away.
+- **`has_where` is a whole-statement keyword check**, so a `DELETE` whose
+  only `WHERE` is inside a subquery classifies as `with WHERE` (Confirm,
+  not Block). Needs a real parser; documented in
+  `docs/safety-and-privacy.md`.
+- **`--tap-record` permission verification** was inconclusive in the
+  sandbox (the agent's filesystem view and the subprocess's did not line
+  up); the code mirrors `write_private`. Verify by hand on Linux.
+- **Batch mode skips the directory-permission repair** that the TUI's
+  `init_logging` does (data/config dirs stay at whatever mode they had).
+
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
 
