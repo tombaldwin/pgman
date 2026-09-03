@@ -410,13 +410,16 @@ fn table_exists(home: &std::path::Path, table: &str) -> bool {
     // `t` in it, and `contains('t')` made this probe answer "yes" to
     // everything — every "still exists after the refused DROP" assertion
     // built on it was unfalsifiable.
+    // Booleans arrive over the text protocol as psql prints them: `t`
+    // / `f` (they were `true` / `false` while the grid decoded them
+    // client-side).
     let stdout = String::from_utf8_lossy(&out.stdout);
     let value = stdout.lines().nth(1).unwrap_or("").trim();
     assert!(
-        matches!(value, "true" | "false"),
-        "existence probe must answer true or false, got {stdout:?}"
+        matches!(value, "t" | "f"),
+        "existence probe must answer t or f, got {stdout:?}"
     );
-    value == "true"
+    value == "t"
 }
 
 #[test]
