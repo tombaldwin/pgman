@@ -23,8 +23,8 @@
 //! realistic without a live database.
 
 use pgman::app::{
-    compute_visible_rows, App, DataSourcePick, HistorySearchState, Mode, PendingRun, RunKind,
-    TapView,
+    compute_visible_rows, App, DataSourcePick, DatabaseInfo, HistorySearchState, Mode, PendingRun,
+    RunKind, TapView,
 };
 use pgman::conn::{Dsn, NotificationMsg, QueryErrDetail};
 use pgman::grid::Grid;
@@ -271,6 +271,32 @@ fn scr_landing() -> App {
     // lay itself out in.
     a.editor.buffer.clear();
     a.editor.cursor = 0;
+    a
+}
+
+/// The start card *with its databases line drawn*. `scr_landing` never
+/// renders it: `demo::app` leaves `databases` empty, so the whole
+/// width-fitting path in `landing::format_databases_line` was swept
+/// without ever running. Two databases named in kana put a real
+/// display-width budget under it — every glyph is two terminal columns,
+/// so a line measured in `char`s paints twice as wide as it claims and
+/// runs through the card's right border at 60 and 80 columns.
+fn scr_landing_databases() -> App {
+    let mut a = scr_landing();
+    a.databases = vec![
+        DatabaseInfo {
+            name: "受注管理データベース".into(),
+            size: "812 MB".into(),
+        },
+        DatabaseInfo {
+            name: "分析基盤データウェアハウス".into(),
+            size: "3.4 GB".into(),
+        },
+        DatabaseInfo {
+            name: "顧客マスタ統合基盤".into(),
+            size: "94 MB".into(),
+        },
+    ];
     a
 }
 
@@ -693,6 +719,11 @@ fn normal_grid() {
 #[test]
 fn landing() {
     run_sizes("landing", scr_landing);
+}
+
+#[test]
+fn landing_databases() {
+    run_sizes("landing_databases", scr_landing_databases);
 }
 
 #[test]

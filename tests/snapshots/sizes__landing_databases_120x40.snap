@@ -1,0 +1,44 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> (empty — press e to focus)                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ start ───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ connected to shop on localhost:5432 · pg 16.2 · RO                                                                   │
+│ databases  受 注 管 理 デ ー タ ベ ー ス  812 MB · 分 析 基 盤 デ ー タ ウ ェ ア ハ ウ ス  3.4 GB · 顧 客 マ ス タ 統 合 基 盤  94 MB                │
+│                                                                                                                      │
+│   e   write a query                                                 S   schema browser (3 tables)                    │
+│   Q   saved queries (3)                                             T   slow queries                                 │
+│   W   schema wizard                                                 L   sessions & locks                             │
+│   F8  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                                     │
+│   ?   all keys                                                                                                       │
+│                                                                                                                      │
+│ recent                                                                                                               │
+│   SELECT * FROM users WHERE id = 42;                                                                                 │
+│   SELECT count(*) FROM orders WHERE status = 'shipped';                                                              │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +3 more

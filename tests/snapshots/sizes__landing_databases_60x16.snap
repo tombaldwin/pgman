@@ -1,0 +1,20 @@
+---
+source: tests/sizes.rs
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+┌ editor (e to focus) ─────────────────────────────────────┐
+│> (empty — press e to focus)                              │
+└──────────────────────────────────────────────────────────┘
+┌ start ───────────────────────────────────────────────────┐
+│ connected to shop on localhost:5432 · pg 16.2 · RO       │
+│                                                          │
+│   e   write a query                                      │
+│   S   schema browser (3 tables)                          │
+│   Q   saved queries (3)                                  │
+│   T   slow queries                                       │
+│   W   schema wizard                                      │
+│   L   sessions & locks                                   │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · F1 +8 more
