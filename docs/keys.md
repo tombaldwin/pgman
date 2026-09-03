@@ -76,7 +76,7 @@ diff, all of which are also dispatched from this mode.
 | `Ctrl-X` | Open the buffer in `$EDITOR` (suspends the TUI, resumes on save) |
 | `Ctrl-S` | Save the current buffer as a named saved query |
 | `Ctrl-O` | Open the saved-queries panel |
-| `Ctrl-F` | Pretty-print the buffer via `pg_format` (requires it on `PATH`) |
+| `Ctrl-F` | Format the buffer (built-in; `pg_format` if installed) |
 | `Ctrl-L` / `F8` | Parse the buffer as a log → pick a reconstructed query |
 | `Ctrl-D` / `F9` | Read the buffer as a DBUnit fixture path → load the apply script |
 | `Ctrl-/` (or `Ctrl-_`) | Toggle a `-- ` line comment on the current line |
@@ -94,6 +94,12 @@ diff, all of which are also dispatched from this mode.
 
 Typing a space right after `FROM`, `JOIN`, `INNER`, `LEFT`, `RIGHT`, `FULL`,
 `CROSS`, `INTO`, `WHERE`, `AND`, `OR` or `ON` also auto-triggers completion.
+
+A newline inherits the previous line's indentation, plus one level (`[editor]
+indent`, default 2) when that line ends with `(`, `,` or a clause keyword such
+as `SELECT`, `FROM`, `WHERE`, `AND`, `JOIN`, `ON` or `ORDER BY`; a line ending
+in `;` starts the next at column 0, `Backspace` inside the indentation removes
+a level and `Tab` there adds one.
 
 ### Completion popup
 
