@@ -198,7 +198,13 @@ impl App {
                     self.spawn_schema_refresh();
                 }
                 match error {
-                    Some(e) => self.last_error = Some(format!("tx close failed: {e}")),
+                    Some(e) => {
+                        // A close failure carries no `DbError` fields —
+                        // whatever detail the last query left is not
+                        // this error's.
+                        self.last_error = Some(format!("tx close failed: {e}"));
+                        self.last_error_detail = None;
+                    }
                     None => {
                         self.last_status = Some(
                             if committed {

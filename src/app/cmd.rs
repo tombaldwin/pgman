@@ -516,7 +516,8 @@ impl App {
     /// cache dir with a wall-clock-stamped filename.
     pub(super) fn dispatch_fixture(&mut self, target: Option<String>) {
         if self.grid.rows.is_empty() {
-            self.last_error = Some("no result to capture — run a query first".into());
+            // A notice, not an error — same as `D` with nothing to diff.
+            self.last_status = Some("no result to capture — run a query first".into());
             return;
         }
         let Some((_schema, table)) = self.grid_view.source.clone() else {

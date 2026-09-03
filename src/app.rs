@@ -1639,7 +1639,22 @@ impl App {
         self.mode == Mode::ConnPick && self.pending_tunnel.is_some()
     }
 
+    /// Key dispatch — [`Self::on_key_inner`] wrapped in one invariant the
+    /// individual handlers cannot each be trusted to remember: a key
+    /// handler only ever produces a *client-side* error (server errors
+    /// arrive through `on_msg`), so when a key changes `last_error` the
+    /// SQLSTATE / hint detail of whatever server error came before it is
+    /// stale. Left in place, F2 on `:readonly off`'s refusal opened an
+    /// overlay headed by the previous query's `SQLSTATE 42P01`.
     pub fn on_key(&mut self, key: KeyEvent) {
+        let error_before = self.last_error.clone();
+        self.on_key_inner(key);
+        if self.last_error.is_some() && self.last_error != error_before {
+            self.last_error_detail = None;
+        }
+    }
+
+    fn on_key_inner(&mut self, key: KeyEvent) {
         // Any key cancels an active `\watch` session — psql-style.
         // Done BEFORE the Ctrl-C-quits arm so Ctrl-C-while-watching
         // doesn't also tear down the session.
@@ -3144,9 +3159,13 @@ impl App {
     /// `D` in Normal mode. With no baseline pinned, freeze the
     /// current grid as A. With a baseline already pinned, diff the
     /// current grid (B) against it and open `Mode::ResultDiff`.
+    ///
+    /// Nothing to diff is a notice, not an error: it goes in
+    /// `last_status`, so the footer does not grow a `· F2 detail`
+    /// pointer to an overlay with nothing in it.
     fn pin_or_diff_result(&mut self) {
         if self.grid.rows.is_empty() {
-            self.last_error = Some("no result to diff — run a query first".into());
+            self.last_status = Some("no result to diff — run a query first".into());
             return;
         }
         match self.result_diff.pinned.take() {
