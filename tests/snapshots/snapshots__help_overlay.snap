@@ -21,12 +21,15 @@ expression: dump(&buf)
 │                                                                                                  │
 │              ┌────────────────────────────────────────────────────────────────────┐              │
 │              │                                                                    │              │
-│              │ pgman — keys (F1 help · F2 error detail · F3 notify · ? from grid) │              │
+│              │ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │              │
+│              │ notify)                                                            │              │
 │              │                                                                    │              │
 │              │   grid                                                             │              │
 │              │     q             quit (esc here is a no-op so a reflex press      │              │
 │              │                   doesn't lose the session)                        │              │
-│              │     ? / F1        toggle this help                                 │              │
+│              │     ? / F1        toggle this help (both work from every           │              │
+│              │                   non-typing mode)                                 │              │
+│              │     :             command bar — see the ': commands' section       │              │
 │              │     A             about pgman (version, credits)                   │              │
 │              │     e / i / tab   focus editor                                     │              │
 │              │     c             change connection (opens the picker mid-session) │              │
@@ -88,10 +91,7 @@ expression: dump(&buf)
 │              │     ctrl-u        clear the buffer                                 │              │
 │              │     esc           back to grid                                     │              │
 │              │                                                                    │              │
-│              │   confirm                                                          │              │
-│              │     y             run the guarded (or pre-flight-flagged)          │              │
-│              │                   statement                                        │              │
-│              │ ↓ 161 more below                                                   │              │
+│              │ ↓ 185 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

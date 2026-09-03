@@ -21,6 +21,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Release-panel polish**: overlays stay off the header and footer
+  (the About box used to paint over its own close hint at 80×24); the
+  pickers float inside their panel and fit their rows; the header and
+  start card show `pg 16.15`, not the Debian build string; the confirm
+  modal sizes to its content; footer text is measured in display
+  columns so a Japanese server error no longer clips the action keys;
+  the help overlay no longer drifts on narrow terminals; the start card
+  budgets its rows correctly at 60 columns and says `running …` while
+  the first query is in flight; the log picker scrolls; a buffer over
+  256 KiB renders plain; the tap panel no longer hands out a Gradle
+  coordinate for an unreleased JAR; a launch without a terminal says so
+  instead of `os error 6`; the CLI shows the same connect hints as the
+  TUI; a read-only refusal says where `read_only` lives; `--log` refuses
+  files over 64 MB; no auto-completion fires inside a pasted log.
 - **Security review before the first release** (five findings, each
   reproduced, each now pinned by a test):
   - Anything discovered in the working tree is untrusted. A discovered
@@ -98,6 +112,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- **A `:` command bar**, as in ebman and k9s: `:about`, `:help`,
+  `:update`, `:quit`, `:readonly on|off`, `:connect NAME`, and every
+  `\` command without the backslash (`:l`, `:x`, `:dt`, `:i PATH` …),
+  with Tab completion. `?` opens help from any mode. `\c` and `:connect`
+  accept a quoted name or a unique prefix.
+- **`pgman postgres://…`** as a positional argument; **`--init-config`**
+  writes a commented default `safety.toml`; **`--help`** fits on a
+  screen, grouped, and names no internal types.
+- **Typed JSON in `--batch --format json`**: `null`, numbers and
+  booleans instead of strings.
 - **`--demo` answers queries** synthetically, through the same safety
   guards as a live session, and opens on the start card — so a talk or
   a recording can go paste-log → reconstruct → run → rows without a
