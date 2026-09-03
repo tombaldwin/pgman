@@ -865,9 +865,16 @@ async fn connect_inner(
 /// (`UPDATE`, `DELETE`, DDL). Non-row statements yield a single-cell grid with
 /// the affected-row count.
 ///
-/// Row-returning statements are streamed via `query_raw` and capped at
-/// `grid::MAX_ROWS`; if the underlying result is larger, the returned
-/// `Grid` carries `truncated: true` so the renderer can surface that.
+/// Row-returning statements run over the *text* wire format
+/// ([`stream_text_rows`]) so every column type renders as psql prints
+/// it — a timestamptz, numeric, uuid, json, array, interval, bytea,
+/// money or inet cell used to come back as `?` because the binary
+/// path decoded only bool / int / float / text. `prepare` (Parse +
+/// Describe, no execution) still supplies the column shape and decides
+/// the branch; the statement executes exactly once either way. Rows
+/// are capped at `grid::MAX_ROWS`; if the underlying result is larger,
+/// the returned `Grid` carries `truncated: true` so the renderer can
+/// surface that.
 pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
     let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns = stmt.columns();
@@ -880,12 +887,91 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
         })
     } else {
         let column_names: Vec<String> = columns.iter().map(|c| c.name().to_string()).collect();
-        let (rows, truncated) = stream_rows(client, &stmt).await?;
+        let (rows, truncated) = stream_text_rows(client, sql, column_names.len()).await?;
         Ok(Grid {
             columns: column_names,
             rows,
             truncated,
         })
+    }
+}
+
+/// One result row as the grid shows it: the text-wire cells lined up
+/// with the `n_columns` Describe promised ([`project_cells`]) and SQL
+/// NULL rendered as the empty string — the same convention
+/// [`cell_to_string`] uses, which `grid::cmp_cells` sorts last. The
+/// shared row→cells step of every result-set path (TUI grid, `--batch
+/// csv` / `tsv` / `expanded`). Pure / testable.
+pub fn display_cells(cells: Vec<Option<String>>, n_columns: usize) -> Vec<String> {
+    project_cells(cells, n_columns)
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect()
+}
+
+/// Stream a row-returning statement over the simple-query (text)
+/// protocol into display strings, stopping at `grid::MAX_ROWS`. Every
+/// type arrives already rendered by the server — no client-side
+/// decoder to be missing. Returns `(rows, truncated)` like
+/// [`stream_rows`].
+async fn stream_text_rows(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    n_columns: usize,
+) -> Result<(Vec<Vec<String>>, bool), QueryErr> {
+    use futures::StreamExt;
+    let stream = client.simple_query_raw(sql).await.map_err(QueryErr::from)?;
+    let mut stream = Box::pin(stream);
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut truncated = false;
+    while let Some(msg) = stream.next().await {
+        let tokio_postgres::SimpleQueryMessage::Row(row) = msg.map_err(QueryErr::from)? else {
+            continue;
+        };
+        if out.len() >= crate::grid::MAX_ROWS {
+            truncated = true;
+            break;
+        }
+        // Read only what the row carries (see `run_statement_typed`):
+        // `SimpleQueryRow::get` panics past the row's own width.
+        let cells: Vec<Option<String>> = (0..row.columns().len())
+            .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
+            .collect();
+        out.push(display_cells(cells, n_columns));
+    }
+    Ok((out, truncated))
+}
+
+#[cfg(test)]
+mod display_cells_tests {
+    use super::display_cells;
+
+    fn cells(items: &[Option<&str>]) -> Vec<Option<String>> {
+        items.iter().map(|c| c.map(str::to_string)).collect()
+    }
+
+    #[test]
+    fn text_wire_values_pass_through_and_null_is_the_empty_string() {
+        let got = display_cells(
+            cells(&[
+                Some("2024-05-06 07:08:09+00"),
+                None,
+                Some("{1,2}"),
+                Some(""),
+            ]),
+            4,
+        );
+        assert_eq!(got, vec!["2024-05-06 07:08:09+00", "", "{1,2}", ""]);
+    }
+
+    #[test]
+    fn a_short_row_is_padded_and_a_long_row_cut_to_the_described_width() {
+        assert_eq!(display_cells(cells(&[Some("a")]), 3), vec!["a", "", ""]);
+        assert_eq!(
+            display_cells(cells(&[Some("a"), Some("b"), Some("c")]), 2),
+            vec!["a", "b"]
+        );
+        assert!(display_cells(Vec::new(), 0).is_empty());
     }
 }
 

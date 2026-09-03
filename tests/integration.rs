@@ -816,3 +816,131 @@ fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
         String::from_utf8_lossy(&probe.stdout)
     );
 }
+
+/// The result-set path (the TUI grid and `--batch csv/tsv/expanded`
+/// share `conn::run_statement`) renders every common column type the
+/// way psql prints it. It used to decode only bool / int / float /
+/// text over the binary protocol and print `?` for everything else —
+/// timestamps, dates, numeric, uuid, json, arrays, intervals, bytea,
+/// money, inet — in the grid and in the CSV alike.
+#[test]
+fn batch_csv_renders_every_common_column_type_as_psql_prints_it() {
+    let out = Command::new(pgman_binary())
+        .args([
+            "--batch",
+            "--dsn",
+            DSN,
+            "--format",
+            "csv",
+            "--sql",
+            "SELECT '2024-05-06 07:08:09+00'::timestamptz AT TIME ZONE 'UTC' AS ts_utc, \
+             '2024-05-06 07:08:09'::timestamp AS ts, \
+             '2024-05-06'::date AS d, \
+             '12:34:56'::time AS t, \
+             1.50::numeric AS n, \
+             '6ba7b810-9dad-11d1-80b4-00c04fd430c8'::uuid AS u, \
+             '{\"a\":1}'::json AS j, \
+             '{\"b\": 2}'::jsonb AS jb, \
+             ARRAY[1,2]::int[] AS arr, \
+             interval '1 day 02:00:00' AS iv, \
+             '\\xdead'::bytea AS b, \
+             12.34::money AS m, \
+             '10.0.0.1'::inet AS ip, \
+             42 AS i, 'x' AS s, true AS ok, NULL::text AS nul",
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "exit {:?}, stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut lines = stdout.lines();
+    let header = csv_fields(lines.next().expect("header row"));
+    let cells = csv_fields(lines.next().expect("data row"));
+    assert_eq!(
+        cells.len(),
+        header.len(),
+        "row and header disagree on width: {stdout}"
+    );
+    assert!(
+        !cells.iter().any(|c| c == "?"),
+        "a cell rendered as `?` (undecodable type): {stdout}"
+    );
+    let expected = [
+        "2024-05-06 07:08:09",
+        "2024-05-06 07:08:09",
+        "2024-05-06",
+        "12:34:56",
+        "1.50",
+        "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        // json keeps its input spacing; jsonb normalises.
+        "{\"a\":1}",
+        "{\"b\": 2}",
+        "{1,2}",
+        "1 day 02:00:00",
+        "\\xdead",
+        "$12.34",
+        "10.0.0.1",
+        "42",
+        "x",
+        "t",
+        "",
+    ];
+    for (i, want) in expected.iter().enumerate() {
+        assert_eq!(cells[i], *want, "column {i} ({}): {stdout}", header[i]);
+    }
+}
+
+/// Split one CSV line the way `--format csv` writes it: `,`-separated,
+/// a field holding `,` / `"` / newline wrapped in `"` with inner `"`
+/// doubled. Test-side only; enough for one row of known shape.
+fn csv_fields(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                cur.push('"');
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// The no-result-set branch is untouched by the text-protocol routing:
+/// DDL and an `INSERT` without `RETURNING` still report the affected
+/// count through the `status` column.
+#[test]
+fn batch_csv_non_row_statement_still_reports_the_affected_count() {
+    let home = scratch_home("no-result-set", WRITABLE_PROFILE);
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--format",
+            "csv",
+            "--sql",
+            "CREATE TEMP TABLE pgman_types_probe (id int)",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("status\n0 row(s) affected"),
+        "expected the status grid: {stdout}"
+    );
+}
