@@ -1609,6 +1609,16 @@ impl App {
             self.splash_until = None;
             // fall through so the key reaches the active mode's handler
         }
+        // The `:` bar is only ever `take()`n by its own key handler,
+        // but the mode can leave `CommandBar` underneath it — an async
+        // `QueryOk { tx_open_after }` / `TxClosed` / `CostPreviewLoaded`
+        // landing mid-bar, or a chord that opened a panel. A bar with
+        // no mode behind it is stale text (`:rea`) that would otherwise
+        // sit in the footer for the rest of the session; drop it on the
+        // next key.
+        if self.mode != Mode::CommandBar && self.command_bar.is_some() {
+            self.command_bar = None;
+        }
 
         // F1 opens help from ANY mode (except Help itself, which closes
         // on F1 / esc / ? / q). The cheat-sheet auto-scrolls to the

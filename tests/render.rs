@@ -8,6 +8,7 @@
 //! seed any state the scenario needs, then render once into a
 //! `TestBackend` and inspect the resulting buffer.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pgman::app::{compute_visible_rows, App, ConnState, DataSourcePick, HistorySearchState, Mode};
 use pgman::conn::Dsn;
 use pgman::grid::cmp_cells;
@@ -1058,4 +1059,41 @@ fn about_card_carries_the_full_server_version() {
     let header = rendered.lines().next().unwrap();
     assert!(header.contains("pg 16.15"), "{header}");
     assert!(!header.contains("Debian"), "{header}");
+}
+
+/// The footer renders the `:` bar only while the mode IS `CommandBar`.
+/// An async `TxClosed` landing mid-bar moves the mode to Editor
+/// without taking the bar; until the next key drops it, its text must
+/// not hide the editor's own footer hints. (TxDecision has its own
+/// pre-empting footer, so the Editor case is the one that shows.)
+#[test]
+fn stale_command_bar_does_not_hide_the_editor_footer() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+    for c in "rea".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    assert_eq!(a.mode, Mode::CommandBar);
+    // Exactly what `on_msg(TxClosed { .. })` does to the mode —
+    // without touching the bar (the app-level test in
+    // `src/app/tests.rs` drives a real message; `on_msg` is
+    // crate-private).
+    a.mode = Mode::Editor;
+    assert!(
+        a.command_bar.is_some(),
+        "precondition: the bar is stale, not taken"
+    );
+    let buf = render(&mut a, 80, 24);
+    let footer = row_text(&buf, 23);
+    assert!(
+        !footer.contains(":rea"),
+        "stale command bar drawn over the editor footer: {footer:?}"
+    );
+    assert!(
+        footer.contains("F5 run"),
+        "editor footer hint missing: {footer:?}"
+    );
 }

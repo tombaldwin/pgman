@@ -792,8 +792,16 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .sum();
     // Priority: the `:` command bar (the operator is typing INTO the
     // footer — nothing else may occupy it) > query error > status
-    // (e.g. "EXPLAIN ok · 4 rows") > hints.
-    let line = if let Some(bar) = &app.command_bar {
+    // (e.g. "EXPLAIN ok · 4 rows") > hints. The bar only counts while
+    // the mode is actually `CommandBar`: an async message can move the
+    // mode out from under it (`QueryOk { tx_open_after }` opens the tx
+    // decision), and until the next key drops the stale bar its text
+    // must not hide the modal's own footer.
+    let bar = app
+        .command_bar
+        .as_ref()
+        .filter(|_| app.mode == Mode::CommandBar);
+    let line = if let Some(bar) = bar {
         Line::from(vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
             Span::styled(
