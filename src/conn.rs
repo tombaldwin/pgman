@@ -1551,10 +1551,19 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
         ));
     }
     if lower.contains("password authentication failed") {
-        return Some(
+        // Telling an operator whose DSN already carried a password to
+        // "pass user:pass in --dsn" sends them in a circle. The DSN
+        // knows whether one was supplied; the value itself is never
+        // shown.
+        return Some(if dsn.password.is_some() {
+            format!(
+                "wrong password for user {:?} — the DSN (or its credential source) supplied one; check that value, or which user / database it belongs to",
+                dsn.user.as_deref().unwrap_or("")
+            )
+        } else {
             "wrong password. set PGPASSWORD before launching pgman, or pass user:pass in --dsn"
-                .to_string(),
-        );
+                .to_string()
+        });
     }
     if lower.contains("no password was provided") || lower.contains("requires password") {
         return Some(
@@ -2154,6 +2163,18 @@ mod tests {
         let d = dsn_for("h", "x", Some("alice"));
         let h = connect_hint("password authentication failed for user \"alice\"", &d).unwrap();
         assert!(h.to_lowercase().contains("password"), "got: {h}");
+        assert!(h.contains("pass user:pass in --dsn"), "got: {h}");
+    }
+
+    #[test]
+    fn connect_hint_does_not_suggest_supplying_a_password_the_dsn_already_carried() {
+        let mut d = dsn_for("h", "x", Some("alice"));
+        d.password = Some("hunter2".into());
+        let h = connect_hint("password authentication failed for user \"alice\"", &d).unwrap();
+        assert!(h.contains("wrong password for user \"alice\""), "got: {h}");
+        assert!(h.contains("supplied one"), "got: {h}");
+        assert!(!h.contains("pass user:pass"), "got: {h}");
+        assert!(!h.contains("hunter2"), "the value must never surface: {h}");
     }
 
     #[test]

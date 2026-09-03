@@ -665,6 +665,18 @@ fn end_ellipsis_never_overruns_a_cjk_budget() {
     assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
 }
 
+// ----- The failure card names the dated log file -----------------------
+
+#[test]
+fn dated_log_file_name_is_the_daily_rollers_utc_date() {
+    assert_eq!(dated_log_file_name(0), "pgman.log.1970-01-01");
+    assert_eq!(dated_log_file_name(951_782_400), "pgman.log.2000-02-29"); // leap day
+    assert_eq!(dated_log_file_name(1_700_000_000), "pgman.log.2023-11-14");
+    assert_eq!(dated_log_file_name(1_704_067_199), "pgman.log.2023-12-31"); // 23:59:59
+    assert_eq!(dated_log_file_name(1_704_067_200), "pgman.log.2024-01-01");
+    assert_eq!(dated_log_file_name(4_102_444_800), "pgman.log.2100-01-01");
+}
+
 // ----- Prose segments are cut at word boundaries ------------------------
 
 #[test]
