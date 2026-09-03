@@ -66,6 +66,13 @@ struct Cli {
     #[arg(long, help_heading = "Batch mode")]
     yes: bool,
 
+    /// In --batch with no --dsn, accept the single data source
+    /// discovered in this checkout. Without it a discovered candidate
+    /// is refused: nothing found in the working tree connects without
+    /// a deliberate act, and --batch has no keypress to offer.
+    #[arg(long, help_heading = "Batch mode")]
+    discovered: bool,
+
     /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON events).
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_listen: Option<String>,
@@ -661,7 +668,7 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
             discover_intellij_datasources(&cwd, &mut picks);
         }
     }
-    batch_dsn_from_picks(picks)
+    batch_dsn_from_picks(picks, cli.discovered)
 }
 
 /// Reduce the discovered candidate list to the one DSN `--batch` may
@@ -669,8 +676,19 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
 /// `picks` happens in `resolve_batch_dsn`.
 ///
 /// Batch has no picker and nobody to prompt, so every question the TUI
-/// would ask becomes a refusal here rather than a silent yes.
-fn batch_dsn_from_picks(picks: Vec<DataSourcePick>) -> Result<conn::Dsn, String> {
+/// would ask becomes a refusal here rather than a silent yes. That
+/// includes the question the TUI asks about discovery itself: "nothing
+/// discovered connects without a keypress" (see
+/// `docs/safety-and-privacy.md`) — a single candidate lands in the
+/// picker exactly like ten. Batch used to connect to a lone candidate
+/// on its own, so `git clone && pgman --batch --sql …` inside a
+/// checkout the operator hadn't read connected to whatever host that
+/// checkout named. `allow_discovered` (the `--discovered` flag) is the
+/// deliberate act that replaces the keypress.
+fn batch_dsn_from_picks(
+    picks: Vec<DataSourcePick>,
+    allow_discovered: bool,
+) -> Result<conn::Dsn, String> {
     match picks.len() {
         0 => Err(
             "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
@@ -678,6 +696,15 @@ fn batch_dsn_from_picks(picks: Vec<DataSourcePick>) -> Result<conn::Dsn, String>
         ),
         1 => {
             let pick = picks.into_iter().next().expect("len checked");
+            if !allow_discovered {
+                return Err(format!(
+                    "'{}' was discovered in this checkout — pgman never connects to a \
+                     discovered data source without a deliberate act, and --batch has no \
+                     keypress to offer. Pass --dsn to name the connection yourself, or \
+                     --discovered to accept this one.",
+                    pick.name
+                ));
+            }
             // An unresolved placeholder must fail loudly rather than
             // handing `connect_and_bootstrap` a literal `${NAME}`.
             if let Some(name) = pick.unresolved_host.first() {
@@ -1605,18 +1632,40 @@ mod main_tests {
 
     #[test]
     fn batch_uses_a_single_clean_discovered_pick() {
-        let got = batch_dsn_from_picks(vec![batch_pick("only", "postgres://app@db/main")]).unwrap();
+        let got =
+            batch_dsn_from_picks(vec![batch_pick("only", "postgres://app@db/main")], true).unwrap();
         assert_eq!(got.host, "db");
+    }
+
+    #[test]
+    fn batch_refuses_a_lone_discovered_pick_without_the_opt_in() {
+        // "Nothing discovered connects without a keypress"
+        // (docs/safety-and-privacy.md) held everywhere except here:
+        // `git clone && pgman --batch --sql …` inside a checkout the
+        // operator hadn't read connected to whatever host that
+        // checkout named. `--batch` has no keypress to offer, so the
+        // deliberate act has to be a flag.
+        let err = batch_dsn_from_picks(vec![batch_pick("only", "postgres://app@db/main")], false)
+            .unwrap_err();
+        assert!(err.contains("'only'"), "names the candidate: {err}");
+        assert!(err.contains("--dsn"), "names both ways forward: {err}");
+        assert!(
+            err.contains("--discovered"),
+            "names both ways forward: {err}"
+        );
     }
 
     #[test]
     fn batch_refuses_a_discovered_ssh_tunnel() {
         // The TUI asks before spawning ssh; batch has nobody to ask, and
         // that is a reason to refuse, not to proceed quietly.
-        let err = batch_dsn_from_picks(vec![batch_pick(
-            "via-bastion",
-            "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
-        )])
+        let err = batch_dsn_from_picks(
+            vec![batch_pick(
+                "via-bastion",
+                "postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com",
+            )],
+            true,
+        )
         .unwrap_err();
         assert!(err.contains("tom@bastion.example.com"), "got: {err}");
         assert!(err.contains("--dsn"), "should name the way forward: {err}");
@@ -1626,29 +1675,32 @@ mod main_tests {
     fn batch_refuses_unresolved_placeholders_and_says_which_kind() {
         let mut host = batch_pick("app", "postgres://app@db/main");
         host.unresolved_host = vec!["DB_HOST".into()];
-        let err = batch_dsn_from_picks(vec![host]).unwrap_err();
+        let err = batch_dsn_from_picks(vec![host], true).unwrap_err();
         assert!(err.starts_with("${DB_HOST} sits in the host"), "got: {err}");
 
         let mut user = batch_pick("app", "postgres://app@db/main");
         user.unresolved = vec!["DB_USER".into()];
-        let err = batch_dsn_from_picks(vec![user]).unwrap_err();
+        let err = batch_dsn_from_picks(vec![user], true).unwrap_err();
         assert!(err.contains("export it"), "got: {err}");
 
         let mut broken = batch_pick("app", "postgres://app@db/main");
         broken.dsn = None;
-        let err = batch_dsn_from_picks(vec![broken]).unwrap_err();
+        let err = batch_dsn_from_picks(vec![broken], true).unwrap_err();
         assert!(err.contains("no usable connection URL"), "got: {err}");
     }
 
     #[test]
     fn batch_refuses_zero_or_ambiguous_candidates() {
-        assert!(batch_dsn_from_picks(Vec::new())
+        assert!(batch_dsn_from_picks(Vec::new(), true)
             .unwrap_err()
             .contains("no DSN"));
-        let err = batch_dsn_from_picks(vec![
-            batch_pick("a", "postgres://app@a/main"),
-            batch_pick("b", "postgres://app@b/main"),
-        ])
+        let err = batch_dsn_from_picks(
+            vec![
+                batch_pick("a", "postgres://app@a/main"),
+                batch_pick("b", "postgres://app@b/main"),
+            ],
+            true,
+        )
         .unwrap_err();
         assert!(err.contains("--dsn to disambiguate"), "got: {err}");
     }
@@ -1768,7 +1820,7 @@ mod main_tests {
         assert_eq!(pick.unresolved, vec!["PGMAN_TEST_MAIN_TOML_PW".to_string()]);
         assert!(pick.name.contains("unresolved ${PGMAN_TEST_MAIN_TOML_PW}"));
         assert!(
-            batch_dsn_from_picks(vec![pick]).is_err(),
+            batch_dsn_from_picks(vec![pick], true).is_err(),
             "and batch must refuse it rather than send the literal text"
         );
     }

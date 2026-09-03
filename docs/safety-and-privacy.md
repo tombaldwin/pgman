@@ -149,7 +149,9 @@ way is untrusted**: the repo's author chose those hosts, not you.
 Nothing discovered connects without a keypress — a single candidate
 lands in the picker exactly like ten, and the row shows the origin,
 `user@host:port/db`, the `sslmode` and any `tunnel → <bastion>` before
-you press enter. `PGPASSWORD` is only used with `--dsn`, so a
+you press enter. `--batch` has no keypress to offer, so it refuses a
+lone discovered candidate too: pass `--dsn`, or `--discovered` to
+accept it deliberately. `PGPASSWORD` is only used with `--dsn`, so a
 discovered connection can never borrow it, and a `${…}` placeholder is
 never resolved into a URL's host, port or query parameters (that is
 where `ssh_tunnel=` and `sslmode=` live), so a committed config can't
