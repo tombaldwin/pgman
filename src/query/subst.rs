@@ -191,6 +191,16 @@ fn quote(p: &BoundParam) -> String {
         ParamValue::Literal(v) => {
             if is_bare_type(&p.sql_type) && is_bare_literal(&p.sql_type, v) {
                 v.clone()
+            } else if v.contains('\\') {
+                // A backslash makes a plain `'…'` ambiguous: with
+                // `standard_conforming_strings = off` the server reads
+                // `\'` as an escaped quote, so a value ending in `\`
+                // leaves the literal *unterminated* and whatever
+                // follows in the statement becomes SQL. `E'…'` means
+                // the same thing under either setting, provided the
+                // backslashes are doubled — which is why the plain
+                // form is kept for the values that don't need it.
+                format!("E'{}'", v.replace('\\', "\\\\").replace('\'', "''"))
             } else {
                 format!("'{}'", v.replace('\'', "''"))
             }
@@ -317,6 +327,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "SELECT * FROM t WHERE id = 42 AND name = 'alice'");
+    }
+
+    #[test]
+    fn a_value_containing_a_backslash_becomes_an_escape_string() {
+        // A plain `'…'` is only unambiguous while
+        // `standard_conforming_strings` is on. With it off the server
+        // reads `\'` as an escaped quote, so a value ending in `\`
+        // leaves the literal open and the rest of the statement — here
+        // ` AND active = true` — stops being data.
+        let params = [p(1, "VARCHAR", r"ends-with\")];
+        let out = apply(
+            "SELECT * FROM t WHERE name = ? AND active = true",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            r"SELECT * FROM t WHERE name = E'ends-with\\' AND active = true"
+        );
+
+        // The injection shape: a backslash placed to eat the closing
+        // quote, then SQL of the attacker's choosing.
+        let params = [p(1, "VARCHAR", r"x\'; DROP TABLE users; --")];
+        let out = apply(
+            "SELECT * FROM t WHERE name = ?",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            r"SELECT * FROM t WHERE name = E'x\\''; DROP TABLE users; --'"
+        );
+        // pgman's own lexer agrees it is one statement — the `DROP` is
+        // inside the literal, not after it.
+        assert_eq!(crate::safety::split_statements(&out).len(), 1);
+        assert_eq!(
+            crate::safety::classify(&out),
+            crate::safety::StatementKind::Select
+        );
+    }
+
+    #[test]
+    fn a_value_without_a_backslash_keeps_the_plain_quoted_form() {
+        // `E'…'` is only reached for the values that need it — an
+        // ordinary string still renders as an ordinary literal.
+        let params = [p(1, "VARCHAR", "o'brien")];
+        let out = apply(
+            "SELECT * FROM t WHERE name = ?",
+            &params,
+            PlaceholderStyle::QuestionMark,
+        )
+        .unwrap();
+        assert_eq!(out, "SELECT * FROM t WHERE name = 'o''brien'");
     }
 
     #[test]

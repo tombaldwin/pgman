@@ -71,37 +71,66 @@ fn run_checkout() -> anyhow::Result<()> {
 }
 
 /// Pick a working directory for an upgrade subprocess: `home` if it's
-/// a directory that actually exists, otherwise `temp`. Pure — the
-/// impure caller (`run_step`) resolves `$HOME` and `std::env::temp_dir()`
-/// and passes them in, so this stays testable without touching the
-/// filesystem or environment.
-fn choose_working_dir(home: Option<PathBuf>, home_is_dir: bool, temp: PathBuf) -> PathBuf {
+/// a directory that actually exists, otherwise `fallback`. Pure — the
+/// impure caller (`run_step`) resolves `$HOME` and the fallback
+/// directory and passes them in, so this stays testable without
+/// touching the filesystem or environment.
+fn choose_working_dir(home: Option<PathBuf>, home_is_dir: bool, fallback: PathBuf) -> PathBuf {
     match home {
         Some(p) if home_is_dir => p,
-        _ => temp,
+        _ => fallback,
     }
 }
 
-/// `$HOME` if set and an actual directory, else the OS temp dir.
+/// `$HOME` if set and an actual directory, else pgman's own cache
+/// directory.
+///
 /// `cargo install` and `brew upgrade` search upward from the
 /// subprocess's *current working directory* for `.cargo/config.toml`
 /// — a `build.rustc-wrapper` or `target.*.runner` entry in one runs
 /// arbitrary commands. Running the upgrade from wherever the operator
 /// happened to invoke `pgman --upgrade` (which might be sitting inside
 /// some other, untrusted checkout) would let that checkout's config
-/// hijack the upgrade; running from `$HOME` (or the temp dir) instead
-/// means only a config *there* — Homebrew's or cargo's own concern —
-/// can affect it.
+/// hijack the upgrade; running from `$HOME` instead means only a
+/// config *there* — Homebrew's or cargo's own concern — can affect it.
+///
+/// The fallback for a missing `$HOME` used to be `std::env::temp_dir()`,
+/// which reopened the same hole from a different directory: `/tmp` is
+/// world-writable on Linux, and cargo searches upward, so any local
+/// user could plant `/tmp/.cargo/config.toml` with a
+/// `build.rustc-wrapper` and own the upgrade.
 fn home_or_temp_dir() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let home_is_dir = home.as_deref().is_some_and(Path::is_dir);
-    choose_working_dir(home, home_is_dir, std::env::temp_dir())
+    choose_working_dir(home, home_is_dir, private_fallback_dir())
+}
+
+/// pgman's cache directory, created owner-only — a working directory
+/// nobody but the user can drop a `.cargo/config.toml` into.
+///
+/// `util::cache_dir()` degrades to `.` when neither `XDG_CACHE_HOME`
+/// nor `HOME` is set, and `.` is the invoking working directory, which
+/// is the one place this must never be. In that single case — no
+/// `HOME`, no XDG override, so pgman has no private directory anywhere
+/// — there is nothing better than the old temp-dir behaviour.
+fn private_fallback_dir() -> PathBuf {
+    fallback_from(crate::util::cache_dir(), std::env::temp_dir())
+}
+
+/// `cache` when it is a real directory pgman can make owner-only,
+/// else `temp`. Split out so a test can drive both arms without
+/// mutating the process environment.
+fn fallback_from(cache: PathBuf, temp: PathBuf) -> PathBuf {
+    if cache != Path::new(".") && crate::util::ensure_private_dir(&cache).is_ok() {
+        return cache;
+    }
+    temp
 }
 
 /// Run one upgrade subprocess with inherited stdio, echoing the command
-/// first so the operator sees exactly what ran. Runs from `$HOME` (or the
-/// OS temp dir) rather than pgman's own working directory — see
-/// `home_or_temp_dir` for why. `Err` on a failed spawn or a non-zero exit.
+/// first so the operator sees exactly what ran. Runs from `$HOME` (or
+/// pgman's own cache directory) rather than pgman's working directory —
+/// see `home_or_temp_dir` for why. `Err` on a failed spawn or a non-zero exit.
 fn run_step(program: &str, args: &[&str]) -> anyhow::Result<()> {
     eprintln!("→ {program} {}", args.join(" "));
     let status = Command::new(program)
@@ -163,6 +192,45 @@ fn relaunch() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_fallback_working_dir_is_private_and_not_a_shared_temp_dir() {
+        // The reproduction: with `$HOME` unset the upgrade ran from
+        // `std::env::temp_dir()`. cargo searches *upward* from the
+        // working directory for `.cargo/config.toml`, and `/tmp` is
+        // world-writable on Linux — so any local user could plant one
+        // with a `build.rustc-wrapper` and own the upgrade. That is
+        // the same hijack running from `$HOME` exists to prevent.
+        use std::os::unix::fs::PermissionsExt;
+        let scratch =
+            std::env::temp_dir().join(format!("pgman-upgrade-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let cache = scratch.join("pgman");
+        let temp = PathBuf::from("/tmp");
+
+        let dir = fallback_from(cache.clone(), temp.clone());
+        assert_eq!(dir, cache, "the fallback must be pgman's cache directory");
+        assert_ne!(dir, temp, "and never the shared temp directory");
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "it must be created owner-only so nobody else can plant a \
+             .cargo/config.toml in it; got {mode:o}"
+        );
+
+        // The one case with no private directory to be had: neither
+        // `XDG_CACHE_HOME` nor `HOME` set, so `cache_dir()` degraded to
+        // `.` — the invoking working directory, which is the one place
+        // this must never run. Temp is the least-bad answer there.
+        assert_eq!(
+            fallback_from(PathBuf::from("."), temp.clone()),
+            temp,
+            "`.` is the caller's cwd and must never be chosen"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
 
     #[test]
     fn choose_working_dir_prefers_home_when_it_is_a_real_directory() {

@@ -194,7 +194,11 @@ version, a backup restore, a stale umask) — unless the path is a
 **symlink**, in which case pgman leaves the mode alone entirely
 rather than following the link and re-permissioning a directory it
 does not own; if you point `~/.cache/pgman` at a shared volume, its
-mode stays yours to set. That's a floor, not a
+mode stays yours to set. `pgman --upgrade` runs its subprocesses from
+`$HOME`, or from that cache directory when `$HOME` is unusable, never
+from a shared temp directory — `cargo` and `brew` search upward from
+the working directory for a `.cargo/config.toml`, and one in a
+world-writable `/tmp` would be anyone's to write. That's a floor, not a
 substitute for filesystem hygiene: if your `~` itself isn't otherwise
 locked down (shared account, backup that preserves world-readable
 ACLs, etc.), still treat the files above as no more private than a
