@@ -1751,7 +1751,11 @@ impl App {
             self.cycle_tab(false);
             return;
         }
-        if alt {
+        // Gated like Ctrl-W: from a typing prompt (save-as name,
+        // rename, param, filter…) a tab jump swapped the editor buffer
+        // out from under the prompt, and Enter then saved the OTHER
+        // tab's SQL under the name just typed.
+        if alt && !typing_mode {
             if let KeyCode::Char(c) = key.code {
                 if let Some(d) = c.to_digit(10) {
                     if d >= 1 && (d as usize) <= self.tabs.len() {
