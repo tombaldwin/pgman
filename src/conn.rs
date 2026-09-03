@@ -397,25 +397,45 @@ fn opt(s: impl Into<String>) -> Option<String> {
 /// The naive "authority ends at the first `/`" rule (what both
 /// `Dsn::parse` and `redact_url` used to do) breaks the moment a
 /// password contains `/` or `@` — both are valid, unescaped, in a
-/// postgres/JDBC password. The correct rule, matching how browsers
-/// resolve authority boundaries (RFC 3986 §3.2 in spirit): nothing
-/// past the first `?` or `#` can be part of the authority (those
-/// always start the query/fragment); within what's left, the *last*
-/// `@` is the userinfo/host boundary — so an unescaped `@` inside the
-/// password is absorbed into userinfo rather than mistaken for the
-/// boundary. The authority itself then ends at the first `/`, `?`, or
-/// `#` at-or-after that boundary.
+/// postgres/JDBC password. So is `?`, and so is `#`.
+///
+/// The rule: the *last* `@` is the userinfo/host boundary, so an
+/// unescaped `@` inside the password is absorbed into userinfo rather
+/// than mistaken for the boundary; the authority then ends at the
+/// first `/`, `?`, or `#` at-or-after that boundary.
+///
+/// What bounds the search for that `@` is the delicate part. Cutting
+/// at the first `?` or `#` anywhere in the string — the previous rule
+/// — mis-parses `postgres://u:p?ss@h/d`: the cut lands *before* the
+/// real `@`, so the userinfo is missed entirely and `u:p` is read as
+/// `host:port`. A `?` is only a query separator once the path has
+/// begun, so the search runs to the first `?`/`#` that follows the
+/// first `/`, and to the end of the string when there is no `/` at
+/// all.
+///
+/// That last clause is deliberately the *unsafe-to-parse, safe-to-
+/// redact* choice. In a path-less URL a `?` could equally start the
+/// query (`…@host?sslmode=disable`, common) or sit inside the password
+/// (`u:p?ss@host`, rare), and nothing in the string distinguishes
+/// them. Scanning the whole string resolves the tie towards "it was
+/// the password", because the cost of guessing wrong that way is a
+/// wrongly-masked host in a log line, while guessing the other way
+/// prints the password. `redact_url` closes the remaining gap outright.
 ///
 /// Returns `authority` as `host[:port]` (userinfo already stripped)
 /// and `path_and_query` as everything from the authority's end to the
 /// end of the string (starting with `/`, `?`, `#`, or empty).
 fn split_authority(rest: &str) -> (Option<&str>, &str, &str) {
-    let query_or_fragment = rest.find(['?', '#']);
-    let before_qf = match query_or_fragment {
-        Some(p) => &rest[..p],
-        None => rest,
+    let at_search_end = match rest.find('/') {
+        // Past the path's first `/`, a `?`/`#` really does open the
+        // query — an `@` beyond it belongs to a parameter value.
+        Some(p) => rest[p..]
+            .find(['?', '#'])
+            .map(|i| p + i)
+            .unwrap_or(rest.len()),
+        None => rest.len(),
     };
-    let last_at = before_qf.rfind('@');
+    let last_at = rest[..at_search_end].rfind('@');
     let search_start = last_at.map(|p| p + 1).unwrap_or(0);
     let authority_end = rest[search_start..]
         .find(['/', '?', '#'])
@@ -477,20 +497,45 @@ fn hex_val(b: u8) -> Option<u8> {
 /// Best-effort and conservative. Used only on the logging/error path for
 /// strings that failed to parse; never reconstruct a real DSN from it.
 pub fn redact_url(url: &str) -> String {
-    // 1. Userinfo between "://" and the authority — via the same
-    // `split_authority` rule `Dsn::parse` uses, so a password
-    // containing `/` or `@` gets fully masked here too instead of
-    // leaking the part past a naive first-`/`-or-first-`@` cut.
+    // 1. Userinfo between "://" and the authority.
+    //
+    // `split_authority` is the parser's rule, and it is right whenever
+    // the DSN can be parsed at all — but this function's whole job is
+    // the strings that could NOT be parsed, so it cannot stop there. A
+    // password mixing `@`, `/` and `?` defeats any split (`u:@/?@h/d`
+    // — which `@` is the delimiter?), and `split_authority` picking
+    // the earlier one would leave the rest of the password in the log.
+    //
+    // So redaction cuts at the *last* `@` that could be a userinfo
+    // boundary, falling back to the parser's answer when none does.
+    // The test for "could be": a userinfo `@` is followed by the host
+    // and therefore by the path's `/`, while an `@` in a query
+    // parameter value sits past the path and has no `/` after it. With
+    // no `/` anywhere there is no path, so the `@` cannot be inside a
+    // query that follows one.
+    //
+    // Ties go to masking. Being wrong costs a host name in one log
+    // line; being wrong the other way prints a password.
     let mut out = String::with_capacity(url.len());
     let tail = if let Some(scheme_end) = url.find("://") {
         let after = scheme_end + 3;
         out.push_str(&url[..after]);
-        let (userinfo, authority, path_and_query) = split_authority(&url[after..]);
-        if userinfo.is_some() {
-            out.push_str("***@");
+        let rest = &url[after..];
+        let (userinfo, authority, path_and_query) = split_authority(rest);
+        let cut = rest
+            .rfind('@')
+            .filter(|at| rest[at + 1..].contains('/') || !rest[..*at].contains('/'))
+            .or_else(|| userinfo.map(|u| u.len()));
+        match cut {
+            Some(at) => {
+                out.push_str("***@");
+                &rest[at + 1..]
+            }
+            None => {
+                out.push_str(authority);
+                path_and_query
+            }
         }
-        out.push_str(authority);
-        path_and_query
     } else {
         url
     };
@@ -1659,6 +1704,80 @@ mod tests {
         let masked = super::redact_url("postgres://svc:p@ssw0rd@db.host/app");
         assert_eq!(masked, "postgres://***@db.host/app");
         assert!(!masked.contains("ssw0rd"), "leak: {masked}");
+    }
+
+    #[test]
+    fn redact_url_masks_password_containing_question_mark_or_hash() {
+        // Was: unchanged (LEAK). The userinfo scan cut the string at
+        // the FIRST '?' or '#' anywhere in it — which, for a password
+        // holding one, landed before the real '@'. No userinfo was
+        // found, so nothing was masked, and `redact_url` is exactly
+        // what runs on a URL that failed to parse, on its way to the
+        // log.
+        for (raw, want) in [
+            ("postgres://u:p?ss@h/d", "postgres://***@h/d"),
+            ("postgres://u:p#ss@h/d", "postgres://***@h/d"),
+            (
+                "postgres://svc:pa?s#s@db.host:5432/app",
+                "postgres://***@db.host:5432/app",
+            ),
+            // No path at all — the ambiguous shape, resolved towards
+            // masking.
+            ("postgres://u:p?ss@h", "postgres://***@h"),
+            // A password mixing '/' with '?' cannot be parsed back
+            // out, but it must still never be printed.
+            ("postgres://u:p/s?s@h:5432/d", "postgres://***@h:5432/d"),
+            // Found by `redact_url_never_leaks_any_raw_password`: with
+            // '@', '/' and '?' all in the password, `split_authority`
+            // picks the FIRST '@' as the boundary and the rest of the
+            // password ("/?") survived past the mask. Redaction cuts
+            // at the last plausible '@', not the parser's.
+            ("postgres://u:@/?@h:5432/d", "postgres://***@h:5432/d"),
+        ] {
+            let masked = super::redact_url(raw);
+            assert_eq!(masked, want, "for {raw}");
+            assert!(!masked.contains("ss"), "leak: {masked}");
+        }
+    }
+
+    #[test]
+    fn redact_url_leaves_an_at_sign_in_a_query_parameter_alone() {
+        // The other side of the rule: once the path has begun, a '?'
+        // really does start the query, so an '@' in a parameter value
+        // is not a userinfo boundary and the host stays readable.
+        assert_eq!(
+            super::redact_url("postgres://db.host:5432/app?application_name=svc@box"),
+            "postgres://db.host:5432/app?application_name=svc@box"
+        );
+    }
+
+    #[test]
+    fn parses_password_containing_question_mark_or_hash() {
+        // Was: user=None, host="u", port parse of "p" -> DsnError, so
+        // the string fell through to `redact_url` unparsed.
+        let d = Dsn::parse("postgres://u:p?ss@h/d").unwrap();
+        assert_eq!(d.user.as_deref(), Some("u"));
+        assert_eq!(d.password.as_deref(), Some("p?ss"));
+        assert_eq!(d.host, "h");
+        assert_eq!(d.dbname, "d");
+
+        let d = Dsn::parse("postgres://svc:pa#ss@db.host:5432/app").unwrap();
+        assert_eq!(d.password.as_deref(), Some("pa#ss"));
+        assert_eq!(d.host, "db.host");
+        assert_eq!(d.port, 5432);
+        assert_eq!(d.dbname, "app");
+    }
+
+    #[test]
+    fn a_query_parameter_is_not_mistaken_for_userinfo() {
+        // The bound on the userinfo search has to stop at the query
+        // once a path has begun, or `@` in a parameter value would be
+        // read as the credential boundary.
+        let d = Dsn::parse("postgres://db.host:5432/app?application_name=svc@box").unwrap();
+        assert_eq!(d.user, None);
+        assert_eq!(d.password, None);
+        assert_eq!(d.host, "db.host");
+        assert_eq!(d.dbname, "app");
     }
 
     #[test]

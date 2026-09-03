@@ -301,18 +301,31 @@ pure redactors (`src/conn.rs`):
   parameter, case-insensitively.
 
 Both redactors — and `Dsn::parse` itself — split the authority using
-the *last* `@` before the first `?`/`#`, not the first. A password may
-contain `/` or `@` unescaped (common with generated cloud-provider
-credentials); using the first `@` as the userinfo boundary used to
-both mis-parse the DSN and let the tail of such a password leak past
-`redact_url`'s masking.
+the *last* `@`, not the first. A password may contain `/`, `@`, `?` or
+`#` unescaped (common with generated cloud-provider credentials);
+using the first `@` as the userinfo boundary used to both mis-parse
+the DSN and let the tail of such a password leak past `redact_url`'s
+masking. The search for that `@` stops at the first `?`/`#` **after
+the path's first `/`**, since before the path a `?` is still password
+material — cutting at the first `?` anywhere made
+`postgres://u:p?ss@host/db` parse `p` as the port and redact to
+itself.
+
+`redact_url` goes further than the parser, because it runs on strings
+that *failed* to parse: it cuts at the last `@` that could be a
+userinfo boundary (one followed by the host, and so by the path's
+`/`), rather than the parser's answer. A password mixing `@`, `/` and
+`?` cannot be split back out by any rule, and this is what guarantees
+none of it is printed anyway; the cost when the guess goes the other
+way is a masked host in one log line.
 
 **Percent-encoding.** `Dsn::parse` percent-decodes `user` and
 `password` (leniently — a malformed `%XX` escape is kept literal
 rather than erroring), matching libpq's URI-connection-string
-behaviour. This is the only way a password can contain a literal `?`
-or `#`, since those characters always start the query/fragment and
-can't appear raw in the authority. `host` and `dbname` are **not**
+behaviour. A raw `?` or `#` in a password is now
+parsed and redacted correctly, but percent-encoding remains the only
+way to represent one unambiguously — a password holding both a `/` and
+a `?` is genuinely un-splittable (it is still fully redacted). `host` and `dbname` are **not**
 percent-decoded.
 
 Discovery logging (project connections, Spring picks, IntelliJ picks)
