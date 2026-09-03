@@ -21,6 +21,26 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Second pass of the release panel** (the security and correctness
+  reviewers re-reviewed the fixes): the new statement lexer treated only
+  ASCII as identifier characters where Postgres treats every byte over
+  0x7F as one, so a non-ASCII alias reopened the dollar-quote bypass —
+  reproduced live, fixed, and both reproductions are integration tests;
+  tap events cap their entry counts (65 000 empty params had taken a
+  listening pgman to 3.9 GB) and idle TCP connections time out; a
+  password containing `?` or `#` is parsed and redacted; Markdown report
+  headers are escaped; CSV/TSV strip control characters; the log
+  rollover file is owner-only; directories are never chmodded through a
+  symlink. A `${…}` in a URL parameter such as `ssh_tunnel=` is refused
+  rather than resolved; `:readonly on` survives the next connect; the
+  tap panel's memo keys on a generation counter rather than a
+  timestamp fingerprint that collided on 95% of adjacent events; the
+  `--batch` path needs `--dsn` or the new `--discovered` to use a
+  discovered data source; `:help <topic>` returns to where it was
+  opened; `\c my db` is an error; EXPLAIN works in `--demo`; a
+  multi-byte character in demo SQL no longer panics; the help overlay
+  wraps to the exact width at every terminal size; the convention guards
+  scan with a real lexer so a string literal cannot hide a path.
 - **Release-panel polish**: overlays stay off the header and footer
   (the About box used to paint over its own close hint at 80×24); the
   pickers float inside their panel and fit their rows; the header and
