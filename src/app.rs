@@ -86,6 +86,34 @@ pub fn sessions_status(total: usize, blocked: usize) -> String {
     }
 }
 
+/// A panel: a view the operator opens over the grid / editor and
+/// closes again — as opposed to the two base modes, a decision modal
+/// that owns the keyboard, a text prompt, or the error-detail overlay.
+/// Opening or closing one drops the footer's last error
+/// (`App::on_key`). Every full-screen picker / browser / monitor
+/// belongs here; a new one that is left out keeps the previous
+/// error under it.
+fn is_panel(mode: Mode) -> bool {
+    matches!(
+        mode,
+        Mode::Help
+            | Mode::About
+            | Mode::LogPick
+            | Mode::ConnPick
+            | Mode::RowDetail
+            | Mode::CellDetail
+            | Mode::ExplainTree
+            | Mode::SchemaBrowser
+            | Mode::SlowQueries
+            | Mode::Sessions
+            | Mode::SchemaLint
+            | Mode::Notifications
+            | Mode::TapMonitor
+            | Mode::SavedQueries
+            | Mode::ResultDiff
+    )
+}
+
 /// Is there a `safety.toml` in the config dir? Decides which
 /// [`read_only_escape_refusal`] to show; checked at message time
 /// because the profile itself does not record where it came from.
@@ -1648,8 +1676,25 @@ impl App {
     /// overlay headed by the previous query's `SQLSTATE 42P01`.
     pub fn on_key(&mut self, key: KeyEvent) {
         let error_before = self.last_error.clone();
+        let mode_before = self.mode;
         self.on_key_inner(key);
         if self.last_error.is_some() && self.last_error != error_before {
+            self.last_error_detail = None;
+        }
+        // Opening or closing a panel changes the subject: a failed `T`
+        // does not belong under the sessions panel the operator opened
+        // next, nor in the footer after they left it — it stayed
+        // through `L`, `W`, `S` and every Esc. Only an error this key
+        // did not itself produce is dropped, and only across a panel
+        // edge: the error-detail overlay *shows* the error, and leaving
+        // the editor for Normal is not a change of subject.
+        if self.mode != mode_before
+            && self.last_error == error_before
+            && self.mode != Mode::ErrorDetail
+            && mode_before != Mode::ErrorDetail
+            && (is_panel(mode_before) || is_panel(self.mode))
+        {
+            self.last_error = None;
             self.last_error_detail = None;
         }
     }
