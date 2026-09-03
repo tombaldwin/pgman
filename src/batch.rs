@@ -86,7 +86,19 @@ pub fn check_batch_safety(
         tracing::warn!("batch: {e:?}");
         crate::safety::SPLIT_REFUSAL.to_string()
     })?;
+    let read_only = config.profile_for(db).read_only;
     for stmt in &statements {
+        // The script runs inside one explicit transaction
+        // (`conn::run_batch_in_tx`). Under a read-only profile a
+        // transaction-control statement in it is refused: a `COMMIT`
+        // would end that transaction, and the next one would begin under
+        // whatever the script had made of the session — `…; COMMIT;
+        // INSERT …` was the way past the floor once
+        // `default_transaction_read_only` had been lifted. Not a category
+        // guard, so `--yes` does not apply.
+        if read_only && crate::safety::is_transaction_control(stmt) {
+            return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
+        }
         let decision = crate::safety::evaluate(config, db, stmt);
         match decision.guard {
             Guard::Allow => {}
@@ -117,6 +129,63 @@ pub fn check_batch_safety(
         }
     }
     Ok(statements)
+}
+
+#[cfg(test)]
+mod read_only_batch_tests {
+    use super::check_batch_safety;
+    use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
+
+    #[test]
+    fn transaction_control_is_refused_under_a_read_only_profile_even_with_yes() {
+        let cfg = SafetyConfig::default();
+        assert!(
+            cfg.default.read_only,
+            "fixture: default profile is read-only"
+        );
+        for sql in [
+            "SELECT 1; COMMIT; SELECT 2",
+            "BEGIN; SELECT 1",
+            "SELECT 1; END",
+            "SELECT 1; ROLLBACK",
+            "SELECT 1; ABORT",
+            "START TRANSACTION; SELECT 1",
+            "COMMIT",
+        ] {
+            assert_eq!(
+                check_batch_safety(&cfg, "db", sql, true),
+                Err(READ_ONLY_ESCAPE_REFUSAL.to_string()),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn transaction_control_is_a_plain_confirm_under_a_writable_profile() {
+        let mut cfg = SafetyConfig::default();
+        cfg.default.read_only = false;
+        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", true).is_ok());
+        assert!(check_batch_safety(&cfg, "db", "BEGIN; SELECT 1; COMMIT", false).is_err());
+    }
+
+    #[test]
+    fn every_lift_of_the_floor_is_refused_before_connecting() {
+        let cfg = SafetyConfig::default();
+        for sql in [
+            "SELECT set_config('default_transaction_read_only', 'off', false)",
+            "SET \"transaction_read_only\" = off",
+            "DO $$ BEGIN SET default_transaction_read_only = off; END $$",
+            "CALL lift_the_floor()",
+            "SELECT set_config('default_transaction_read_only', 'off', false); \
+             COMMIT; INSERT INTO t VALUES (1)",
+        ] {
+            assert_eq!(
+                check_batch_safety(&cfg, "db", sql, true),
+                Err(READ_ONLY_ESCAPE_REFUSAL.to_string()),
+                "{sql}"
+            );
+        }
+    }
 }
 
 /// Connect, run `opts.sql`, write the formatted result to `stdout`.
@@ -196,8 +265,14 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
             }
         }
     } else {
+        // A script runs inside one explicit transaction
+        // (`conn::run_batch_in_tx`) — see `check_batch_safety` for why
+        // that, together with the transaction-control refusal there,
+        // pins a read-only session to read-only. A single statement is
+        // one transaction already, with nothing after it to benefit from
+        // a lifted setting, so it keeps the typed extended-protocol path.
         let result = if checked.len() > 1 {
-            conn::run_batch(&client, &sql).await
+            conn::run_batch_in_tx(&client, &sql).await
         } else {
             conn::run_statement(&client, &sql).await
         };

@@ -1025,6 +1025,64 @@ pub async fn run_batch(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
     Ok(status_grid("batch executed"))
 }
 
+/// Run a multi-statement script inside one explicit transaction —
+/// `BEGIN; <script>; COMMIT` — rolled back if any statement fails.
+/// `--batch`'s executor.
+///
+/// The simple-query protocol already runs a multi-statement string in an
+/// implicit transaction, so for a script with no transaction control of
+/// its own this changes nothing on the wire. The wrapper exists for
+/// `batch::check_batch_safety`'s sake, which under a read-only profile
+/// refuses any top-level `COMMIT` / `END` / `ROLLBACK` / `BEGIN` / `START
+/// TRANSACTION` in the script. Together they pin the whole script to one
+/// transaction that began read-only: a `default_transaction_read_only`
+/// lifted mid-script (however the classifier missed it) only reaches the
+/// *next* transaction, and there is none.
+///
+/// The TUI's multi-statement path deliberately does not use this — a
+/// `BEGIN; UPDATE …` typed there under `auto_tx = false` is meant to stay
+/// open for the operator's own `COMMIT`.
+pub async fn run_batch_in_tx(client: &tokio_postgres::Client, sql: &str) -> Result<Grid, QueryErr> {
+    match client.batch_execute(&wrap_in_transaction(sql)).await {
+        Ok(()) => Ok(status_grid("batch executed")),
+        Err(e) => {
+            // An error mid-script leaves the transaction aborted; end it
+            // rather than drop the connection with one open.
+            let _ = client.batch_execute("ROLLBACK").await;
+            Err(QueryErr::from(e))
+        }
+    }
+}
+
+/// The script [`run_batch_in_tx`] sends. Pure so the shape is testable.
+/// The newline before the `;` ends a `-- line comment` the last statement
+/// may finish with — the same reason `safety::join_verified`'s separator
+/// is `"\n;\n"` — so the `COMMIT` can never be commented out.
+pub fn wrap_in_transaction(sql: &str) -> String {
+    format!("BEGIN;\n{sql}\n;\nCOMMIT")
+}
+
+#[cfg(test)]
+mod batch_tx_tests {
+    use super::wrap_in_transaction;
+    use crate::safety::split_statements;
+
+    #[test]
+    fn the_wrapper_brackets_the_script_and_survives_a_trailing_line_comment() {
+        assert_eq!(
+            wrap_in_transaction("SELECT 1\n;\nSELECT 2"),
+            "BEGIN;\nSELECT 1\n;\nSELECT 2\n;\nCOMMIT"
+        );
+        // The last statement ends in a line comment: the `COMMIT` still
+        // splits out as its own statement rather than vanishing into it.
+        let wrapped = wrap_in_transaction("SELECT 1 -- trailing");
+        assert_eq!(
+            split_statements(&wrapped),
+            vec!["BEGIN", "SELECT 1 -- trailing", "COMMIT"]
+        );
+    }
+}
+
 /// Run a multi-statement script inside an explicit transaction that is
 /// **left open** on success (caller commits or rolls back). On error in the
 /// batch, rolls back immediately.

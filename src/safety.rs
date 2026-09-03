@@ -270,6 +270,12 @@ pub fn classify(sql: &str) -> StatementKind {
         // (rather than falling through `_`) so a reader sees it's intentional
         // and the regression test pins it as a write.
         "merge" => StatementKind::Other,
+        // `DO` and `CALL` run procedural code. A plpgsql body is a
+        // dollar-quoted string to this classifier, so whatever it does is
+        // invisible here: `Other` (Confirm by default) — and, while the
+        // profile is read-only, a refusal in its own right (see
+        // `attempts_read_only_escape`).
+        "do" | "call" => StatementKind::Other,
         // `EXPLAIN ANALYZE <dml>` *executes* the DML — classify the inner
         // statement, not the EXPLAIN wrapper.
         "explain" => classify(strip_explain_prefix(trimmed)),
@@ -340,7 +346,13 @@ fn classify_cte(stripped: &str, has_where: bool) -> StatementKind {
 pub const READ_ONLY_ESCAPE_REFUSAL: &str =
     "this session is read-only by safety.toml; the setting cannot be changed from inside it";
 
-/// `true` if `sql` would lift the read-only property the profile asked for.
+/// The session GUCs that carry the read-only floor: `transaction_read_only`
+/// is the current transaction's, `default_transaction_read_only` every later
+/// one's. `read_only = true` sets the latter at connect.
+const READ_ONLY_GUCS: &[&str] = &["default_transaction_read_only", "transaction_read_only"];
+
+/// `true` if `sql` would lift the read-only property the profile asked for —
+/// or runs code that might, which this classifier cannot see into.
 ///
 /// `read_only = true` is applied at connect as
 /// `SET default_transaction_read_only = on`, and the docs claim a write on
@@ -351,14 +363,27 @@ pub const READ_ONLY_ESCAPE_REFUSAL: &str =
 ///
 /// Covers the ways back out: assigning the GUC anything but a truthy value,
 /// `RESET`ting it (or `RESET ALL` / `DISCARD ALL`, which take it with them),
-/// and the `READ WRITE` transaction modes on `SET`/`BEGIN`/`START`.
+/// the `READ WRITE` transaction modes on `SET`/`BEGIN`/`START`, and
+/// `set_config()` naming either GUC — from *any* statement, because
+/// `SELECT set_config('default_transaction_read_only', 'off', false)` is
+/// `SET` spelled as a read, and it was classified as one. A quoted
+/// identifier names the GUC as surely as the bare form does
+/// (`SET "transaction_read_only" = off`), so quoted identifiers are tokens
+/// here. And `DO` / `CALL` run procedural code whose body is a dollar-quoted
+/// string to this lexer: a `SET` inside it is invisible, so both count as an
+/// attempt outright. Opaque is not the same as safe.
 pub fn attempts_read_only_escape(sql: &str) -> bool {
-    const READ_ONLY_GUCS: &[&str] = &["default_transaction_read_only", "transaction_read_only"];
     let stripped = strip_sql_comments(sql);
+    if set_config_names_read_only_guc(&stripped) {
+        return true;
+    }
     let toks = code_tokens(&stripped);
     let Some(first) = toks.first().map(String::as_str) else {
         return false;
     };
+    if matches!(first, "do" | "call") {
+        return true;
+    }
     if !matches!(first, "set" | "reset" | "begin" | "start" | "discard") {
         return false;
     }
@@ -391,6 +416,329 @@ pub fn attempts_read_only_escape(sql: &str) -> bool {
         value = toks.get(pos + 2).map(String::as_str);
     }
     !matches!(value, Some("on" | "true" | "1"))
+}
+
+/// `true` if `sql` is a transaction-control statement: `BEGIN`, `START
+/// TRANSACTION`, `COMMIT`, `END`, `ROLLBACK`, `ABORT`, `PREPARE TRANSACTION`
+/// (and the `PREPARED` forms of the last three, which start the same way).
+///
+/// `--batch` runs a script inside one explicit transaction
+/// (`conn::run_batch_in_tx`) and, under a read-only profile, refuses these
+/// (`batch::check_batch_safety`): a `COMMIT` in the script would end that
+/// transaction, and the next one would begin under whatever the script had
+/// made of the session. `…; COMMIT; INSERT …` was the way past the floor
+/// once `default_transaction_read_only` had been lifted.
+pub fn is_transaction_control(sql: &str) -> bool {
+    let toks = code_tokens(&strip_sql_comments(sql));
+    match toks.first().map(String::as_str) {
+        Some("begin" | "start" | "commit" | "end" | "rollback" | "abort") => true,
+        Some("prepare") => toks.get(1).map(String::as_str) == Some("transaction"),
+        _ => false,
+    }
+}
+
+/// A token of [`call_tokens`]: just enough structure to find a function
+/// call in code and read its first argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CallTok {
+    /// An identifier, keyword or number in code, or a quoted identifier
+    /// with its quotes removed — lower-cased either way. (Postgres would
+    /// keep a quoted identifier's case; folding it can only over-match,
+    /// which is the safe direction.)
+    Word(String),
+    /// A `'…'` or `$tag$…$tag$` literal with its quotes removed,
+    /// lower-cased.
+    Literal(String),
+    /// `(`, `)` or `,`.
+    Punct(char),
+    /// Anything else: an operator, a `.`, a `::`, an `E'…'` string with
+    /// backslash escapes (`E'\164ransaction_read_only'` spells a GUC in
+    /// octal, and this classifier has no unescaper), an unterminated
+    /// dollar-quote. Its presence in an argument marks the argument as one
+    /// that cannot be read.
+    Opaque,
+}
+
+/// Lex `sql` into [`CallTok`]s. Comments contribute nothing.
+fn call_tokens(sql: &str) -> Vec<CallTok> {
+    let mut out = Vec::new();
+    for span in scan(sql) {
+        let text = &sql[span.start..span.end];
+        match span.kind {
+            SpanKind::Code => {
+                let b = text.as_bytes();
+                let mut i = 0;
+                while i < b.len() {
+                    if is_ident_cont_byte(b[i]) {
+                        // Bytes from 0x80 up are all identifier bytes, so
+                        // the run only ever ends at an ASCII byte — a char
+                        // boundary.
+                        let start = i;
+                        while i < b.len() && is_ident_cont_byte(b[i]) {
+                            i += 1;
+                        }
+                        out.push(CallTok::Word(text[start..i].to_ascii_lowercase()));
+                        continue;
+                    }
+                    match b[i] {
+                        b'(' | b')' | b',' => out.push(CallTok::Punct(b[i] as char)),
+                        b';' => {}
+                        c if c.is_ascii_whitespace() => {}
+                        _ => out.push(CallTok::Opaque),
+                    }
+                    i += 1;
+                }
+            }
+            SpanKind::Ident => out.push(CallTok::Word(unquote_ident(text).to_ascii_lowercase())),
+            SpanKind::String => {
+                out.push(CallTok::Literal(unquote_string(text).to_ascii_lowercase()))
+            }
+            SpanKind::EscapeString => {
+                // `E'…'`: the `E` off, then a plain string — unless it
+                // carries a backslash, which needs an unescaper.
+                let body = &text[1..];
+                out.push(if body.contains('\\') {
+                    CallTok::Opaque
+                } else {
+                    CallTok::Literal(unquote_string(body).to_ascii_lowercase())
+                });
+            }
+            SpanKind::DollarQuoted => out.push(match unquote_dollar(text, span.terminated) {
+                Some(body) => CallTok::Literal(body.to_ascii_lowercase()),
+                None => CallTok::Opaque,
+            }),
+            SpanKind::LineComment | SpanKind::BlockComment => {}
+        }
+    }
+    out
+}
+
+/// `true` if `sql` calls `set_config()` with a first argument that names one
+/// of [`READ_ONLY_GUCS`] — as a string literal, a dollar-quoted literal, or an
+/// identifier, quoted or not, in any case — or with a first argument this
+/// classifier cannot read: an expression, a nested call, an escape string
+/// with backslashes. A name that cannot be read is not one that can be
+/// vouched for. `pg_catalog.set_config(…)` and `"set_config"(…)` count too.
+fn set_config_names_read_only_guc(sql: &str) -> bool {
+    let toks = call_tokens(sql);
+    let mut i = 0;
+    while i + 1 < toks.len() {
+        let is_call = matches!(&toks[i], CallTok::Word(w) if w == "set_config")
+            && toks[i + 1] == CallTok::Punct('(');
+        i += 1;
+        if !is_call {
+            continue;
+        }
+        // The first argument: everything up to the `,` or `)` at depth 0.
+        let mut depth = 0usize;
+        let mut arg: Vec<&CallTok> = Vec::new();
+        for t in &toks[i + 1..] {
+            match t {
+                CallTok::Punct(',') | CallTok::Punct(')') if depth == 0 => break,
+                CallTok::Punct('(') => depth += 1,
+                CallTok::Punct(')') => depth -= 1,
+                _ => {}
+            }
+            arg.push(t);
+        }
+        let names_guc = match arg.as_slice() {
+            [] => false,
+            [CallTok::Word(s)] | [CallTok::Literal(s)] => READ_ONLY_GUCS.contains(&s.trim()),
+            _ => true,
+        };
+        if names_guc {
+            return true;
+        }
+    }
+    false
+}
+
+/// The name inside a `"…"` quoted identifier: quotes off, `""` undoubled. An
+/// unterminated one keeps everything after the opening quote.
+fn unquote_ident(text: &str) -> String {
+    let body = text.strip_prefix('"').unwrap_or(text);
+    let body = body.strip_suffix('"').unwrap_or(body);
+    body.replace("\"\"", "\"")
+}
+
+/// The text of a `'…'` literal: quotes off, `''` undoubled. An unterminated
+/// one keeps everything after the opening quote.
+fn unquote_string(text: &str) -> String {
+    let body = text.strip_prefix('\'').unwrap_or(text);
+    let body = body.strip_suffix('\'').unwrap_or(body);
+    body.replace("''", "'")
+}
+
+/// The body of a terminated `$tag$…$tag$` literal. `None` when the tag
+/// cannot be read or the literal never closed.
+fn unquote_dollar(text: &str, terminated: bool) -> Option<String> {
+    let tag_len = dollar_tag_at(text.as_bytes(), 0)?;
+    if !terminated || text.len() < 2 * tag_len {
+        return None;
+    }
+    Some(text[tag_len..text.len() - tag_len].to_string())
+}
+
+#[cfg(test)]
+mod read_only_floor_tests {
+    use super::*;
+
+    #[test]
+    fn set_config_on_either_guc_is_an_escape_from_any_statement() {
+        for sql in [
+            "SELECT set_config('default_transaction_read_only', 'off', false)",
+            "SELECT set_config('transaction_read_only', 'off', true)",
+            "select SET_CONFIG('DEFAULT_TRANSACTION_READ_ONLY', 'off', false)",
+            "SELECT pg_catalog.set_config('default_transaction_read_only', 'off', false)",
+            "SELECT \"set_config\"('default_transaction_read_only', 'off', false)",
+            "SELECT set_config($$default_transaction_read_only$$, 'off', false)",
+            "SELECT set_config($q$transaction_read_only$q$, 'off', false)",
+            "SELECT set_config(\"default_transaction_read_only\", 'off', false)",
+            "SELECT set_config(default_transaction_read_only, 'off', false)",
+            "SELECT set_config(' default_transaction_read_only ', 'off', false)",
+            "SELECT set_config(E'default_transaction_read_only', 'off', false)",
+            "WITH x AS (SELECT set_config('default_transaction_read_only', 'off', false)) \
+             SELECT 1",
+            "SELECT 1 WHERE set_config('transaction_read_only', 'off', false) = 'off'",
+            "SELECT /* c */ set_config /* c */ ( -- c\n 'transaction_read_only', 'off', false)",
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn a_set_config_argument_that_cannot_be_read_is_an_escape() {
+        for sql in [
+            "SELECT set_config('default_' || 'transaction_read_only', 'off', false)",
+            "SELECT set_config(lower('DEFAULT_TRANSACTION_READ_ONLY'), 'off', false)",
+            "SELECT set_config(E'default\\137transaction_read_only', 'off', false)",
+            "SELECT set_config((SELECT 'default_transaction_read_only'), 'off', false)",
+            "SELECT set_config(t.name, 'off', false) FROM t",
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn set_config_on_another_guc_is_not_an_escape() {
+        for sql in [
+            "SELECT set_config('application_name', 'pgman', false)",
+            "SELECT set_config('search_path', 'default_transaction_read_only', false)",
+            "SELECT set_config()",
+            "SELECT current_setting('default_transaction_read_only')",
+            "SELECT 'set_config(''default_transaction_read_only'', ''off'', false)'",
+            "SELECT * FROM t WHERE note = 'set_config(' -- default_transaction_read_only",
+            "SELECT set_config_at, x FROM t",
+        ] {
+            assert!(!attempts_read_only_escape(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn a_quoted_guc_name_is_still_the_guc() {
+        for sql in [
+            "SET \"transaction_read_only\" = off",
+            "SET \"default_transaction_read_only\" TO off",
+            "SET \"Default_Transaction_Read_Only\" = off",
+            "RESET \"default_transaction_read_only\"",
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+        }
+        assert!(!attempts_read_only_escape(
+            "SET \"default_transaction_read_only\" = on"
+        ));
+    }
+
+    #[test]
+    fn do_and_call_are_opaque_and_count_as_an_attempt() {
+        for sql in [
+            "DO $$ BEGIN SET default_transaction_read_only = off; END $$",
+            "do $body$ begin perform 1; end $body$",
+            "DO LANGUAGE plpgsql $$ BEGIN NULL; END $$",
+            "CALL lift_the_floor()",
+            "call pg_catalog.some_proc(1)",
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+        }
+        // The statement kinds, not the words.
+        assert!(!attempts_read_only_escape(
+            "SELECT do_it, call_count FROM t"
+        ));
+    }
+
+    #[test]
+    fn every_lift_is_a_block_under_a_read_only_profile_whatever_the_kind() {
+        let cfg = SafetyConfig::default();
+        assert!(
+            cfg.default.read_only,
+            "fixture: the default profile is read-only"
+        );
+        for sql in [
+            "SELECT set_config('default_transaction_read_only', 'off', false)",
+            "SET \"transaction_read_only\" = off",
+            "DO $$ BEGIN SET default_transaction_read_only = off; END $$",
+            "CALL lift_the_floor()",
+        ] {
+            let d = evaluate(&cfg, "any", sql);
+            assert_eq!(d.guard, Guard::Block, "{sql}");
+            assert!(d.read_only_escape, "{sql}");
+        }
+        let d = evaluate(
+            &cfg,
+            "any",
+            "SELECT current_setting('default_transaction_read_only')",
+        );
+        assert_eq!(d.guard, Guard::Allow, "reading the setting is a read");
+    }
+
+    #[test]
+    fn transaction_control_is_recognised_at_the_top_level_only() {
+        for sql in [
+            "BEGIN",
+            "begin;",
+            "BEGIN READ WRITE",
+            "START TRANSACTION",
+            "COMMIT",
+            "END",
+            "end transaction",
+            "ROLLBACK",
+            "rollback to savepoint s",
+            "ABORT",
+            "PREPARE TRANSACTION 'x'",
+            "COMMIT PREPARED 'x'",
+            "/* c */ COMMIT -- c",
+        ] {
+            assert!(is_transaction_control(sql), "{sql}");
+        }
+        for sql in [
+            "SELECT 1",
+            "SAVEPOINT s",
+            "RELEASE SAVEPOINT s",
+            "PREPARE q AS SELECT 1",
+            "SELECT 'COMMIT'",
+            "DO $$ BEGIN COMMIT; END $$",
+            "SELECT commit_id FROM t",
+            "",
+        ] {
+            assert!(!is_transaction_control(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn unquoting_helpers_undouble_and_survive_unterminated_input() {
+        assert_eq!(unquote_ident("\"a\"\"b\""), "a\"b");
+        assert_eq!(unquote_ident("\"abc"), "abc");
+        assert_eq!(unquote_string("'a''b'"), "a'b");
+        assert_eq!(unquote_string("'abc"), "abc");
+        assert_eq!(unquote_string("''"), "");
+        assert_eq!(unquote_dollar("$$x$$", true).as_deref(), Some("x"));
+        assert_eq!(unquote_dollar("$t$x$t$", true).as_deref(), Some("x"));
+        assert_eq!(unquote_dollar("$$x", false), None);
+        assert_eq!(unquote_dollar("$$$$", true).as_deref(), Some(""));
+        // A bare opener is not a literal, whatever the caller claims.
+        assert_eq!(unquote_dollar("$$", true), None);
+    }
 }
 
 /// The guard for `kind` under `profile`.
@@ -1011,21 +1359,27 @@ pub(crate) fn word_present_in_code(sql: &str, word: &str) -> bool {
         .any(|s| word_present(&sql[s.start..s.end], word))
 }
 
-/// The lower-cased identifier-ish tokens of `sql`'s code spans, in order.
-/// Quoted text and comments contribute nothing, so a keyword only counts where
-/// Postgres would read it as one.
+/// The lower-cased identifier-ish tokens of `sql`'s code spans, in order,
+/// plus each `"…"` quoted identifier as one token with its quotes removed.
+/// String literals, dollar-quoted bodies and comments contribute nothing, so
+/// a keyword only counts where Postgres would read it as one — while a quoted
+/// identifier is still an identifier: `SET "transaction_read_only" = off`
+/// names the GUC as surely as the bare form does, and `"pg_read_file"(…)`
+/// calls the function. (Postgres would keep a quoted identifier's case;
+/// folding it can only over-match, which is the safe direction.)
 pub(crate) fn code_tokens(sql: &str) -> Vec<String> {
     let mut out = Vec::new();
     for span in scan(sql) {
-        if span.kind != SpanKind::Code {
-            continue;
+        let text = &sql[span.start..span.end];
+        match span.kind {
+            SpanKind::Code => out.extend(
+                text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.to_ascii_lowercase()),
+            ),
+            SpanKind::Ident => out.push(unquote_ident(text).to_ascii_lowercase()),
+            _ => {}
         }
-        out.extend(
-            sql[span.start..span.end]
-                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .filter(|t| !t.is_empty())
-                .map(|t| t.to_ascii_lowercase()),
-        );
     }
     out
 }

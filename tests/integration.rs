@@ -113,17 +113,12 @@ fn batch_multistatement_routes_through_simple_query_protocol() {
     // transaction will go on to do — so batch mode refuses it without
     // explicit confirmation. That refusal is the gate working. This test
     // is about statement splitting, so it confirms and moves on.
-    let out = Command::new(pgman_binary())
-        .args([
-            "--batch",
-            "--yes",
-            "--dsn",
-            DSN,
-            "--sql",
-            "BEGIN; SELECT 1; COMMIT",
-        ])
-        .output()
-        .expect("spawn pgman");
+    //
+    // The writable profile, because under a read-only one transaction
+    // control in a script is refused outright, `--yes` or not (see
+    // `batch_refuses_to_turn_the_read_only_session_writable`).
+    let home = scratch_home("multistmt", WRITABLE_PROFILE);
+    let out = batch_with_home(&home, &["--yes", "--sql", "BEGIN; SELECT 1; COMMIT"]);
     assert!(
         out.status.success(),
         "multi-statement batch should succeed; stderr: {}",
@@ -159,18 +154,18 @@ fn batch_surfaces_server_notice_on_stderr() {
     // which the batch path drains to stderr.
     // `--yes` for the same reason as the multi-statement test above: a
     // `DO $$ .. $$` block is arbitrary PL/pgSQL, so the gate classifies
-    // it `Other` and asks. This test is about notice routing.
-    let out = Command::new(pgman_binary())
-        .args([
-            "--batch",
+    // it `Other` and asks. This test is about notice routing. The
+    // writable profile, because under a read-only one `DO` is refused
+    // outright — its body is opaque to the classifier.
+    let home = scratch_home("notice", WRITABLE_PROFILE);
+    let out = batch_with_home(
+        &home,
+        &[
             "--yes",
-            "--dsn",
-            DSN,
             "--sql",
             "DO $$ BEGIN RAISE NOTICE 'pgman-test-notice'; END $$",
-        ])
-        .output()
-        .expect("spawn pgman");
+        ],
+    );
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -271,16 +266,17 @@ fn batch_expanded_format_renders_one_record_per_block() {
 /// So this pins that the *binary*, not just the function, refuses.
 #[test]
 fn batch_refuses_a_guarded_statement_without_yes() {
-    let out = Command::new(pgman_binary())
-        .args([
-            "--batch",
-            "--dsn",
-            DSN,
+    // The writable profile: this test is about `Confirm` without `--yes`,
+    // and under a read-only profile `DO` never gets as far as the
+    // category guard (it is refused as opaque procedural code).
+    let home = scratch_home("guarded-no-yes", WRITABLE_PROFILE);
+    let out = batch_with_home(
+        &home,
+        &[
             "--sql",
             "DO $$ BEGIN RAISE NOTICE 'pgman-test-notice'; END $$",
-        ])
-        .output()
-        .expect("spawn pgman");
+        ],
+    );
 
     assert!(
         !out.status.success(),
@@ -355,7 +351,17 @@ fn table_exists(home: &std::path::Path, table: &str) -> bool {
         "existence probe failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8_lossy(&out.stdout).contains('t')
+    // The value row, not the whole output: the header `present` has a
+    // `t` in it, and `contains('t')` made this probe answer "yes" to
+    // everything — every "still exists after the refused DROP" assertion
+    // built on it was unfalsifiable.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value = stdout.lines().nth(1).unwrap_or("").trim();
+    assert!(
+        matches!(value, "true" | "false"),
+        "existence probe must answer true or false, got {stdout:?}"
+    );
+    value == "true"
 }
 
 #[test]
@@ -546,6 +552,27 @@ fn batch_refuses_to_turn_the_read_only_session_writable() {
         "SET default_transaction_read_only = off",
         "SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE",
         "SET default_transaction_read_only = off; SELECT 1",
+        // `SET` spelled as a function call — classified a plain read once,
+        // and run with no prompt.
+        "SELECT set_config('default_transaction_read_only', 'off', false)",
+        "SELECT set_config('transaction_read_only', 'off', true)",
+        "SELECT pg_catalog.set_config('DEFAULT_TRANSACTION_READ_ONLY', 'off', false)",
+        // A quoted GUC name is still the GUC.
+        "SET \"transaction_read_only\" = off",
+        "SET \"default_transaction_read_only\" TO off",
+        // Procedural code is opaque: the `SET` inside is a dollar-quoted
+        // string to the classifier.
+        "DO $$ BEGIN SET default_transaction_read_only = off; END $$",
+        "CALL pgman_it_no_such_procedure()",
+        // Ending the transaction is what lets a lifted setting bite: the
+        // next transaction begins under it. This one created its table.
+        "SELECT set_config('default_transaction_read_only', 'off', false); \
+         COMMIT; CREATE TABLE pgman_it_ro_escape(x int)",
+        "SELECT 1; COMMIT; CREATE TABLE pgman_it_ro_escape(x int)",
+        "SELECT 1; END; CREATE TABLE pgman_it_ro_escape(x int)",
+        "BEGIN; SELECT 1",
+        "SELECT 1; ROLLBACK",
+        "START TRANSACTION; SELECT 1",
     ] {
         let out = batch_with_home(&home, &["--yes", "--sql", sql]);
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -558,6 +585,30 @@ fn batch_refuses_to_turn_the_read_only_session_writable() {
             "{sql:?} must be refused for the right reason: {stderr}"
         );
     }
+    // The floor is intact afterwards, and nothing landed.
+    let out = batch_with_home(
+        &home,
+        &[
+            "--sql",
+            "SHOW default_transaction_read_only",
+            "--format",
+            "csv",
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "SHOW failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "default_transaction_read_only\non",
+        "the session must still be read-only"
+    );
+    assert!(
+        !table_exists(&home, "pgman_it_ro_escape"),
+        "a table was created on a read-only profile"
+    );
 }
 
 #[test]
