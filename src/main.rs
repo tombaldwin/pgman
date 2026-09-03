@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
 
     // `--init-config` is a one-shot file write, not a TUI path either.
     if cli.init_config {
-        std::process::exit(init_config());
+        std::process::exit(init_config_cli());
     }
 
     // `--batch` is the other non-TUI path. Don't init the rolling-file
@@ -825,7 +825,7 @@ fn resolve_dsn_arg(cli: &Cli) -> Result<Option<String>, String> {
 /// Write a commented default `safety.toml` under the config dir
 /// (`--init-config`). Refuses to overwrite an existing file. Returns
 /// the process exit code.
-fn init_config() -> i32 {
+fn init_config_cli() -> i32 {
     let path = util::config_file("safety.toml");
     if path.exists() {
         eprintln!(
