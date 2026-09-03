@@ -94,6 +94,58 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
 /// let blocked = WatchTickInputs { query_running: true, ..clear };
 /// assert!(!watch_should_fire(&state, now + Duration::from_secs(10), blocked));
 /// ```
+/// The first connection-critical field of `dsn` still carrying a
+/// literal `${…}`, as `(field name, placeholder body)`. `None` for a
+/// clean DSN, or for no DSN at all.
+///
+/// Only the field *name* and the placeholder *body* come back — never
+/// the field's value — so a caller can put this straight into an error
+/// message without a password reaching the log or the UI.
+///
+/// Pure. The last line of defence behind each discovery source's own
+/// placeholder marking (`DataSourcePick::unresolved` /
+/// `unresolved_host`): an unmarked `${…}` is not inert — as a hostname
+/// it becomes a DNS lookup to whatever the resolver makes of the
+/// literal text, and as a password it goes on the wire. Shared by the
+/// TUI's `App::refuse_if_unresolved` and `--batch`'s
+/// `batch_dsn_from_picks`, so the two can't drift.
+pub fn dsn_placeholder_field(dsn: Option<&conn::Dsn>) -> Option<(&'static str, String)> {
+    let dsn = dsn?;
+    let mut fields: Vec<(&'static str, &str)> =
+        vec![("host", &dsn.host), ("database name", &dsn.dbname)];
+    if let Some(u) = dsn.user.as_deref() {
+        fields.push(("username", u));
+    }
+    if let Some(p) = dsn.password.as_deref() {
+        fields.push(("password", p));
+    }
+    if let Some(t) = dsn.ssh_tunnel.as_ref() {
+        fields.push(("ssh tunnel host", &t.host));
+        if let Some(u) = t.user.as_deref() {
+            fields.push(("ssh tunnel user", u));
+        }
+    }
+    for (name, value) in fields {
+        if let Some(body) = crate::creds::spring::placeholder_bodies(value)
+            .into_iter()
+            .next()
+        {
+            return Some((name, body));
+        }
+    }
+    for (k, v) in &dsn.params {
+        for text in [k.as_str(), v.as_str()] {
+            if let Some(body) = crate::creds::spring::placeholder_bodies(text)
+                .into_iter()
+                .next()
+            {
+                return Some(("url parameters", body));
+            }
+        }
+    }
+    None
+}
+
 pub fn watch_should_fire(
     state: &WatchState,
     now: std::time::Instant,

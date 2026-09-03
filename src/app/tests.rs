@@ -2088,6 +2088,80 @@ fn conn_pick_enter_refuses_a_placeholder_in_the_host_with_its_own_message() {
 }
 
 #[test]
+fn conn_pick_enter_refuses_an_unmarked_placeholder_still_sitting_in_the_dsn() {
+    // Belt and braces. Every discovery source is supposed to mark its
+    // own `${…}` — this is the pick from a source that didn't. The
+    // literal text is not inert: as a password it goes on the wire.
+    let mut dsn = Dsn::parse("postgres://svc@db:5432/orders").unwrap();
+    dsn.password = Some("${DB_PASSWORD}".to_string());
+    let pick = DataSourcePick {
+        name: "dev".into(),
+        origin: "project",
+        dsn: Some(dsn),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+    };
+    let mut a = App::new(Theme::default(), None, vec![pick], SafetyConfig::default());
+    a.mode = Mode::ConnPick;
+    a.conn_pick.index = 0;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(
+        matches!(a.conn_state, ConnState::Disconnected),
+        "must not start connecting"
+    );
+    let err = a.last_error.as_deref().expect("refusal message");
+    assert!(
+        err.contains("${DB_PASSWORD}") && err.contains("password"),
+        "the refusal names the placeholder and the field: {err}"
+    );
+}
+
+#[test]
+fn dsn_placeholder_field_finds_every_connection_critical_field_and_nothing_else() {
+    let clean = Dsn::parse("postgres://svc:pw@db:5432/orders?sslmode=require").unwrap();
+    assert_eq!(crate::app::dsn_placeholder_field(Some(&clean)), None);
+    assert_eq!(crate::app::dsn_placeholder_field(None), None);
+
+    let host = Dsn::parse("postgres://svc@${H}:5432/orders").unwrap();
+    assert_eq!(
+        crate::app::dsn_placeholder_field(Some(&host)),
+        Some(("host", "H".to_string()))
+    );
+
+    let mut db = clean.clone();
+    db.dbname = "${DB}".into();
+    assert_eq!(
+        crate::app::dsn_placeholder_field(Some(&db)),
+        Some(("database name", "DB".to_string()))
+    );
+
+    let mut user = clean.clone();
+    user.user = Some("${U}".into());
+    assert_eq!(
+        crate::app::dsn_placeholder_field(Some(&user)),
+        Some(("username", "U".to_string()))
+    );
+
+    let mut tunnel = clean.clone();
+    tunnel.ssh_tunnel = Some(crate::tunnel::SshTunnelSpec {
+        user: None,
+        host: "${BASTION}".into(),
+        port: None,
+    });
+    assert_eq!(
+        crate::app::dsn_placeholder_field(Some(&tunnel)),
+        Some(("ssh tunnel host", "BASTION".to_string()))
+    );
+
+    let mut param = clean.clone();
+    param.params.push(("options".into(), "${OPTS}".into()));
+    assert_eq!(
+        crate::app::dsn_placeholder_field(Some(&param)),
+        Some(("url parameters", "OPTS".to_string()))
+    );
+}
+
+#[test]
 fn conn_pick_enter_refuses_a_pick_with_no_usable_dsn() {
     // Discovery keeps a pick whose URL wouldn't parse (a placeholder in
     // the port, say) so the operator can see it. Enter on it must

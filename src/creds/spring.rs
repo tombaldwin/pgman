@@ -575,7 +575,7 @@ fn introduces_url_structure(template: &str, resolved: &str) -> bool {
 
 /// Every `${…}` body in `s`, in order. An unterminated `${` yields the
 /// rest of the string as its body, matching `resolve_placeholders`.
-fn placeholder_bodies(s: &str) -> Vec<String> {
+pub fn placeholder_bodies(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = s;
     while let Some(start) = rest.find("${") {
