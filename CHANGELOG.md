@@ -21,6 +21,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Third pass**: a statement ending in a `-- comment` absorbed the `;`
+  the re-join inserted, so `UPDATE … WHERE id=1 --` plus `; OR true`
+  reached the server as `WHERE id=1 OR true`. One `join_verified` for
+  every executor, newline before the `;`, and the verifier now checks
+  that re-splitting the join reproduces what it checked. Both shapes
+  are live integration tests.
 - **Second pass of the release panel** (the security and correctness
   reviewers re-reviewed the fixes): the new statement lexer treated only
   ASCII as identifier characters where Postgres treats every byte over
