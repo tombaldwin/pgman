@@ -24,7 +24,7 @@
 
 use pgman::app::{
     compute_visible_rows, App, DataSourcePick, DatabaseInfo, HistorySearchState, Mode, PendingRun,
-    RunKind, TapView,
+    PendingTunnel, RunKind, TapView,
 };
 use pgman::conn::{Dsn, NotificationMsg, QueryErrDetail};
 use pgman::grid::Grid;
@@ -426,6 +426,20 @@ fn scr_conn_pick() -> App {
     a
 }
 
+/// The picker's ssh-tunnel confirmation: a discovered pick carrying
+/// `?ssh_tunnel=` was chosen and the prompt is asking for an explicit
+/// `y` before pgman spawns `ssh`. Drawn in place of the candidate
+/// list, so it is a distinct screen with its own width budget.
+fn scr_tunnel_prompt() -> App {
+    let mut a = scr_conn_pick();
+    a.pending_tunnel = Some(PendingTunnel {
+        dsn: Dsn::parse("postgres://app@db.internal:5432/main?ssh_tunnel=tom@bastion.example.com")
+            .unwrap(),
+        origin: "picked project data source 'via-bastion'".into(),
+    });
+    a
+}
+
 fn scr_row_detail() -> App {
     let mut a = base();
     a.grid_state.select(Some(0));
@@ -769,6 +783,25 @@ fn log_pick() {
 #[test]
 fn conn_pick() {
     run_sizes("conn_pick", scr_conn_pick);
+}
+
+#[test]
+fn tunnel_prompt() {
+    run_sizes("tunnel_prompt", scr_tunnel_prompt);
+}
+
+/// The prompt's box had a hard 40-column floor: `clamp(40, width - 2)`
+/// panics once the terminal is 41 columns or narrower (`min > max`),
+/// so a resize mid-prompt aborted the whole TUI. Every width down to
+/// nothing must render without panicking — the sweep above only
+/// starts at 60.
+#[test]
+fn tunnel_prompt_survives_every_narrow_width() {
+    for w in 1..=60u16 {
+        let mut a = scr_tunnel_prompt();
+        let buf = render(&mut a, w, 12);
+        assert_eq!(buf.area.width, w);
+    }
 }
 
 #[test]
