@@ -1363,7 +1363,7 @@ pub(super) fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
             .fg(theme.title)
             .add_modifier(Modifier::BOLD),
     )));
-    for chunk in wrap_value(&focused.body, detail.width.saturating_sub(4) as usize) {
+    for chunk in super::wrap_words(&focused.body, detail.width.saturating_sub(4) as usize) {
         detail_lines.push(Line::from(Span::styled(
             format!("  {chunk}"),
             Style::default().fg(theme.text),

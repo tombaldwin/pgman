@@ -1,13 +1,14 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │> S┌ schema browser — q / esc close ──────────────────┐   │
-│  F│▼ public  (3)               schema: public        │   │
+│  F│▼ public  (4)               schema: public        │   │
 │  W│  ▼ orders  (5 col, 1 cons)                       │   │
-│  O│      · user_id : bigint N… 3 table(s)            │   │
+│  O│      · user_id : bigint N… 4 table(s)            │   │
 └───│      · status : varchar(2…                       │───┘
 ┌ re│  ▼ users  (4 col, 1 cons)  enter to expand — the…│───┐
 │id │      ◆ users_pkey                                │   │

@@ -665,6 +665,42 @@ fn end_ellipsis_never_overruns_a_cjk_budget() {
     assert_eq!(end_ellipsis("あいうえお", 5), "あい…");
 }
 
+// ----- Wizard detail wraps at word boundaries ---------------------------
+
+#[test]
+fn wrap_words_breaks_between_words_not_inside_them() {
+    let s = "constraint `x` references column(s) (a) — no index leads with the first FK column";
+    let rows = wrap_words(s, 30);
+    for row in &rows {
+        assert!(display_width(row) <= 30, "{row:?}");
+    }
+    // Every row boundary is a word boundary: joining with spaces gives
+    // the original back.
+    assert_eq!(rows.join(" "), s);
+    assert_eq!(
+        rows,
+        vec![
+            "constraint `x` references",
+            "column(s) (a) — no index leads",
+            "with the first FK column",
+        ]
+    );
+}
+
+#[test]
+fn wrap_words_hard_splits_a_word_wider_than_the_line_and_keeps_newlines() {
+    assert_eq!(wrap_words("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    assert_eq!(
+        wrap_words("ab abcdefghij cd", 4),
+        vec!["ab", "abcd", "efgh", "ij", "cd"]
+    );
+    assert_eq!(wrap_words("a\nb c", 80), vec!["a", "b c"]);
+    assert_eq!(wrap_words("", 10), vec![""]);
+    assert_eq!(wrap_words("hello", 0), vec!["hello"]);
+    // Columns, not chars: two CJK glyphs fill a four-column row.
+    assert_eq!(wrap_words("東京 都", 4), vec!["東京", "都"]);
+}
+
 // ----- The failure card names the dated log file -----------------------
 
 #[test]

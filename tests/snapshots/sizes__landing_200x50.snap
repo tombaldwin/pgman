@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,7 +10,7 @@ expression: dump(&buf)
 ┌ start ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ connected to shop on localhost:5432 · pg 16.2 · RO                                                                                                                                                   │
 │                                                                                                                                                                                                      │
-│   e   write a query                                                 S   schema browser (3 tables)                                                                                                    │
+│   e   write a query                                                 S   schema browser (4 tables)                                                                                                    │
 │   Q   saved queries (3)                                             T   slow queries                                                                                                                 │
 │   W   schema wizard                                                 L   sessions & locks                                                                                                             │
 │   F8  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                                                                                                                     │

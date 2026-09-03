@@ -409,8 +409,8 @@ fn synth_cell(table: &str, col: &ColumnMeta, row_idx: usize) -> String {
             ["pending", "shipped", "delivered", "cancelled"][row_idx % 4].to_string()
         }
         ("orders", "total_cents") => (1_999 + row_idx * 550).to_string(),
-        ("order_items", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
-        ("order_items", "qty") => ((row_idx % 4) + 1).to_string(),
+        ("order_items", "sku") | ("item", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
+        ("order_items", "qty") | ("item", "qty") => ((row_idx % 4) + 1).to_string(),
         ("order_items", "price_cents") => (499 + row_idx * 250).to_string(),
         _ if ty.starts_with("timestamp") => {
             format!(
@@ -472,6 +472,18 @@ fn schema_cache() -> SchemaCache {
             col("price_cents", "integer", true),
         ],
     );
+    // `item` is the table the docs' original N+1 walkthrough queries
+    // (`SELECT * FROM item WHERE order_id = ?`); without it the sample
+    // dead-ended in `--demo`.
+    columns_meta_by_table.insert(
+        key("item"),
+        vec![
+            col("id", "bigint", true),
+            col("order_id", "bigint", true),
+            col("sku", "varchar(40)", true),
+            col("qty", "integer", true),
+        ],
+    );
 
     let columns_by_table: HashMap<(String, String), Vec<String>> = columns_meta_by_table
         .iter()
@@ -479,6 +491,10 @@ fn schema_cache() -> SchemaCache {
         .collect();
 
     let tables = vec![
+        TableMeta {
+            schema: "public".into(),
+            name: "item".into(),
+        },
         TableMeta {
             schema: "public".into(),
             name: "order_items".into(),
@@ -509,6 +525,11 @@ fn schema_cache() -> SchemaCache {
             table: "order_items".into(),
             name: "order_items_pkey".into(),
         },
+        ConstraintMeta {
+            schema: "public".into(),
+            table: "item".into(),
+            name: "item_pkey".into(),
+        },
     ];
 
     let fk_edges = vec![
@@ -523,6 +544,14 @@ fn schema_cache() -> SchemaCache {
         FkEdge {
             child_schema: "public".into(),
             child_table: "order_items".into(),
+            child_column: "order_id".into(),
+            parent_schema: "public".into(),
+            parent_table: "orders".into(),
+            parent_column: "id".into(),
+        },
+        FkEdge {
+            child_schema: "public".into(),
+            child_table: "item".into(),
             child_column: "order_id".into(),
             parent_schema: "public".into(),
             parent_table: "orders".into(),
@@ -671,7 +700,7 @@ mod tests {
         assert!(matches!(a.conn_state, ConnState::Connected { .. }));
         assert!(!a.grid.rows.is_empty(), "grid has data");
         assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
-        assert_eq!(a.schema_cache.tables.len(), 3);
+        assert_eq!(a.schema_cache.tables.len(), 4);
         assert!(a
             .saved_queries
             .entries
@@ -697,9 +726,23 @@ mod tests {
     #[test]
     fn demo_schema_cache_has_pk_constraints_and_fks() {
         let c = schema_cache();
-        assert_eq!(c.constraints.len(), 3);
-        assert_eq!(c.fk_edges.len(), 2);
+        assert_eq!(c.constraints.len(), 4);
+        assert_eq!(c.fk_edges.len(), 3);
         assert!(c.columns_meta_by_table.contains_key(&key("users")));
+        assert!(c.columns_meta_by_table.contains_key(&key("item")));
+    }
+
+    /// The docs' N+1 walkthrough queries `item`; the demo answers it
+    /// with rows shaped by the table's columns instead of the
+    /// "unknown table" notice it dead-ended in.
+    #[test]
+    fn answer_select_on_item_yields_item_rows() {
+        let cache = schema_cache();
+        let g = answer("SELECT * FROM item WHERE order_id = 1", &cache);
+        assert_eq!(g.columns, vec!["id", "order_id", "sku", "qty"]);
+        assert!(!g.rows.is_empty());
+        assert!(g.rows[0][2].starts_with("SKU-"), "{:?}", g.rows[0]);
+        assert!(g.rows[0][3].parse::<u32>().is_ok(), "{:?}", g.rows[0]);
     }
 
     #[test]
@@ -717,7 +760,7 @@ mod tests {
             "start card's databases line needs data to show"
         );
         // Everything else app() sets up is untouched.
-        assert_eq!(a.schema_cache.tables.len(), 3);
+        assert_eq!(a.schema_cache.tables.len(), 4);
         assert!(!a.tap_events.is_empty());
     }
 

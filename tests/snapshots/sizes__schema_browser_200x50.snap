@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
@@ -9,14 +10,20 @@ expression: dump(&buf)
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
 └───────────┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐───────────┘
-┌ result · 6│▼ public  (3)                                                        schema: public                                                                                           │───────────┐
-│id  email  │  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
-│1   ada@exa│      · id : bigint NOT NULL                                         3 table(s)                                                                                               │           │
+┌ result · 6│▼ public  (4)                                                        schema: public                                                                                           │───────────┐
+│id  email  │  ▼ item  (4 col, 1 cons)                                                                                                                                                     │           │
+│1   ada@exa│      · id : bigint NOT NULL                                         4 table(s)                                                                                               │           │
 │2   linus@e│      · order_id : bigint NOT NULL                                                                                                                                            │           │
 │3   grace@e│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
 │4   alan@ex│      · qty : integer NOT NULL                                                                                                                                                │           │
-│5   edsger@│      · price_cents : integer NOT NULL                                                                                                                                        │           │
-│6   katheri│      ◆ order_items_pkey                                                                                                                                                      │           │
+│5   edsger@│      ◆ item_pkey                                                                                                                                                             │           │
+│6   katheri│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
+│           │      · id : bigint NOT NULL                                                                                                                                                  │           │
+│           │      · order_id : bigint NOT NULL                                                                                                                                            │           │
+│           │      · sku : varchar(40) NOT NULL                                                                                                                                            │           │
+│           │      · qty : integer NOT NULL                                                                                                                                                │           │
+│           │      · price_cents : integer NOT NULL                                                                                                                                        │           │
+│           │      ◆ order_items_pkey                                                                                                                                                      │           │
 │           │  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │           │
 │           │      · id : bigint NOT NULL                                                                                                                                                  │           │
 │           │      · user_id : bigint NOT NULL                                                                                                                                             │           │
@@ -30,12 +37,6 @@ expression: dump(&buf)
 │           │      · plan : varchar(20) NOT NULL                                                                                                                                           │           │
 │           │      · created_at : timestamptz NOT NULL                                                                                                                                     │           │
 │           │      ◆ users_pkey                                                                                                                                                            │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │

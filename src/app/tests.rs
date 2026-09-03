@@ -86,6 +86,9 @@ fn help_anchor_for_known_modes_picks_their_section() {
     assert_eq!(App::help_anchor_for(Mode::Editor), Some("editor"));
     assert_eq!(App::help_anchor_for(Mode::LogPick), Some("log pick"));
     assert_eq!(App::help_anchor_for(Mode::Help), None);
+    // `?` from the start card opens the document at the top — not two
+    // rows into it with an `↑ 2 more above` marker.
+    assert_eq!(App::help_anchor_for(Mode::Normal), None);
 }
 
 #[test]
@@ -6852,7 +6855,7 @@ fn command_bar_tab_completes_a_unique_name_and_lists_ambiguous_ones() {
     a.on_key(KeyEvent::from(KeyCode::Char('d')));
     a.on_key(KeyEvent::from(KeyCode::Tab));
     assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("d"));
-    assert_eq!(a.last_status.as_deref(), Some("d dn dt"));
+    assert_eq!(a.command_bar_completions.as_deref(), Some("d · dn · dt"));
 }
 
 #[test]
@@ -6879,7 +6882,6 @@ fn question_mark_opens_help_from_every_panel_mode() {
     // tap monitor it did nothing at all, and the footer's "? help"
     // pointer was wrong everywhere but Normal.
     for (mode, anchor) in [
-        (Mode::Normal, "grid"),
         (Mode::Sessions, "active sessions"),
         (Mode::SlowQueries, "slow queries"),
         (Mode::TapMonitor, "jdbc tap"),
@@ -7553,6 +7555,36 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
     assert_eq!(a.editor.buffer, "select 1");
+}
+
+// ----- `:` then Tab lists every command where it can be seen ----------
+
+#[test]
+fn tab_on_an_empty_command_bar_lists_every_command_beside_the_bar() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char(':')));
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let list = a
+        .command_bar_completions
+        .clone()
+        .expect("Tab on an empty bar lists the commands");
+    for name in crate::app::cmd::COMMAND_NAMES {
+        assert!(
+            list.split(" · ").any(|c| c == *name),
+            "{name} missing from {list:?}"
+        );
+    }
+    // The next key moves on; Tab narrows again.
+    a.on_key(KeyEvent::from(KeyCode::Char('r')));
+    assert!(a.command_bar_completions.is_none());
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("readonly · report")
+    );
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(a.command_bar_completions.is_none());
 }
 
 // ----- read-only refusal names a file only when there is one ----------
