@@ -565,13 +565,17 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
             })
             .collect();
         let h = (lines.len() as u16 + 2).min(area.height);
+        // `clamp` panics when min > max, so the 40-column floor must
+        // itself bow to a terminal narrower than that — a resize to
+        // 41 columns mid-prompt used to abort the whole TUI.
+        let max_w = area.width.saturating_sub(2);
         let w = lines
             .iter()
             .map(|l| l.width() as u16)
             .max()
             .unwrap_or(0)
             .saturating_add(4)
-            .clamp(40, area.width.saturating_sub(2));
+            .clamp(40.min(max_w), max_w);
         let popup = centered(area, w, h);
         f.render_widget(Clear, popup);
         f.render_widget(
