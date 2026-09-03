@@ -61,12 +61,13 @@ pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
 /// the file is where to change it ([`safety::READ_ONLY_ESCAPE_REFUSAL`]).
 /// Without one, read-only is the built-in default — blaming a file
 /// that does not exist sent the operator looking for it; say instead
-/// how to get one. Pure / testable.
+/// how to get one ([`crate::conn::READ_ONLY_DEFAULT_HINT`], the same
+/// line the server-side 25006 refusal carries). Pure / testable.
 pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     if safety_toml_exists {
         safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
     } else {
-        "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database".to_string()
+        crate::conn::READ_ONLY_DEFAULT_HINT.to_string()
     }
 }
 

@@ -363,10 +363,18 @@ fn batch_refuses_a_guarded_statement_without_yes() {
 /// A scratch `HOME` containing `.config/pgman/safety.toml` with `body`.
 /// Returned path is handed to the child process as `HOME`.
 fn scratch_home(name: &str, body: &str) -> std::path::PathBuf {
+    let home = scratch_home_without_profile(name);
+    std::fs::write(home.join(".config/pgman/safety.toml"), body).expect("write safety.toml");
+    home
+}
+
+/// A scratch `$HOME` with the config dir but NO `safety.toml` — the
+/// built-in default profile, which is what a fresh install runs under.
+fn scratch_home_without_profile(name: &str) -> std::path::PathBuf {
     let home = std::env::temp_dir().join(format!("pgman-it-{name}-{}", std::process::id()));
     let cfg = home.join(".config/pgman");
     std::fs::create_dir_all(&cfg).expect("create scratch config dir");
-    std::fs::write(cfg.join("safety.toml"), body).expect("write safety.toml");
+    let _ = std::fs::remove_file(cfg.join("safety.toml"));
     home
 }
 
@@ -711,12 +719,51 @@ fn batch_read_only_transaction_refusal_carries_the_configuration_hint() {
         stderr.to_lowercase().contains("read-only transaction"),
         "the server's own message should show: {stderr}"
     );
+    // The profile came from a file, so the hint names that file — the
+    // scratch one, not whatever the developer has under their own $HOME.
+    let path = home.join(".config/pgman/safety.toml");
     assert!(
         stderr.contains("hint:")
-            && stderr.contains("safety.toml")
+            && stderr.contains(&path.display().to_string())
             && stderr.contains("read_only")
             && stderr.contains("docs/configuration.md"),
         "got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--init-config"),
+        "with a file on disk the hint must not tell the operator to write one: {stderr}"
+    );
+}
+
+#[test]
+fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
+    // Same server-side 25006 refusal, but under the built-in default
+    // profile: there is no safety.toml, so naming one (with a full path)
+    // sent the operator looking for a file that was not there. The hint
+    // has to say read-only is the default and how to write the file.
+    let home = scratch_home_without_profile("readonly-server-refusal-default");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE pgman_ro_hint_default (id int)",
+        ],
+    );
+    assert!(!out.status.success(), "the write must be refused");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.to_lowercase().contains("read-only transaction"),
+        "the server's own message should show: {stderr}"
+    );
+    assert!(
+        stderr.contains("hint: read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database"),
+        "got: {stderr}"
+    );
+    let path = home.join(".config/pgman/safety.toml");
+    assert!(
+        !stderr.contains(&path.display().to_string()),
+        "must not name a file that does not exist: {stderr}"
     );
 }
 

@@ -167,7 +167,8 @@ impl From<tokio_postgres::Error> for QueryErr {
         // the TUI (`last_error` is this `.msg`) and `--batch` (which
         // prints it to stderr) end up showing, so neither path has to
         // ask separately.
-        if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg) {
+        let safety_toml_exists = crate::util::config_file("safety.toml").exists();
+        if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml_exists) {
             msg.push('\n');
             msg.push_str("hint: ");
             msg.push_str(&hint);
@@ -180,18 +181,37 @@ impl From<tokio_postgres::Error> for QueryErr {
     }
 }
 
+/// The read-only explanation when there is no `safety.toml` to point at:
+/// read-only is the built-in default, and the fix is to write the file.
+/// Shared by the server-side refusal hint (SQLSTATE `25006`) and the
+/// client-side escape refusal (`:readonly off`,
+/// `app::read_only_escape_refusal`), so the two paths cannot drift.
+pub const READ_ONLY_DEFAULT_HINT: &str = "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database";
+
 /// Hint for a read-only-transaction refusal (SQLSTATE `25006`):
-/// `read_only = true` in `safety.toml` set `default_transaction_read_only
-/// = on` at connect, and Postgres itself — not a client-side guard —
-/// rejected the write. Points at the file and key rather than leaving the
-/// operator to guess why. Pure — pattern-matched on the SQLSTATE code,
-/// falling back to the message text when the server didn't populate
-/// `detail` (e.g. a `simple_query` error path that skips it).
-fn read_only_refusal_hint(detail: Option<&QueryErrDetail>, msg: &str) -> Option<String> {
+/// `read_only = true` set `default_transaction_read_only = on` at
+/// connect, and Postgres itself — not a client-side guard — rejected the
+/// write. Says where the setting came from rather than leaving the
+/// operator to guess: the file's path and key when a `safety.toml`
+/// exists, and [`READ_ONLY_DEFAULT_HINT`] when the profile is the
+/// built-in default — naming a file that is not there sent the operator
+/// looking for it. Pure — pattern-matched on the SQLSTATE code, falling
+/// back to the message text when the server didn't populate `detail`
+/// (e.g. a `simple_query` error path that skips it); `safety_toml_exists`
+/// is checked by the caller at message time because the profile does not
+/// record its origin.
+fn read_only_refusal_hint(
+    detail: Option<&QueryErrDetail>,
+    msg: &str,
+    safety_toml_exists: bool,
+) -> Option<String> {
     let is_read_only_refusal = detail.and_then(|d| d.code.as_deref()) == Some("25006")
         || msg.to_ascii_lowercase().contains("read-only transaction");
     if !is_read_only_refusal {
         return None;
+    }
+    if !safety_toml_exists {
+        return Some(READ_ONLY_DEFAULT_HINT.to_string());
     }
     Some(format!(
         "this connection is read-only by safety.toml ({}, read_only) — see docs/configuration.md",
@@ -2214,7 +2234,7 @@ mod tests {
     }
 
     #[test]
-    fn read_only_refusal_hint_recognises_the_sqlstate() {
+    fn read_only_refusal_hint_names_the_file_when_there_is_one() {
         let detail = QueryErrDetail {
             code: Some("25006".to_string()),
             ..Default::default()
@@ -2222,20 +2242,56 @@ mod tests {
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
+            true,
         )
         .expect("25006 should map to a hint");
-        assert!(h.contains("safety.toml"), "got: {h}");
+        let path = crate::util::config_file("safety.toml")
+            .display()
+            .to_string();
+        assert!(h.contains(&path), "should name the file's path: {h}");
         assert!(h.contains("read_only"), "got: {h}");
         assert!(h.contains("docs/configuration.md"), "got: {h}");
+        assert!(!h.contains("--init-config"), "got: {h}");
+    }
+
+    #[test]
+    fn read_only_refusal_hint_says_how_to_get_a_file_when_there_is_none() {
+        // A default profile has no safety.toml on disk: pointing at a
+        // path that does not exist sent the operator looking for it.
+        let detail = QueryErrDetail {
+            code: Some("25006".to_string()),
+            ..Default::default()
+        };
+        let h = read_only_refusal_hint(
+            Some(&detail),
+            "cannot execute UPDATE in a read-only transaction",
+            false,
+        )
+        .expect("25006 should map to a hint");
+        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
+        assert!(h.contains("--init-config"), "got: {h}");
+        assert!(h.contains("read_only = false"), "got: {h}");
+        let path = crate::util::config_file("safety.toml")
+            .display()
+            .to_string();
+        assert!(
+            !h.contains(&path),
+            "must not name a file that is not there: {h}"
+        );
     }
 
     #[test]
     fn read_only_refusal_hint_falls_back_to_message_text_without_detail() {
         // `simple_query`'s error path doesn't always populate `detail`;
-        // the message text alone must still be recognised.
-        let h = read_only_refusal_hint(None, "cannot execute INSERT in a read-only transaction")
+        // the message text alone must still be recognised — on both
+        // branches.
+        let msg = "cannot execute INSERT in a read-only transaction";
+        let h = read_only_refusal_hint(None, msg, true)
             .expect("message text alone should map to a hint");
-        assert!(h.contains("safety.toml"), "got: {h}");
+        assert!(h.contains("safety.toml ("), "got: {h}");
+        let h = read_only_refusal_hint(None, msg, false)
+            .expect("message text alone should map to a hint");
+        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
     }
 
     #[test]
@@ -2244,9 +2300,16 @@ mod tests {
             code: Some("42601".to_string()), // syntax_error
             ..Default::default()
         };
-        assert!(
-            read_only_refusal_hint(Some(&detail), "syntax error at or near \"FROM\"").is_none()
-        );
-        assert!(read_only_refusal_hint(None, "relation \"t\" does not exist").is_none());
+        for exists in [true, false] {
+            assert!(read_only_refusal_hint(
+                Some(&detail),
+                "syntax error at or near \"FROM\"",
+                exists
+            )
+            .is_none());
+            assert!(
+                read_only_refusal_hint(None, "relation \"t\" does not exist", exists).is_none()
+            );
+        }
     }
 }
