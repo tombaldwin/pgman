@@ -7317,3 +7317,29 @@ fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
         "the stale `:rea` bar survived a key press in TxDecision"
     );
 }
+
+#[test]
+fn f5_while_a_query_is_running_does_not_start_a_second_execution() {
+    // A second F5 mid-flight used to pipeline a second run — an INSERT
+    // pressed twice ran twice. The demo answers synchronously through
+    // `msg_rx`, so "nothing was spawned" is "nothing was queued".
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "INSERT INTO users (email) VALUES ('twice@example.com')".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.query_running = true;
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    assert!(
+        a.msg_rx.as_mut().unwrap().try_recv().is_err(),
+        "a second execution was queued while one was running"
+    );
+    assert!(
+        a.pending_run.is_none(),
+        "must not even reach the confirm prompt"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("a query is already running · ctrl-c cancels it")
+    );
+    assert_eq!(a.mode, Mode::Editor);
+}
