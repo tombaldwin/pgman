@@ -856,15 +856,16 @@ mod tests {
 
     #[test]
     fn batch_safety_returns_the_statements_it_checked() {
-        // The caller runs these, not the original string — comments and the
-        // original separators are gone, and what is left is exactly what was
-        // classified.
+        // The caller runs these, not the original string — the original
+        // separators are gone and what is left is exactly what was
+        // classified. Comments stay with their statement: a `/*+ … */`
+        // planner hint is input to the server, not decoration.
         let cfg = crate::safety::SafetyConfig::default();
         let checked =
             check_batch_safety(&cfg, "db", "SELECT 1; -- note\nSELECT 2;", false).unwrap();
         assert_eq!(
             checked,
-            vec!["SELECT 1".to_string(), "SELECT 2".to_string()]
+            vec!["SELECT 1".to_string(), "-- note\nSELECT 2".to_string()]
         );
     }
 

@@ -555,10 +555,12 @@ pub(crate) fn scan(sql: &str) -> Vec<Span> {
 
         // `E'…'` / `e'…'` — an escape string, but only when the `E` stands
         // alone (`table_e'x'` is not a thing, but `some_e` followed by a
-        // literal would be, so check the preceding byte).
+        // literal would be, so check the preceding byte). `$` counts here:
+        // `a$e` is one identifier to Postgres, so `a$e'\'` is that identifier
+        // followed by an *ordinary* string in which `\` is not an escape.
         if (c == b'E' || c == b'e')
             && b.get(i + 1) == Some(&b'\'')
-            && !i.checked_sub(1).is_some_and(|p| is_ident_byte(b[p]))
+            && !i.checked_sub(1).is_some_and(|p| is_ident_cont_byte(b[p]))
         {
             flush_code(&mut spans, code_start, i);
             let (end, terminated) = scan_quoted_string(b, i + 2, true);
@@ -601,9 +603,7 @@ pub(crate) fn scan(sql: &str) -> Vec<Span> {
             b'$' => {
                 // Only a `$` that is NOT continuing an identifier can open a
                 // dollar-quote. `a$b$c` is one identifier to Postgres.
-                let after_ident = i
-                    .checked_sub(1)
-                    .is_some_and(|p| is_ident_byte(b[p]) || b[p] == b'$');
+                let after_ident = i.checked_sub(1).is_some_and(|p| is_ident_cont_byte(b[p]));
                 match if after_ident {
                     None
                 } else {
@@ -674,6 +674,17 @@ pub(crate) fn scan(sql: &str) -> Vec<Span> {
 /// after `é$b$` lexed into a dollar-quoted body and slipped past its guard.
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
+}
+
+/// Postgres's full `ident_cont` class, `[A-Za-z0-9_$\200-\377]` — the same
+/// set as [`is_ident_byte`] plus `$`.
+///
+/// `$` continues an identifier but cannot *start* one, which is why the two
+/// predicates are separate. Every "does an identifier end at the byte to my
+/// left" lookback wants this one, and both such lookbacks — the `E'…'` guard
+/// and the dollar-quote guard — use it.
+fn is_ident_cont_byte(b: u8) -> bool {
+    is_ident_byte(b) || b == b'$'
 }
 
 /// Scan from just past the opening `'` to just past the closing one. `escapes`
@@ -769,10 +780,52 @@ fn scan_block_comment(b: &[u8], start: usize) -> (usize, bool) {
     (b.len(), false)
 }
 
+/// Close the statement accumulated in `current`, pushing it onto `result`.
+/// A segment holding only comments and whitespace is *not* a statement — it
+/// is dropped rather than handed to the classifier, which would score a bare
+/// `-- note` as `Other` and demand confirmation for a trailing comment.
+fn flush_statement(current: &mut String, has_code: &mut bool, result: &mut Vec<String>) {
+    if *has_code {
+        let trimmed = current.trim();
+        if !trimmed.is_empty() {
+            result.push(trimmed.to_string());
+        }
+    }
+    current.clear();
+    *has_code = false;
+}
+
+/// Append a run of plain code to the statement being built, ending a
+/// statement at every top-level `;` in it.
+fn push_code(current: &mut String, has_code: &mut bool, result: &mut Vec<String>, text: &str) {
+    for part in text.split_inclusive(';') {
+        match part.strip_suffix(';') {
+            Some(before) => {
+                current.push_str(before);
+                *has_code |= !before.trim().is_empty();
+                flush_statement(current, has_code, result);
+            }
+            None => {
+                current.push_str(part);
+                *has_code |= !part.trim().is_empty();
+            }
+        }
+    }
+}
+
 /// Split a SQL script on `;` outside string literals, quoted identifiers,
 /// dollar-quoted bodies, and SQL comments. Returns the trimmed, non-empty
 /// statements in order. Used by the editor's multi-statement run path (DBUnit
 /// scripts, hand-written batches).
+///
+/// Comments stay **in** the statement they sit in. They are not decoration:
+/// `/*+ IndexScan(t idx) */ SELECT * FROM t` is a pg_hint_plan hint, and
+/// [`split_verified`]'s callers execute the statements this returns rather
+/// than the original buffer — so dropping the comment here would silently
+/// change the plan the server runs. A comment contributes nothing to the
+/// classifier either way, because that runs off [`scan`]'s code spans; and
+/// [`canonical_for_compare`] still drops comments, so the verification
+/// re-join is unaffected.
 ///
 /// Runs off [`scan`], so it agrees with [`strip_sql_comments`] by construction.
 /// Prefer [`split_verified`] on any path that then *runs* the statements: it
@@ -780,45 +833,31 @@ fn scan_block_comment(b: &[u8], start: usize) -> (usize, bool) {
 pub fn split_statements(sql: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
-    // Append `text` to the statement being built, ending a statement at every
-    // top-level `;` in it.
-    let push_code = |current: &mut String, result: &mut Vec<String>, text: &str| {
-        for part in text.split_inclusive(';') {
-            match part.strip_suffix(';') {
-                Some(before) => {
-                    current.push_str(before);
-                    let trimmed = current.trim().to_string();
-                    if !trimmed.is_empty() {
-                        result.push(trimmed);
-                    }
-                    current.clear();
-                }
-                None => current.push_str(part),
-            }
-        }
-    };
+    // Whether `current` holds anything the server would execute. Comments
+    // ride along but do not, on their own, make a statement.
+    let mut has_code = false;
     for span in scan(sql) {
         let text = &sql[span.start..span.end];
         match span.kind {
-            SpanKind::LineComment => {}
+            SpanKind::LineComment => current.push_str(text),
+            SpanKind::BlockComment if span.terminated => current.push_str(text),
             SpanKind::BlockComment => {
                 current.push(' ');
                 // An unterminated `/*` must not swallow the rest of the
                 // script: swallowing could hide a destructive verb and get a
                 // fragment misclassified as a harmless SELECT. Keep the text
                 // as code (Postgres rejects the unterminated comment anyway).
-                if !span.terminated {
-                    push_code(&mut current, &mut result, &text[2..]);
-                }
+                push_code(&mut current, &mut has_code, &mut result, &text[2..]);
             }
-            SpanKind::Code => push_code(&mut current, &mut result, text),
-            _ => current.push_str(text),
+            SpanKind::Code => push_code(&mut current, &mut has_code, &mut result, text),
+            // A quoted span is never empty and is always executable text.
+            _ => {
+                current.push_str(text);
+                has_code = true;
+            }
         }
     }
-    let trimmed = current.trim().to_string();
-    if !trimmed.is_empty() {
-        result.push(trimmed);
-    }
+    flush_statement(&mut current, &mut has_code, &mut result);
     result
 }
 
@@ -863,7 +902,11 @@ pub fn split_verified(sql: &str) -> Result<Vec<String>, SplitError> {
         return Err(SplitError::Unterminated(bad.kind.name()));
     }
     let statements = split_statements(sql);
-    let rejoined = statements.join(";");
+    // `";\n"`, not `";"` — the same separator both callers execute with. A
+    // statement may now end in a `-- line comment`, and on one line the `;`
+    // that follows would fall *inside* it; the newline is what keeps the
+    // re-join meaning what the pieces meant.
+    let rejoined = statements.join(";\n");
     if canonical_for_compare(&rejoined) != canonical_for_compare(sql) {
         return Err(SplitError::Mismatch);
     }
@@ -1140,10 +1183,19 @@ mod tests {
     }
 
     #[test]
-    fn split_statements_skips_comments_and_empty_segments() {
+    fn split_statements_keeps_comments_and_skips_empty_segments() {
+        // Empty segments (`;;;`) are dropped; comments are not — they stay
+        // attached to the statement whose segment they fall in.
         let sql = "-- header\nselect 1;\n\n/* block */\nselect 2;;;";
         let parts = split_statements(sql);
-        assert_eq!(parts, vec!["select 1".to_string(), "select 2".to_string()]);
+        assert_eq!(
+            parts,
+            vec![
+                "-- header\nselect 1".to_string(),
+                "/* block */\nselect 2".to_string()
+            ]
+        );
+        assert_eq!(classify(&parts[1]), StatementKind::Select);
     }
 
     // --- lexer: the security-review reproductions ------------------------
@@ -1276,11 +1328,104 @@ mod tests {
         let parts = split_statements(sql);
         assert_eq!(
             parts,
-            vec!["SELECT 1".to_string(), "DROP TABLE users".to_string()]
+            vec![
+                "SELECT 1".to_string(),
+                "-- note\rDROP TABLE users".to_string()
+            ]
         );
+        // The comment rides along, but it ends at the `\r` — so the `DROP`
+        // after it is code the classifier sees.
         assert_eq!(classify(&parts[1]), StatementKind::Drop);
         // CRLF is unaffected: the comment ends at the `\r`, both bytes stay.
         assert_eq!(split_statements("SELECT 1; -- note\r\nSELECT 2").len(), 2);
+    }
+
+    /// `$` is an identifier-*continue* byte to Postgres, so `a$e` is one
+    /// identifier and the `e` in it cannot introduce an `E'…'` escape string.
+    /// Reading it as one made `\'` an escaped quote instead of a closing one,
+    /// so the literal ran on to the end of the script and swallowed the
+    /// `DELETE` — the whole thing lexed as a single `Select`. The server
+    /// disagrees: it reports `type "a$e" does not exist`, which is only
+    /// reachable if `a$e` is an identifier and `'\'` a complete literal.
+    #[test]
+    fn a_dollar_inside_an_identifier_does_not_start_an_escape_string() {
+        let sql = r"SELECT a$e'\';DELETE FROM t;--'";
+        let parts = split_statements(sql);
+        assert_eq!(
+            parts,
+            vec![r"SELECT a$e'\'".to_string(), "DELETE FROM t".to_string()],
+            "the DELETE must be its own statement"
+        );
+        // The trailing `--'` is a comment, not a third statement — and an
+        // unqualified DELETE is `Block` by default.
+        assert_eq!(
+            classify(&parts[1]),
+            StatementKind::Delete { has_where: false }
+        );
+        assert_eq!(
+            guard_for(&SafetyProfile::default(), classify(&parts[1])),
+            Guard::Block
+        );
+        // And the verifier vouches for the split rather than refusing it.
+        assert_eq!(split_verified(sql).unwrap(), parts);
+    }
+
+    // --- comments belong to the statement they sit in ---------------------
+
+    #[test]
+    fn a_planner_hint_survives_the_split() {
+        // `/*+ … */` is pg_hint_plan input, not decoration. Both callers run
+        // the statements `split_verified` returns, so dropping the comment
+        // here would silently change the plan the server picks.
+        let sql = "/*+ IndexScan(t idx) */ SELECT * FROM t; SELECT 2";
+        let parts = split_statements(sql);
+        assert_eq!(
+            parts,
+            vec![
+                "/*+ IndexScan(t idx) */ SELECT * FROM t".to_string(),
+                "SELECT 2".to_string(),
+            ]
+        );
+        // The classifier is unaffected — it reads code spans, not comments.
+        assert_eq!(classify(&parts[0]), StatementKind::Select);
+        assert_eq!(split_verified(sql).unwrap(), parts);
+    }
+
+    #[test]
+    fn a_comment_only_segment_is_not_a_statement() {
+        // Keeping comments must not turn a trailing `-- note` into a bare
+        // statement: it would classify `Other` and demand confirmation.
+        assert_eq!(
+            split_statements("SELECT 1; -- trailing note"),
+            vec!["SELECT 1".to_string()]
+        );
+        assert_eq!(
+            split_statements("/* leading */ ; SELECT 1"),
+            vec!["SELECT 1".to_string()]
+        );
+        assert_eq!(
+            split_statements("-- nothing but a comment"),
+            Vec::<String>::new()
+        );
+        // A comment attaches to the statement that follows it in its segment.
+        assert_eq!(
+            split_statements("-- header\nSELECT 1"),
+            vec!["-- header\nSELECT 1".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_statement_ending_in_a_line_comment_still_verifies() {
+        // The re-join has to use `";\n"`, the separator the callers execute
+        // with. Joined with a bare `";"` the separator lands *inside* the
+        // trailing line comment, the canonical forms diverge, and a perfectly
+        // ordinary script is refused.
+        let sql = "SELECT 1 -- why\n; SELECT 2";
+        let parts = split_verified(sql).expect("must not be refused");
+        assert_eq!(
+            parts,
+            vec!["SELECT 1 -- why".to_string(), "SELECT 2".to_string()]
+        );
     }
 
     // --- lexer: the rest of the constructs -------------------------------
@@ -1328,7 +1473,10 @@ mod tests {
         let sql = "SELECT 1 /* outer /* inner */ still comment */, 2; SELECT 3";
         assert_eq!(
             split_statements(sql),
-            vec!["SELECT 1  , 2".to_string(), "SELECT 3".to_string()]
+            vec![
+                "SELECT 1 /* outer /* inner */ still comment */, 2".to_string(),
+                "SELECT 3".to_string()
+            ]
         );
     }
 
@@ -1386,7 +1534,7 @@ mod tests {
             split_verified(sql).unwrap(),
             vec![
                 "SELECT 1".to_string(),
-                "UPDATE t SET x = 1 WHERE id = 2".to_string(),
+                "-- note\nUPDATE t SET x = 1 WHERE id = 2".to_string(),
             ]
         );
     }
@@ -1432,17 +1580,21 @@ mod tests {
     }
 
     #[test]
-    fn split_verified_rejoin_drops_only_comments_and_separators() {
+    fn split_verified_rejoin_drops_only_separators() {
+        // Separators and empty segments go; comments stay with their
+        // statement, including a trailing one that ends the segment.
         let sql = "SELECT 1; /* x */ SELECT 2 -- tail\n; SELECT 3";
         let parts = split_verified(sql).unwrap();
         assert_eq!(
             parts,
             vec![
                 "SELECT 1".to_string(),
-                "SELECT 2".to_string(),
+                "/* x */ SELECT 2 -- tail".to_string(),
                 "SELECT 3".to_string()
             ]
         );
+        // Every statement still classifies off its code, not its comments.
+        assert!(parts.iter().all(|s| classify(s) == StatementKind::Select));
     }
 
     // --- classifier gaps the security review found -----------------------
