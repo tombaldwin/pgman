@@ -1451,6 +1451,144 @@ fn a_client_side_refusal_after_a_server_error_drops_the_stale_sqlstate() {
 }
 
 #[test]
+fn a_failed_panel_load_does_not_haunt_the_next_panel() {
+    // `T` failed (no pg_stat_statements). The error stayed in the
+    // footer through every later panel open and close: `S`, its Esc,
+    // and on.
+    let mut a = test_app_with_cache(&[("users", &["id"])]);
+    a.generation = 1;
+    a.mode = Mode::SlowQueries;
+    a.on_msg(AppMsg::SlowQueriesLoaded {
+        generation: 1,
+        result: Err(crate::conn::QueryErr::msg(
+            "relation \"pg_stat_statements\" does not exist",
+        )),
+    });
+    assert_eq!(a.mode, Mode::Normal);
+    assert!(
+        a.last_error.is_some(),
+        "fixture check: the failed load is an error"
+    );
+    a.on_key(KeyEvent::from(KeyCode::Char('S')));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    assert!(
+        a.last_error.is_none(),
+        "opening a panel must drop the previous error: {:?}",
+        a.last_error
+    );
+}
+
+#[test]
+fn closing_a_panel_drops_the_error_left_under_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Sessions;
+    a.last_error = Some("sessions load failed: permission denied".into());
+    a.last_error_detail = Some(crate::conn::QueryErrDetail {
+        code: Some("42501".into()),
+        ..Default::default()
+    });
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Normal);
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert!(a.last_error_detail.is_none());
+}
+
+#[test]
+fn a_panel_load_that_works_clears_the_failure_before_it() {
+    // `r` in the panel after a failed load, or `L` straight after a
+    // failed `T` with the panel already open: the load landing is the
+    // footer's new subject.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.generation = 1;
+    a.mode = Mode::Sessions;
+    a.last_error = Some("slow queries load failed: whatever".into());
+    a.on_msg(AppMsg::SessionsLoaded {
+        generation: 1,
+        result: Ok(Vec::new()),
+    });
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert_eq!(a.last_status.as_deref(), Some(SESSIONS_ONLY_THIS_SESSION));
+
+    a.mode = Mode::SlowQueries;
+    a.last_error = Some("sessions load failed: whatever".into());
+    a.on_msg(AppMsg::SlowQueriesLoaded {
+        generation: 1,
+        result: Ok(Vec::new()),
+    });
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+}
+
+#[test]
+fn a_query_failure_survives_leaving_the_editor_and_viewing_its_detail() {
+    // The clear is scoped to panel edges. Esc from the editor to Normal
+    // is not one, and neither is the error-detail overlay — it *shows*
+    // the error, from any mode, including a panel.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.generation = 1;
+    a.mode = Mode::Editor;
+    a.on_msg(AppMsg::QueryFailed {
+        generation: 1,
+        error: "relation \"t\" does not exist".into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some("42P01".into()),
+            ..Default::default()
+        }),
+    });
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Normal);
+    assert!(
+        a.last_error.is_some(),
+        "Esc from the editor is not a panel edge"
+    );
+
+    a.mode = Mode::Sessions;
+    a.on_key(KeyEvent::from(KeyCode::F(2)));
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    assert!(
+        a.last_error.is_some(),
+        "F2 from a panel shows the error, not drops it"
+    );
+    assert_eq!(
+        a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("42P01")
+    );
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert_eq!(a.mode, Mode::Sessions);
+    assert!(
+        a.last_error.is_some(),
+        "closing the overlay returns to the panel with the error"
+    );
+}
+
+#[test]
+fn is_panel_separates_panels_from_base_modes_modals_and_prompts() {
+    for m in [
+        Mode::Sessions,
+        Mode::SlowQueries,
+        Mode::SchemaLint,
+        Mode::SchemaBrowser,
+        Mode::Notifications,
+        Mode::SavedQueries,
+        Mode::Help,
+    ] {
+        assert!(is_panel(m), "{m:?}");
+    }
+    for m in [
+        Mode::Normal,
+        Mode::Editor,
+        Mode::ErrorDetail,
+        Mode::Confirm,
+        Mode::TxDecision,
+        Mode::ConfirmTerminate,
+        Mode::CommandBar,
+        Mode::SaveQueryPrompt,
+    ] {
+        assert!(!is_panel(m), "{m:?}");
+    }
+}
+
+#[test]
 fn a_key_that_leaves_the_error_alone_keeps_its_sqlstate() {
     // The clear is keyed on the error *changing*: navigating around a
     // server error must not strip the detail F2 is about to show.

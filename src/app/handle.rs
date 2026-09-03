@@ -219,6 +219,11 @@ impl App {
             }
             AppMsg::SlowQueriesLoaded { result, .. } => match result {
                 Ok(rows) => {
+                    // A load that worked supersedes whatever failed
+                    // before it (the previous `T`, a refresh) — the
+                    // footer shows this panel now, not that error.
+                    self.last_error = None;
+                    self.last_error_detail = None;
                     self.slow_queries.rows = rows;
                     // Preserve the operator's selection across an auto-refresh
                     // tick (R) — clamp to the new length rather than zeroing,
@@ -259,6 +264,8 @@ impl App {
             },
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
+                    self.last_error = None;
+                    self.last_error_detail = None;
                     let blocked = rows.iter().filter(|r| r.is_blocked()).count();
                     self.sessions.rows = rows;
                     // Preserve selection across auto-refresh (R) — clamp, don't
@@ -290,6 +297,8 @@ impl App {
                 }
                 match result {
                     Ok(live) => {
+                        self.last_error = None;
+                        self.last_error_detail = None;
                         let added = live.len();
                         self.schema_lint.findings.extend(live);
                         // Re-sort to keep severity ordering after
