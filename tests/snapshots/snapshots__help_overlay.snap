@@ -91,7 +91,7 @@ expression: dump(&buf)
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
 │              │     enter         insert newline                                   │              │
-│              │ ↓ 208 more below                                                   │              │
+│              │ ↓ 209 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

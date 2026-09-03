@@ -150,9 +150,9 @@ with `n`/`N` from Normal mode afterward), `Esc` clears and cancels.
 
 | Key | Action |
 |---|---|
+| `J` / `K` (or `PageDown` / `PageUp`) | Next / previous row of the (filtered, sorted) grid, keeping the highlighted field; the grid selection follows, so closing lands on that row |
 | `j` / `k` / `↓` / `↑` | Move to next / previous field |
 | `g` / `G` | First / last field |
-| `PageUp` / `PageDown` | Jump 10 fields |
 | `Enter` | Zoom into the focused field (cell detail) |
 | `y` | Yank the focused field value |
 | `Esc` / `q` | Close |

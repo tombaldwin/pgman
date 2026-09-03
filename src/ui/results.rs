@@ -212,10 +212,12 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     );
     app.row_detail.scroll = effective_scroll;
 
+    // Position within the visible (filtered, sorted) rows — the order
+    // `J` / `K` step through — not the raw index into `grid.rows`.
     let title = format!(
-        " row {} of {} · field {}/{} ",
-        idx + 1,
-        app.grid.row_count(),
+        " row {} / {} · field {}/{} ",
+        app.grid_state.selected().map_or(0, |s| s + 1),
+        app.grid_view.visible_rows.len(),
         focus + 1,
         layout.len().max(1)
     );

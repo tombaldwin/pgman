@@ -8,7 +8,7 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
-│  ORDER BY ┌ row 1 of 6 · field 1/4 ──────────────────────────────────────────────────────────────────────┐           │
+│  ORDER BY ┌ row 1 / 6 · field 1/4 ───────────────────────────────────────────────────────────────────────┐           │
 │           │                                                                                              │           │
 └───────────│ id         │ 1                                                                               │───────────┘
 ┌ result · 6│ email      │ ada@example.com                                                                 │───────────┐
@@ -41,4 +41,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ↑↓ / j/k field · enter zoom · y yank · g/G first/last · esc close · F1 help
+ RO   TAP   N+1 ×1   J / K next / prev row · j / k field · y yank · esc close · F1 help

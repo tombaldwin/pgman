@@ -537,8 +537,9 @@ impl App {
     }
 
     /// Row-detail modal: j/k navigate fields (renderer auto-scrolls so the
-    /// focused field stays visible); g/G first/last field; PageUp/Down
-    /// jump by 10 fields; `y` yanks the focused value; Enter zooms into
+    /// focused field stays visible); g/G first/last field; J/K (and
+    /// PageDown/PageUp) step to the next/previous grid row with the
+    /// focused field kept; `y` yanks the focused value; Enter zooms into
     /// the focused field (`Mode::CellDetail`); Esc/q close.
     pub(super) fn on_row_detail_key(&mut self, key: KeyEvent) {
         match key.code {
@@ -549,6 +550,14 @@ impl App {
             }
             KeyCode::Enter => {
                 self.open_cell_detail();
+                return;
+            }
+            KeyCode::Char('J') | KeyCode::PageDown => {
+                self.step_row_detail(1);
+                return;
+            }
+            KeyCode::Char('K') | KeyCode::PageUp => {
+                self.step_row_detail(-1);
                 return;
             }
             KeyCode::Char('y') => {

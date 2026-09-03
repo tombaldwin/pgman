@@ -6,7 +6,7 @@ expression: dump(&buf)
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
-│  FROM ┌ row 1 of 6 · field 1/4 ──────────────────────────────────────┐       │
+│  FROM ┌ row 1 / 6 · field 1/4 ───────────────────────────────────────┐       │
 │  WHERE│                                                              │       │
 │  ORDER│ id         │ 1                                               │       │
 │       │ email      │ ada@example.com                                 │       │
@@ -25,4 +25,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ↑↓ / j/k field · enter zoom · y yank · F1 +3 more
+ RO   TAP   N+1 ×1   J / K next / prev row · j / k field · y yank · F1 +2 more
