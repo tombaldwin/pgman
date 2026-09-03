@@ -38,6 +38,8 @@ pub const TAP_MAX_CONCURRENT_CONNS: usize = 64;
 pub const TAP_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 static TCP_CONN_LIMIT_WARN: WarnThrottle = WarnThrottle::new();
+static TCP_ACCEPT_WARN: WarnThrottle = WarnThrottle::new();
+static TCP_CONN_ENDED_WARN: WarnThrottle = WarnThrottle::new();
 static TCP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
 static TCP_IDLE_WARN: WarnThrottle = WarnThrottle::new();
 static UDP_MALFORMED_WARN: WarnThrottle = WarnThrottle::new();
@@ -136,7 +138,14 @@ pub async fn run_tcp_listener(
         let (sock, peer) = match listener.accept().await {
             Ok(pair) => pair,
             Err(e) => {
-                tracing::warn!("tap: accept failed: {e}");
+                TCP_ACCEPT_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap: accept failed: {e}{suffix}")
+                });
                 continue;
             }
         };
@@ -166,7 +175,14 @@ pub async fn run_tcp_listener(
         tokio::spawn(async move {
             let _permit = permit;
             if let Err(e) = handle_tcp_conn(sock, &tx).await {
-                tracing::warn!("tap: conn {peer} ended: {e}");
+                TCP_CONN_ENDED_WARN.warn(|suppressed| {
+                    let suffix = if suppressed > 0 {
+                        format!(" ({suppressed} more suppressed in the last second)")
+                    } else {
+                        String::new()
+                    };
+                    format!("tap: conn {peer} ended: {e}{suffix}")
+                });
             }
         });
     }

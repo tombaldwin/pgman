@@ -249,8 +249,11 @@ field — both the length of each field and, for the list-shaped
 `params`, `caller` and `error`, the number of entries in it (64,
 the last being a `… +N more` marker), since a list of many short
 entries is cheap to send and expensive to hold —
-and throttles its malformed-frame warnings (at most one per
-second, with a suppressed-count) so a hostile or broken client can't
+and throttles every warning a peer can trigger — malformed
+frames, refused connections, accept failures, idle closes, a
+connection ending in error, and a bad line in a `--tap-replay`
+file — to at most one per second per log site, with a
+suppressed-count on the next line so a hostile or broken client can't
 blow up memory or flood the app log — which itself rolls daily
 (`pgman.log.YYYY-MM-DD` under `~/.cache/pgman/`, see the table
 above).
