@@ -3566,6 +3566,28 @@ pub(crate) fn cursor_position(buffer: &str, cursor: usize) -> (usize, usize) {
     (line, col)
 }
 
+/// `(line_index, display_column)` of `cursor` within `buffer` — the
+/// terminal column the cursor should be painted at, summing each
+/// char's `UnicodeWidthChar::width`. `cursor_position` counts chars,
+/// which is what indexing into the line needs; painted as a column it
+/// left the cursor one cell short of every wide glyph before it
+/// (`SELECT '東京都'` put the cursor over the closing quote).
+pub(crate) fn cursor_display_position(buffer: &str, cursor: usize) -> (usize, usize) {
+    use unicode_width::UnicodeWidthChar;
+    let prefix = &buffer[..cursor.min(buffer.len())];
+    let mut line = 0;
+    let mut col = 0;
+    for c in prefix.chars() {
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += UnicodeWidthChar::width(c).unwrap_or(0);
+        }
+    }
+    (line, col)
+}
+
 /// Byte offset for `(line, char_col)`. Clamps to line end / buffer end if the
 /// position is past the line / past the buffer.
 fn byte_offset_at_line_col(buffer: &str, line: usize, col: usize) -> usize {
