@@ -986,6 +986,10 @@ pub struct App {
     /// end. Heartbeat events don't land here — they update
     /// `tap_health` instead. Capped at `TAP_CAP`.
     pub tap_events: std::collections::VecDeque<crate::tap::TapEvent>,
+    /// Running `TapEvent::approx_bytes` total of `tap_events`, kept by
+    /// `tap::push_bounded` for the `tap::TAP_RING_MAX_BYTES` budget.
+    /// Zero means "unseeded" and is recounted on the next push.
+    pub tap_ring_bytes: usize,
     /// Bumped on every mutation of `tap_events` (push, eviction,
     /// clear, `--demo` fixture load). Keys `tap_cache`, so a frame
     /// whose ring hasn't moved is a cache hit and one whose ring has
@@ -1248,6 +1252,7 @@ impl App {
             editor_log_kind_cache: None,
             notifications: NotificationsUi::default(),
             tap_events: std::collections::VecDeque::new(),
+            tap_ring_bytes: 0,
             tap_generation: 0,
             tap_cache: crate::tap::TapInsightsCache::default(),
             tap_nav: TapNavUi::default(),
@@ -1538,15 +1543,20 @@ impl App {
                 if matches!(event.kind, crate::tap::TapKind::Query) {
                     self.tap_health.query_count = self.tap_health.query_count.saturating_add(1);
                 }
-                self.tap_events.push_back(event);
+                // Two caps, oldest out first: `TAP_CAP` events and
+                // `TAP_RING_MAX_BYTES` of text — the count alone let
+                // 2 000 fully-capped events hold ~400 MiB.
+                let evicted = crate::tap::push_bounded(
+                    &mut self.tap_events,
+                    &mut self.tap_ring_bytes,
+                    event,
+                    TAP_CAP,
+                    crate::tap::TAP_RING_MAX_BYTES,
+                );
                 self.bump_tap_generation();
-                while self.tap_events.len() > TAP_CAP {
-                    self.tap_events.pop_front();
-                    // Cursor follows the eviction so a viewer
-                    // parked on the oldest row doesn't suddenly
-                    // jump forward in content.
-                    self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(1);
-                }
+                // Cursor follows the eviction so a viewer parked on the
+                // oldest row doesn't suddenly jump forward in content.
+                self.tap_nav.events_cursor = self.tap_nav.events_cursor.saturating_sub(evicted);
             }
         }
     }
@@ -1872,6 +1882,7 @@ impl App {
     fn clear_tap_ring(&mut self) {
         let n = self.tap_events.len();
         self.tap_events.clear();
+        self.tap_ring_bytes = 0;
         self.bump_tap_generation();
         self.tap_nav.reset_cursors();
         self.last_status = Some(format!("cleared {n} tap event(s)"));
@@ -3898,6 +3909,9 @@ pub const NOTIFICATION_CAP: usize = 200;
 /// `tap::OTLP_MAX_BODY_BYTES`) bound a single frame before that
 /// even runs. Before both existed, this cap alone still allowed
 /// a multi-GB ring: 2000 events x a 1 MiB `sql` string each.
+/// And with every field at its cap, 2000 events is still ~400
+/// MiB — so the ring's *text* is budgeted too, by
+/// `tap::TAP_RING_MAX_BYTES` (`tap::push_bounded`).
 pub const TAP_CAP: usize = 2000;
 
 /// Encode a multi-line SQL entry to a single line: `\\` → `\\\\`,

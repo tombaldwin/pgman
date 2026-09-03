@@ -129,6 +129,27 @@ pub const TAP_MAX_FIELD_BYTES: usize = 1024;
 /// makes the ring's memory bound real.
 pub const TAP_MAX_FIELD_ENTRIES: usize = 64;
 
+/// Ceiling on the tap ring's total text, in bytes — the sum of
+/// [`TapEvent::approx_bytes`] over every event held. `app::TAP_CAP`
+/// bounds the *count*, and with every field at its cap one event is
+/// ~200 KiB, so 2 000 of them was ~400 MiB. Oldest evicted first
+/// ([`push_bounded`]).
+pub const TAP_RING_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Ceiling on a `--tap-record` file, in bytes. Appending stops, with
+/// one warning, once the file would pass it: a capture holds
+/// production parameter values, and nothing else bounded how much of
+/// them one pgman left running could write.
+pub const TAP_RECORD_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// `true` when writing `next` more bytes to a capture that already
+/// holds `written` would pass `max`.
+pub fn record_would_exceed(written: u64, next: usize, max: u64) -> bool {
+    written
+        .checked_add(next as u64)
+        .is_none_or(|total| total > max)
+}
+
 /// Marker appended to a field truncated at ingest. Doubles as
 /// the caller-visible signal that a field was shortened —
 /// pgman doesn't carry a dedicated `truncated: bool` on
@@ -591,6 +612,194 @@ pub(crate) fn enforce_field_caps(event: &mut TapEvent) -> bool {
         }
     }
     truncated
+}
+
+impl TapEvent {
+    /// The bytes this event's text holds — every string field, every
+    /// list entry (plus its `String` header), and the struct itself.
+    /// What [`TAP_RING_MAX_BYTES`] budgets: an approximation that skips
+    /// allocator overhead, cheap enough to run on every push.
+    pub fn approx_bytes(&self) -> usize {
+        fn s(v: &Option<String>) -> usize {
+            v.as_ref().map_or(0, String::len)
+        }
+        fn l(v: &Option<Vec<String>>) -> usize {
+            v.as_ref().map_or(0, |xs| {
+                xs.iter()
+                    .map(|x| x.len() + std::mem::size_of::<String>())
+                    .sum()
+            })
+        }
+        std::mem::size_of::<TapEvent>()
+            + s(&self.app)
+            + s(&self.pool)
+            + s(&self.conn)
+            + s(&self.txn)
+            + s(&self.sql)
+            + l(&self.params)
+            + l(&self.error)
+            + l(&self.caller)
+    }
+}
+
+/// Push `event` onto `ring`, then evict from the front until both caps
+/// hold: at most `max_events` entries, and at most `max_bytes` of text
+/// by [`TapEvent::approx_bytes`] — except that the newest event is
+/// never evicted on its own account. `bytes` is the running total the
+/// caller keeps beside the ring; it is re-seeded from the ring when
+/// found at zero with events present (a ring loaded wholesale, as the
+/// demo fixture is, never went through here). Returns how many events
+/// were evicted, so a cursor into the ring can follow them.
+pub fn push_bounded(
+    ring: &mut std::collections::VecDeque<TapEvent>,
+    bytes: &mut usize,
+    event: TapEvent,
+    max_events: usize,
+    max_bytes: usize,
+) -> usize {
+    if *bytes == 0 && !ring.is_empty() {
+        *bytes = ring.iter().map(TapEvent::approx_bytes).sum();
+    }
+    *bytes += event.approx_bytes();
+    ring.push_back(event);
+    let mut evicted = 0;
+    while ring.len() > max_events || (*bytes > max_bytes && ring.len() > 1) {
+        let Some(old) = ring.pop_front() else {
+            break;
+        };
+        *bytes = bytes.saturating_sub(old.approx_bytes());
+        evicted += 1;
+    }
+    evicted
+}
+
+#[cfg(test)]
+mod ring_budget_tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    fn ev(sql: &str) -> TapEvent {
+        TapEvent {
+            v: 1,
+            kind: TapKind::Query,
+            ts_unix_micros: 0,
+            received_at_unix_micros: 0,
+            app: None,
+            pool: None,
+            conn: None,
+            txn: None,
+            sql: Some(sql.to_string()),
+            params: None,
+            params_redacted: false,
+            duration_micros: None,
+            rows: None,
+            error: None,
+            caller: None,
+            dropped_events_total: None,
+            txn_outcome: None,
+        }
+    }
+
+    #[test]
+    fn approx_bytes_counts_every_text_field() {
+        let mut e = ev("");
+        let base = e.approx_bytes();
+        assert_eq!(base, std::mem::size_of::<TapEvent>());
+        e.sql = Some("x".repeat(100));
+        e.app = Some("app".into());
+        e.params = Some(vec!["ab".into(), "cd".into()]);
+        e.caller = Some(vec!["Frame.java:1".into()]);
+        assert_eq!(
+            e.approx_bytes(),
+            base + 100
+                + 3
+                + (4 + 2 * std::mem::size_of::<String>())
+                + (12 + std::mem::size_of::<String>())
+        );
+    }
+
+    #[test]
+    fn push_bounded_evicts_oldest_past_the_count_cap() {
+        let mut ring = VecDeque::new();
+        let mut bytes = 0;
+        assert_eq!(
+            push_bounded(&mut ring, &mut bytes, ev("a"), 2, usize::MAX),
+            0
+        );
+        assert_eq!(
+            push_bounded(&mut ring, &mut bytes, ev("b"), 2, usize::MAX),
+            0
+        );
+        assert_eq!(
+            push_bounded(&mut ring, &mut bytes, ev("c"), 2, usize::MAX),
+            1
+        );
+        assert_eq!(ring.len(), 2);
+        assert_eq!(ring.front().unwrap().sql.as_deref(), Some("b"));
+        assert_eq!(bytes, ev("b").approx_bytes() + ev("c").approx_bytes());
+    }
+
+    #[test]
+    fn push_bounded_evicts_oldest_past_the_byte_budget() {
+        let one = ev(&"x".repeat(100)).approx_bytes();
+        let budget = 2 * one + 10;
+        let mut ring = VecDeque::new();
+        let mut bytes = 0;
+        for _ in 0..2 {
+            assert_eq!(
+                push_bounded(&mut ring, &mut bytes, ev(&"x".repeat(100)), 1000, budget),
+                0
+            );
+        }
+        assert_eq!(
+            push_bounded(&mut ring, &mut bytes, ev(&"y".repeat(100)), 1000, budget),
+            1,
+            "the third event pushes the ring past the budget; the oldest goes"
+        );
+        assert_eq!(ring.len(), 2);
+        assert!(bytes <= budget, "{bytes} > {budget}");
+        assert_eq!(ring.back().unwrap().sql.as_deref(), Some(&*"y".repeat(100)));
+    }
+
+    #[test]
+    fn push_bounded_never_evicts_the_newest_event_on_its_own() {
+        let mut ring = VecDeque::new();
+        let mut bytes = 0;
+        assert_eq!(push_bounded(&mut ring, &mut bytes, ev("aaaa"), 1000, 1), 0);
+        assert_eq!(push_bounded(&mut ring, &mut bytes, ev("bbbb"), 1000, 1), 1);
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring.front().unwrap().sql.as_deref(), Some("bbbb"));
+    }
+
+    #[test]
+    fn push_bounded_reseeds_a_ring_it_did_not_fill() {
+        // `demo.rs` assigns the ring wholesale; the first live push must
+        // count what is already there rather than let it ride free.
+        let mut ring: VecDeque<TapEvent> = VecDeque::from(vec![ev("aaaa"), ev("bb")]);
+        let mut bytes = 0;
+        push_bounded(&mut ring, &mut bytes, ev("c"), 1000, usize::MAX);
+        assert_eq!(
+            bytes,
+            ev("aaaa").approx_bytes() + ev("bb").approx_bytes() + ev("c").approx_bytes()
+        );
+    }
+
+    #[test]
+    fn record_cap_is_a_strict_ceiling() {
+        assert!(!record_would_exceed(0, 10, 10));
+        assert!(record_would_exceed(1, 10, 10));
+        assert!(record_would_exceed(u64::MAX, 1, u64::MAX));
+        assert!(!record_would_exceed(
+            TAP_RECORD_MAX_BYTES - 1,
+            1,
+            TAP_RECORD_MAX_BYTES
+        ));
+        assert!(record_would_exceed(
+            TAP_RECORD_MAX_BYTES,
+            1,
+            TAP_RECORD_MAX_BYTES
+        ));
+    }
 }
 
 /// Enforce the per-kind required-fields contract documented

@@ -412,6 +412,13 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         };
+        // Bytes already in the capture: a resumed capture starts from
+        // the file's current size, so `tap::TAP_RECORD_MAX_BYTES` caps
+        // the file, not the session.
+        let mut record_bytes: u64 = match record_file.as_ref() {
+            Some(f) => f.metadata().await.map(|m| m.len()).unwrap_or(0),
+            None => 0,
+        };
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             // Track the global drop counter so we can emit a
@@ -450,6 +457,11 @@ async fn main() -> anyhow::Result<()> {
                     // pgman so the "X% missing" signal survives
                     // the file round-trip.
                     let cur_drops = tap::dropped_at_listener();
+                    // The marker line (if due) and the event line go
+                    // out as one write: a panic mid-format can't leave
+                    // a torn line, and the size cap is checked once
+                    // against the whole of it.
+                    let mut bytes: Vec<u8> = Vec::new();
                     if cur_drops > last_drop_seen {
                         let marker = tap::TapEvent {
                             v: 1,
@@ -471,43 +483,59 @@ async fn main() -> anyhow::Result<()> {
                             txn_outcome: None,
                         };
                         if let Ok(line) = tap::record_line(&marker) {
-                            let mut bytes = line.into_bytes();
+                            bytes.extend(line.into_bytes());
                             bytes.push(b'\n');
-                            let _ = f.write_all(&bytes).await;
                         }
                         last_drop_seen = cur_drops;
                     }
                     match tap::record_line(&event) {
                         Ok(line) => {
-                            // Build the line + newline as one
-                            // write so a panic mid-format can't
-                            // leave a torn line.
-                            let mut bytes = line.into_bytes();
+                            bytes.extend(line.into_bytes());
                             bytes.push(b'\n');
-                            // Write + flush sequentially. A
-                            // failure disables the recorder so
-                            // we don't spam logs every event.
-                            let write_ok = match f.write_all(&bytes).await {
-                                Ok(()) => true,
-                                Err(e) => {
-                                    tracing::warn!(
-                                            "tap-record: write failed; disabling capture for this session: {e}"
-                                        );
-                                    false
-                                }
-                            };
-                            if write_ok {
-                                if let Err(e) = f.flush().await {
-                                    tracing::warn!(
-                                        "tap-record: flush failed; disabling capture for this session: {e}"
-                                    );
-                                    record_file = None;
-                                }
-                            } else {
-                                record_file = None;
-                            }
                         }
                         Err(e) => tracing::warn!("tap-record: serialize failed: {e}"),
+                    }
+                    if tap::record_would_exceed(
+                        record_bytes,
+                        bytes.len(),
+                        tap::TAP_RECORD_MAX_BYTES,
+                    ) {
+                        // Once: the recorder is dropped, so this cannot
+                        // repeat. A capture holds production parameter
+                        // values; a pgman left running must not write
+                        // them without bound.
+                        tracing::warn!(
+                            "tap-record: {} has reached {} MiB; capture stopped for this session — start a new file to keep recording",
+                            record_path
+                                .as_ref()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default(),
+                            tap::TAP_RECORD_MAX_BYTES / (1024 * 1024)
+                        );
+                        record_file = None;
+                    } else if !bytes.is_empty() {
+                        // Write + flush sequentially. A failure disables
+                        // the recorder so we don't spam logs every event.
+                        let write_ok = match f.write_all(&bytes).await {
+                            Ok(()) => true,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "tap-record: write failed; disabling capture for this session: {e}"
+                                );
+                                false
+                            }
+                        };
+                        if write_ok {
+                            record_bytes = record_bytes.saturating_add(bytes.len() as u64);
+                            if let Err(e) = f.flush().await {
+                                tracing::warn!(
+                                    "tap-record: flush failed; disabling capture for this session: {e}"
+                                );
+                                record_file = None;
+                            }
+                        } else {
+                            record_file = None;
+                        }
                     }
                 }
                 if app_send.is_err() {
