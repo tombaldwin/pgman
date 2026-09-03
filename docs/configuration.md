@@ -259,9 +259,14 @@ The picker row shows, for each candidate: its origin, its name,
 set one), and `tunnel → <bastion>` when an `ssh_tunnel` is configured.
 A candidate with a tunnel asks a second time before pgman spawns `ssh`.
 
-In `--batch` mode there's no picker to fall back on, so a single
-discovered candidate is still used; zero or more-than-one is a hard
-error asking for `--dsn` (`src/main.rs::batch_dsn_from_picks`). Batch
+In `--batch` mode there's no picker to fall back on, so *no* discovered
+candidate is used on its own — "nothing discovered connects without a
+keypress" applies to batch too, and batch has no keypress to offer.
+A single candidate is refused with an error naming both ways forward:
+pass `--dsn` to name the connection yourself, or `--discovered` to
+accept that one candidate deliberately. Zero or more-than-one is a hard
+error asking for `--dsn` either way
+(`src/main.rs::batch_dsn_from_picks`). Batch
 inherits the same password and placeholder rules — it has no
 `PGPASSWORD` fallback for a discovered source either — and every
 question the TUI would ask becomes a refusal rather than a silent yes:
