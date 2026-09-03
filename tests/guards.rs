@@ -7,189 +7,404 @@
 //! same `c` — and a fifth guard, unrelated to `src/`, over what `cargo
 //! package` would actually ship to crates.io.
 //!
-//! `syn` is not a dependency here, so unlike ebman's AST-based
-//! `key_arm_order.rs` these are line-level scans. The one trap that
-//! defeats a naive line scan — cutting a `//` "comment" out of a string
-//! literal that happens to contain `//` (a URL, say) — is handled by
-//! `strip_line_comment`, which tracks whether the scanner is inside a
-//! `"…"` or `'…'` literal before treating `//` as a comment start.
+//! `syn` is not a dependency here, so these do not parse an AST the way
+//! ebman's `key_arm_order.rs` does. They do, however, run off a real
+//! lexer rather than per-line string searching: [`scan_rust`] splits a
+//! file into code / string / char / line-comment / block-comment spans
+//! in one forward pass, and every guard below scans a *mask* of the
+//! file derived from those spans (see [`Mask`]).
+//!
+//! That matters because the comment stripping used to be
+//! literal-blind. A line reading
+//!
+//! ```text
+//! let a = "/*"; let p = "~/.cache/pgman/x.log"; let b = "*/";
+//! ```
+//!
+//! has no comment in it at all — but a scanner that greps for `/*` and
+//! `*/` sees one, blanks everything between them, and walks a hardcoded
+//! cache path straight past the guard that exists to catch it. Lexing
+//! first is the only way a guard can tell a delimiter from a quoted
+//! mention of one, and it is the same reason `src/safety.rs` lexes SQL
+//! into spans instead of grepping for `;`. That scanner is not reused
+//! here: it is a *SQL* lexer (`--` comments, `'…'` strings, `$tag$`
+//! bodies, no `//` and no lifetimes) and it is `pub(crate)`, so it is
+//! neither correct for Rust nor reachable from an integration test.
 
 use std::fs;
 use std::path::Path;
 
 // ---------------------------------------------------------------------
+// A Rust lexer, so that no guard can be fooled by a literal
+// ---------------------------------------------------------------------
+
+/// What a [`Span`] of a Rust source file is, lexically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpanKind {
+    /// Ordinary Rust code — the only kind a code-token needle
+    /// (`Color::`, `println!`, a brace) may legitimately match in.
+    Code,
+    /// A string literal, delimiters included: `"…"` with backslash
+    /// escapes, `r"…"` / `r#"…"#` raw strings, and the `b`-prefixed
+    /// byte-string forms of both.
+    Str,
+    /// A char literal (`'x'`, `'\n'`, `'\''`) — never a lifetime.
+    Char,
+    /// `//` (including `///` and `//!`) to end of line.
+    LineComment,
+    /// `/* … */`, nesting the way Rust allows.
+    BlockComment,
+}
+
+/// One lexical run of a source file. Spans tile the input exactly:
+/// concatenating `src[start..end]` over the returned spans reproduces
+/// `src`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Span {
+    kind: SpanKind,
+    start: usize,
+    end: usize,
+}
+
+/// Byte length of the UTF-8 sequence whose leading byte is `first`.
+fn utf8_len(first: u8) -> usize {
+    match first {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    }
+}
+
+fn is_ident_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_'
+}
+
+/// End (exclusive) of a `"…"` literal whose body starts at `i`,
+/// honouring backslash escapes. An unterminated literal runs to end of
+/// input.
+fn escaped_string_end(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    b.len()
+}
+
+/// End (exclusive) of a raw-string literal whose body starts at `i` and
+/// whose opener carried `hashes` `#` characters. Raw strings have no
+/// escapes: only a `"` followed by exactly that many `#` closes one.
+fn raw_string_end(b: &[u8], mut i: usize, hashes: usize) -> usize {
+    while i < b.len() {
+        if b[i] == b'"' {
+            let mut k = 0;
+            while k < hashes && b.get(i + 1 + k) == Some(&b'#') {
+                k += 1;
+            }
+            if k == hashes {
+                return i + 1 + hashes;
+            }
+        }
+        i += 1;
+    }
+    b.len()
+}
+
+/// End (exclusive) of the char literal starting at `b[i]` (a `'`), or
+/// `None` when the quote opens a lifetime (`'a`, `'static`) rather than
+/// a literal. Getting this wrong in either direction is what makes a
+/// naive scanner lose track of the rest of the file.
+fn char_literal_end(b: &[u8], i: usize) -> Option<usize> {
+    let c = *b.get(i + 1)?;
+    if c == b'\'' {
+        // `''` is not a char literal.
+        return None;
+    }
+    if c == b'\\' {
+        let esc = *b.get(i + 2)?;
+        let close = match esc {
+            // `\xNN`
+            b'x' => i + 5,
+            // `\u{NNNN}` — variable length, ends at the `}`.
+            b'u' => {
+                let mut j = i + 3;
+                while j < b.len() && b[j] != b'}' {
+                    j += 1;
+                }
+                j + 1
+            }
+            // `\n`, `\t`, `\r`, `\0`, `\\`, `\'`, `\"`
+            _ => i + 3,
+        };
+        return (b.get(close) == Some(&b'\'')).then_some(close + 1);
+    }
+    let n = utf8_len(c);
+    (b.get(i + 1 + n) == Some(&b'\'')).then_some(i + 2 + n)
+}
+
+/// Lex `src` into code / literal / comment spans. The single source of
+/// truth for "is this `/*` a comment opener?" and "is this `'` a char
+/// literal?" across every guard in this file.
+fn scan_rust(src: &str) -> Vec<Span> {
+    let b = src.as_bytes();
+    let mut spans: Vec<Span> = Vec::new();
+    let mut code_start = 0usize;
+    let mut i = 0usize;
+
+    fn flush_code(spans: &mut Vec<Span>, from: usize, to: usize) {
+        if to > from {
+            spans.push(Span {
+                kind: SpanKind::Code,
+                start: from,
+                end: to,
+            });
+        }
+    }
+
+    while i < b.len() {
+        // `//` … end of line.
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'/') {
+            flush_code(&mut spans, code_start, i);
+            let mut j = i;
+            while j < b.len() && b[j] != b'\n' {
+                j += 1;
+            }
+            spans.push(Span {
+                kind: SpanKind::LineComment,
+                start: i,
+                end: j,
+            });
+            i = j;
+            code_start = i;
+            continue;
+        }
+        // `/* … */`, nesting.
+        if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+            flush_code(&mut spans, code_start, i);
+            let mut depth = 1usize;
+            let mut j = i + 2;
+            while j < b.len() && depth > 0 {
+                if b[j] == b'/' && b.get(j + 1) == Some(&b'*') {
+                    depth += 1;
+                    j += 2;
+                } else if b[j] == b'*' && b.get(j + 1) == Some(&b'/') {
+                    depth -= 1;
+                    j += 2;
+                } else {
+                    j += 1;
+                }
+            }
+            let end = j.min(b.len());
+            spans.push(Span {
+                kind: SpanKind::BlockComment,
+                start: i,
+                end,
+            });
+            i = end;
+            code_start = i;
+            continue;
+        }
+        // `r"…"` / `r#"…"#` / `b"…"` / `br#"…"#`. The prefix only counts
+        // when it stands alone — the `r` ending an identifier like
+        // `ptr` opens nothing.
+        if (b[i] == b'r' || b[i] == b'b') && (i == 0 || !is_ident_byte(b[i - 1])) {
+            let mut j = i;
+            if b[j] == b'b' {
+                j += 1;
+            }
+            let raw = b.get(j) == Some(&b'r');
+            if raw {
+                j += 1;
+            }
+            let hash_start = j;
+            while b.get(j) == Some(&b'#') {
+                j += 1;
+            }
+            let hashes = j - hash_start;
+            if b.get(j) == Some(&b'"') && (raw || hashes == 0) {
+                flush_code(&mut spans, code_start, i);
+                let end = if raw {
+                    raw_string_end(b, j + 1, hashes)
+                } else {
+                    escaped_string_end(b, j + 1)
+                };
+                spans.push(Span {
+                    kind: SpanKind::Str,
+                    start: i,
+                    end,
+                });
+                i = end;
+                code_start = i;
+                continue;
+            }
+        }
+        if b[i] == b'"' {
+            flush_code(&mut spans, code_start, i);
+            let end = escaped_string_end(b, i + 1);
+            spans.push(Span {
+                kind: SpanKind::Str,
+                start: i,
+                end,
+            });
+            i = end;
+            code_start = i;
+            continue;
+        }
+        if b[i] == b'\'' {
+            if let Some(end) = char_literal_end(b, i) {
+                flush_code(&mut spans, code_start, i);
+                spans.push(Span {
+                    kind: SpanKind::Char,
+                    start: i,
+                    end,
+                });
+                i = end;
+                code_start = i;
+                continue;
+            }
+            // A lifetime — ordinary code, keep scanning.
+        }
+        i += 1;
+    }
+    flush_code(&mut spans, code_start, b.len());
+    spans
+}
+
+/// Which lexical spans a guard's scan should be blind to. Blanking is
+/// done character-for-character with spaces (newlines and carriage
+/// returns kept), so a masked file has exactly the same line structure
+/// as the original and reported line numbers stay true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mask {
+    /// Comments blanked; string and char literals kept verbatim. For
+    /// the hardcoded-path guard, whose whole subject is what a string
+    /// literal *contains*.
+    Comments,
+    /// Comments and string literals blanked; char literals kept. For
+    /// the structural scans (brace matching, `match … .code` arm
+    /// order), which must still see `KeyCode::Char('{')` but must not
+    /// count a `{` inside a multi-line raw string.
+    CommentsAndStrings,
+    /// Comments and every literal blanked. For guards whose needle is a
+    /// code token (`Color::`, `println!`) that a literal can only ever
+    /// mention, never perform.
+    Code,
+}
+
+fn mask(src: &str, mode: Mask) -> String {
+    let mut out = String::with_capacity(src.len());
+    for span in scan_rust(src) {
+        let text = &src[span.start..span.end];
+        let blank = match span.kind {
+            SpanKind::Code => false,
+            SpanKind::LineComment | SpanKind::BlockComment => true,
+            SpanKind::Str => mode != Mask::Comments,
+            SpanKind::Char => mode == Mask::Code,
+        };
+        if blank {
+            for c in text.chars() {
+                out.push(if c == '\n' || c == '\r' { c } else { ' ' });
+            }
+        } else {
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------
 // Shared scanning primitives
 // ---------------------------------------------------------------------
 
-/// Split `line` into its code portion (any `//` line comment stripped,
-/// without cutting inside a string or char literal) and the net
-/// `{` minus `}` found in that code portion — also literal-aware, so a
-/// pattern like `KeyCode::Char('{')` doesn't perturb brace counting.
-///
-/// Ported from the same fix in ebman's `app/tests/scan.rs`: a `'` is
-/// only treated as starting/ending a char literal when it looks like
-/// one (`'x'` or an escape `'\n'`), not a lifetime like `'a`.
-fn scan_line(line: &str) -> (&str, i32) {
-    let b = line.as_bytes();
-    let mut i = 0;
-    let mut in_str = false;
-    let mut in_char = false;
-    let mut depth = 0i32;
-    let mut code_end = line.len();
-    while i < b.len() {
-        match b[i] {
-            b'\\' if in_str || in_char => {
-                i += 2;
-                continue;
-            }
-            b'"' if !in_char => in_str = !in_str,
-            b'\'' if !in_str => {
-                let looks_like_char = b.get(i + 1) == Some(&b'\\')
-                    || (b.get(i + 2) == Some(&b'\'') && b.get(i + 1).is_some());
-                if in_char || looks_like_char {
-                    in_char = !in_char;
-                }
-            }
-            b'{' if !in_str && !in_char => depth += 1,
-            b'}' if !in_str && !in_char => depth -= 1,
-            b'/' if !in_str && !in_char && b.get(i + 1) == Some(&b'/') => {
-                code_end = i;
-                break;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    (&line[..code_end], depth)
-}
-
-/// Just the comment-stripped code portion of `line`.
+/// Just the code portion of `line` — everything before the first
+/// comment the lexer finds. A `//` inside a string literal (a URL, say)
+/// is not a comment and does not cut the line.
 fn strip_line_comment(line: &str) -> &str {
-    scan_line(line).0
+    for span in scan_rust(line) {
+        if matches!(span.kind, SpanKind::LineComment | SpanKind::BlockComment) {
+            return &line[..span.start];
+        }
+    }
+    line
 }
 
-/// String/char-literal aware net bracket delta of `code` (`(`,`[`,`{` =
-/// +1, `)`,`]`,`}` = -1) — used to find where a match arm's body (a
-/// braced block or a plain expression) ends on the lines following its
-/// `=>`, without needing to distinguish which bracket kind opened it.
-/// `code` is expected to already have any `//` comment stripped.
-fn bracket_delta(code: &str) -> i32 {
-    let b = code.as_bytes();
-    let mut i = 0;
-    let mut in_str = false;
-    let mut in_char = false;
+/// Split `line` into its code portion (any comment stripped) and the
+/// net `{` minus `}` found in that portion, counting only braces the
+/// lexer classified as code — so `KeyCode::Char('{')` doesn't perturb
+/// brace counting.
+fn scan_line(line: &str) -> (&str, i32) {
+    let code = strip_line_comment(line);
+    (code, brace_delta_in_code(code, &['{'], &['}']))
+}
+
+/// Net `open` minus `close` over the *code* spans of `text` only.
+fn brace_delta_in_code(text: &str, open: &[char], close: &[char]) -> i32 {
     let mut depth = 0i32;
-    while i < b.len() {
-        match b[i] {
-            b'\\' if in_str || in_char => {
-                i += 2;
-                continue;
-            }
-            b'"' if !in_char => in_str = !in_str,
-            b'\'' if !in_str => {
-                let looks_like_char = b.get(i + 1) == Some(&b'\\')
-                    || (b.get(i + 2) == Some(&b'\'') && b.get(i + 1).is_some());
-                if in_char || looks_like_char {
-                    in_char = !in_char;
-                }
-            }
-            b'(' | b'[' | b'{' if !in_str && !in_char => depth += 1,
-            b')' | b']' | b'}' if !in_str && !in_char => depth -= 1,
-            _ => {}
+    for span in scan_rust(text) {
+        if span.kind != SpanKind::Code {
+            continue;
         }
-        i += 1;
+        for c in text[span.start..span.end].chars() {
+            if open.contains(&c) {
+                depth += 1;
+            } else if close.contains(&c) {
+                depth -= 1;
+            }
+        }
     }
     depth
+}
+
+/// Net bracket delta of `code` (`(`,`[`,`{` = +1, `)`,`]`,`}` = -1),
+/// counting only brackets the lexer classified as code — used to find
+/// where a match arm's body (a braced block or a plain expression) ends
+/// on the lines following its `=>`, without needing to distinguish which
+/// bracket kind opened it.
+fn bracket_delta(code: &str) -> i32 {
+    brace_delta_in_code(code, &['(', '[', '{'], &[')', ']', '}'])
 }
 
 /// 0-based index of the line containing the closing `}` matching the
 /// first `{` found at/after `lines[start]`, tracked by *true* depth —
 /// char-by-char, not a net-per-line delta — so a line that opens and
 /// closes its own brace pair (a one-line function, `mod tests { … }`
-/// all on one line) isn't mistaken for "never opened". String/char-
-/// literal aware, and comment-aware for `//` (not block comments —
-/// callers that need those stripped do it first).
+/// all on one line) isn't mistaken for "never opened". Only braces the
+/// lexer classified as code count.
 ///
 /// Returns `None` if a top-level `;` is reached before any `{` — a
 /// signature with no body (a trait method declaration) rather than a
 /// block to skip. Scanning past it looking for some unrelated later
 /// `{` would silently skip arbitrary amounts of real code.
 fn brace_end_from(lines: &[&str], start: usize) -> Option<usize> {
-    let mut in_str = false;
-    let mut in_char = false;
     let mut depth = 0i32;
     let mut opened = false;
     for (li, line) in lines.iter().enumerate().skip(start) {
-        let b = line.as_bytes();
-        let mut i = 0;
-        while i < b.len() {
-            match b[i] {
-                b'\\' if in_str || in_char => {
-                    i += 2;
-                    continue;
-                }
-                b'"' if !in_char => in_str = !in_str,
-                b'\'' if !in_str => {
-                    let looks_like_char = b.get(i + 1) == Some(&b'\\')
-                        || (b.get(i + 2) == Some(&b'\'') && b.get(i + 1).is_some());
-                    if in_char || looks_like_char {
-                        in_char = !in_char;
-                    }
-                }
-                b'/' if !in_str && !in_char && b.get(i + 1) == Some(&b'/') => break,
-                b';' if !in_str && !in_char && !opened => return None,
-                b'{' if !in_str && !in_char => {
-                    depth += 1;
-                    opened = true;
-                }
-                b'}' if !in_str && !in_char => {
-                    depth -= 1;
-                    if opened && depth <= 0 {
-                        return Some(li);
-                    }
-                }
-                _ => {}
+        for span in scan_rust(line) {
+            if span.kind != SpanKind::Code {
+                continue;
             }
-            i += 1;
+            for c in line[span.start..span.end].chars() {
+                match c {
+                    ';' if !opened => return None,
+                    '{' => {
+                        depth += 1;
+                        opened = true;
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if opened && depth <= 0 {
+                            return Some(li);
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     None
-}
-
-/// Strip `/* … */` block comments from `text`, replacing their content
-/// (newlines aside) with spaces so line numbers are unaffected. Doesn't
-/// handle nested block comments (Rust allows them; this codebase
-/// doesn't use them) or a `/*`-looking sequence inside a string
-/// literal — good enough for a text-based guard, and checked against
-/// the current tree by hand.
-fn strip_block_comments(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    let mut in_block_comment = false;
-    while let Some(c) = chars.next() {
-        if in_block_comment {
-            if c == '*' && chars.peek() == Some(&'/') {
-                chars.next();
-                in_block_comment = false;
-                out.push(' ');
-                out.push(' ');
-            } else if c == '\n' {
-                out.push('\n');
-            } else {
-                out.push(' ');
-            }
-            continue;
-        }
-        if c == '/' && chars.peek() == Some(&'*') {
-            chars.next();
-            in_block_comment = true;
-            out.push(' ');
-            out.push(' ');
-            continue;
-        }
-        out.push(c);
-    }
-    out
 }
 
 /// Per-line mask over `lines`: `true` where the line is *not* inside a
@@ -240,12 +455,18 @@ fn non_test_module_mask(lines: &[&str]) -> Vec<bool> {
 /// (e.g. synthetic `/Users/tester` paths in install-channel-detection
 /// tests) while still catching the same needle in production code.
 fn strip_test_module_content(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let mask = non_test_module_mask(&lines);
-    lines
-        .iter()
-        .zip(mask.iter())
-        .map(|(line, keep)| if *keep { *line } else { "" })
+    let structural = mask(text, Mask::CommentsAndStrings);
+    let struct_lines: Vec<&str> = structural.lines().collect();
+    let keep = non_test_module_mask(&struct_lines);
+    text.lines()
+        .enumerate()
+        .map(|(i, line)| {
+            if *keep.get(i).unwrap_or(&true) {
+                line
+            } else {
+                ""
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -287,12 +508,14 @@ fn source_files() -> Vec<(String, String)> {
 // Guard 1 — no hardcoded `Color::*` outside theme.rs
 // ---------------------------------------------------------------------
 
-/// `Color::` occurrences in `text`'s code (comments stripped), as
-/// `path:line` strings.
+/// `Color::` occurrences in `text`'s code, as `path:line` strings.
+/// Scanned over [`Mask::Code`]: a `Color::` named in a comment or
+/// quoted in a doc example is a mention, not a hardcoded colour.
 fn colour_hits(path: &str, text: &str) -> Vec<String> {
-    text.lines()
+    mask(text, Mask::Code)
+        .lines()
         .enumerate()
-        .filter(|(_, line)| strip_line_comment(line).contains("Color::"))
+        .filter(|(_, line)| line.contains("Color::"))
         .map(|(n, _)| format!("{path}:{}", n + 1))
         .collect()
 }
@@ -372,10 +595,11 @@ fn print_macro_hits(path: &str, text: &str) -> Vec<String> {
     if PRINT_ALLOWED_WHOLE_FILES.contains(&path) {
         return Vec::new();
     }
-    let lines: Vec<&str> = text.lines().collect();
+    let masked = mask(text, Mask::Code);
+    let lines: Vec<&str> = masked.lines().collect();
     let mut exempt = vec![false; lines.len()];
     for i in 0..lines.len() {
-        let code = strip_line_comment(lines[i]);
+        let code = lines[i];
         if let Some(fn_pos) = code.find("fn ") {
             if let Some(name) = fn_name_at(&code[fn_pos + 3..]) {
                 if is_print_allowed_function(path, &name) {
@@ -389,11 +613,10 @@ fn print_macro_hits(path: &str, text: &str) -> Vec<String> {
         }
     }
     let mut hits = Vec::new();
-    for (n, line) in lines.iter().enumerate() {
+    for (n, code) in lines.iter().enumerate() {
         if exempt[n] {
             continue;
         }
-        let code = strip_line_comment(line);
         // `"eprintln!"` contains `"println!"` as a substring (it's
         // `e` + `println!`), so checking each needle independently and
         // pushing a hit per match double-reports every `eprintln!` line
@@ -439,16 +662,26 @@ const PATH_NEEDLES: [&str; 4] = ["/Users/", "/home/", "~/.config", "~/.cache"];
 /// `/* … */`) and skipping each `#[cfg(test)] mod { … }` body by its
 /// own brace extent (see `non_test_module_mask`) rather than bailing to
 /// EOF at the first one.
+///
+/// Two views of the same file, both produced by the lexer so they agree
+/// on where the comments are:
+///
+/// - the needle search runs over [`Mask::Comments`], which keeps string
+///   literals — the path being hunted lives *inside* one;
+/// - the `#[cfg(test)] mod` extent runs over
+///   [`Mask::CommentsAndStrings`], because a `{` quoted in a literal is
+///   not a brace.
 fn hardcoded_path_hits(path: &str, text: &str) -> Vec<String> {
-    let stripped = strip_block_comments(text);
-    let lines: Vec<&str> = stripped.lines().collect();
-    let mask = non_test_module_mask(&lines);
+    let with_literals = mask(text, Mask::Comments);
+    let structural = mask(text, Mask::CommentsAndStrings);
+    let lines: Vec<&str> = with_literals.lines().collect();
+    let struct_lines: Vec<&str> = structural.lines().collect();
+    let keep = non_test_module_mask(&struct_lines);
     let mut hits = Vec::new();
-    for (n, line) in lines.iter().enumerate() {
-        if !mask[n] {
+    for (n, code) in lines.iter().enumerate() {
+        if !keep.get(n).copied().unwrap_or(true) {
             continue;
         }
-        let code = strip_line_comment(line);
         for needle in PATH_NEEDLES {
             if code.contains(needle) {
                 hits.push(format!("{path}:{} — contains {needle:?}", n + 1));
@@ -627,38 +860,67 @@ struct Shadowed {
     catchall: bool,
 }
 
-/// True if `code` (comment-stripped) contains a `match <expr>.code {`
-/// header — the expr can be any identifier chain (`key`, `tab_key`,
-/// `self.pending.key`, …), found by locating each `match ` and checking
-/// the text up to the following `{` ends with `.code` once trimmed.
-fn is_match_code_header(code: &str) -> bool {
+/// How many lines past the `match ` keyword the opening `{` may sit
+/// before the text stops looking like one header. rustfmt puts the
+/// brace on its own line whenever the scrutinee makes the header too
+/// long, which is exactly what happens to the longer dispatch chains
+/// (`match self.pending_run.as_ref().unwrap().key.code`).
+const MATCH_HEADER_LOOKAHEAD: usize = 4;
+
+/// If a `match <expr>.code { … }` header *starts* on `lines[i]`, the
+/// 0-based index of the line carrying its opening `{`. The expr can be
+/// any identifier chain (`key`, `tab_key`, `self.pending.key`, …), and
+/// the brace may be on the same line or on one of the next few —
+/// requiring one physical line silently dropped every rustfmt-wrapped
+/// dispatcher out of the guard's reach.
+fn match_code_header_end(lines: &[&str], i: usize) -> Option<usize> {
+    let first = strip_line_comment(lines[i]);
     let mut search_from = 0;
-    while let Some(rel) = code[search_from..].find("match ") {
+    while let Some(rel) = first[search_from..].find("match ") {
         let after = search_from + rel + "match ".len();
-        if let Some(brace_rel) = code[after..].find('{') {
-            let between = code[after..after + brace_rel].trim();
-            if between.ends_with(".code") {
-                return true;
+        let mut expr = String::new();
+        let mut li = i;
+        let mut chunk = &first[after..];
+        loop {
+            if let Some(brace_rel) = chunk.find('{') {
+                expr.push_str(&chunk[..brace_rel]);
+                if expr.trim().ends_with(".code") {
+                    return Some(li);
+                }
+                break;
             }
+            expr.push_str(chunk);
+            expr.push(' ');
+            // A `;` or an arm's `=>` before any `{` means this `match `
+            // never opened a block on these lines.
+            if chunk.contains(';') || chunk.contains("=>") {
+                break;
+            }
+            li += 1;
+            if li >= lines.len() || li > i + MATCH_HEADER_LOOKAHEAD {
+                break;
+            }
+            chunk = strip_line_comment(lines[li]);
         }
         search_from = after;
     }
-    false
+    None
 }
 
 /// Line-range (1-based, inclusive) of every `match <expr>.code { … }`
-/// block in `lines`, found by true brace depth from each header line —
-/// found by a plain forward scan (not skipping past a block once
-/// found), so a `match … .code { … }` nested inside another one's arm
-/// body is discovered as its own, separate block rather than being
-/// silently skipped or merged into the outer one's arm list.
+/// block in `lines`. The range *starts* at the line carrying the
+/// opening `{` (which may be below the `match ` keyword), so the arm
+/// parser can begin at the line after it either way. Found by a plain
+/// forward scan (not skipping past a block once found), so a
+/// `match … .code { … }` nested inside another one's arm body is
+/// discovered as its own, separate block rather than being silently
+/// skipped or merged into the outer one's arm list.
 fn match_code_blocks(lines: &[&str]) -> Vec<(usize, usize)> {
     let mut blocks = Vec::new();
     for i in 0..lines.len() {
-        let code = strip_line_comment(lines[i]);
-        if is_match_code_header(code) {
-            if let Some(end) = brace_end_from(lines, i) {
-                blocks.push((i + 1, end + 1));
+        if let Some(brace_line) = match_code_header_end(lines, i) {
+            if let Some(end) = brace_end_from(lines, brace_line) {
+                blocks.push((brace_line + 1, end + 1));
             }
         }
     }
@@ -769,7 +1031,8 @@ fn parse_arms_in_block(lines: &[&str], start: usize, end: usize) -> Vec<ParsedAr
 /// literal to compare, though it's still tracked as a potential
 /// shadower of a later concrete arm).
 fn shadowed_key_arms(text: &str) -> (Vec<Shadowed>, usize) {
-    let lines: Vec<&str> = text.lines().collect();
+    let structural = mask(text, Mask::CommentsAndStrings);
+    let lines: Vec<&str> = structural.lines().collect();
     let mut violations = Vec::new();
     let mut guarded_concrete_arms = 0usize;
     for (start, end) in match_code_blocks(&lines) {
@@ -829,7 +1092,8 @@ fn ctrl_guarded_arms_precede_unguarded() {
     let mut blocks_checked = 0usize;
     let mut guarded_concrete_total = 0usize;
     for (path, text) in source_files() {
-        let lines: Vec<&str> = text.lines().collect();
+        let structural = mask(&text, Mask::CommentsAndStrings);
+        let lines: Vec<&str> = structural.lines().collect();
         blocks_checked += match_code_blocks(&lines).len();
         let (violations, guarded_concrete) = shadowed_key_arms(&text);
         guarded_concrete_total += guarded_concrete;
@@ -1344,6 +1608,153 @@ mod detector_tests {
     fn a_block_comment_spanning_lines_is_stripped() {
         let src = "/*\n * see /home/tom/notes.txt\n */\nfn f() {}\n";
         assert!(hardcoded_path_hits("x.rs", src).is_empty());
+    }
+
+    // --- literal-blind comment stripping (the shape that smuggled a
+    // path past all five guards) --------------------------------------
+
+    #[test]
+    fn a_path_fenced_by_quoted_comment_delimiters_is_still_found() {
+        // Neither `"/*"` nor `"*/"` opens or closes a comment: both are
+        // string literals. A scanner that greps for the delimiters
+        // blanks the middle of this line and reports nothing.
+        let src =
+            "fn f() {\n    let a = \"/*\"; let p = \"~/.cache/pgman/x.log\"; let b = \"*/\";\n}\n";
+        let hits = hardcoded_path_hits("x.rs", src);
+        assert_eq!(
+            hits.len(),
+            1,
+            "a hardcoded cache path fenced by quoted `/*` and `*/` must \
+             still be found: {hits:?}"
+        );
+        assert!(hits[0].contains("x.rs:2"), "{hits:?}");
+    }
+
+    #[test]
+    fn a_comment_delimiter_in_a_literal_does_not_hide_the_next_line() {
+        // The blind stripper treats the `"/*"` as a comment opener and
+        // runs to the *next* `*/` — swallowing every line in between.
+        let src = "fn f() {\n    let opener = \"/*\";\n    let p = \"/Users/tom/x\";\n}\n";
+        let hits = hardcoded_path_hits("x.rs", src);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].contains("x.rs:3"), "{hits:?}");
+    }
+
+    #[test]
+    fn a_raw_string_holding_a_comment_opener_is_not_a_comment() {
+        let src =
+            "fn f() {\n    let sql = r#\"SELECT '/*' AS x\"#;\n    let p = \"/home/tom/x\";\n}\n";
+        let hits = hardcoded_path_hits("x.rs", src);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].contains("x.rs:3"), "{hits:?}");
+    }
+
+    #[test]
+    fn a_lifetime_is_not_a_char_literal() {
+        // `'a` must not open a literal that swallows the rest of the
+        // file — the path two lines down has to stay visible.
+        let src = "fn f<'a>(s: &'a str) -> &'a str {\n    let _ = s;\n    let p = \"/Users/tom/x\";\n    s\n}\n";
+        let hits = hardcoded_path_hits("x.rs", src);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].contains("x.rs:3"), "{hits:?}");
+    }
+
+    #[test]
+    fn a_colour_named_only_inside_a_literal_is_not_a_hardcoded_colour() {
+        // The needle is a code token; a literal can only mention it.
+        assert!(colour_hits("x.rs", "let s = \"Color::Red\";\n").is_empty());
+        assert!(colour_hits("x.rs", "/* Color::Red */\nfn f() {}\n").is_empty());
+        assert_eq!(colour_hits("x.rs", "let c = Color::Red;\n").len(), 1);
+    }
+
+    #[test]
+    fn a_println_named_only_inside_a_literal_is_not_a_print() {
+        assert!(print_macro_hits("src/x.rs", "let s = \"println!\";\n").is_empty());
+        assert_eq!(
+            print_macro_hits("src/x.rs", "fn f() {\n    println!(\"hi\");\n}\n").len(),
+            1
+        );
+    }
+
+    // --- the match header rustfmt wrapped ------------------------------
+
+    #[test]
+    fn a_match_header_with_the_brace_on_the_next_line_is_found() {
+        // rustfmt puts the `{` on its own line once the scrutinee is
+        // long enough. A finder that needs `match <expr>.code {` on one
+        // physical line sees no block here at all — and so polices no
+        // arm inside it.
+        let src = "
+        fn f(key: KeyEvent) {
+            match self.pending_run.as_ref().unwrap().event.key.code
+            {
+                KeyCode::Char('d') => self.detail(),
+                KeyCode::Char('d') if ctrl => self.dlq(),
+                _ => {}
+            }
+        }
+        ";
+        let structural = mask(src, Mask::CommentsAndStrings);
+        let lines: Vec<&str> = structural.lines().collect();
+        assert_eq!(
+            match_code_blocks(&lines).len(),
+            1,
+            "the wrapped header must still be recognised as a block"
+        );
+        let (v, _) = shadowed_key_arms(src);
+        assert_eq!(
+            v.len(),
+            1,
+            "and its arms must be policed: the unguarded 'd' shadows the \
+             guarded one: {v:?}"
+        );
+        assert_eq!(v[0].ch, 'd');
+    }
+
+    #[test]
+    fn a_match_on_something_other_than_a_key_code_is_not_a_block() {
+        // The lookahead must not turn every wrapped `match` into a
+        // key-dispatch block.
+        let src = "
+        fn f(x: Thing) {
+            match x.kind
+            {
+                Kind::A => 1,
+                _ => 0,
+            }
+        }
+        ";
+        let structural = mask(src, Mask::CommentsAndStrings);
+        let lines: Vec<&str> = structural.lines().collect();
+        assert!(match_code_blocks(&lines).is_empty());
+    }
+
+    #[test]
+    fn a_brace_inside_a_multiline_raw_string_does_not_close_a_block() {
+        // The arm body holds a raw string with an unbalanced `}` in it.
+        // Counting it would end the match block early and lose the
+        // guarded arm below.
+        let src = "
+        fn f(key: KeyEvent) {
+            match key.code {
+                KeyCode::Char('x') => {
+                    let sql = r#\"SELECT '}' FROM t
+                    WHERE a = '{'\"#;
+                    self.run(sql);
+                }
+                KeyCode::Char('d') => self.detail(),
+                KeyCode::Char('d') if ctrl => self.dlq(),
+                _ => {}
+            }
+        }
+        ";
+        let (v, _) = shadowed_key_arms(src);
+        assert_eq!(
+            v.len(),
+            1,
+            "the guarded 'd' arm below the raw string must still be \
+             parsed: {v:?}"
+        );
     }
 
     // --- println exemption narrowing (guard 2) ------------------------
