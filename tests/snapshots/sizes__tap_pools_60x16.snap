@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…             ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │ ┌ JDBC tap — 8 queries · 0 heartbeats · … ────────────┐  │
 │ │  conns   peak   calls    err        busy        p95 │  │
@@ -13,8 +15,7 @@ expression: dump(&buf)
 │1│                                                     │  │
 │2│                                                     │  │
 │3│                                                     │  │
-│4│                                                     │  │
-│5└─────────────────────────────────────────────────────┘  │
-│6   katherine@example.com  pro   2026-03-21 16:40:00+00   │
+│4└─────────────────────────────────────────────────────┘  │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
 └──────────────────────────────────────────────────────────┘
  RO   TAP   j/k navigate · v cycle 7 views · F1 +5 more

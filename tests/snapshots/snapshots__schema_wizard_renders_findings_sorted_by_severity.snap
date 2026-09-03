@@ -1,8 +1,10 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 662
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                                                                            ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ───────────────────────────────────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                                                │
 │   ┌ schema wizard — y yank suggestion · r refresh · q close ──────────────────────────────────────────┐    │
@@ -12,7 +14,6 @@ expression: dump(&buf)
 └───│  HIGH   LINT001  public.user                                       table without PRIMARY KEY or U…│────┘
 ┌ re│  MED    LINT002  public.OrderItems                                 mixed-case table identifier ne…│────┐
 │(no│  MED    LINT003  public.user                                       table named after a SQL reserv…│    │
-│   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                         │    │
 │   │  object: public.OrderItems                                                                        │    │

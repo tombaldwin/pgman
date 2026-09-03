@@ -1931,14 +1931,25 @@ impl App {
                 }
             }
         }
-        // Pane zoom and editor size — Alt-Z / Alt-= / Alt-- / Alt-0.
-        // Global, and live in the editor too (that is where the
-        // operator is when the grid is too short), but off in every
-        // other text input: a prompt or filter has the keyboard, and
-        // reshaping the panes under it is not what a chord typed there
-        // meant. The decision modals returned above.
+        // Pane zoom and editor size — Alt-Z / Alt-= / Alt-- / Alt-0 —
+        // and Alt-N / Alt-P for next / previous tab (Ctrl-Tab is not
+        // delivered by every terminal; Alt chords are). Global, and
+        // live in the editor too (that is where the operator is when
+        // the grid is too short, and where Ctrl-Tab already works), but
+        // off in every other text input: a prompt or filter has the
+        // keyboard, and reshaping the panes — or swapping the buffer —
+        // under it is not what a chord typed there meant. The decision
+        // modals returned above.
         if alt && (!typing_mode || self.mode == Mode::Editor) && !self.tunnel_prompt_open() {
             match key.code {
+                KeyCode::Char('n') => {
+                    self.cycle_tab(true);
+                    return;
+                }
+                KeyCode::Char('p') => {
+                    self.cycle_tab(false);
+                    return;
+                }
                 KeyCode::Char('z') => {
                     self.toggle_zoom();
                     return;

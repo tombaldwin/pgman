@@ -4,6 +4,7 @@ assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 empty                                                                  ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                                      │
 │                                                                                                  │
@@ -18,12 +19,11 @@ expression: dump(&buf)
 │   Q   saved queries (3)                                             T   slow queries             │
 │   W   schema wizard                                                 L   sessions & locks         │
 │   F8  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                 │
-│   ?   all keys                                                                                   │
+│   ?   all keys                                                      ctrl-t  new tab              │
 │                                                                                                  │
 │ recent                                                                                           │
 │   SELECT * FROM users WHERE id = 42;                                                             │
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                                          │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

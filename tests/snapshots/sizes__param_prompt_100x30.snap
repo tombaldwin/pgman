@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                     ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
@@ -13,12 +15,11 @@ expression: dump(&buf)
 ┌ result · 6 row(s) ───────────────────────────────────────────────────────────────────────────────┐
 │id  email                  plan  created_at                                                       │
 │1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
-│2   linus@example.com      free  2026-01-09 14:48:00+00                                           │
-│3   grace@exam┌ load 'order-by-id' · param 1/1 · enter next · esc cancel ──────────┐              │
-│4   alan@examp│value for :order_id                                                 │              │
+│2   linus@exam┌ load 'order-by-id' · param 1/1 · enter next · esc cancel ──────────┐              │
+│3   grace@exam│value for :order_id                                                 │              │
+│4   alan@examp│                                                                    │              │
 │5   edsger@exa│                                                                    │              │
 │6   katherine@│                                                                    │              │
-│              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │
 │                                                                                                  │

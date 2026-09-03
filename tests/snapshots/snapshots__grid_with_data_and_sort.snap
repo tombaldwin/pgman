@@ -4,6 +4,7 @@ assertion_line: 164
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                          ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │> (empty — press e to focus)                              │
 └──────────────────────────────────────────────────────────┘
@@ -12,7 +13,6 @@ expression: dump(&buf)
 │1     alice                                               │
 │2     bob                                                 │
 │3     carol                                               │
-│                                                          │
 │                                                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘

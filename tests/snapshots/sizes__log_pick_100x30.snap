@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                     ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
@@ -18,7 +20,6 @@ expression: dump(&buf)
 ││  [pglog]     select * from orders where user_id = 42                                           ││
 │└────────────────────────────────────────────────────────────────────────────────────────────────┘│
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                                           │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

@@ -1,8 +1,10 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 504
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                                                                  ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> (empty — press e to focus)                                                                      │
 │     ┌ EXPLAIN plan — q / esc close ────────────────────────────────────────────────────────┐     │
@@ -12,7 +14,6 @@ expression: dump(&buf)
 └─────│  ▼ Hash · 5.00ms                                                                     │─────┘
 ┌ resu│    · Seq Scan on users u · 4.00ms                                                    │─────┐
 │(no r│                                                                                      │     │
-│     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │

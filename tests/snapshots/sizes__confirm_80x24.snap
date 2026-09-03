@@ -1,24 +1,25 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                 ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6┌ confirm ─────────────────────────────────────────────┐───────────┐
-│id  email  │run (DELETE without WHERE) · will be refused — this   │           │
-│1   ada@exa│session is read-only                                  │           │
-│2   linus@e│                                                      │           │
-│3   grace@e│DELETE FROM orders                                    │           │
-│4   alan@ex│                                                      │           │
-│5   edsger@│y = run · n / esc = cancel                            │           │
-│6   katheri└──────────────────────────────────────────────────────┘           │
-│                                                                              │
+└───────────┌ confirm ─────────────────────────────────────────────┐───────────┘
+┌ result · 6│run (DELETE without WHERE) · will be refused — this   │───────────┐
+│id  email  │session is read-only                                  │           │
+│1   ada@exa│                                                      │           │
+│2   linus@e│DELETE FROM orders                                    │           │
+│3   grace@e│                                                      │           │
+│4   alan@ex│y = run · n / esc = cancel                            │           │
+│5   edsger@└──────────────────────────────────────────────────────┘           │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
 │                                                                              │
 │                                                                              │
 │                                                                              │

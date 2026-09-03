@@ -1,24 +1,25 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                     ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
 │  ORDER BY created_at DESC;                                                                       │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6 row(s) ──────┌ about ───────────────────────────────────────┐─────────────────────────┐
+└─────────────────────────┌ about ───────────────────────────────────────┐─────────────────────────┘
+┌ result · 6 row(s) ──────│                                              │─────────────────────────┐
 │id  email                │                                              │                         │
-│1   ada@example.com      │                                              │                         │
-│2   linus@example.com    │              pgman 0.1.0 · beta              │                         │
-│3   grace@example.com    │       installed via a standalone binary      │                         │
-│4   alan@example.com     │   k9s-style Postgres TUI for Java/AWS shops  │                         │
-│5   edsger@example.com   │            server: pg 16.2 (demo)            │                         │
-│6   katherine@example.com│                                              │                         │
-│                         │       by Tom Baldwin / Polymorphism Ltd      │                         │
+│1   ada@example.com      │              pgman 0.1.0 · beta              │                         │
+│2   linus@example.com    │       installed via a standalone binary      │                         │
+│3   grace@example.com    │   k9s-style Postgres TUI for Java/AWS shops  │                         │
+│4   alan@example.com     │            server: pg 16.2 (demo)            │                         │
+│5   edsger@example.com   │                                              │                         │
+│6   katherine@example.com│       by Tom Baldwin / Polymorphism Ltd      │                         │
 │                         │          license: MIT OR Apache-2.0          │                         │
 │                         │                                              │                         │
 │                         │           esc / enter / A to close           │                         │

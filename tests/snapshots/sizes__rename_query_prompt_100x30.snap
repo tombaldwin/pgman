@@ -1,8 +1,10 @@
 ---
 source: tests/sizes.rs
+assertion_line: 229
 expression: dump(&buf)
 ---
  pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                                                     ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
@@ -16,10 +18,9 @@ expression: dump(&buf)
 │2   l│                                                                                      │     │
 │3   g│        ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐        │     │
 │4   a│        │new name:                                                           │        │     │
-│5   e│        │pro-users                                                           │        │     │
-│6   k│  pro-us│                                                                    │        │     │
-│     │  SELECT└────────────────────────────────────────────────────────────────────┘        │     │
-│     │  FROM users                                                                          │     │
+│5   e│  pro-us│pro-users                                                           │        │     │
+│6   k│  SELECT│                                                                    │        │     │
+│     │  FROM u└────────────────────────────────────────────────────────────────────┘        │     │
 │     │  WHERE plan = 'pro'                                                                  │     │
 │     │  ORDER BY created_at DESC;                                                           │     │
 │     │                                                                                      │     │

@@ -4,6 +4,7 @@ assertion_line: 192
 expression: text
 ---
  pgman │ test  connected · pg 16.0
+ 1 empty                          ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │> (empty — press e to focus)                              │
 └──────────────────────────────────────────────────────────┘
@@ -11,7 +12,6 @@ expression: text
 │id  名 前     city                                          │
 │1   東 京 都   tokyo                                         │
 │2   bob     leeds                                         │
-│                                                          │
 │                                                          │
 │                                                          │
 │                                                          │

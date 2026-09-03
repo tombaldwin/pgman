@@ -8697,3 +8697,65 @@ fn zoom_and_size_chords_are_inert_in_prompts_and_decision_modals() {
     assert_eq!(c.editor_lines, None);
     assert_eq!(c.mode, Mode::Confirm);
 }
+
+// ---- Alt-N / Alt-P: next / previous tab ----------------------------------
+
+#[test]
+fn alt_n_and_alt_p_cycle_tabs_and_wrap() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.editor.buffer = "t1".into();
+    a.new_tab();
+    a.editor.buffer = "t2".into();
+    a.new_tab();
+    a.editor.buffer = "t3".into();
+    assert_eq!(a.active_tab, 2);
+    a.on_key(alt('n'));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str()),
+        (0, "t1"),
+        "wraps forward"
+    );
+    a.on_key(alt('n'));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (1, "t2"));
+    a.on_key(alt('p'));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (0, "t1"));
+    a.on_key(alt('p'));
+    assert_eq!(
+        (a.active_tab, a.editor.buffer.as_str()),
+        (2, "t3"),
+        "wraps backward"
+    );
+}
+
+#[test]
+fn alt_n_works_from_the_editor_but_not_from_a_prompt() {
+    // The editor: same as Ctrl-Tab, which already works there.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Editor;
+    a.editor.buffer = "one".into();
+    a.new_tab();
+    a.editor.buffer = "two".into();
+    a.on_key(alt('n'));
+    assert_eq!((a.active_tab, a.editor.buffer.as_str()), (0, "one"));
+    assert_eq!(a.mode, Mode::Editor, "still in the editor");
+    assert_eq!(a.editor.buffer, "one", "no `n` was typed");
+    // A save-as prompt: a tab jump under it would save the OTHER
+    // tab's SQL under the name being typed.
+    a.mode = Mode::SaveQueryPrompt;
+    a.on_key(alt('n'));
+    a.on_key(alt('p'));
+    assert_eq!(a.active_tab, 0, "inert while a prompt has the keyboard");
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+}
+
+#[test]
+fn alt_n_on_a_single_tab_is_a_no_op() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(alt('n'));
+    a.on_key(alt('p'));
+    assert_eq!(a.active_tab, 0);
+    assert_eq!(a.tabs.len(), 1);
+    assert_eq!(a.last_status, None);
+}

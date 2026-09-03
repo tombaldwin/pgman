@@ -1088,3 +1088,70 @@ fn pane_split_always_sums_to_the_body() {
         }
     }
 }
+
+// -- tab_label_text: what the tab bar calls a tab --
+
+#[test]
+fn tab_label_text_is_the_first_non_blank_line_trimmed() {
+    assert_eq!(tab_label_text("SELECT 1"), "SELECT 1");
+    assert_eq!(
+        tab_label_text("\n   \n  select id\n  from users"),
+        "select id",
+        "leading blank lines and indentation are skipped"
+    );
+}
+
+#[test]
+fn tab_label_text_says_empty_for_a_blank_buffer() {
+    assert_eq!(tab_label_text(""), "empty");
+    assert_eq!(tab_label_text("  \n\t\n"), "empty");
+}
+
+#[test]
+fn tab_bar_cells_cut_labels_at_eighteen_columns_when_there_is_room() {
+    let labels = vec![
+        "SELECT id, email, plan FROM users WHERE plan = 'pro'".to_string(),
+        "SELECT * FROM user".to_string(),
+        "empty".to_string(),
+    ];
+    let cells = tab_bar_cells(&labels, 80);
+    assert_eq!(cells[0], " 1 SELECT id, email,… ");
+    assert_eq!(display_width(&cells[0]), 4 + 18);
+    assert_eq!(
+        cells[1], " 2 SELECT * FROM user ",
+        "exactly eighteen columns is not cut"
+    );
+    assert_eq!(cells[2], " 3 empty ");
+    // Counts display columns, not chars: nine CJK glyphs are eighteen
+    // columns and must not be cut to nine glyphs plus an ellipsis.
+    let cjk = vec![
+        "顧客マスタ統合基盤".to_string(),
+        "顧客マスタ統合基盤の一覧".to_string(),
+    ];
+    let cells = tab_bar_cells(&cjk, 80);
+    assert_eq!(cells[0], " 1 顧客マスタ統合基盤 ");
+    assert!(display_width(&cells[1]) <= 4 + 18, "{:?}", cells[1]);
+    assert!(cells[1].ends_with("… "), "{:?}", cells[1]);
+}
+
+#[test]
+fn tab_bar_cells_shrink_labels_until_every_tab_fits() {
+    let labels: Vec<String> = (0..5)
+        .map(|i| format!("select {i} from a_long_table_name"))
+        .collect();
+    // 80 columns: five full cells (23 each) need 115 — the 10-column
+    // budget (15 each, 75) fits.
+    let cells = tab_bar_cells(&labels, 80);
+    assert_eq!(cells[0], " 1 select 0 … ");
+    assert_eq!(cells.len(), 5);
+    // 60 columns: 75 does not fit; the 6-column budget (11 each, 55) does.
+    let cells = tab_bar_cells(&labels, 60);
+    assert_eq!(cells[0], " 1 selec… ");
+    // 40 columns: even 55 is too much — numbers only (4 each, 20).
+    let cells = tab_bar_cells(&labels, 40);
+    assert_eq!(cells, vec![" 1 ", " 2 ", " 3 ", " 4 ", " 5 "]);
+    // Narrower than the numbers themselves: they are returned anyway
+    // (the row clips) rather than nothing.
+    assert_eq!(tab_bar_cells(&labels, 10).len(), 5);
+    assert!(tab_bar_cells(&[], 10).is_empty());
+}
