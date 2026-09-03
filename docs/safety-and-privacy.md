@@ -151,8 +151,13 @@ lands in the picker exactly like ten, and the row shows the origin,
 `user@host:port/db`, the `sslmode` and any `tunnel → <bastion>` before
 you press enter. `PGPASSWORD` is only used with `--dsn`, so a
 discovered connection can never borrow it, and a `${…}` placeholder is
-never resolved into a URL's host or port, so a committed config can't
+never resolved into a URL's host, port or query parameters (that is
+where `ssh_tunnel=` and `sslmode=` live), so a committed config can't
 turn one of your environment variables into a DNS lookup it controls.
+The two components a placeholder *is* resolved in — the username /
+password and the database name — additionally refuse any value that
+introduces a `?`, `&`, `/`, `@` or `=`, so a database name of
+`db?ssh_tunnel=x.evil.example` can't reach past its own component.
 A project's `[safety]` block can only *tighten* your personal
 `~/.config/pgman/safety.toml`, never relax it. And a discovered
 `ssh_tunnel` asks before pgman runs `ssh` with your keys, because that

