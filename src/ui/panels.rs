@@ -448,6 +448,47 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+/// The tag `main.rs` appends to a pick's name when its URL still holds
+/// an unresolved `${…}` placeholder, up to the placeholder list.
+const UNRESOLVED_MARKER: &str = " — unresolved";
+
+/// Columns of the name itself that must survive beside the marker for
+/// keeping the marker to be worth it — below this the row identifies
+/// nothing.
+const MIN_PICK_NAME_COLS: usize = 4;
+
+/// Fit a picker row's name into `width` display columns, keeping its
+/// `— unresolved ${…}` tag.
+///
+/// That tag is not decoration: `main.rs` refuses to connect a pick
+/// carrying one, so a row that loses it advertises a connection that
+/// cannot be made. It is protected here the way `fit_status` protects
+/// its last segment — the human-readable half of the name gives way
+/// first, then the placeholder list, and only then the word
+/// `unresolved` itself. Pure / testable.
+pub(crate) fn fit_pick_name(name: &str, width: usize) -> String {
+    if display_width(name) <= width {
+        return name.to_string();
+    }
+    let Some(at) = name.find(UNRESOLVED_MARKER) else {
+        return crate::grid::truncate_cell(name, width);
+    };
+    let head = &name[..at];
+    // Widest suffix that still leaves a scrap of the name beside it:
+    // the full tag with its placeholder names, else the bare tag.
+    for marker in [&name[at..], UNRESOLVED_MARKER] {
+        let marker_w = display_width(marker);
+        if marker_w + MIN_PICK_NAME_COLS <= width {
+            let kept = crate::grid::truncate_cell(head, width - marker_w);
+            return format!("{kept}{marker}");
+        }
+    }
+    // Narrower than the bare tag plus a scrap of name: the tag alone,
+    // cut if it must be. A row that says nothing about why it will be
+    // refused is worse than one with no name on it.
+    crate::grid::truncate_cell(UNRESOLVED_MARKER.trim_start(), width)
+}
+
 /// What a picker row says about one candidate, beyond its origin and
 /// name: where it would connect, how it would be encrypted, and whether
 /// an SSH tunnel would be opened first. Pure so it can be unit-tested
@@ -556,27 +597,29 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         .conn_pick
         .picks
         .iter()
-        .map(|p| p.origin.chars().count())
+        .map(|p| display_width(p.origin))
         .max()
         .unwrap_or(0);
     // Cap the name column so one long label (a Spring pick carries its
     // "— unresolved ${…}" note in the name) doesn't push every other
-    // row's target off the right edge. A name over the cap overflows
-    // its own row only.
+    // row's target off the right edge. A name over the cap is fitted
+    // into it rather than allowed to overflow — see `fit_pick_name`.
     let name_width = app
         .conn_pick
         .picks
         .iter()
-        .map(|p| p.name.chars().count())
+        .map(|p| display_width(&p.name))
         .max()
         .unwrap_or(0)
         .clamp(8, 24);
-    // Each row is `<head><target>`: the head (marker, origin tag,
-    // name) identifies the pick and always survives; the target's
-    // tail (`sslmode=…`, `tunnel → …`) is what gets ellipsised when
-    // the row won't fit, so the `user@host` an operator reads first
-    // stays whole.
-    let rows: Vec<(String, String)> = app
+    // Each row is `<lead><name><target>`. The lead (cursor marker plus
+    // the origin tag) is a fixed few columns and always survives; the
+    // target's tail (`sslmode=…`, `tunnel → …`) ellipsises first, so
+    // the `user@host` an operator reads first stays whole; and the name
+    // ellipsises last, through `fit_pick_name`, which protects any
+    // `— unresolved ${…}` tag on the way.
+    let lead_width = 2 + (origin_width + 2) + 1;
+    let rows: Vec<(String, &str, String)> = app
         .conn_pick
         .picks
         .iter()
@@ -588,13 +631,8 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
                 "  "
             };
             let tag = format!("[{}]", pick.origin);
-            let head = format!(
-                "{prefix}{tag:<tw$} {name:<nw$} ",
-                tw = origin_width + 2,
-                name = pick.name,
-                nw = name_width,
-            );
-            (head, conn_pick_target(pick))
+            let lead = format!("{prefix}{tag:<tw$} ", tw = origin_width + 2);
+            (lead, pick.name.as_str(), conn_pick_target(pick))
         })
         .collect();
 
@@ -622,9 +660,12 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     let max_w = area.width.saturating_sub(2);
     let widest_row = rows
         .iter()
-        .map(|(head, target)| (head.chars().count() + target.chars().count()) as u16)
-        .chain(notes.iter().map(|n| n.chars().count() as u16))
-        .chain(std::iter::once(title.chars().count() as u16))
+        .map(|(lead, name, target)| {
+            (display_width(lead) + display_width(name).max(name_width) + 1 + display_width(target))
+                as u16
+        })
+        .chain(notes.iter().map(|n| display_width(n) as u16))
+        .chain(std::iter::once(display_width(&title) as u16))
         .max()
         .unwrap_or(0);
     // +3, not +2: two border columns plus one blank column before the
@@ -633,11 +674,25 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     // against it.
     let w = widest_row.saturating_add(3).min(max_w).max(4.min(max_w));
     let inner_w = (w.saturating_sub(2) as usize).saturating_sub(1);
+    // How much of a name one row may actually paint, once the popup's
+    // real width is known. `name_width` is only the *padding* column —
+    // a longer name has always been allowed to overflow it and push its
+    // own target right, which is fine while the frame has the room.
+    // What was missing is the hard ceiling: nothing may run past the
+    // frame, or the tail of the name — the `— unresolved ${…}` tag,
+    // which is the whole reason the pick will be refused — is simply
+    // clipped away at 50 columns and a refused pick reads as a good
+    // one.
+    const MIN_TARGET_COLS: usize = 8;
+    let name_col = name_width
+        .max(inner_w.saturating_sub(lead_width + 1 + MIN_TARGET_COLS))
+        .min(inner_w.saturating_sub(lead_width + 1))
+        .max(1);
 
     let mut lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(i, (head, target))| {
+        .map(|(i, (lead, name, target))| {
             let style = if i == app.conn_pick.index {
                 Style::default()
                     .bg(theme.row_selected_bg)
@@ -646,7 +701,10 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(theme.text)
             };
-            let budget = inner_w.saturating_sub(head.chars().count());
+            let name = fit_pick_name(name, name_col);
+            let pad = " ".repeat(name_width.saturating_sub(display_width(&name)));
+            let head = format!("{lead}{name}{pad} ");
+            let budget = inner_w.saturating_sub(display_width(&head));
             let (kept, ellipsis) = crate::grid::truncate_cell_parts(target, budget);
             Line::from(Span::styled(format!("{head}{kept}{ellipsis}"), style))
         })
@@ -1824,6 +1882,62 @@ mod tests {
             dsn: Some(crate::conn::Dsn::parse(url).unwrap()),
             unresolved: Vec::new(),
             unresolved_host: Vec::new(),
+        }
+    }
+
+    const UNRESOLVED_NAME: &str = "dataSource (application-dev.yml) — unresolved ${DB_PASSWORD}";
+
+    #[test]
+    fn fit_pick_name_leaves_a_name_that_fits_alone() {
+        assert_eq!(fit_pick_name("prod", 24), "prod");
+        assert_eq!(fit_pick_name(UNRESOLVED_NAME, 80), UNRESOLVED_NAME);
+    }
+
+    #[test]
+    fn fit_pick_name_ellipsises_a_plain_name() {
+        assert_eq!(
+            fit_pick_name("dataSource (application-dev.yml)", 12),
+            "dataSource …"
+        );
+    }
+
+    #[test]
+    fn fit_pick_name_keeps_the_whole_marker_while_it_fits() {
+        // 40 columns: the placeholder list survives and the readable
+        // half of the name gives way.
+        let got = fit_pick_name(UNRESOLVED_NAME, 40);
+        assert_eq!(display_width(&got), 40);
+        assert!(got.ends_with("— unresolved ${DB_PASSWORD}"), "{got:?}");
+        assert!(got.starts_with("dataSource"), "{got:?}");
+    }
+
+    #[test]
+    fn fit_pick_name_falls_back_to_the_bare_marker_before_losing_it() {
+        // 24 columns — the picker's name-column cap. The placeholder
+        // list no longer fits, but "— unresolved" does, and that is the
+        // difference between a pick that will be refused and one that
+        // will not.
+        let got = fit_pick_name(UNRESOLVED_NAME, 24);
+        assert!(display_width(&got) <= 24, "{got:?}");
+        assert!(got.ends_with("— unresolved"), "{got:?}");
+        assert!(got.starts_with("dataSource"), "{got:?}");
+    }
+
+    #[test]
+    fn fit_pick_name_keeps_the_warning_when_nothing_else_fits() {
+        // Narrower than the tag plus a scrap of name: the name goes
+        // entirely rather than the warning.
+        for width in 1..=16 {
+            let got = fit_pick_name(UNRESOLVED_NAME, width);
+            assert!(
+                display_width(&got) <= width,
+                "width {width}: {got:?} paints {}",
+                display_width(&got)
+            );
+            assert!(
+                got.contains('—') || got == "…",
+                "width {width}: nothing left of the refusal marker: {got:?}"
+            );
         }
     }
 

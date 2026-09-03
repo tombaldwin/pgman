@@ -1,0 +1,18 @@
+---
+source: tests/snapshots.rs
+expression: dumped
+---
+ pgman │ test  connected · pg 16.0
+┌ editor (e to focus) ───────────────────────────┐
+│> (empty — press e to focus)                    │
+└────────────────────────────────────────────────┘
+┌ result ────────────────────────────────────────┐
+│┌ pick a connection · 1/2 ─────────────────────┐│
+││▶ [Spring]  dataSource… — unresolved app@ord… ││
+││  [project] prod                     app@pro… ││
+││                                              ││
+││  nothing here connects until you press enter ││
+││  PGPASSWORD is only used with --dsn          ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+ RO   ↑↓ / j/k navigate · F1 +3 more
