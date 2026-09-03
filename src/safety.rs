@@ -1342,11 +1342,25 @@ pub(crate) fn strip_sql_comments(sql: &str) -> String {
     out
 }
 
+/// The identifier-shaped tokens of `s`, as Postgres would lex them: maximal
+/// runs of `ident_cont` characters — `[A-Za-z0-9_$]` and every non-ASCII
+/// character, whose bytes are all `>= 0x80` (see [`is_ident_cont_byte`]).
+///
+/// Splitting on `[^A-Za-z0-9_]` instead ended an identifier at a `$` or at
+/// the first non-ASCII byte, so `DELETE FROM t where$` and `DELETE FROM t
+/// whereé` — one identifier each to the server — read as having a `WHERE`
+/// here: Confirm rather than Block, and every row gone. Punctuation the
+/// lexer treats as its own token (`.`, `(`, `=`) still splits, and a
+/// positional parameter `$1` comes out as its own token, which matches no
+/// keyword.
+fn ident_tokens(s: &str) -> impl Iterator<Item = &str> {
+    s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()))
+        .filter(|t| !t.is_empty())
+}
+
 /// `true` if `word` appears in `haystack` as a whole token (case-insensitive).
 pub(crate) fn word_present(haystack: &str, word: &str) -> bool {
-    haystack
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .any(|tok| tok.eq_ignore_ascii_case(word))
+    ident_tokens(haystack).any(|tok| tok.eq_ignore_ascii_case(word))
 }
 
 /// `true` if `word` appears as a whole token in the *code* of `sql` — ignoring
@@ -1372,16 +1386,86 @@ pub(crate) fn code_tokens(sql: &str) -> Vec<String> {
     for span in scan(sql) {
         let text = &sql[span.start..span.end];
         match span.kind {
-            SpanKind::Code => out.extend(
-                text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .filter(|t| !t.is_empty())
-                    .map(|t| t.to_ascii_lowercase()),
-            ),
+            SpanKind::Code => out.extend(ident_tokens(text).map(|t| t.to_ascii_lowercase())),
             SpanKind::Ident => out.push(unquote_ident(text).to_ascii_lowercase()),
             _ => {}
         }
     }
     out
+}
+
+#[cfg(test)]
+mod ident_token_tests {
+    use super::*;
+
+    #[test]
+    fn a_dollar_or_a_non_ascii_character_continues_the_identifier() {
+        // `where$` and `whereé` are single identifiers to Postgres, so
+        // neither statement has a WHERE clause — each deletes every row.
+        for sql in [
+            "DELETE FROM t where$",
+            "DELETE FROM t whereé",
+            "DELETE FROM t where$1",
+            "DELETE FROM t WHERE中",
+            "UPDATE t SET a = 1 where$",
+        ] {
+            let kind = classify(sql);
+            assert!(
+                matches!(
+                    kind,
+                    StatementKind::Delete { has_where: false }
+                        | StatementKind::Update { has_where: false }
+                ),
+                "{sql}: {kind:?}"
+            );
+        }
+        // A real WHERE beside a parameter marker or a non-ASCII column is
+        // still a WHERE.
+        for sql in [
+            "DELETE FROM t WHERE id = $1",
+            "DELETE FROM t WHERE é = 1",
+            "DELETE FROM t WHERE$1 = 1",
+        ] {
+            let kind = classify(sql);
+            let has_where = matches!(
+                kind,
+                StatementKind::Delete { has_where: true }
+                    | StatementKind::Update { has_where: true }
+            );
+            // `WHERE$1` is the identifier `where$1` — no clause. The other
+            // two have one.
+            assert_eq!(has_where, !sql.contains("WHERE$1"), "{sql}: {kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_quoted_destructive_function_is_still_the_call() {
+        for sql in [
+            "SELECT \"pg_read_file\"('/etc/passwd')",
+            "SELECT pg_catalog.\"pg_read_file\"('/etc/passwd')",
+            "SELECT \"pg_catalog\".\"pg_terminate_backend\"(1)",
+            "SELECT \"PG_READ_FILE\"('/etc/passwd')",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+        }
+        // The name inside a string literal is data.
+        assert_eq!(classify("SELECT 'pg_read_file'"), StatementKind::Select);
+    }
+
+    #[test]
+    fn ident_tokens_follow_the_lexer() {
+        assert_eq!(
+            ident_tokens("a$b c.d é1 $1 x=y 中$z").collect::<Vec<_>>(),
+            vec!["a$b", "c", "d", "é1", "$1", "x", "y", "中$z"]
+        );
+        assert!(word_present("delete from t", "DELETE"));
+        assert!(!word_present("delete$ from t", "delete"));
+        assert!(!word_present("deleteé from t", "delete"));
+        assert_eq!(
+            code_tokens("SELECT \"Quoted\", plain$1 FROM \"a\"\"b\""),
+            vec!["select", "quoted", "plain$1", "from", "a\"b"]
+        );
+    }
 }
 
 /// Given a string starting with `EXPLAIN`, return the inner statement — the
