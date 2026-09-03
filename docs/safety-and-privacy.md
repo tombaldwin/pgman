@@ -172,7 +172,7 @@ typed choice and behaves as it always has.
 | `~/.local/share/pgman/saved.toml` | Named queries you explicitly saved. |
 | `~/.cache/pgman/pgman.log` | Application log. Connection strings are always logged with the password masked (see "Redaction of connection strings" below). Resolved passwords are never logged. |
 | `~/.cache/pgman/update_check.json` | The last crates.io check timestamp and the latest version string it returned. No identifying data. |
-| `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. |
+| `~/.cache/pgman/report-*.md` / `.html`, `~/.cache/pgman/*-fixture-*.xml` | `\report` and `\fixture` output — advisor/tap findings and DBUnit fixtures respectively. Can contain table/column names and row data from your session. Every value a report renders is escaped for its format, headers included: for Markdown that means `\`, `|`, `` ` ``, `[`, `]` and the HTML-significant characters, so text arriving from a JDBC tap cannot become a link, a live `<script>`, or an extra table column in the shared artifact. |
 
 The files pgman itself writes — `draft.sql`, `history.log`,
 `saved.toml`, `update_check.json`, `pgman.log`, and `\report`/
