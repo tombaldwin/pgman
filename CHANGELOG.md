@@ -76,8 +76,15 @@ checked; passwords with `/ @ ? #` parsed and redacted correctly; an
 unknown `sslmode` refused rather than silently downgraded; a read-only
 session that cannot be flipped from inside; bounded and throttled JDBC
 tap ingest; owner-only files from the first byte; escapes stripped from
-reports and batch output; and a few dozen first-minute polish defects
-found by rendering every screen at five terminal sizes.
+reports and batch output; the placeholder resolver and the DSN parser
+agreeing on where a URL's host starts, or refusing the URL; the
+read-only floor closed against `set_config`, a quoted GUC name, `DO`
+and `CALL`, and a `COMMIT` mid-script (batch runs inside one explicit
+transaction); the picker naming where every credential comes from;
+decision modals that no global chord can escape; `--demo` never
+touching your saved queries; and a few dozen first-minute polish
+defects found by rendering every screen at five terminal sizes and
+by driving the release binary against a live server.
 
 ### Dependencies
 
