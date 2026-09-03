@@ -7445,3 +7445,41 @@ fn j_and_g_stop_at_the_end_of_a_filtered_grid_not_the_whole_grid() {
     a.on_key(KeyEvent::from(KeyCode::Char('G')));
     assert_eq!(a.grid_state.selected(), Some(9));
 }
+
+#[test]
+fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
+    // Tab 2 holds "select 2"; Ctrl-S opens the save-as prompt. Alt-1
+    // used to swap tab 1's buffer in underneath the prompt, and Enter
+    // saved "select 1" under the name typed for "select 2".
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = temp_saved_path("alt-digit-prompt");
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.new_tab();
+    a.editor.buffer = "select 2".into();
+    a.editor.cursor = a.editor.buffer.len();
+    assert_eq!(a.active_tab, 1);
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+    a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+    assert_eq!(a.active_tab, 1, "alt-1 switched tabs under the prompt");
+    assert_eq!(
+        a.editor.buffer, "select 2",
+        "the prompt's buffer was swapped"
+    );
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+    a.saved_ui.save_name.clear();
+    type_str(&mut a, "second");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        a.saved_queries.get("second").map(|q| q.body.as_str()),
+        Some("select 2"),
+        "saved the wrong tab's SQL"
+    );
+    // Out of the prompt, the jump works again.
+    assert_eq!(a.mode, Mode::Editor);
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    a.on_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
+    assert_eq!(a.active_tab, 0);
+    assert_eq!(a.editor.buffer, "select 1");
+}
