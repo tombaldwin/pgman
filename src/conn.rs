@@ -864,6 +864,20 @@ pub struct TypedRows {
     pub affected: Option<u64>,
 }
 
+/// Line up one result row's cells with the column list Describe
+/// promised: extra cells are dropped, missing ones become SQL NULL.
+///
+/// The two are read a round trip apart — `prepare` describes the shape,
+/// `simple_query` fetches the data — so a view redefined in between (or
+/// any other concurrent DDL) can return a row narrower or wider than
+/// the header. The JSON writer pairs `columns[i]` with `cells[i]` and
+/// must get a rectangle; a short row used to reach it as a panic
+/// instead.
+fn project_cells(mut cells: Vec<Option<String>>, n_columns: usize) -> Vec<Option<String>> {
+    cells.resize(n_columns, None);
+    cells
+}
+
 /// Run a single statement and collect it into [`TypedRows`]. `client
 /// .prepare` gives the column shape via Parse+Describe (no
 /// execution); a row-returning statement then runs over the *text*
@@ -893,11 +907,16 @@ pub async fn run_statement_typed(
     let mut rows = Vec::new();
     for msg in &messages {
         if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            rows.push(
-                (0..columns.len())
-                    .map(|i| row.get(i).map(str::to_string))
-                    .collect(),
-            );
+            // `columns` came from Parse+Describe; these cells come from
+            // a second round trip. A view redefined in between narrows
+            // the row, and `SimpleQueryRow::get` *panics* out of range
+            // — aborting `--batch --format json` mid-document. Read
+            // only what the row actually carries and let
+            // `project_cells` pad the rest with SQL NULL.
+            let cells: Vec<Option<String>> = (0..row.columns().len())
+                .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
+                .collect();
+            rows.push(project_cells(cells, columns.len()));
         }
     }
     Ok(TypedRows {
@@ -1374,6 +1393,32 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_cells_pads_a_row_narrower_than_its_header() {
+        // The shape a view redefined between Parse/Describe and
+        // simple_query produces: three columns promised, two returned.
+        assert_eq!(
+            project_cells(vec![Some("1".into()), None], 3),
+            vec![Some("1".into()), None, None],
+            "the missing cell must arrive as SQL NULL, not as a panic"
+        );
+    }
+
+    #[test]
+    fn project_cells_drops_a_row_wider_than_its_header() {
+        assert_eq!(
+            project_cells(vec![Some("1".into()), Some("2".into())], 1),
+            vec![Some("1".into())]
+        );
+    }
+
+    #[test]
+    fn project_cells_leaves_a_matching_row_alone() {
+        let cells = vec![Some("a".into()), None];
+        assert_eq!(project_cells(cells.clone(), 2), cells);
+        assert!(project_cells(Vec::new(), 0).is_empty());
+    }
 
     #[test]
     fn parses_full_dsn() {
