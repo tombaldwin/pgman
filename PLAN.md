@@ -226,7 +226,7 @@ What it was:
 4. Tests: channel detection, version comparison, response parsing,
    unreachable → silent.
 
-## Phase 4 — docs and going public · behaviour · **docs done 2026-09-02, flip pending**
+## Phase 4 — docs and going public · behaviour · **done 2026-09-03**
 
 Landed: seven docs pages and ARCHITECTURE.md, the README for the
 binary-install era, the demo re-recorded end to end (start card →
@@ -240,14 +240,13 @@ help lacked two sections; four house conventions had no guard (now
 route was dead code the README advertised. History scan: one fixture
 lifted from a real project, neutralised at HEAD.
 
-**Remaining, in order, and all yours:**
-1. Rewrite history (`git filter-repo`, command in the session summary)
-   and force-push. Do it with no agent worktrees present.
-2. `gh secret set CARGO_REGISTRY_TOKEN --repo tombaldwin/pgman`.
-3. Flip the repo public, protect `main`, require the CI jobs.
-4. Hand the product page the hero gif, the install commands and the
-   GitHub link; drop "Coming soon".
-Then Release day below.
+Done since: history rewritten (a client fixture removed from 214
+commits) and force-pushed; `CARGO_REGISTRY_TOKEN` set; the repo is
+public with `main` protected against force-push and deletion.
+
+**Remaining, and yours:** hand the product page the hero gif, the
+install commands and the GitHub link; drop "Coming soon". Then
+Release day below.
 
 What it was:
 
@@ -283,6 +282,30 @@ second site of the "blames a safety.toml that does not exist" hint),
 six tolerate-level items — the final batch in flight. Lesson recorded
 in the memory note: a review that only reads code and snapshots misses
 the first five minutes against a real server.
+
+## Hands-on UX round — 2026-09-03 · **in progress**
+
+Tom ran the binary in a real Spring project (uflexi) and the first
+minutes produced what no reviewer had: F5 is wrong on a Mac, the
+editor looked like a one-line prompt, tabs were invisible, there was
+no way to resize or maximise a pane, and formatting needed an external
+binary. Landed since: **Enter runs a `;`-terminated statement**
+(psql's rule) with Alt-Enter as the unterminated escape hatch; the
+editor **opens five lines** and grows to 40 % of the body; **zoom and
+manual sizing** per tab; an **always-visible tab bar** labelled by each
+tab's query; **built-in Ctrl-F formatting** (`sqlformat`, `pg_format`
+when installed, never on run or paste, and it refuses rather than
+mangle a dollar-quoted body) and **auto-indent**.
+
+In flight: Alt chords are unusable in iTerm, so the primary bindings
+become plain keys outside typing modes — `] [` and digits for tabs,
+`z` / `Z` zoom, `+ - 0` size — with `ctrl-]` from the editor, on-screen
+hints for all of them, and `J` / `K` stepping rows in the row-detail
+view while keeping the highlighted field.
+
+**The lesson, recorded in memory**: five reviewers and four rounds did
+not find any of this. Fifteen minutes of the maintainer using the tool
+for its actual purpose did.
 
 ## Release day
 
