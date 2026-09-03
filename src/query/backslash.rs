@@ -71,7 +71,7 @@ pub enum BackslashCmd {
 /// behaviour.
 pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
     let trimmed = buf.trim();
-    let body = trimmed.strip_prefix('\\')?;
+    let body = trimmed.strip_prefix('\\')?.trim_start();
     let mut parts = body.split_whitespace();
     let cmd = parts.next()?;
     let arg1 = parts.next();
@@ -101,10 +101,84 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
             Some("off") => Some(false),
             _ => None,
         }),
-        "c" => BackslashCmd::Connect(arg1.map(str::to_string)),
+        // `c` reads its argument with `quoted_arg`, not `arg1`:
+        // discovered data-source names contain spaces
+        // (`dataSource (application)`), and the whitespace split
+        // would have handed back `dataSource` — a name no pick has.
+        "c" => BackslashCmd::Connect(quoted_arg(body, cmd)),
         "i" => BackslashCmd::Include(arg1.map(str::to_string)),
         _ => BackslashCmd::Unknown(raw),
     })
+}
+
+/// The argument following `cmd` in `body`, honouring a
+/// double-quoted span so a name containing spaces survives:
+/// `c "dataSource (application)"` yields `dataSource (application)`.
+///
+/// Unquoted, it is the first whitespace-delimited word, exactly as
+/// `split_whitespace` would have produced — so nothing that parsed
+/// before parses differently now. An unterminated quote takes the
+/// rest of the line (the intent is unambiguous, and refusing would
+/// only make the operator retype it); an empty argument, or an
+/// empty quoted string, is `None`.
+fn quoted_arg(body: &str, cmd: &str) -> Option<String> {
+    let rest = body.get(cmd.len()..)?.trim();
+    if let Some(after_open) = rest.strip_prefix('"') {
+        let inside = match after_open.split_once('"') {
+            Some((inside, _)) => inside,
+            None => after_open,
+        };
+        return (!inside.is_empty()).then(|| inside.to_string());
+    }
+    rest.split_whitespace().next().map(str::to_string)
+}
+
+/// How a connect-by-name argument resolved against the discovered
+/// data-source names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameMatch {
+    /// Exactly one candidate — its index into the input slice.
+    One(usize),
+    /// Several candidates share the prefix; the caller lists them
+    /// rather than picking one. Indices, in input order.
+    Ambiguous(Vec<usize>),
+    /// Nothing matched. The caller falls back to treating the name
+    /// as a database to swap onto the current DSN.
+    None,
+}
+
+/// Resolve `name` against `candidates` (data-source names, in
+/// picker order). Case-insensitive throughout.
+///
+/// An exact match always wins — `dev` picks `dev` even when `dev2`
+/// also exists. Failing that, a unique case-insensitive PREFIX
+/// match resolves, which is what makes the long discovered names
+/// (`dataSource (application)`) reachable without quoting. Several
+/// prefix matches are [`NameMatch::Ambiguous`]: choosing one of them
+/// would be choosing which database the operator connects to.
+pub fn match_pick_name(name: &str, candidates: &[&str]) -> NameMatch {
+    let wanted = name.trim();
+    if wanted.is_empty() {
+        return NameMatch::None;
+    }
+    if let Some(i) = candidates
+        .iter()
+        .position(|c| c.eq_ignore_ascii_case(wanted))
+    {
+        return NameMatch::One(i);
+    }
+    let lower = wanted.to_lowercase();
+    let hits: Vec<usize> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.to_lowercase().starts_with(&lower))
+        .map(|(i, _)| i)
+        .collect();
+    match hits.len() {
+        0 => NameMatch::None,
+        1 => NameMatch::One(hits[0]),
+        _ => NameMatch::Ambiguous(hits),
+    }
 }
 
 #[cfg(test)]
@@ -262,6 +336,56 @@ mod tests {
             parse_backslash_command("\\c prod extra"),
             Some(BackslashCmd::Connect(Some("prod".into())))
         );
+    }
+
+    #[test]
+    fn parse_connect_accepts_a_double_quoted_name_with_spaces() {
+        // Spring / IntelliJ discovery names look like this, and the
+        // whitespace split used to hand back just `dataSource`.
+        assert_eq!(
+            parse_backslash_command("\\c \"dataSource (application)\""),
+            Some(BackslashCmd::Connect(Some(
+                "dataSource (application)".into()
+            )))
+        );
+        // Unterminated quote: take the rest of the line.
+        assert_eq!(
+            parse_backslash_command("\\c \"dataSource (application)"),
+            Some(BackslashCmd::Connect(Some(
+                "dataSource (application)".into()
+            )))
+        );
+        // Empty quotes are no name at all — open the picker.
+        assert_eq!(
+            parse_backslash_command("\\c \"\""),
+            Some(BackslashCmd::Connect(None))
+        );
+    }
+
+    #[test]
+    fn match_pick_name_prefers_exact_then_unique_prefix() {
+        let names = ["dev", "dev2", "prod (application)"];
+        // Exact wins even though `dev` is also a prefix of `dev2`.
+        assert_eq!(match_pick_name("dev", &names), NameMatch::One(0));
+        assert_eq!(match_pick_name("DEV2", &names), NameMatch::One(1));
+        // Unique prefix resolves — this is what makes the long
+        // discovered names typeable.
+        assert_eq!(match_pick_name("prod", &names), NameMatch::One(2));
+        assert_eq!(match_pick_name("PROD (app", &names), NameMatch::One(2));
+    }
+
+    #[test]
+    fn match_pick_name_reports_ambiguity_instead_of_guessing() {
+        let names = ["dataSource (application)", "dataSource (test)", "reports"];
+        assert_eq!(
+            match_pick_name("dataSource", &names),
+            NameMatch::Ambiguous(vec![0, 1]),
+            "two data sources share the prefix — the caller must list them"
+        );
+        assert_eq!(match_pick_name("dataSource (t", &names), NameMatch::One(1));
+        assert_eq!(match_pick_name("nope", &names), NameMatch::None);
+        assert_eq!(match_pick_name("", &names), NameMatch::None);
+        assert_eq!(match_pick_name("x", &[]), NameMatch::None);
     }
 
     #[test]
