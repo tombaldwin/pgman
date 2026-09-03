@@ -21,6 +21,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- **Fourth pass**: the TUI's single-statement path classified the raw
+  editor buffer, so `; DROP TABLE t` (one command to the server, which
+  discards the empty statement) was `Other` and a Block became a
+  mislabelled Confirm. It now classifies and runs the verified statement,
+  as the batch path already did.
 - **Third pass**: a statement ending in a `-- comment` absorbed the `;`
   the re-join inserted, so `UPDATE … WHERE id=1 --` plus `; OR true`
   reached the server as `WHERE id=1 OR true`. One `join_verified` for
