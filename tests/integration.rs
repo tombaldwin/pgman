@@ -183,6 +183,61 @@ fn batch_surfaces_server_notice_on_stderr() {
     );
 }
 
+#[test]
+fn batch_filters_control_characters_out_of_server_supplied_text() {
+    // A `RAISE NOTICE` (or an error, or a cell in `--format expanded`)
+    // carrying `ESC ] 0 ; pwned BEL` used to reach the terminal raw — an
+    // OSC title-set, and anything else an escape sequence can do. `chr()`
+    // builds the bytes server-side so this file carries none itself.
+    let home = scratch_home("ctl-chars", WRITABLE_PROFILE);
+    let cases: &[(&[&str], bool)] = &[
+        (
+            &[
+                "--yes",
+                "--sql",
+                "DO $$ BEGIN RAISE NOTICE 'pgman-ctl-notice %', chr(27) || ']0;pwned' || chr(7); END $$",
+            ],
+            true,
+        ),
+        (
+            &[
+                "--yes",
+                "--sql",
+                "DO $$ BEGIN RAISE EXCEPTION 'pgman-ctl-error %', chr(27) || '[31m' || chr(7); END $$",
+            ],
+            false,
+        ),
+        (
+            &[
+                "--format",
+                "expanded",
+                "--sql",
+                "SELECT chr(27) || ']0;pwned' || chr(7) AS \"pgman-ctl-cell\"",
+            ],
+            true,
+        ),
+    ];
+    for (args, expect_success) in cases {
+        let out = batch_with_home(&home, args);
+        assert_eq!(
+            out.status.success(),
+            *expect_success,
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let all = [out.stdout.as_slice(), out.stderr.as_slice()].concat();
+        let text = String::from_utf8_lossy(&all);
+        assert!(
+            text.contains("pgman-ctl"),
+            "{args:?}: the text itself must still print: {text:?}"
+        );
+        assert!(
+            !text.contains('\x1b') && !text.contains('\x07'),
+            "{args:?}: control characters reached the terminal: {text:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn cancel_token_aborts_pg_sleep() {
     // End-to-end: run a long pg_sleep, send a real CancelRequest,

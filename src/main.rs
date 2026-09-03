@@ -760,7 +760,8 @@ async fn run_batch(cli: &Cli) -> i32 {
     let dsn = match resolve_batch_dsn(cli) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("{e}");
+            // Names a discovered pick — text the checkout wrote.
+            eprintln!("{}", batch::terminal_safe(&e));
             return 2;
         }
     };
@@ -819,7 +820,12 @@ async fn run_batch(cli: &Cli) -> i32 {
     match batch::run(opts).await {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("{}", format_connect_failure(&e, &dsn_for_hint));
+            // The server's own words, straight to the terminal: filtered
+            // like every other server-supplied line batch prints.
+            eprintln!(
+                "{}",
+                batch::terminal_safe(&format_connect_failure(&e, &dsn_for_hint))
+            );
             2
         }
     }
