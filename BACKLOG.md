@@ -6,6 +6,17 @@ window: PLAN.md — an item lives in exactly one of the two.
 ## Open
 
 ### From the release panel (2026-09-03) — post-release
+- **From the Fable panel, tolerated for 0.1.0**: the help overlay is
+  300+ lines at 80 columns (needs sections that collapse or a topic
+  picker); `Q` with nothing saved and `/` with no grid are silent
+  no-ops (say so in the status line); the connect-failure card
+  middle-elides the log path so it cannot be copied (wrap it instead)
+  and its wrapped hint line is unindented; `--demo`'s start card is
+  pre-lit with `TAP` / `N+1` badges before anything happened; `--tap-
+  listen` auto-enable is loopback-only but a ~500 MB retained ceiling
+  under a deliberate flood is the honest number; `dollar_tag_at` is
+  ASCII-only (fail-safe: over-splits); `--upgrade` with neither `HOME`
+  nor `XDG_CACHE_HOME` still falls back to the temp dir.
 - **ebman parity, deferred**: a `pgman query 'SQL' --json` subcommand
   alias for `--batch --sql … --format json`; a `--read-write` opt-in flag
   mirroring ebman's `--read-only`; the `D` key means describe in ebman
