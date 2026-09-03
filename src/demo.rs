@@ -194,7 +194,13 @@ fn word_at(text: &str, at: usize, word: &str) -> bool {
     let Some(rest) = text.get(at..) else {
         return false;
     };
-    if rest.len() < word.len() || !rest[..word.len()].eq_ignore_ascii_case(word) {
+    // `get`, not a byte slice: `word.len()` need not be a char boundary
+    // in `rest` (`fé€` straddles byte 4). Once the head is ASCII-equal
+    // to `word`, `word.len()` IS a boundary, so the slice below is safe.
+    let Some(head) = rest.get(..word.len()) else {
+        return false;
+    };
+    if !head.eq_ignore_ascii_case(word) {
         return false;
     }
     let after_ok = rest[word.len()..]
@@ -737,6 +743,21 @@ mod tests {
         assert_eq!(select_list_of("update users set a = 1"), None);
         assert_eq!(select_list_of("selected"), None);
         assert_eq!(select_list_of(""), None);
+    }
+
+    #[test]
+    fn answer_does_not_panic_on_multibyte_sql() {
+        // `word_at` sliced `rest[..word.len()]` by byte; `fé€` puts a
+        // multi-byte char across byte 4 and the TUI died with
+        // "end byte index 4 is not a char boundary".
+        let cache = schema_cache();
+        for sql in [
+            "SELECT fé€ FROM users",
+            "select f€ from users",
+            "SELECT 中文 FROM orders o",
+        ] {
+            let _ = answer(sql, &cache);
+        }
     }
 
     #[test]
