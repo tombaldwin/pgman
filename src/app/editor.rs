@@ -55,6 +55,25 @@ impl App {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
         {
+            // Inside a line's indentation (only spaces between the
+            // line start and the cursor) Tab adds one indent level —
+            // the pair of Backspace's de-indent below. Anywhere else,
+            // and whenever a completion cycle is live, it completes.
+            if self.completion.is_none() {
+                if let Some(col) =
+                    indentation_before_cursor(&self.editor.buffer, self.editor.cursor)
+                {
+                    let width = indent_fill_width(col, self.format_opts.indent);
+                    if width > 0 {
+                        self.editor_dirty();
+                        let at = self.editor.cursor;
+                        self.editor.buffer.insert_str(at, &" ".repeat(width));
+                        self.editor.cursor += width;
+                        self.auto_closers.shift_insert(at, width);
+                        return;
+                    }
+                }
+            }
             self.editor_complete();
             return;
         }
@@ -235,16 +254,35 @@ impl App {
             KeyCode::Enter if !shift && enter_runs(&self.editor.buffer) => {
                 self.request_run(RunKind::Run)
             }
+            // A newline, auto-indented: the new line inherits the
+            // previous one's leading whitespace, plus a level when
+            // that line (up to the cursor, trailing comment ignored)
+            // opens something — see `next_line_indent`.
             KeyCode::Enter => {
                 self.editor_dirty();
                 let at = self.editor.cursor;
-                editor_insert(&mut self.editor.buffer, &mut self.editor.cursor, '\n');
-                self.auto_closers.shift_insert(at, 1);
+                let line_start = line_start_byte(&self.editor.buffer, at);
+                let indent =
+                    next_line_indent(&self.editor.buffer[line_start..at], self.format_opts.indent);
+                let inserted = format!("\n{indent}");
+                self.editor.buffer.insert_str(at, &inserted);
+                self.editor.cursor += inserted.len();
+                self.auto_closers.shift_insert(at, inserted.len());
             }
+            // Backspace inside a line's indentation removes a whole
+            // level (back to the previous indent stop), so undoing an
+            // auto-indent is one key, not `indent` of them.
             KeyCode::Backspace => {
                 self.editor_dirty();
                 let end = self.editor.cursor;
-                editor_backspace(&mut self.editor.buffer, &mut self.editor.cursor);
+                match indentation_before_cursor(&self.editor.buffer, end) {
+                    Some(col) => {
+                        let width = dedent_width(col, self.format_opts.indent);
+                        self.editor.buffer.replace_range(end - width..end, "");
+                        self.editor.cursor = end - width;
+                    }
+                    None => editor_backspace(&mut self.editor.buffer, &mut self.editor.cursor),
+                }
                 self.auto_closers.shift_delete(self.editor.cursor, end);
             }
             KeyCode::Delete => {
@@ -1038,4 +1076,233 @@ pub(super) fn editor_move_down(
     let target = preferred_col.unwrap_or(col);
     *preferred_col = Some(target);
     *cursor = byte_offset_at_line_col(buffer, line + 1, target);
+}
+
+/// Words that, ending a line, mean "what follows belongs inside":
+/// the next line gets one more indent level. `GROUP BY` / `ORDER BY`
+/// end in `BY`; `GROUP` / `ORDER` are listed for a line that stops
+/// short of it. Whole-word, case-insensitive — `my_select` is a name.
+const INDENT_AFTER_KEYWORDS: &[&str] = &[
+    "select", "from", "where", "and", "or", "join", "on", "set", "values", "group", "by", "order",
+    "having", "with",
+];
+
+/// The leading whitespace for the line Enter is about to start,
+/// given the line it ends (`prev_line`, from its start to the
+/// cursor) and the indent width. Pure / testable.
+///
+/// - A line ending in `;` starts the next at column 0.
+/// - Otherwise the new line inherits `prev_line`'s leading whitespace,
+///   plus `indent` spaces when — trailing whitespace and a trailing
+///   comment ignored — the line ends with `(`, `,`, or one of
+///   [`INDENT_AFTER_KEYWORDS`].
+/// - A line that is all whitespace, or only a comment, just inherits.
+///
+/// The line is lexed with `safety::scan` so `--` inside a string is
+/// not a comment and `'select` (an unterminated literal) is not a
+/// keyword.
+pub fn next_line_indent(prev_line: &str, indent: u8) -> String {
+    let leading: String = prev_line
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+    // The last span that is neither a comment nor blank code — the
+    // one whose tail decides.
+    let spans = crate::safety::scan(prev_line);
+    let Some(last) = spans.iter().rev().find(|s| {
+        !matches!(
+            s.kind,
+            crate::safety::SpanKind::LineComment | crate::safety::SpanKind::BlockComment
+        ) && !prev_line[s.start..s.end].trim().is_empty()
+    }) else {
+        return leading;
+    };
+    let code = prev_line[..last.end].trim_end();
+    // Both tail rules read syntax, so the tail has to be code: a
+    // literal ending in `;` or `select` is still a literal.
+    let tail_is_code = last.kind == crate::safety::SpanKind::Code;
+    if tail_is_code && code.ends_with(';') {
+        return String::new();
+    }
+    let mut out = leading;
+    if tail_is_code && opens_a_block(code) {
+        out.push_str(&" ".repeat(usize::from(indent)));
+    }
+    out
+}
+
+/// Does `code` (already trimmed) end with `(`, `,`, or an
+/// [`INDENT_AFTER_KEYWORDS`] word standing on its own?
+fn opens_a_block(code: &str) -> bool {
+    if code.ends_with('(') || code.ends_with(',') {
+        return true;
+    }
+    let word_start = code
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !c.is_ascii_alphabetic())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let word = &code[word_start..];
+    if word.is_empty() {
+        return false;
+    }
+    // Whole word: nothing identifier-ish immediately before it.
+    let bounded = code[..word_start]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+    bounded
+        && INDENT_AFTER_KEYWORDS
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(word))
+}
+
+/// `Some(col)` when the cursor sits inside a line's indentation —
+/// at least one character, and only spaces, between the line start
+/// and the cursor — where `col` is that count. `None` at column 0
+/// (Tab there is completion, as ever) and anywhere after text.
+/// Pure / testable.
+pub fn indentation_before_cursor(buffer: &str, cursor: usize) -> Option<usize> {
+    let start = line_start_byte(buffer, cursor);
+    let prefix = &buffer[start..cursor];
+    (!prefix.is_empty() && prefix.bytes().all(|b| b == b' ')).then_some(prefix.len())
+}
+
+/// How many spaces Backspace removes from `col` spaces of
+/// indentation: back to the previous multiple of `indent`, at least
+/// one. With `indent` 0 it is a plain one-character Backspace.
+pub fn dedent_width(col: usize, indent: u8) -> usize {
+    let indent = usize::from(indent);
+    if col == 0 {
+        return 0;
+    }
+    if indent == 0 {
+        return 1;
+    }
+    match col % indent {
+        0 => indent.min(col),
+        rem => rem,
+    }
+}
+
+/// How many spaces Tab inserts at `col` spaces of indentation: up to
+/// the next multiple of `indent`. Zero with `indent` 0, which the
+/// caller treats as "no indentation to add — complete instead".
+pub fn indent_fill_width(col: usize, indent: u8) -> usize {
+    let indent = usize::from(indent);
+    if indent == 0 {
+        return 0;
+    }
+    indent - col % indent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_line_indent_after_an_opening_paren_adds_a_level() {
+        assert_eq!(next_line_indent("insert into t (", 2), "  ");
+        assert_eq!(next_line_indent("  values (", 2), "    ");
+        assert_eq!(next_line_indent("x = (", 4), "    ");
+        // A closed pair opens nothing.
+        assert_eq!(next_line_indent("select count()", 2), "");
+    }
+
+    #[test]
+    fn next_line_indent_after_a_comma_adds_a_level() {
+        assert_eq!(next_line_indent("select a,", 2), "  ");
+        assert_eq!(next_line_indent("  a,", 2), "    ");
+    }
+
+    #[test]
+    fn next_line_indent_after_a_clause_keyword_adds_a_level() {
+        for kw in [
+            "select", "FROM", "Where", "and", "or", "join", "on", "set", "values", "group by",
+            "order by", "having", "with",
+        ] {
+            assert_eq!(next_line_indent(kw, 2), "  ", "{kw}");
+            assert_eq!(next_line_indent(&format!("  {kw}"), 2), "    ", "{kw}");
+        }
+        assert_eq!(next_line_indent("select", 4), "    ");
+    }
+
+    #[test]
+    fn next_line_indent_keyword_must_be_a_whole_word() {
+        assert_eq!(next_line_indent("my_select", 2), "");
+        assert_eq!(next_line_indent("x_by", 2), "");
+        assert_eq!(next_line_indent("1by", 2), "");
+        assert_eq!(next_line_indent("selection", 2), "");
+    }
+
+    #[test]
+    fn next_line_indent_inherits_when_nothing_opens() {
+        assert_eq!(next_line_indent("x = 1", 2), "");
+        assert_eq!(next_line_indent("    x = 1", 2), "    ");
+        assert_eq!(next_line_indent("\tx = 1", 2), "\t");
+        assert_eq!(next_line_indent("      ", 2), "      ");
+        assert_eq!(next_line_indent("", 2), "");
+    }
+
+    #[test]
+    fn next_line_indent_ignores_a_trailing_comment() {
+        assert_eq!(next_line_indent("select -- the columns", 2), "  ");
+        assert_eq!(next_line_indent("from t -- select", 2), "");
+        assert_eq!(next_line_indent("select /* c */", 2), "  ");
+        assert_eq!(next_line_indent("  -- only a comment", 2), "  ");
+        assert_eq!(next_line_indent("x = 1; -- done", 2), "");
+    }
+
+    #[test]
+    fn next_line_indent_is_not_fooled_by_literals() {
+        // `--` inside a string is not a comment; the line ends in a
+        // literal, which opens nothing.
+        assert_eq!(next_line_indent("  where x = '--'", 2), "  ");
+        // An unterminated literal ending in a keyword is a literal.
+        assert_eq!(next_line_indent("where name = 'select", 2), "");
+        assert_eq!(next_line_indent("where name = \"from", 2), "");
+        // A comma inside a literal is not a list continuation, and a
+        // `;` inside one is not a terminator.
+        assert_eq!(next_line_indent("x = 'a,", 2), "");
+        assert_eq!(next_line_indent("  x = 'a;", 2), "  ");
+    }
+
+    #[test]
+    fn next_line_indent_after_a_terminator_returns_to_column_0() {
+        assert_eq!(next_line_indent("  select 1;", 2), "");
+        assert_eq!(next_line_indent("    ;", 2), "");
+        assert_eq!(next_line_indent("  select 1;  ", 2), "");
+    }
+
+    #[test]
+    fn indentation_before_cursor_is_only_spaces_and_at_least_one() {
+        assert_eq!(indentation_before_cursor("select\n  x", 9), Some(2));
+        assert_eq!(indentation_before_cursor("select\n  x", 8), Some(1));
+        assert_eq!(indentation_before_cursor("select\n  x", 7), None);
+        assert_eq!(indentation_before_cursor("select\n  x", 10), None);
+        assert_eq!(indentation_before_cursor("  ", 2), Some(2));
+        assert_eq!(indentation_before_cursor("\t", 1), None);
+        assert_eq!(indentation_before_cursor("", 0), None);
+    }
+
+    #[test]
+    fn dedent_width_snaps_to_the_previous_stop() {
+        assert_eq!(dedent_width(2, 2), 2);
+        assert_eq!(dedent_width(3, 2), 1);
+        assert_eq!(dedent_width(4, 4), 4);
+        assert_eq!(dedent_width(6, 4), 2);
+        assert_eq!(dedent_width(1, 4), 1);
+        assert_eq!(dedent_width(0, 2), 0);
+        assert_eq!(dedent_width(3, 0), 1);
+    }
+
+    #[test]
+    fn indent_fill_width_snaps_to_the_next_stop() {
+        assert_eq!(indent_fill_width(0, 2), 2);
+        assert_eq!(indent_fill_width(2, 2), 2);
+        assert_eq!(indent_fill_width(3, 2), 1);
+        assert_eq!(indent_fill_width(5, 4), 3);
+        assert_eq!(indent_fill_width(2, 0), 0);
+    }
 }
