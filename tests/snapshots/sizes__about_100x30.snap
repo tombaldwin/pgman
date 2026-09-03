@@ -13,7 +13,7 @@ expression: dump(&buf)
 │id  email                ┌ about ───────────────────────────────────────┐                         │
 │1   ada@example.com      │                                              │                         │
 │2   linus@example.com    │                                              │                         │
-│3   grace@example.com    │        pgman 0.1.0 · beta · 2026-06-06       │                         │
+│3   grace@example.com    │              pgman 0.1.0 · beta              │                         │
 │4   alan@example.com     │       installed via a standalone binary      │                         │
 │5   edsger@example.com   │   k9s-style Postgres TUI for Java/AWS shops  │                         │
 │6   katherine@example.com│            server: pg 16.2 (demo)            │                         │
