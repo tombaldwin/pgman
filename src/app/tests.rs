@@ -8071,8 +8071,10 @@ fn a_deleted_auto_closer_is_forgotten_and_an_insert_before_it_shifts_it() {
 
     let mut a = editor_app();
     type_str(&mut a, "f(");
+    // Enter auto-indents the new line (the `(` opened it): the two
+    // spaces come from the newline, not from typing.
     a.on_key(KeyEvent::from(KeyCode::Enter));
-    type_str(&mut a, "  1, 'é'");
+    type_str(&mut a, "1, 'é'");
     assert_eq!(a.editor.buffer, "f(\n  1, 'é')");
     a.on_key(KeyEvent::from(KeyCode::Char(')')));
     assert_eq!(
@@ -8438,4 +8440,126 @@ fn find_on_path_in_finds_an_executable_stub_and_nothing_else() {
     // and must still not be found through an empty entry.
     assert!(std::path::Path::new("tests/bin/fake_pg_format").exists());
     assert!(find_on_path_in("tests/bin/fake_pg_format", std::ffi::OsStr::new("")).is_none());
+}
+
+// ----- Auto-indent on Enter, de-indent on Backspace, indent on Tab ---------
+
+fn press(a: &mut App, code: KeyCode) {
+    a.on_key(KeyEvent::from(code));
+}
+
+#[test]
+fn enter_after_an_opening_paren_indents_the_new_line() {
+    let mut a = editor_app();
+    type_str(&mut a, "insert into t (");
+    // Autoclose put the `)` after the cursor; the line up to the
+    // cursor ends in `(`.
+    assert_eq!(a.editor.buffer, "insert into t ()");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "insert into t (\n  )");
+    assert_eq!(a.editor.cursor, "insert into t (\n  ".len());
+}
+
+#[test]
+fn enter_after_a_keyword_or_comma_indents_and_a_plain_line_inherits() {
+    let mut a = editor_app();
+    type_str(&mut a, "select");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select\n  ");
+    type_str(&mut a, "a,");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select\n  a,\n    ");
+    type_str(&mut a, "b");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select\n  a,\n    b\n    ");
+}
+
+#[test]
+fn enter_uses_the_configured_indent_width() {
+    let mut a = editor_app();
+    a.format_opts.indent = 4;
+    type_str(&mut a, "select");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select\n    ");
+}
+
+/// A terminated statement runs on Enter, so the column-0 rule shows
+/// where Enter still inserts: a `;` line with more text after it.
+#[test]
+fn enter_after_a_semicolon_line_starts_at_column_0() {
+    let mut a = editor_app();
+    set_editor(&mut a, "  select 1;\nselect 2");
+    a.editor.cursor = "  select 1;".len();
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "  select 1;\n\nselect 2");
+    assert_eq!(a.editor.cursor, "  select 1;\n".len());
+}
+
+#[test]
+fn enter_on_a_terminated_buffer_still_runs_rather_than_indents() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select 1;");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select 1;");
+    assert!(reached_request_run(&a), "last_error = {:?}", a.last_error);
+}
+
+#[test]
+fn backspace_inside_indentation_removes_a_level() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select\n    x");
+    a.editor.cursor = "select\n    ".len();
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.editor.buffer, "select\n  x");
+    assert_eq!(a.editor.cursor, "select\n  ".len());
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.editor.buffer, "select\nx");
+    // At column 0 Backspace is the ordinary join-lines.
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.editor.buffer, "selectx");
+}
+
+#[test]
+fn backspace_off_a_stop_snaps_back_to_the_previous_one() {
+    let mut a = editor_app();
+    set_editor(&mut a, "   ");
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.editor.buffer, "  ");
+}
+
+#[test]
+fn backspace_after_text_is_a_single_character() {
+    let mut a = editor_app();
+    set_editor(&mut a, "  ab");
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.editor.buffer, "  a");
+}
+
+#[test]
+fn tab_inside_indentation_adds_a_level_and_elsewhere_completes() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select\n  ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.editor.buffer, "select\n    ");
+    assert!(a.completion.is_none());
+    // Off a stop: up to the next one.
+    set_editor(&mut a, "select\n   ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.editor.buffer, "select\n    ");
+    // After text on the line, Tab is completion as before.
+    set_editor(&mut a, "select * from ");
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(a.editor.buffer, "select * from ");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.starts_with("completion"), "got: {status:?}");
+}
+
+#[test]
+fn auto_indent_is_one_undo_step_with_the_newline() {
+    let mut a = editor_app();
+    set_editor(&mut a, "select");
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select\n  ");
+    a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    assert_eq!(a.editor.buffer, "select");
 }
