@@ -10,7 +10,7 @@ expression: dump(&buf)
 │  ORDER BY crea┌ about ───────────────────────────────────────┐               │
 └───────────────│                                              │───────────────┘
 ┌ result · 6 row│                                              │───────────────┐
-│id  email      │        pgman 0.1.0 · beta · 2026-06-06       │               │
+│id  email      │              pgman 0.1.0 · beta              │               │
 │1   ada@example│       installed via a standalone binary      │               │
 │2   linus@examp│   k9s-style Postgres TUI for Java/AWS shops  │               │
 │3   grace@examp│            server: pg 16.2 (demo)            │               │

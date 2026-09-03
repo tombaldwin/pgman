@@ -27,7 +27,7 @@ expression: dump(&buf)
 │                                   │                          ██████████          │                                   │
 │                                   │                             ██████           │                                   │
 │                                   │                                              │                                   │
-│                                   │        pgman 0.1.0 · beta · 2026-06-06       │                                   │
+│                                   │              pgman 0.1.0 · beta              │                                   │
 │                                   │       installed via a standalone binary      │                                   │
 │                                   │   k9s-style Postgres TUI for Java/AWS shops  │                                   │
 │                                   │            server: pg 16.2 (demo)            │                                   │

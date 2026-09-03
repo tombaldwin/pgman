@@ -6,7 +6,7 @@ expression: dump(&buf)
 ┌ edit┌ about ───────────────────────────────────────┐─────┐
 │> SEL│                                              │     │
 │  FRO│                                              │     │
-│  WHE│        pgman 0.1.0 · beta · 2026-06-06       │     │
+│  WHE│              pgman 0.1.0 · beta              │     │
 │  ORD│       installed via a standalone binary      │     │
 └─────│   k9s-style Postgres TUI for Java/AWS shops  │─────┘
 ┌ resu│            server: pg 16.2 (demo)            │─────┐
