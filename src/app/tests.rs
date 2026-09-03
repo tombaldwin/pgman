@@ -2590,12 +2590,17 @@ fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
             "relation \"pg_stat_statements\" does not exist",
         )),
     });
-    // Back to Normal + actionable hint in the error.
+    // Back to Normal + actionable hint in the error — one that says
+    // what the extension needs, not just its name.
     assert_eq!(a.mode, Mode::Normal);
     let err = a.last_error.as_deref().unwrap_or("");
     assert!(
         err.contains("CREATE EXTENSION pg_stat_statements"),
         "expected install hint; got: {err}"
+    );
+    assert!(
+        err.contains("shared_preload_libraries") && err.contains("read-write session"),
+        "the hint must say what CREATE EXTENSION needs; got: {err}"
     );
 }
 
@@ -2623,7 +2628,7 @@ fn slow_queries_load_failure_keeps_the_server_message_and_detail_for_f2() {
     let err = a.last_error.as_deref().unwrap_or("");
     assert_eq!(
         err,
-        "slow queries load failed: relation \"pg_stat_statements\" does not exist (try `CREATE EXTENSION pg_stat_statements`)"
+        "slow queries load failed: relation \"pg_stat_statements\" does not exist (try `CREATE EXTENSION pg_stat_statements` — needs shared_preload_libraries and a read-write session)"
     );
     assert_eq!(
         a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
