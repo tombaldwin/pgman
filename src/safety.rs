@@ -628,7 +628,10 @@ pub(crate) fn scan(sql: &str) -> Vec<Span> {
             b'-' if b.get(i + 1) == Some(&b'-') => {
                 flush_code(&mut spans, code_start, i);
                 let mut end = i + 2;
-                while end < b.len() && b[end] != b'\n' {
+                // Postgres ends a `--` comment at either newline byte, so a
+                // lone `\r` (classic-Mac line endings, a pasted log) closes it
+                // just as `\n` does.
+                while end < b.len() && b[end] != b'\n' && b[end] != b'\r' {
                     end += 1;
                 }
                 // The newline itself stays code, so stripping a line comment
@@ -661,8 +664,16 @@ pub(crate) fn scan(sql: &str) -> Vec<Span> {
     spans
 }
 
+/// Is `b` a byte Postgres would accept as *continuing* an identifier?
+///
+/// Postgres's `ident_cont` is `[A-Za-z0-9_$\200-\377]` — every byte from 0x80
+/// up is an identifier character, because a multibyte identifier (`é`, `中`)
+/// reaches the lexer as its raw UTF-8 bytes. Restricting this to ASCII made
+/// pgman see an identifier *end* in the middle of one, so the `E'…'` and
+/// dollar-quote guards both fired where Postgres would not — and a `DROP`
+/// after `é$b$` lexed into a dollar-quoted body and slipped past its guard.
 fn is_ident_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+    b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80
 }
 
 /// Scan from just past the opening `'` to just past the closing one. `escapes`
@@ -1191,6 +1202,85 @@ mod tests {
         );
         // And the stripper agrees - it runs off the same scanner.
         assert_eq!(strip_sql_comments(sql), sql);
+    }
+
+    /// The third reproduction. To Postgres every byte from 0x80 up continues
+    /// an identifier, so `é$b$c` is one identifier and the `$b$` in it opens
+    /// nothing. Treating the identifier as ending at the `é` made the `$`
+    /// look free-standing: `$b$` opened a dollar-quote, the `DROP` landed
+    /// inside the body, and the whole script classified `Select` -> `Allow`.
+    #[test]
+    fn a_non_ascii_identifier_byte_does_not_end_the_identifier() {
+        // `é` is two UTF-8 bytes, `中` three — both must behave the same.
+        for name in ["é", "中"] {
+            let sql =
+                format!("SELECT 1; SELECT 1 AS {name}$b$c; DROP TABLE users; SELECT 1 AS x$b$y");
+            let parts = split_statements(&sql);
+            assert_eq!(
+                parts,
+                vec![
+                    "SELECT 1".to_string(),
+                    format!("SELECT 1 AS {name}$b$c"),
+                    "DROP TABLE users".to_string(),
+                    "SELECT 1 AS x$b$y".to_string(),
+                ],
+                "{name}: expected four statements"
+            );
+            let kinds: Vec<StatementKind> = parts.iter().map(|s| classify(s)).collect();
+            assert_eq!(
+                kinds,
+                vec![
+                    StatementKind::Select,
+                    StatementKind::Select,
+                    StatementKind::Drop,
+                    StatementKind::Select,
+                ],
+                "{name}: the DROP must classify as Drop"
+            );
+            // And the guard that consumes the classification blocks it.
+            assert_eq!(
+                guard_for(&SafetyProfile::default(), kinds[2]),
+                Guard::Block,
+                "{name}: Drop is Block by default"
+            );
+        }
+    }
+
+    /// The same byte class drives the `E'…'` guard. `éE'…'` is an identifier
+    /// followed by an *ordinary* string literal — the `E` continues the name,
+    /// so backslash escapes are off. Postgres agrees: it reports the whole
+    /// `'\''; DROP TABLE users; --'` as one token, so this is one statement
+    /// and the `DROP` in it is literal text, not a statement to run.
+    #[test]
+    fn a_non_ascii_byte_before_e_keeps_it_an_ordinary_string() {
+        let sql = r"SELECT 1 AS éE'\''; DROP TABLE users; --'";
+        assert_eq!(split_statements(sql), vec![sql.to_string()]);
+        assert_eq!(classify(sql), StatementKind::Select);
+        // The span is a plain String, not an EscapeString: nothing in the
+        // script is a dollar-quote or an escape literal.
+        let kinds: Vec<SpanKind> = scan(sql).into_iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, vec![SpanKind::Code, SpanKind::String]);
+        // An ASCII letter before the `E` still ends the identifier the same
+        // way, so this is about the byte class and not about `E` itself.
+        assert_eq!(
+            split_statements(r"SELECT 1 AS aE'\''; DROP TABLE users; --'").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_line_comment_ends_at_a_carriage_return_too() {
+        // Postgres ends `--` at `\r` as well as `\n`. A CR-terminated comment
+        // must not swallow the statement that follows it.
+        let sql = "SELECT 1; -- note\rDROP TABLE users";
+        let parts = split_statements(sql);
+        assert_eq!(
+            parts,
+            vec!["SELECT 1".to_string(), "DROP TABLE users".to_string()]
+        );
+        assert_eq!(classify(&parts[1]), StatementKind::Drop);
+        // CRLF is unaffected: the comment ends at the `\r`, both bytes stay.
+        assert_eq!(split_statements("SELECT 1; -- note\r\nSELECT 2").len(), 2);
     }
 
     // --- lexer: the rest of the constructs -------------------------------
