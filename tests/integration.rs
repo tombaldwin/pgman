@@ -451,6 +451,77 @@ fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
     );
 }
 
+/// The non-ASCII reproduction, live. `name` is the identifier byte sequence
+/// under test; `table` is a scratch table the hidden `DROP` targets.
+///
+/// `é$b$c` is one identifier to Postgres — every byte from 0x80 up continues
+/// an identifier — so the `$b$` in it opens nothing. pgman's lexer stopped the
+/// identifier at the `é`, read `$b$…$b$` as a dollar-quoted body, swallowed the
+/// `DROP` into it, classified the fragment `Select` -> `Allow`, and handed the
+/// ORIGINAL script to `batch_execute`. Reproduced against this server: exit 0,
+/// "batch executed", and the table gone, with `drop` still at its `block`
+/// default.
+fn assert_a_drop_hidden_behind_a_non_ascii_identifier_is_refused(
+    slug: &str,
+    name: &str,
+    table: &str,
+) {
+    let home = scratch_home(slug, WRITABLE_PROFILE);
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE IF NOT EXISTS {table} (id int)"),
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    // The trailing `SELECT 1 AS x$b$y` closes the tag the old lexer thought it
+    // had opened, so the script would have run clean: the test cannot pass
+    // merely because Postgres errored first.
+    let sql = format!("SELECT 1; SELECT 1 AS {name}$b$c; DROP TABLE {table}; SELECT 1 AS x$b$y");
+    let out = batch_with_home(&home, &["--sql", &sql]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "the DROP must be refused; exited 0 with stdout {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        stderr.contains("blocked by safety") && stderr.contains("DROP"),
+        "the refusal must name the DROP: {stderr}"
+    );
+    assert!(table_exists(&home, table), "the table must still be there");
+
+    let _ = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("DROP TABLE IF EXISTS {table}")],
+    );
+}
+
+#[test]
+fn batch_refuses_a_drop_hidden_behind_a_two_byte_identifier_character() {
+    assert_a_drop_hidden_behind_a_non_ascii_identifier_is_refused(
+        "nonascii2",
+        "é",
+        "pgman_repro_nonascii_two",
+    );
+}
+
+#[test]
+fn batch_refuses_a_drop_hidden_behind_a_three_byte_identifier_character() {
+    assert_a_drop_hidden_behind_a_non_ascii_identifier_is_refused(
+        "nonascii3",
+        "中",
+        "pgman_repro_nonascii_three",
+    );
+}
+
 #[test]
 fn batch_refuses_a_script_it_cannot_split_and_never_connects() {
     // An unterminated literal means the statement boundaries are a guess.

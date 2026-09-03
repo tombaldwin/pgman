@@ -64,7 +64,12 @@
   (backslash escapes), `"…"` quoted identifiers (`""` escapes),
   dollar-quoted bodies — where a `$` following an identifier character
   is an identifier character, not a quote opener — and `--` / nested
-  `/* … */` comments. `safety::split_verified` then checks the result:
+  `/* … */` comments. Identifier characters follow Postgres's own rule,
+  so every byte from 0x80 up continues an identifier and a multibyte
+  name such as `é$b$c` or `中$b$c` is one identifier rather than a name
+  followed by a dollar-quote opener, and a `--` comment ends at a
+  carriage return as well as a newline.
+  `safety::split_verified` then checks the result:
   every construct must close, and re-joining the pieces must reproduce
   the input. **A script the splitter cannot verify is refused outright**
   ("could not split this script safely — run the statements one at a
