@@ -9,6 +9,7 @@
 
 use crate::conn::{self, Dsn, QueryErr};
 use crate::grid::Grid;
+use tokio_postgres::types::Type;
 
 /// Output formats. Mirrors the names psql exposes for `\pset format`
 /// but pared to the four most useful for scripted output.
@@ -176,31 +177,51 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
     // protocol rejects for multi-command strings. `safety::split_verified`
     // is the same splitter the interactive editor uses.
     let sql = checked.join(";\n");
-    let result = if checked.len() > 1 {
-        conn::run_batch(&client, &sql).await
-    } else {
-        conn::run_statement(&client, &sql).await
-    };
-    let code = match result {
-        Ok(grid) => {
-            let text = match opts.format {
-                Format::Csv => format_csv(&grid),
-                Format::Tsv => format_tsv(&grid),
-                Format::Json => format_json(&grid),
-                Format::Expanded => format_expanded(&grid),
-            };
-            print!("{text}");
-            // Ensure the output ends in a newline for shell pipelines
-            // (some formats include trailing newlines already; only
-            // add one when the format doesn't).
-            if !text.ends_with('\n') {
-                println!();
+    // `--format json` on a single statement gets the typed path
+    // (`run_statement_typed_json`): SQL NULL, numbers, and booleans
+    // stay distinct instead of collapsing through `Grid`'s
+    // already-stringified cells (see that function's doc comment). A
+    // multi-statement script has no single result set to type this
+    // way, so it keeps going through the `Grid` + `format_json` path
+    // below, same as every other format.
+    let code = if opts.format == Format::Json && checked.len() == 1 {
+        match run_statement_typed_json(&client, &sql).await {
+            Ok(text) => {
+                print!("{text}");
+                0
             }
-            0
+            Err(QueryErr { msg, .. }) => {
+                eprintln!("error: {msg}");
+                1
+            }
         }
-        Err(QueryErr { msg, .. }) => {
-            eprintln!("error: {msg}");
-            1
+    } else {
+        let result = if checked.len() > 1 {
+            conn::run_batch(&client, &sql).await
+        } else {
+            conn::run_statement(&client, &sql).await
+        };
+        match result {
+            Ok(grid) => {
+                let text = match opts.format {
+                    Format::Csv => format_csv(&grid),
+                    Format::Tsv => format_tsv(&grid),
+                    Format::Json => format_json(&grid),
+                    Format::Expanded => format_expanded(&grid),
+                };
+                print!("{text}");
+                // Ensure the output ends in a newline for shell pipelines
+                // (some formats include trailing newlines already; only
+                // add one when the format doesn't).
+                if !text.ends_with('\n') {
+                    println!();
+                }
+                0
+            }
+            Err(QueryErr { msg, .. }) => {
+                eprintln!("error: {msg}");
+                1
+            }
         }
     };
 
@@ -332,6 +353,134 @@ pub fn format_json(grid: &Grid) -> String {
     out
 }
 
+/// Run a single statement and render it as **typed** JSON — the
+/// `Grid` path (`conn::run_statement` + [`format_json`]) always
+/// stringifies every cell and, for TEXT columns, renders SQL NULL the
+/// same way as an empty string, since `Grid` has already thrown the
+/// distinction away by the time it reaches the formatter.
+///
+/// The actual database round trip (`Db` effect) is
+/// [`conn::run_statement_typed`] — this function is the pure
+/// rendering half, kept in `batch.rs` alongside the other format
+/// writers so it gets the same unit-test coverage as
+/// [`format_json`]/[`format_csv`]/etc.
+async fn run_statement_typed_json(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<String, QueryErr> {
+    let typed = conn::run_statement_typed(client, sql).await?;
+    Ok(render_typed_json(&typed))
+}
+
+/// The pure half of [`run_statement_typed_json`]: turn already-fetched
+/// [`conn::TypedRows`] into a JSON array of objects, or (for a
+/// non-row-returning statement) the same one-row "status" shape the
+/// `Grid` path uses.
+fn render_typed_json(typed: &conn::TypedRows) -> String {
+    if let Some(affected) = typed.affected {
+        let mut out = String::from("[{");
+        push_json_string(&mut out, "status");
+        out.push(':');
+        push_json_string(&mut out, &format!("{affected} row(s) affected"));
+        out.push_str("}]\n");
+        return out;
+    }
+    let mut out = String::from("[");
+    for (ri, row) in typed.rows.iter().enumerate() {
+        if ri > 0 {
+            out.push(',');
+        }
+        out.push('{');
+        for (ci, (name, ty)) in typed.columns.iter().enumerate() {
+            if ci > 0 {
+                out.push(',');
+            }
+            push_json_string(&mut out, name);
+            out.push(':');
+            push_typed_json_cell(&mut out, ty, row.get(ci).and_then(|c| c.as_deref()));
+        }
+        out.push('}');
+    }
+    out.push_str("]\n");
+    out
+}
+
+/// One cell of `run_statement_typed_json`'s output. `text` is the
+/// Postgres text-wire rendering of the value, `None` for SQL NULL.
+/// `ty` decides whether the cell becomes a bare JSON number/boolean
+/// or a quoted string; everything not explicitly numeric or boolean
+/// renders as a string, same as today's CSV/TSV/expanded formats.
+fn push_typed_json_cell(buf: &mut String, ty: &Type, text: Option<&str>) {
+    let Some(text) = text else {
+        buf.push_str("null");
+        return;
+    };
+    match *ty {
+        Type::BOOL => match text {
+            "t" => buf.push_str("true"),
+            "f" => buf.push_str("false"),
+            other => push_json_string(buf, other), // shouldn't happen; fail safe
+        },
+        Type::INT2 | Type::INT4 | Type::INT8 | Type::FLOAT4 | Type::FLOAT8 | Type::NUMERIC => {
+            if is_json_number(text) {
+                buf.push_str(text);
+            } else {
+                // NaN / Infinity / -Infinity — valid Postgres float
+                // text, not a valid JSON number token.
+                push_json_string(buf, text);
+            }
+        }
+        _ => push_json_string(buf, text),
+    }
+}
+
+/// `true` when `s` is a valid JSON `number` token (RFC 8259). Postgres's
+/// text rendering of int2/int4/int8 and ordinary float4/float8/numeric
+/// values already matches this grammar; the exceptions are the special
+/// float spellings (`NaN`, `Infinity`, `-Infinity`), which this
+/// correctly rejects so [`push_typed_json_cell`] falls back to a JSON
+/// string instead of emitting invalid JSON.
+fn is_json_number(s: &str) -> bool {
+    let mut chars = s.chars().peekable();
+    if chars.peek() == Some(&'-') {
+        chars.next();
+    }
+    let mut saw_digit = false;
+    while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+        chars.next();
+        saw_digit = true;
+    }
+    if !saw_digit {
+        return false;
+    }
+    if chars.peek() == Some(&'.') {
+        chars.next();
+        let mut saw_frac = false;
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+            chars.next();
+            saw_frac = true;
+        }
+        if !saw_frac {
+            return false;
+        }
+    }
+    if matches!(chars.peek(), Some('e') | Some('E')) {
+        chars.next();
+        if matches!(chars.peek(), Some('+') | Some('-')) {
+            chars.next();
+        }
+        let mut saw_exp = false;
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+            chars.next();
+            saw_exp = true;
+        }
+        if !saw_exp {
+            return false;
+        }
+    }
+    chars.next().is_none()
+}
+
 fn push_json_string(buf: &mut String, s: &str) {
     buf.push('"');
     for c in s.chars() {
@@ -446,6 +595,147 @@ mod tests {
         let g = grid(&["x"], &[&["line\nwith\ttabs"]]);
         let out = format_json(&g);
         assert!(out.contains(r#""line\nwith\ttabs""#));
+    }
+
+    // --- typed JSON cells (`run_statement_typed_json`'s pure half) ---
+
+    #[test]
+    fn typed_json_cell_null_is_bare_null_regardless_of_type() {
+        for ty in [Type::TEXT, Type::INT4, Type::BOOL, Type::NUMERIC] {
+            let mut out = String::new();
+            push_typed_json_cell(&mut out, &ty, None);
+            assert_eq!(out, "null", "type {ty:?}");
+        }
+    }
+
+    #[test]
+    fn typed_json_cell_empty_string_is_not_null() {
+        // The exact conflation this fix is for: SQL NULL and '' must
+        // render differently.
+        let mut out = String::new();
+        push_typed_json_cell(&mut out, &Type::TEXT, Some(""));
+        assert_eq!(out, "\"\"");
+    }
+
+    #[test]
+    fn typed_json_cell_renders_bool_as_json_boolean() {
+        let mut out = String::new();
+        push_typed_json_cell(&mut out, &Type::BOOL, Some("t"));
+        assert_eq!(out, "true");
+
+        let mut out = String::new();
+        push_typed_json_cell(&mut out, &Type::BOOL, Some("f"));
+        assert_eq!(out, "false");
+    }
+
+    #[test]
+    fn typed_json_cell_renders_integers_and_floats_as_bare_numbers() {
+        for (ty, text) in [
+            (Type::INT2, "42"),
+            (Type::INT4, "-7"),
+            (Type::INT8, "9007199254740993"),
+            (Type::FLOAT4, "1.5"),
+            (Type::FLOAT8, "-3.25"),
+            (Type::NUMERIC, "1.50"),
+        ] {
+            let mut out = String::new();
+            push_typed_json_cell(&mut out, &ty, Some(text));
+            assert_eq!(out, text, "type {ty:?}");
+        }
+    }
+
+    #[test]
+    fn typed_json_cell_falls_back_to_string_for_special_float_spellings() {
+        // NaN / Infinity aren't valid JSON number tokens.
+        for text in ["NaN", "Infinity", "-Infinity"] {
+            let mut out = String::new();
+            push_typed_json_cell(&mut out, &Type::FLOAT8, Some(text));
+            assert_eq!(out, format!("\"{text}\""));
+        }
+    }
+
+    #[test]
+    fn typed_json_cell_renders_text_types_as_quoted_strings() {
+        let mut out = String::new();
+        push_typed_json_cell(&mut out, &Type::TEXT, Some("alice"));
+        assert_eq!(out, "\"alice\"");
+    }
+
+    #[test]
+    fn is_json_number_accepts_postgres_numeric_text() {
+        for ok in [
+            "0", "-1", "42", "1.5", "-3.14", "1e10", "1.5e-3", "0.0", "-0",
+        ] {
+            assert!(is_json_number(ok), "{ok} should be a JSON number");
+        }
+    }
+
+    #[test]
+    fn is_json_number_rejects_non_numbers_and_special_floats() {
+        for bad in [
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "",
+            "-",
+            "1.",
+            ".5",
+            "abc",
+            "1..0",
+        ] {
+            assert!(!is_json_number(bad), "{bad} should not be a JSON number");
+        }
+    }
+
+    // --- render_typed_json: the pure half of run_statement_typed_json --
+
+    #[test]
+    fn render_typed_json_matches_the_worked_example() {
+        // select null::text as a, '' as b, 42 as c, true as d, 1.5 as e
+        let typed = conn::TypedRows {
+            columns: vec![
+                ("a".to_string(), Type::TEXT),
+                ("b".to_string(), Type::TEXT),
+                ("c".to_string(), Type::INT4),
+                ("d".to_string(), Type::BOOL),
+                ("e".to_string(), Type::NUMERIC),
+            ],
+            rows: vec![vec![
+                None,
+                Some("".to_string()),
+                Some("42".to_string()),
+                Some("t".to_string()),
+                Some("1.5".to_string()),
+            ]],
+            affected: None,
+        };
+        assert_eq!(
+            render_typed_json(&typed),
+            "[{\"a\":null,\"b\":\"\",\"c\":42,\"d\":true,\"e\":1.5}]\n"
+        );
+    }
+
+    #[test]
+    fn render_typed_json_renders_a_non_row_statement_as_a_status_object() {
+        let typed = conn::TypedRows {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected: Some(3),
+        };
+        assert_eq!(
+            render_typed_json(&typed),
+            "[{\"status\":\"3 row(s) affected\"}]\n"
+        );
+    }
+
+    #[test]
+    fn render_typed_json_multiple_rows() {
+        let typed = conn::TypedRows {
+            columns: vec![("id".to_string(), Type::INT4)],
+            rows: vec![vec![Some("1".to_string())], vec![Some("2".to_string())]],
+            affected: None,
+        };
+        assert_eq!(render_typed_json(&typed), "[{\"id\":1},{\"id\":2}]\n");
     }
 
     #[test]

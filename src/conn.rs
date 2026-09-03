@@ -814,6 +814,69 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
     }
 }
 
+/// Column names + Postgres [`Type`]s, plus the text-wire value of every
+/// cell (`None` for SQL NULL), for `--batch --format json`'s typed
+/// path ([`batch::run_statement_typed_json`]). Unlike `run_statement`,
+/// which renders every cell to a display `String` and loses the
+/// NULL-vs-empty-string / numeric-vs-text distinction on the way,
+/// this keeps the `Type` so the caller can decide what belongs in
+/// quotes.
+///
+/// [`batch::run_statement_typed_json`]: crate::batch::run_statement_typed_json
+pub struct TypedRows {
+    pub columns: Vec<(String, tokio_postgres::types::Type)>,
+    /// One entry per result row; each inner `Vec` aligned with `columns`.
+    /// Empty when `affected` is `Some` (a DDL/DML statement with no
+    /// `RETURNING` — nothing to type).
+    pub rows: Vec<Vec<Option<String>>>,
+    /// `Some(n)` for a non-row-returning statement (`client.execute`'s
+    /// affected-row count); `None` for a row-returning one.
+    pub affected: Option<u64>,
+}
+
+/// Run a single statement and collect it into [`TypedRows`]. `client
+/// .prepare` gives the column shape via Parse+Describe (no
+/// execution); a row-returning statement then runs over the *text*
+/// wire format via `client.simple_query` — so int/float/numeric
+/// values never need a binary decoder pgman doesn't have
+/// (`tokio-postgres` has no `FromSql<String>` for `NUMERIC`). Exactly
+/// one execution happens either way.
+pub async fn run_statement_typed(
+    client: &tokio_postgres::Client,
+    sql: &str,
+) -> Result<TypedRows, QueryErr> {
+    let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
+    let columns: Vec<(String, tokio_postgres::types::Type)> = stmt
+        .columns()
+        .iter()
+        .map(|c| (c.name().to_string(), c.type_().clone()))
+        .collect();
+    if columns.is_empty() {
+        let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
+        return Ok(TypedRows {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected: Some(affected),
+        });
+    }
+    let messages = client.simple_query(sql).await.map_err(QueryErr::from)?;
+    let mut rows = Vec::new();
+    for msg in &messages {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+            rows.push(
+                (0..columns.len())
+                    .map(|i| row.get(i).map(str::to_string))
+                    .collect(),
+            );
+        }
+    }
+    Ok(TypedRows {
+        columns,
+        rows,
+        affected: None,
+    })
+}
+
 /// Stream rows from a prepared statement (no params) into string-rendered
 /// vectors, stopping at `grid::MAX_ROWS`. Returns `(rows, truncated)` where
 /// `truncated` is `true` iff at least one additional row existed past the cap.
