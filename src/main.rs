@@ -8,15 +8,19 @@ use std::io::IsTerminal;
 /// Full flag documentation lives in `docs/commands.md` — the doc
 /// comments here are what `--help` shows, so they stay to one short,
 /// type-free sentence each.
-#[derive(Parser)]
+#[derive(Parser, Default)]
 #[command(
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (public beta)"
 )]
 struct Cli {
+    /// Connect using a postgres:// DSN — same as --dsn.
+    #[arg(value_name = "DSN")]
+    dsn_pos: Option<String>,
+
     /// Connect using a postgres:// DSN.
-    #[arg(long)]
+    #[arg(long, value_name = "DSN")]
     dsn: Option<String>,
 
     /// Colour theme: dark | light | high-contrast.
@@ -133,7 +137,14 @@ async fn main() -> anyhow::Result<()> {
         return result;
     }
 
-    let dsn = match cli.dsn.as_deref() {
+    let dsn_arg = match resolve_dsn_arg(&cli) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    let dsn = match dsn_arg.as_deref() {
         Some(raw) => match conn::Dsn::parse(raw) {
             Ok(mut d) => {
                 apply_pgpassword(&mut d);
@@ -146,7 +157,7 @@ async fn main() -> anyhow::Result<()> {
         },
         None => None,
     };
-    let dsn_origin: Option<String> = if cli.dsn.is_some() {
+    let dsn_origin: Option<String> = if dsn_arg.is_some() {
         Some("--dsn flag".to_string())
     } else {
         None
@@ -604,8 +615,8 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
 /// fast — batch mode can't prompt — so the operator must disambiguate
 /// with `--dsn`.
 fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
-    if let Some(raw) = cli.dsn.as_deref() {
-        let mut dsn = conn::Dsn::parse(raw).map_err(|e| format!("invalid --dsn: {e}"))?;
+    if let Some(raw) = resolve_dsn_arg(cli)? {
+        let mut dsn = conn::Dsn::parse(&raw).map_err(|e| format!("invalid --dsn: {e}"))?;
         apply_pgpassword(&mut dsn);
         return Ok(dsn);
     }
@@ -770,6 +781,21 @@ fn format_connect_failure(err: &str, dsn: &conn::Dsn) -> String {
         out.push_str(&format!("hint: {hint}"));
     }
     out
+}
+
+/// Resolve the DSN string from `--dsn` and/or the positional `DSN`
+/// argument (`pgman postgres://…`). Errors when both are given and
+/// disagree — there's no principled way to pick one; the same value
+/// twice (e.g. a script that always passes both) passes through.
+fn resolve_dsn_arg(cli: &Cli) -> Result<Option<String>, String> {
+    match (&cli.dsn, &cli.dsn_pos) {
+        (Some(flag), Some(pos)) if flag != pos => Err(format!(
+            "--dsn {flag:?} and the positional DSN {pos:?} disagree — pass only one"
+        )),
+        (Some(flag), _) => Ok(Some(flag.clone())),
+        (None, Some(pos)) => Ok(Some(pos.clone())),
+        (None, None) => Ok(None),
+    }
 }
 
 /// Read `--log PATH`'s target: `-` reads stdin to EOF, otherwise the file
@@ -1654,5 +1680,61 @@ mod main_tests {
         let dsn = conn::Dsn::parse("postgres://app@host/db").unwrap();
         let out = format_connect_failure("something weird happened", &dsn);
         assert_eq!(out, "connect failed: something weird happened");
+    }
+
+    // --- resolve_dsn_arg: --dsn vs. the positional DSN ------------------
+
+    #[test]
+    fn resolve_dsn_arg_prefers_flag_when_positional_absent() {
+        let cli = Cli {
+            dsn: Some("postgres://a/db".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_dsn_arg(&cli).unwrap(),
+            Some("postgres://a/db".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_dsn_arg_uses_positional_when_flag_absent() {
+        let cli = Cli {
+            dsn_pos: Some("postgres://a/db".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_dsn_arg(&cli).unwrap(),
+            Some("postgres://a/db".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_dsn_arg_allows_matching_flag_and_positional() {
+        let cli = Cli {
+            dsn: Some("postgres://a/db".into()),
+            dsn_pos: Some("postgres://a/db".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_dsn_arg(&cli).unwrap(),
+            Some("postgres://a/db".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_dsn_arg_rejects_disagreeing_flag_and_positional() {
+        let cli = Cli {
+            dsn: Some("postgres://a/db".into()),
+            dsn_pos: Some("postgres://b/db".into()),
+            ..Default::default()
+        };
+        let err = resolve_dsn_arg(&cli).unwrap_err();
+        assert!(err.contains("disagree"), "got: {err}");
+    }
+
+    #[test]
+    fn resolve_dsn_arg_is_none_when_neither_given() {
+        let cli = Cli::default();
+        assert_eq!(resolve_dsn_arg(&cli).unwrap(), None);
     }
 }
