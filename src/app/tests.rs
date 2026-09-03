@@ -5633,7 +5633,7 @@ fn preload_log_with_hibernate_sample_enters_log_pick() {
 [main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
 [main] org.hibernate.SQL : select * from orders where customer_id=?
 [main] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [7]";
-    a.preload_log(log);
+    a.preload_log(log.to_string());
     assert_eq!(a.mode, Mode::LogPick);
     assert_eq!(a.log_pick.picks.len(), 2);
     assert!(a.editor.buffer.contains("org.hibernate.SQL"));
@@ -5646,7 +5646,7 @@ fn preload_log_with_jdbc_paste_shape_enters_log_pick_with_substituted_sql() {
     // `?`-statement, a blank line, then typed params.
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     let pasted = "select * from orders where id = ? and status = ?\n\nINTEGER:42\nVARCHAR:shipped";
-    a.preload_log(pasted);
+    a.preload_log(pasted.to_string());
     assert_eq!(a.mode, Mode::LogPick);
     assert_eq!(a.log_pick.picks.len(), 1);
     assert_eq!(
@@ -5658,7 +5658,7 @@ fn preload_log_with_jdbc_paste_shape_enters_log_pick_with_substituted_sql() {
 #[test]
 fn preload_log_with_prose_lands_in_editor_with_no_queries_error() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    a.preload_log("just some notes, not a log or SQL at all");
+    a.preload_log("just some notes, not a log or SQL at all".to_string());
     assert_eq!(a.mode, Mode::Editor);
     assert!(a.log_pick.picks.is_empty());
     assert_eq!(
@@ -5690,7 +5690,7 @@ fn preload_log_overrides_conn_pick_startup_mode() {
     ];
     let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
     assert_eq!(a.mode, Mode::ConnPick);
-    a.preload_log("[main] org.hibernate.SQL : select 1");
+    a.preload_log("[main] org.hibernate.SQL : select 1".to_string());
     // A pick was found → LogPick; either way the ConnPick startup picker
     // has been overridden by the explicit --log.
     assert_eq!(a.mode, Mode::LogPick);
