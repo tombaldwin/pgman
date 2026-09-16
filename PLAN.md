@@ -285,7 +285,7 @@ the first five minutes against a real server.
 
 ## Hands-on UX round — 2026-09-03 · **in progress**
 
-Tom ran the binary in a real Spring project (poly) and the first
+Tom ran the binary in a real Spring project and the first
 minutes produced what no reviewer had: F5 is wrong on a Mac, the
 editor looked like a one-line prompt, tabs were invisible, there was
 no way to resize or maximise a pane, and formatting needed an external

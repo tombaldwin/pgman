@@ -643,7 +643,7 @@ Survey is in [Done]. Lift as the milestones reach them:
 - `creds/{ssm,secrets}.rs` + `creds/onepassword.rs` — placeholder
   resolution.
 - `migrate/` — `MigrationStrategy` trait + `flyway` / `liquibase` /
-  `custom` (config-driven table mapping; poly is one preset). Note:
+  `custom` (config-driven table mapping; a real schema is one preset). Note:
   `pending()` is not implementable for a DB-table-only strategy —
   make it an optional capability.
 - `mode_params.rs` — RDS parameter groups; view / diff +
