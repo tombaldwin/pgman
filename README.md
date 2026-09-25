@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![status: public beta](https://img.shields.io/badge/status-public%20beta-orange.svg)](https://github.com/tombaldwin/pgman/releases)
+[![status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#install)
 
 A k9s-style Postgres TUI aimed at Java / AWS shops. Where psql, pgcli, and
 DataGrip stop at the database, pgman also turns Hibernate logs, Postgres
@@ -10,8 +10,9 @@ server logs, and pasted JDBC into runnable SQL, offline and with zero
 application changes — with N+1 detection built in. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
 
-> ### ⚠️ Public beta
-> pgman is pre-1.0 — expect rough edges and breaking changes before 1.0.
+> ### ⚠️ Not released yet
+> There is no Homebrew formula, crate or binary yet: to try pgman today, build it
+> from source (below). It is pre-1.0 — expect rough edges and breaking changes.
 > It defaults to **read-only** connections and routes every write through
 > per-statement safety guards, but don't point it at a production database
 > without reviewing your `safety.toml` first. Bug reports and feedback very
@@ -128,24 +129,16 @@ Three things worth knowing:
 
 ## Install
 
-**Homebrew (macOS / Linux):**
+pgman has not had a release yet, so there is no Homebrew formula, no crate on
+crates.io and no pre-built binary. Build it from source with a Rust toolchain:
 
 ```sh
-brew tap tombaldwin/tap
-brew install pgman
+cargo install --git https://github.com/tombaldwin/pgman --locked
 ```
 
-**Cargo:**
-
-```sh
-cargo install pgman --locked
-```
-
-**Pre-built binary:** download the tarball for your platform from the
-[GitHub Releases page](https://github.com/tombaldwin/pgman/releases), extract,
-and put `pgman` on your `PATH`. Built for `x86_64-unknown-linux-gnu`,
-`aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
-`x86_64-apple-darwin`.
+Homebrew (`tombaldwin/tap`), crates.io and binaries for Linux and macOS
+(x86_64 and arm64) follow with the first release, the same way as
+[`ebman`](https://github.com/tombaldwin/ebman).
 
 To hack on it, install from a checkout:
 
@@ -207,6 +200,6 @@ submit for inclusion shall be dual-licensed as above, without additional terms.
 
 ---
 
-Built by [Polymorphism Ltd](https://polymorphism.co.uk). pgman is one of the
+Built by [Polymorphism Ltd](https://www.poly.io). pgman is one of the
 tools we build for ourselves and our clients — if you want this kind of
 internal developer tooling for your team, get in touch.
