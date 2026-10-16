@@ -8,7 +8,7 @@ description = "k9s-style Postgres TUI for Java/AWS shops"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/tombaldwin/pgman"
-homepage = "https://github.com/tombaldwin/pgman"
+homepage = "https://www.poly.io/products/pgman/"
 keywords = ["postgresql", "tui", "database", "cli", "ratatui"]
 categories = ["command-line-utilities", "database"]
 # Keep the published crate to source + the docs cargo needs (README for
