@@ -6,6 +6,13 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 [ -f "$ROOT/.candor/config" ] && . "$ROOT/.candor/config"
 HOME_DIR="${CANDOR_HOME:-$HOME/git/candor}"
-[ -x "$HOME_DIR/cargo-candor" ] || { echo "candor: wrapper not found ($HOME_DIR/cargo-candor); skipping guard"; exit 0; }
+if [ -x "$HOME_DIR/cargo-candor" ]; then
+  WRAPPER="$HOME_DIR/cargo-candor"
+elif WRAPPER="$(command -v cargo-candor)"; then
+  :
+else
+  echo "candor: wrapper not found ($HOME_DIR/cargo-candor, or cargo-candor on PATH); skipping guard"
+  exit 0
+fi
 cd "$ROOT"
-exec "$HOME_DIR/cargo-candor" guard .candor/baseline
+exec "$WRAPPER" guard .candor/baseline
