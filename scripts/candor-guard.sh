@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# candor effect-regression guard (version-aware). Delegates to the candor clone's wrapper,
-# which SKIPS enforcement on a candor version change (a tool upgrade is not a code
-# regression) and blocks only on a real AS-EFF-005 against a same-version baseline.
+# candor effect-regression guard. Delegates to the cargo-candor wrapper, which blocks
+# (exit 1) on a real AS-EFF-005 against a same-engine baseline, and refuses to evaluate
+# (exit 2) when the baseline was made by another engine build: refresh it with
+# 'cargo candor snapshot .candor/baseline', review the effect delta, and commit it.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 [ -f "$ROOT/.candor/config" ] && . "$ROOT/.candor/config"
