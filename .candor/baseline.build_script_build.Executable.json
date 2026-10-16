@@ -1,0 +1,45 @@
+{
+  "candor": {
+    "version": "797f5b5",
+    "toolchain": "nightly-2026-06-14",
+    "spec": "0.40"
+  },
+  "package": "build_script_build",
+  "analyzed": {
+    "count": 3,
+    "digest": "9c3b7aadf57f7259"
+  },
+  "resolves": [
+    "fs",
+    "incomplete"
+  ],
+  "excluded": [],
+  "functions": [
+    {
+      "fn": "main",
+      "loc": "build.rs:10:1: 10:10",
+      "inferred": [
+        "Env",
+        "Fs"
+      ],
+      "direct": [
+        "Env",
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "entryPoint": true,
+      "hash": "695deb274cc82789d4925f1c5b668430",
+      "fs": [
+        "read"
+      ],
+      "paths": [
+        "CHANGELOG.md"
+      ]
+    }
+  ]
+}
