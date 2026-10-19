@@ -1665,12 +1665,12 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
         rows,
         [
             ("demo".into(), "ledger".into(), "primary".into()),
-            ("demo".into(), "ledgerlog".into(), "primary".into()),
             (
                 "demo-read-only-replica".into(),
                 "ledger".into(),
                 "replica".into()
             ),
+            ("demo".into(), "ledgerlog".into(), "primary".into()),
             (
                 "demo-read-only-replica".into(),
                 "ledgerlog".into(),
