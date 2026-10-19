@@ -14,8 +14,11 @@
 //!   `--project-connections` (batch's `--discovered`, for the same reason),
 //!   and one that tunnels is never connectable, flag or not.
 //!
-//! Everything here is pure over already-loaded inputs so the trust rules
-//! are unit-tested; [`load`] is the thin I/O wrapper.
+//! Everything but [`load`] works on already-loaded inputs, so the trust
+//! rules are unit-tested; the one thing [`build`] still reads is the
+//! environment variable a personal entry's `password_env` names (through
+//! `project::connection_to_dsn`), to say whether it is set. [`load`] is
+//! the file and discovery I/O.
 
 use crate::app::DataSourcePick;
 use crate::conn::Dsn;
