@@ -93,6 +93,19 @@ pub fn tool_table() -> Value {
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
         },
         {
+            "name": "schema_lint",
+            "description": "The schema wizard's findings for one connection: tables without a primary key or unique constraint, mixed-case identifiers, and the live checks — foreign keys without a supporting index, unused indexes, overlapping indexes, table bloat, tables without a comment, and schemas mixing timestamp with and without time zone. Each finding has a severity (high, medium, low), a code (LINT001…, LINT101…), the object, why it matters, and a suggested fix where there is one. CAVEATS: the unused-index (LINT102) and bloat (LINT104) checks read usage statistics, which a read replica keeps for ITS OWN activity: an index the primary uses can look unused on a replica, and a replica reports no dead tuples. Run those against the primary's figures before acting (the result says when it ran on a replica). Statistics reset with pg_stat_reset or a failover, so a young cluster reads as unused too. Suggestions are starting points, not migrations to run as-is.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": {"type": "string", "description": "A name from `connections`."}
+                },
+                "required": ["connection"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
             "name": "environments_discover",
             "description": "Propose environments from an AWS account, for environments.toml: one per RDS Postgres primary with its read replicas, the Secrets Manager secret matching each database by NAME, the bastion (public EC2 host) in the instance's VPC, sslmode=require, the account and region pinned. Each proposal has `toml` (exactly what environments_save would append), `notes` to check first (ambiguous secrets are listed, not guessed), and `covered_by` when an existing environment already lists that primary. CAVEATS: reads names and endpoints only — it never reads a secret's value or connects to a database, so a proposed secret is a match by name, not a tested login. Without permission to list secrets or EC2 hosts, proposals come without them and `warnings` says why. Uses the aws CLI's ambient profile and region unless given.",
             "inputSchema": {
@@ -147,6 +160,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         // One aws CLI listing (plus an account check) per distinct scope.
         // Listings, then (with `probe`) a tunnel and up to 20s per database.
         "environments" => 120,
+        // The catalog, then six live checks.
+        "schema_lint" => 120,
         // sts, configure, then three listings, each bounded by the CLI.
         "environments_discover" | "environments_save" => 120,
         _ => 10,
@@ -162,6 +177,7 @@ impl Server {
             "sessions_locks" => self.tool_sessions_locks(args).await,
             "pending_patches" => self.tool_pending_patches(args).await,
             "environments" => tool_environments(args).await,
+            "schema_lint" => self.tool_schema_lint(args).await,
             "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
             "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
@@ -193,6 +209,41 @@ impl Server {
         })
         .await
         .map_err(|e| format!("save task failed: {e}"))?
+    }
+
+    /// `schema_lint`: the schema wizard's findings, over a read-only
+    /// connection.
+    async fn tool_schema_lint(&self, args: &Value) -> Result<String, String> {
+        let name = arg_str(args, "connection")?;
+        let target = self.prepare(name, "schema_lint")?;
+        tracing::info!(target: "pgman::mcp", connection = name, "schema_lint");
+        let (client, _tunnel) = connect(name, target, &self.tunnels).await?;
+        let (replica, _) =
+            conn::run_statement_typed_capped(&client, preflight::IS_REPLICA_SQL, Some(1))
+                .await
+                .map_err(|e| e.msg)?;
+        let on_replica = replica
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|c| c.as_deref())
+            .map(|v| v == "t");
+        let cache = crate::query::schema::fetch(&client).await;
+        let mut findings = crate::query::lint::run_all(&cache);
+        let live = crate::query::lint::fetch_live(&client).await;
+        let live_error = match live {
+            Ok(fs) => {
+                findings.extend(fs);
+                None
+            }
+            Err(e) => Some(e),
+        };
+        Ok(render_schema_lint(
+            name,
+            &findings,
+            on_replica,
+            live_error.as_deref(),
+        ))
     }
 
     fn tool_doctor(&self) -> String {
@@ -632,6 +683,41 @@ pub fn render_row_probe(
             v
         }
     }
+}
+
+/// `schema_lint`'s result. Pure.
+pub fn render_schema_lint(
+    name: &str,
+    findings: &[crate::query::lint::Finding],
+    on_replica: Option<bool>,
+    live_error: Option<&str>,
+) -> String {
+    let rows: Vec<Value> = findings
+        .iter()
+        .map(|f| {
+            json!({
+                "severity": format!("{:?}", f.severity).to_ascii_lowercase(),
+                "code": f.code,
+                "title": f.title,
+                "object": f.object,
+                "detail": f.detail,
+                "suggestion": f.suggestion,
+            })
+        })
+        .collect();
+    let mut v = json!({
+        "connection": name,
+        "server_is_replica": on_replica,
+        "findings": rows,
+        "live_checks_error": live_error,
+    });
+    if on_replica == Some(true) {
+        v["note"] = json!(
+            "this is a replica: unused-index (LINT102) and bloat (LINT104) findings reflect the \
+             replica's own activity, not the primary's"
+        );
+    }
+    v.to_string()
 }
 
 /// One database's probe as the `environments` tool reports it. Pure.
@@ -1117,6 +1203,7 @@ mod tests {
                 "sessions_locks",
                 "pending_patches",
                 "environments",
+                "schema_lint",
                 "environments_discover",
                 "environments_save"
             ]
@@ -1167,6 +1254,40 @@ mod tests {
         t.status = Some("stopped".into());
         let v = render_row_probe(&[t], &[None], 0);
         assert_eq!(v, json!({"not_probed": "the server isn't running"}));
+    }
+
+    #[test]
+    fn schema_lint_reports_findings_and_warns_about_replica_statistics() {
+        let f = crate::query::lint::Finding {
+            severity: crate::query::lint::Severity::High,
+            code: "LINT001",
+            title: "no primary key".into(),
+            object: "public.events".into(),
+            detail: "rows can't be told apart".into(),
+            suggestion: Some("ALTER TABLE …".into()),
+        };
+        let v: Value =
+            serde_json::from_str(&render_schema_lint("r", &[f], Some(true), None)).unwrap();
+        assert_eq!(v["findings"][0]["severity"], "high");
+        assert_eq!(v["findings"][0]["code"], "LINT001");
+        assert!(v["note"]
+            .as_str()
+            .unwrap()
+            .contains("replica's own activity"));
+        let v: Value = serde_json::from_str(&render_schema_lint(
+            "p",
+            &[],
+            Some(false),
+            Some("LINT101: x"),
+        ))
+        .unwrap();
+        assert!(v.get("note").is_none());
+        assert_eq!(v["live_checks_error"], "LINT101: x");
+        assert_eq!(
+            connections::Role::Primary.refuses("schema_lint").is_some(),
+            true,
+            "the primary serves only the pre-flight and the patch check"
+        );
     }
 
     #[test]

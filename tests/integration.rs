@@ -2435,3 +2435,45 @@ fn schema_fetch_reads_partition_parents() {
         Some(("public".to_string(), root.clone()))
     );
 }
+
+/// `schema_lint` over MCP finds what the wizard finds.
+#[test]
+fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
+    let home = scratch_home("mcp-lint", WRITABLE_PROFILE);
+    let table = format!("pgman_it_nopk_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {table} (x int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[tool_call(
+            1,
+            "schema_lint",
+            serde_json::json!({"connection": "local"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["server_is_replica"], false);
+    let hit = v["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["code"] == "LINT001" && f["object"].as_str().unwrap().ends_with(&table));
+    assert!(hit, "{text}");
+}
