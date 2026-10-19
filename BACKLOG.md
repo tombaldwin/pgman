@@ -5,6 +5,47 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### Environments overview, like ebman's main screen (Tom, 2026-10-19)
+One table of every database in an environment, replicas included, each
+with its versions. Tom's immediate need is RDS, but the design must also
+cover local databases, hand-listed groups of remote ones, and other
+clouds. So it's an inventory layer, and RDS is one source of it.
+- **Model.** An *environment* is a named group of *targets*. A target is
+  one database on one server, with a role (primary, replica or direct),
+  an endpoint, a tunnel and a credential reference. Environments live in
+  `environments.toml` under `util::config_dir()`, never the project file,
+  because they carry tunnels and secret names (the same rule as
+  `connections.toml`).
+- **Sources** (a trait; each produces targets). `static` takes names
+  from `connections.toml` and covers local and hand-listed remote groups.
+  `rds` runs `describe-db-instances` through the aws CLI, filtered by
+  identifier or tag; it gives the role from the replica's source
+  instance, the engine version and the endpoint, with no database
+  connection. `docker` finds local containers exposing 5432. Cloud SQL,
+  Azure Database and Neon/Supabase come later, behind the same trait.
+- **Credential providers** are pluggable too: `password_env` and the AWS
+  `secret` exist; GCP Secret Manager, Vault and 1Password are candidates.
+  A templated secret name, `demo/database/{db}/credentials` with `{db}`
+  and `{role}` filled per target, avoids one entry per database.
+- **Probes** fill the columns. Postgres version comes from the source
+  when it has one, else `SHOW server_version`. Schema version is
+  `max(<column>)` of a configured version table. Pending patches reuse
+  `query::patches`. Replica lag is `now() - pg_last_xact_replay_timestamp()`.
+  Each probe is a read-only connection through the existing guards.
+- **Safety.** A refresh connects to every database, so connecting is
+  opt-in per environment (Prod off by default). Schema versions are read
+  from the replica where one exists; a primary is touched only when it
+  has none.
+- **Surfaces.** A TUI screen in ebman's style that refreshes in the
+  background on the shared frame clock (house rule: no independent
+  tickers), and an `environments` MCP tool returning the same rows.
+- **Order.** (1) The model, the `static` and `rds` sources, and a
+  version-less screen showing role, endpoint and engine version, with no
+  database connections; this is a small PR. (2) Tunnel reuse (the
+  connection-pool item below becomes a prerequisite: ten databases must
+  not mean ten ssh handshakes) and then the schema/pending/lag probes.
+  (3) `docker` and the other sources as needed.
+
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:
