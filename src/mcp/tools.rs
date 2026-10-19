@@ -601,6 +601,39 @@ async fn tool_environments(args: &Value) -> Result<String, String> {
     ))
 }
 
+/// Row `ti`'s probe, with a row that wasn't connected to labelled by why:
+/// a primary read through its replica carries the replica's patch level
+/// (physical replication makes it the primary's too); a server that
+/// isn't running says so. Pure.
+pub fn render_row_probe(
+    targets: &[crate::inventory::Target],
+    outcomes: &[crate::inventory::probe::Outcome],
+    ti: usize,
+) -> Value {
+    use crate::inventory::probe::{plan, Step};
+    let Some(outcome) = outcomes.get(ti) else {
+        return Value::Null;
+    };
+    if outcome.is_some() {
+        return render_probe(outcome);
+    }
+    match plan(targets).get(ti) {
+        Some(Step::NotRunning) => json!({"not_probed": "the server isn't running"}),
+        _ => {
+            let t = &targets[ti];
+            let replica = targets.iter().position(|r| {
+                r.replica_of.as_deref() == Some(t.server.as_str()) && r.database == t.database
+            });
+            let mut v = json!({"via_replica": replica.map(|j| targets[j].server.clone())});
+            if let Some(Some(Ok(p))) = replica.and_then(|j| outcomes.get(j)) {
+                v["schema_version"] = json!(p.schema_version);
+                v["pending"] = json!(p.pending);
+            }
+            v
+        }
+    }
+}
+
 /// One database's probe as the `environments` tool reports it. Pure.
 pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
     match outcome {
@@ -730,9 +763,7 @@ pub fn render_environments(
                         "multi_az": t.multi_az,
                     });
                     if let Some(Some(outcomes)) = &env_probes {
-                        if let Some(o) = outcomes.get(ti) {
-                            row["probe"] = render_probe(o);
-                        }
+                        row["probe"] = render_row_probe(&r.targets, outcomes, ti);
                     }
                     row
                 })
@@ -1106,7 +1137,8 @@ mod tests {
         let staging = &v["environments"][0];
         assert_eq!(
             staging["databases"][0]["probe"],
-            json!({"via_replica": true})
+            json!({"via_replica": "staging-replica", "schema_version": 251, "pending": 1}),
+            "the primary carries its replica's patch level"
         );
         let replica = &staging["databases"][1]["probe"];
         assert_eq!(replica["schema_version"], 251);
@@ -1127,6 +1159,14 @@ mod tests {
 
         reports.truncate(0);
         assert!(render_environments(path, &reports, None).contains("no environments configured"));
+    }
+
+    #[test]
+    fn a_stopped_server_is_labelled_not_probed() {
+        let mut t = crate::demo::environments()[1].targets[0].clone();
+        t.status = Some("stopped".into());
+        let v = render_row_probe(&[t], &[None], 0);
+        assert_eq!(v, json!({"not_probed": "the server isn't running"}));
     }
 
     #[test]

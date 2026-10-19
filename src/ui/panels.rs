@@ -1176,6 +1176,35 @@ pub(crate) struct ProbeCells {
     pub alert: Option<ProbeAlert>,
 }
 
+/// The patch level as the `SCHEMA` column shows it, and whether it wants
+/// attention (patches pending, or the table unreadable). Pure.
+pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<ProbeAlert>) {
+    match (p.schema_version, p.pending, &p.schema_error) {
+        (_, _, Some(_)) => ("version ✗".to_string(), Some(ProbeAlert::Warn)),
+        (Some(v), Some(n), None) if n > 0 => (format!("v{v} (+{n})"), Some(ProbeAlert::Warn)),
+        (Some(v), _, None) => (format!("v{v}"), None),
+        (None, _, None) => ("—".to_string(), None),
+    }
+}
+
+/// A primary read through its replica: physical replication makes its
+/// schema the replica's, so `SCHEMA` shows the replica's patch level.
+/// Sessions and size are per server, and the primary wasn't connected
+/// to, so they stay blank. Pure.
+pub(crate) fn via_replica_cells(replica: &crate::app::ProbeState) -> ProbeCells {
+    use crate::app::ProbeState;
+    let (schema, alert) = match replica {
+        ProbeState::Done(Ok(p)) => schema_cell(p),
+        ProbeState::Probing => ("probing…".to_string(), None),
+        _ => ("—".to_string(), None),
+    };
+    ProbeCells {
+        schema,
+        alert,
+        ..ProbeCells::default()
+    }
+}
+
 /// One row's probe as the overview's columns. Pure.
 pub(crate) fn probe_cells(
     state: &crate::app::ProbeState,
@@ -1199,19 +1228,7 @@ pub(crate) fn probe_cells(
         }
         ProbeState::Done(Ok(p)) => p,
     };
-    let mut alert = None;
-    let schema = match (p.schema_version, p.pending, &p.schema_error) {
-        (_, _, Some(_)) => {
-            alert = Some(ProbeAlert::Warn);
-            "version ✗".to_string()
-        }
-        (Some(v), Some(n), None) if n > 0 => {
-            alert = Some(ProbeAlert::Warn);
-            format!("v{v} (+{n})")
-        }
-        (Some(v), _, None) => format!("v{v}"),
-        (None, _, None) => "—".to_string(),
-    };
+    let (schema, mut alert) = schema_cell(p);
     let lag = if role == crate::mcp::connections::Role::Replica {
         match (p.in_recovery, p.lag_secs) {
             (Some(false), _) => {
@@ -1295,11 +1312,20 @@ pub(crate) fn environment_lines_probed(
     );
     // The probe columns, before engine: what a probe found matters more
     // than a version, and a narrow terminal cuts from the right.
+    let cells_for = |ri: usize, ti: usize, t: &crate::inventory::Target| -> ProbeCells {
+        if *state(ri, ti) != crate::app::ProbeState::ViaReplica {
+            return probe_cells(state(ri, ti), t.role);
+        }
+        let replica = reports[ri].targets.iter().position(|r| {
+            r.replica_of.as_deref() == Some(t.server.as_str()) && r.database == t.database
+        });
+        via_replica_cells(replica.map(|j| state(ri, j)).unwrap_or(&off))
+    };
     let probed: Vec<ProbeCells> = reports
         .iter()
         .enumerate()
         .flat_map(|(ri, r)| r.targets.iter().enumerate().map(move |(ti, t)| (ri, ti, t)))
-        .map(|(ri, ti, t)| probe_cells(state(ri, ti), t.role))
+        .map(|(ri, ti, t)| cells_for(ri, ti, t))
         .collect();
     let sch_w = w("schema", probed.iter().map(|c| c.schema.clone()).collect());
     let lag_w = w("lag", probed.iter().map(|c| c.lag.clone()).collect());
@@ -1345,7 +1371,7 @@ pub(crate) fn environment_lines_probed(
             format!("{head}engine")
         }));
         for (ti, t) in r.targets.iter().enumerate() {
-            let cells = probe_cells(state(i, ti), t.role);
+            let cells = cells_for(i, ti, t);
             let alert = cells.alert;
             let mut text = format!(
                 "    {}  {}  {}  {}  ",
@@ -1411,6 +1437,15 @@ pub(crate) fn environment_detail_probed(
 ) -> String {
     use crate::app::ProbeState;
     let what = match probe {
+        ProbeState::ViaReplica => {
+            // Near the front: the endpoint goes last so a narrow panel
+            // cuts it, not this.
+            let d = environment_detail(t);
+            return match d.split_once(" · ") {
+                Some((head, rest)) => format!("{head} · schema as read on its replica · {rest}"),
+                None => format!("{d} · schema as read on its replica"),
+            };
+        }
         ProbeState::Done(Err(e)) => Some(format!("✗ {}", e.replace('\n', " "))),
         ProbeState::Done(Ok(p)) => p
             .schema_error
@@ -2662,6 +2697,54 @@ mod tests {
     }
 
     #[test]
+    fn a_primary_read_through_its_replica_shows_the_replicas_schema() {
+        use crate::app::ProbeState;
+        let envs = crate::demo::environments();
+        let probes: Vec<Vec<ProbeState>> = envs
+            .iter()
+            .map(|r| match r.probe {
+                Some(_) => crate::demo::environment_probes(r)
+                    .into_iter()
+                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .collect(),
+                None => vec![ProbeState::Off; r.targets.len()],
+            })
+            .collect();
+        let lines = environment_lines_probed(&envs, &probes);
+        let primary = lines
+            .iter()
+            .find_map(|l| match l {
+                EnvLine::Row {
+                    text,
+                    index: 0,
+                    alert,
+                    ..
+                } => Some((text.clone(), *alert)),
+                _ => None,
+            })
+            .unwrap();
+        assert!(primary.0.contains("v251 (+1)"), "{}", primary.0);
+        assert!(!primary.0.contains("via replica"), "{}", primary.0);
+        assert!(
+            !primary.0.contains("812 MB"),
+            "its own size isn't known: {}",
+            primary.0
+        );
+        assert_eq!(
+            primary.1,
+            Some(ProbeAlert::Warn),
+            "pending patches are the primary's too"
+        );
+        assert_eq!(via_replica_cells(&ProbeState::Probing).schema, "probing…");
+        assert_eq!(via_replica_cells(&ProbeState::Off).schema, "—");
+        let d = environment_detail_probed(&envs[0].targets[0], &ProbeState::ViaReplica);
+        assert!(
+            d.starts_with("  staging/shop · schema as read on its replica · "),
+            "{d}"
+        );
+    }
+
+    #[test]
     fn the_probe_column_shows_only_when_an_environment_probes_and_lines_up() {
         use crate::app::ProbeState;
         let mut envs = crate::demo::environments();
@@ -2684,7 +2767,7 @@ mod tests {
             })
             .collect();
         let at = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
-        assert_eq!(at(&texts[1], "via replica"), at(&texts[0], "schema"));
+        assert_eq!(at(&texts[1], "v251 (+1)"), at(&texts[0], "schema"));
         assert_eq!(at(&texts[2], "v251 (+1)"), at(&texts[0], "schema"));
         assert_eq!(at(&texts[2], "lag 0.4s"), at(&texts[0], "lag"));
         assert_eq!(at(&texts[2], "812 MB"), at(&texts[0], "size"));

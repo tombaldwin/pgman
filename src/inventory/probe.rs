@@ -32,6 +32,28 @@ pub enum Step {
     Connect,
     /// A primary read through its replica instead.
     ViaReplica,
+    /// The instance or container isn't running: nothing to connect to.
+    NotRunning,
+}
+
+/// Whether a source's status says the server can be connected to. An
+/// unknown status (a `static` source) is given the benefit of the doubt.
+/// Pure.
+pub fn is_running(status: Option<&str>) -> bool {
+    !matches!(
+        status,
+        Some(
+            "stopped"
+                | "stopping"
+                | "starting"
+                | "creating"
+                | "deleting"
+                | "exited"
+                | "created"
+                | "paused"
+                | "dead"
+        )
+    )
 }
 
 /// One [`Step`] per target, in order. Pure.
@@ -44,7 +66,9 @@ pub fn plan(targets: &[Target]) -> Vec<Step> {
                     && r.replica_of.as_deref() == Some(t.server.as_str())
                     && r.database == t.database
             });
-            if t.role == Role::Primary && has_replica {
+            if !is_running(t.status.as_deref()) {
+                Step::NotRunning
+            } else if t.role == Role::Primary && has_replica {
                 Step::ViaReplica
             } else {
                 Step::Connect
@@ -53,8 +77,9 @@ pub fn plan(targets: &[Target]) -> Vec<Step> {
         .collect()
 }
 
-/// A probe's answer for one row: `None` for a primary read via its
-/// replica.
+/// A probe's answer for one row: `None` when it wasn't connected to —
+/// a primary read via its replica, or a server that isn't running
+/// ([`plan`] says which).
 pub type Outcome = Option<Result<Probe, String>>;
 
 /// Reads a secret. Blocking (the aws CLI).
@@ -90,7 +115,7 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
     let mut secrets: HashMap<String, Result<SecretCreds, String>> = HashMap::new();
     let mut ready: Vec<Option<Result<crate::conn::Dsn, String>>> = Vec::new();
     for (t, step) in report.targets.iter().zip(&steps) {
-        if *step == Step::ViaReplica {
+        if *step != Step::Connect {
             ready.push(None);
             continue;
         }
@@ -357,5 +382,56 @@ mod tests {
                 "password_env names $PGMAN_TEST_PROBE_UNSET_PW, which is not set".into()
             ))
         );
+    }
+
+    #[test]
+    fn servers_that_are_not_running_are_not_probed() {
+        let mut stopped = t("dev", "app", Role::Direct, None);
+        stopped.status = Some("stopped".into());
+        let mut up = t("demo", "app", Role::Direct, None);
+        up.status = Some("available".into());
+        let unknown = t("local", "app", Role::Direct, None);
+        assert_eq!(
+            plan(&[stopped, up, unknown]),
+            [Step::NotRunning, Step::Connect, Step::Connect],
+            "an unknown status (static) is still tried"
+        );
+        for s in ["stopped", "stopping", "starting", "exited", "paused"] {
+            assert!(!is_running(Some(s)), "{s}");
+        }
+        for s in ["available", "backing-up", "modifying", "running"] {
+            assert!(is_running(Some(s)), "{s}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stopped_server_is_never_contacted() {
+        let mut row = t("dev", "app", Role::Direct, None);
+        row.status = Some("stopped".into());
+        row.connect = Ok(super::super::ConnectSpec {
+            dsn: crate::conn::Dsn::parse("postgres://127.0.0.1:1/app?sslmode=disable").unwrap(),
+            secret: Some(crate::creds::aws_secrets::SecretRef {
+                id: "s".into(),
+                region: None,
+                profile: None,
+                account: None,
+            }),
+            password_env: None,
+        });
+        let report = EnvReport {
+            name: "x".into(),
+            source: "test".into(),
+            targets: vec![row],
+            error: None,
+            probe: Some(super::super::ProbeSettings {
+                version_table: None,
+            }),
+        };
+        let out = run(
+            report,
+            std::sync::Arc::new(|_| panic!("no secret read for a stopped server")),
+        )
+        .await;
+        assert_eq!(out, vec![None]);
     }
 }

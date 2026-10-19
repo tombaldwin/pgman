@@ -778,7 +778,7 @@ pub fn environment_probes(
     plan(&report.targets)
         .into_iter()
         .map(|step| match step {
-            Step::ViaReplica => None,
+            Step::ViaReplica | Step::NotRunning => None,
             Step::Connect => Some(Ok(crate::query::probe::Probe {
                 server_version: Some("16.4".into()),
                 in_recovery: Some(true),
