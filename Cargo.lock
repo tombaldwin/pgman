@@ -3089,9 +3089,9 @@ dependencies = [
 
 [[package]]
 name = "tb-tui-common"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f082d3b24e3ed0d4dd153bddcf1a7df14078cdad9a662dc40f0ed4ea51700d2"
+checksum = "b4d0e21869b7fc9cd1e8514e7321a49b5132e64f950dc5f5058f35e9dee7198d"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -3105,7 +3105,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

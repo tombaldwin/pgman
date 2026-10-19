@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  FROM users                                              │
-│  W┌ error detail — F2 / esc / q close ──────────────┐    │
+│  W╭[ ◆ error detail ◆ ] F2 / esc / q close ─────────╮    │
 │  O│ ERROR · SQLSTATE 23505                          │    │
-└───│                                                 │────┘
-┌ re│    message: duplicate key value violates uniqu  │────┐
+╰───│                                                 │────╯
+╭[ ◆│    message: duplicate key value violates uniqu  │────╮
 │id │             e constraint "users_email_key"      │    │
 │1  │     detail: Key (email)=(ada@example.com) alre  │0   │
 │2  │             ady exists.                         │0   │
 │3  │      where: SQL statement "INSERT INTO users (  │0   │
-│4  └─────────────────────────────────────────────────┘0   │
+│4  ╰─────────────────────────────────────────────────╯0   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   ⚠ … "users_email_key" · F2 detail

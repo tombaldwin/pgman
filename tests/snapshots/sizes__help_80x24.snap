@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││         PostgreSQL   help │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
-│  WHERE pla┌──────────────────────────────────────────────────────┐           │
+│  WHERE pla╭──────────────────────────────────────────────────────╮           │
 │  ORDER BY │                                                      │           │
-│           │ pgman — keys (? / F1 help · : commands · F2 error    │           │
-└───────────│ detail · F3 notify)                                  │───────────┘
-┌ result · 6│                                                      │───────────┐
-│id  email  │   grid                                               │           │
-│1   ada@exa│     q             quit (esc here is a no-op so a     │           │
-│2   linus@e│                   reflex press doesn't lose the      │           │
-│3   grace@e│                   session)                           │           │
-│4   alan@ex│     ? / F1        toggle this help (both work from   │           │
-│5   edsger@│                   every non-typing mode)             │           │
-│6   katheri│ ↓ 350 more below                                     │           │
-│           │                                                      │           │
-│           └──────────────────────────────────────────────────────┘           │
+╰───────────│ pgman — keys (? / F1 help · : commands · F2 error    │───────────╯
+╭[ ◆ result │ detail · F3 notify)                                  │───────────╮
+│id  email  │                                                      │           │
+│1   ada@exa│   grid                                               │           │
+│2   linus@e│     q             quit (esc here is a no-op so a     │           │
+│3   grace@e│                   reflex press doesn't lose the      │           │
+│4   alan@ex│ ↓ 353 more below                                     │           │
+│5   edsger@│                                                      │           │
+│6   katheri╰──────────────────────────────────────────────────────╯           │
 │                                                                              │
 │                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

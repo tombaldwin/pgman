@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││              PostgreSQL   notifications │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  ORD┌ NOTIFY arrivals — j/k · y yank · c clear · q close ──────────────────────────────────────────────────────┐     │
-│     │  channel                  pid  payload                                                                   │     │
-└─────│  orders_channel          4321  order:9001 shipped                                                        │─────┘
-┌ resu│  cache_invalidate        4322  users                                                                     │─────┐
+│  WHE╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ─────────────────────────────────────────────────╮     │
+│  ORD│  CHANNEL                  PID  PAYLOAD                                                                   │     │
+│     │  orders_channel          4321  order:9001 shipped                                                        │     │
+╰─────│  cache_invalidate        4322  users                                                                     │─────╯
+╭[ ◆ r│                                                                                                          │─────╮
 │id  e│                                                                                                          │     │
 │1   a│                                                                                                          │     │
 │2   l│                                                                                                          │     │
@@ -33,13 +37,9 @@ expression: dump(&buf)
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
-│     │                                                                                                          │     │
-│     │                                                                                                          │     │
-│     │                                                                                                          │     │
-│     │                                                                                                          │     │
-│     └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘     │
+│     ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · q / esc close · F1 help

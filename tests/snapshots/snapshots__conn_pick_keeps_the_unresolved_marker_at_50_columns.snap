@@ -5,15 +5,15 @@ expression: dumped
 ---
  pgman X.X.X │ test  connected · pg 16.0
  1 empty   ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ───────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]─────────────────────╮
 │> (empty — press e to focus)                    │
-└────────────────────────────────────────────────┘
-┌ result ────────────────────────────────────────┐
-│┌ pick a connection · 1/2 ─────────────────────┐│
+╰────────────────────────────────────────────────╯
+╭[ ◆ result ◆ ]──────────────────────────────────╮
+│╭[ ◆ pick a connection · 1/2 ◆ ]───────────────╮│
 ││▶ [Spring]  dataSource… — unresolved app@ord… ││
 ││  [project] prod                     app@pro… ││
 ││                                              ││
 ││  nothing here connects until you press enter ││
-│└──────────────────────────────────────────────┘│
-└────────────────────────────────────────────────┘
+│╰──────────────────────────────────────────────╯│
+╰────────────────────────────────────────────────╯
  RO   ↑↓ / j/k navigate · F1 +4 more

@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│ ┌ schema wizard — y yank suggestion · r refresh · q cl┐  │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
 │ │no findings — schema looks clean                     │  │
 │ │                                                     │  │
-└─│                                                     │──┘
-┌ │                                                     │──┐
+╰─│                                                     │──╯
+╭[│                                                     │──╮
 │i│                                                     │  │
 │1│                                                     │  │
 │2│                                                     │  │
 │3│                                                     │  │
-│4└─────────────────────────────────────────────────────┘  │
+│4╰─────────────────────────────────────────────────────╯  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · F1 +4 more

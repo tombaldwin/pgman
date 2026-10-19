@@ -3,24 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                            PostgreSQL   environments │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ┌ discover — space choose · s save · p scope · q back ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
-└───────│  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2                                                                                                                 │───────┘
-┌ result│                                                                                                                                                                                      │───────┐
-│id  ema│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                                                                                                                 │       │
-│1   ada│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                                                                                                                 │       │
-│2   lin│      staging    already in environment staging                                                                                                                                       │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│  s appends for analytics:                                                                                                                                                            │       │
-│5   eds│  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/config unless you write user@host                                                                               │       │
-│6   kat│  [[environments]]                                                                                                                                                                    │       │
-│       │  name = "analytics"                                                                                                                                                                  │       │
+│  ORDER╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+│       │  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2                                                                                                                 │       │
+╰───────│                                                                                                                                                                                      │───────╯
+╭[ ◆ res│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                                                                                                                 │───────╮
+│id  ema│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                                                                                                                 │       │
+│1   ada│      staging    already in environment staging                                                                                                                                       │       │
+│2   lin│                                                                                                                                                                                      │       │
+│3   gra│  s appends for analytics:                                                                                                                                                            │       │
+│4   ala│  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/config unless you write user@host                                                                               │       │
+│5   eds│  [[environments]]                                                                                                                                                                    │       │
+│6   kat│  name = "analytics"                                                                                                                                                                  │       │
 │       │  source = { kind = "rds", instances = ["analytics"], region = "eu-west-2", account = "123456789012" }                                                                                │       │
 │       │  ssh_tunnel = "bastion.eu-west-2.compute.amazonaws.com"                                                                                                                              │       │
 │       │  sslmode = "require"                                                                                                                                                                 │       │
@@ -43,13 +46,10 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│       ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · d again · q / esc back · F1 help

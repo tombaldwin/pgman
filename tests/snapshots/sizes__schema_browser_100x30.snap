@@ -3,33 +3,33 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││              PostgreSQL   schema │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHE┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
-│  ORD│▼ public  (4)                     schema: public                                      │     │
-│     │  ▼ item  (4 col, 1 cons)                                                             │     │
-└─────│      · id : bigint NOT NULL      4 table(s)                                          │─────┘
-┌ resu│      · order_id : bigint NOT NU…                                                     │─────┐
-│id  e│      · sku : varchar(40) NOT NU… enter to expand — then arrow / j/k into the tables  │     │
-│1   a│      · qty : integer NOT NULL                                                        │     │
-│2   l│      ◆ item_pkey                                                                     │     │
-│3   g│  ▼ order_items  (5 col, 1 cons)                                                      │     │
-│4   a│      · id : bigint NOT NULL                                                          │     │
-│5   e│      · order_id : bigint NOT NU…                                                     │     │
-│6   k│      · sku : varchar(40) NOT NU…                                                     │     │
-│     │      · qty : integer NOT NULL                                                        │     │
+│  FRO╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────╮     │
+│  WHE│▼ public  (4)                     schema: public                                      │     │
+│  ORD│  ▼ item  (4 col, 1 cons)                                                             │     │
+│     │      · id : bigint NOT NULL      4 table(s)                                          │     │
+╰─────│      · order_id : bigint NOT NU…                                                     │─────╯
+╭[ ◆ r│      · sku : varchar(40) NOT NU… enter to expand — then arrow / j/k into the tables  │─────╮
+│id  e│      · qty : integer NOT NULL                                                        │     │
+│1   a│      ◆ item_pkey                                                                     │     │
+│2   l│  ▼ order_items  (5 col, 1 cons)                                                      │     │
+│3   g│      · id : bigint NOT NULL                                                          │     │
+│4   a│      · order_id : bigint NOT NU…                                                     │     │
+│5   e│      · sku : varchar(40) NOT NU…                                                     │     │
+│6   k│      · qty : integer NOT NULL                                                        │     │
 │     │      · price_cents : integer NO…                                                     │     │
 │     │      ◆ order_items_pkey                                                              │     │
 │     │  ▼ orders  (5 col, 1 cons)                                                           │     │
 │     │      · id : bigint NOT NULL                                                          │     │
-│     │      · user_id : bigint NOT NULL                                                     │     │
-│     │      · status : varchar(20) NOT…                                                     │     │
-│     │      · total_cents : integer NO…                                                     │     │
-│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   expanded all

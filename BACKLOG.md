@@ -44,6 +44,16 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   ssh per bastion. Next is (3): `docker` and the other sources as
   needed.
 
+### Shared chrome — follow-ups (2026-10-19)
+- **ebman onto `tui_common::chrome`.** ebman still carries its own copy
+  of the helpers that moved to `tb-tui-common` 0.2.1 (`rounded_block`,
+  `titled_block`, `pill_chain`, `sep`, `kv`, `join_fields_to_fit`,
+  `hints_to_fit`). Switching it over makes the two apps one vocabulary
+  for real.
+- **Results grid headers** keep the query's own column names (case
+  matters in SQL); a bold or underlined style, rather than uppercase,
+  could still set them apart.
+
 ### Environments — after probes (2026-10-19)
 - **Background refresh.** Probes run on `E` and `r` only. A periodic
   refresh on the shared frame clock (house rule: no independent tickers)

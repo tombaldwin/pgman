@@ -3,33 +3,33 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││        PostgreSQL   environments │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  W┌ environments — enter connect · d discover · q close ─────────────────────────────────────┐   │
-│  O│  staging · RDS 123456789012 eu-west-2                                                    │   │
-│   │    database  role     server             status     probe                        engine  │   │
-└───│    shop      primary  staging            available  via replica                  postgre…│───┘
-┌ re│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgre…│───┐
-│id │                                                                                          │   │
-│1  │  qa · RDS 123456789012 eu-west-2                                                         │   │
-│2  │    database  role     server             status     engine                               │   │
-│3  │    shop      direct   qa                 stopped    postgres 16.4                        │   │
-│4  │                                                                                          │   │
-│5  │  local · connections.toml                                                                │   │
-│6  │    database  role     server             status     engine                               │   │
-│   │    shop      direct   shop-local         —          —                                    │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
+│  F╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────╮   │
+│  W│  staging · RDS 123456789012 eu-west-2                                                    │   │
+│  O│    DATABASE  ROLE     SERVER             STATUS     PROBE                        ENGINE  │   │
+│   │    shop      primary  staging            available  via replica                  postgre…│   │
+╰───│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgre…│───╯
+╭[ ◆│                                                                                          │───╮
+│id │  qa · RDS 123456789012 eu-west-2                                                         │   │
+│1  │    DATABASE  ROLE     SERVER             STATUS     ENGINE                               │   │
+│2  │    shop      direct   qa                 stopped    postgres 16.4                        │   │
+│3  │                                                                                          │   │
+│4  │  local · connections.toml                                                                │   │
+│5  │    DATABASE  ROLE     SERVER             STATUS     ENGINE                               │   │
+│6  │    shop      direct   shop-local         —          —                                    │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica…│   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

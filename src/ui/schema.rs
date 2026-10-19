@@ -29,12 +29,11 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_pct(area, 88, 80);
     f.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " schema browser — q / esc close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -328,12 +327,11 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " schema wizard — y yank suggestion · r refresh · q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);

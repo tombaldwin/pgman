@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│  F┌ saved queries — /d  (3/3 shown) · enter load · es┐   │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│  F╭[ ◆ saved queries ◆ ] /d  (3/3 shown) · enter load╮   │
 │  W│  pro-users                     SELECT id, email, │   │
 │  O│  order-by-id                   SELECT * FROM orde│   │
-└───│  daily-revenue                 SELECT date_trunc(│───┘
-┌ re│                                                  │───┐
+╰───│  daily-revenue                 SELECT date_trunc(│───╯
+╭[ ◆│                                                  │───╮
 │id │                                                  │   │
 │1  │  pro-users                                       │   │
 │2  │  SELECT id, email, created_at                    │   │
 │3  │  FROM users                                      │   │
-│4  └──────────────────────────────────────────────────┘   │
+│4  ╰──────────────────────────────────────────────────╯   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   filter saved queries · type to narrow

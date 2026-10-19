@@ -1202,3 +1202,33 @@ fn the_header_names_the_build_and_gives_way_before_the_connection_does() {
     );
     assert_eq!(header_build(10, 40), "", "never at the rest's expense");
 }
+
+#[test]
+fn hint_keys_are_the_first_word_and_their_alternatives() {
+    assert_eq!(hint_key("j/k navigate"), Some(("j/k", " navigate")));
+    assert_eq!(hint_key("esc / q close"), Some(("esc / q", " close")));
+    assert_eq!(hint_key("q / esc close"), Some(("q / esc", " close")));
+    assert_eq!(hint_key("ctrl-t new"), Some(("ctrl-t", " new")));
+    assert_eq!(hint_key("F1 +3 more"), Some(("F1", " +3 more")));
+    assert_eq!(hint_key("connecting…"), None);
+    assert_eq!(hint_key("esc / ?"), None, "alternatives with no action");
+}
+
+#[test]
+fn the_key_strip_colours_keys_and_keeps_its_text() {
+    let theme = Theme::default();
+    let fitted = "j/k navigate · esc / q close · connecting…";
+    let spans = hint_spans(fitted, &theme);
+    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    assert_eq!(text, fitted, "same text, so the fitted width holds");
+    let key = |s: &str| {
+        spans
+            .iter()
+            .find(|sp| sp.content == s)
+            .map(|sp| (sp.style.fg, sp.style.add_modifier.contains(Modifier::BOLD)))
+    };
+    assert_eq!(key("j/k"), Some((Some(theme.accent), true)));
+    assert_eq!(key("esc / q"), Some((Some(theme.accent), true)));
+    assert_eq!(key(" navigate"), Some((Some(theme.muted), false)));
+    assert_eq!(key("connecting…"), Some((Some(theme.muted), false)));
+}

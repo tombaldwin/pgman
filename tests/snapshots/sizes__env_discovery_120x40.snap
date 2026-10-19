@@ -3,24 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││               PostgreSQL   environments │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  OR┌ discover — space choose · s save · p scope · q back ───────────────────────────────────────────────────────┐    │
-│    │  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2                                       │    │
-└────│                                                                                                            │────┘
-┌ res│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                                       │────┐
-│id  │  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                                       │    │
-│1   │      staging    already in environment staging                                                             │    │
-│2   │                                                                                                            │    │
-│3   │  s appends for analytics:                                                                                  │    │
-│4   │  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/config unless you write user@host     │    │
-│5   │  [[environments]]                                                                                          │    │
-│6   │  name = "analytics"                                                                                        │    │
-│    │  source = { kind = "rds", instances = ["analytics"], region = "eu-west-2", account = "123456789012" }      │    │
+│  WH╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ──────────────────────────────────────────────────╮    │
+│  OR│  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2                                       │    │
+│    │                                                                                                            │    │
+╰────│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                                       │────╯
+╭[ ◆ │  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                                       │────╮
+│id  │      staging    already in environment staging                                                             │    │
+│1   │                                                                                                            │    │
+│2   │  s appends for analytics:                                                                                  │    │
+│3   │  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/config unless you write user@host     │    │
+│4   │  [[environments]]                                                                                          │    │
+│5   │  name = "analytics"                                                                                        │    │
+│6   │  source = { kind = "rds", instances = ["analytics"], region = "eu-west-2", account = "123456789012" }      │    │
 │    │  ssh_tunnel = "bastion.eu-west-2.compute.amazonaws.com"                                                    │    │
 │    │  sslmode = "require"                                                                                       │    │
 │    │                                                                                                            │    │
@@ -34,12 +37,9 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · d again · q / esc back · F1 help

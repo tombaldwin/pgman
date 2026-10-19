@@ -3,33 +3,33 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││               PostgreSQL   about │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DESC;                                                                       │
-│                                                                                                  │
-└─────────────────────────┌ about ───────────────────────────────────────┐─────────────────────────┘
-┌ result · 6 row(s) ──────│                                              │─────────────────────────┐
-│id  email                │                                              │                         │
-│1   ada@example.com      │              pgman X.X.X · beta              │                         │
-│2   linus@example.com    │       installed via a standalone binary      │                         │
-│3   grace@example.com    │   k9s-style Postgres TUI for Java/AWS shops  │                         │
-│4   alan@example.com     │            server: pg 16.2 (demo)            │                         │
-│5   edsger@example.com   │                                              │                         │
-│6   katherine@example.com│       by Tom Baldwin / Polymorphism Ltd      │                         │
-│                         │          license: MIT OR Apache-2.0          │                         │
+│  ORDER BY created_at DES╭[ ◆ about ◆ ]─────────────────────────────────╮                         │
 │                         │                                              │                         │
+╰─────────────────────────│                                              │─────────────────────────╯
+╭[ ◆ result · 6 row(s) ◆ ]│              pgman X.X.X · beta              │─────────────────────────╮
+│id  email                │       installed via a standalone binary      │                         │
+│1   ada@example.com      │   k9s-style Postgres TUI for Java/AWS shops  │                         │
+│2   linus@example.com    │            server: pg 16.2 (demo)            │                         │
+│3   grace@example.com    │                                              │                         │
+│4   alan@example.com     │       by Tom Baldwin / Polymorphism Ltd      │                         │
+│5   edsger@example.com   │          license: MIT OR Apache-2.0          │                         │
+│6   katherine@example.com│                                              │                         │
 │                         │           esc / enter / A to close           │                         │
 │                         │                                              │                         │
-│                         └──────────────────────────────────────────────┘                         │
+│                         ╰──────────────────────────────────────────────╯                         │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / enter / A close · F1 help

@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
 │  ORDER BY created_at DESC;                               │
-└──────────────────────────────────────────────────────────┘
-┌ result · 6 row(s) ───────────────────────────────────────┐
-│┌ pick a connection · 1/2 ───────────────────────────────┐│
+╰──────────────────────────────────────────────────────────╯
+╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────╮
+│╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────╮│
 ││▶ [project]  prod     app@prod-db:5432/main  sslmode=d… ││
 ││  [IntelliJ] staging  app@staging-db:5432/main  sslmod… ││
 ││                                                        ││
 ││  nothing here connects until you press enter           ││
-│└────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────┘
+│╰────────────────────────────────────────────────────────╯│
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   ↑↓ / j/k navigate · F1 +4 more

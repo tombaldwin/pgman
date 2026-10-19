@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││            PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  W┌ JDBC tap — 8 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · … ───┐   │
-│  O│   calls    err        p50        p95        p99  fingerprint · last caller               │   │
-│   │       6      0      450µs      495µs      495µs  select * from order… · OrderService.load│   │
-└───│       1      0      1.8ms      1.8ms      1.8ms  select id, user_id,… · OrderService.list│───┘
-┌ re│       1      0      310µs      310µs      310µs  select id, email, p… · UserController.sh│───┐
+│  F╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · ╮   │
+│  W│   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CALLER               │   │
+│  O│       6      0      450µs      495µs      495µs  select * from order… · OrderService.load│   │
+│   │       1      0      1.8ms      1.8ms      1.8ms  select id, user_id,… · OrderService.list│   │
+╰───│       1      0      310µs      310µs      310µs  select id, email, p… · UserController.sh│───╯
+╭[ ◆│                                                                                          │───╮
 │id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
@@ -24,12 +28,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

@@ -3,24 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                  PostgreSQL   schema │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│           ┌ schema browser — q / esc close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐           │
-└───────────│▼ public  (4)                                                        schema: public                                                                                           │───────────┘
-┌ result · 6│  ▼ item  (4 col, 1 cons)                                                                                                                                                     │───────────┐
-│id  email  │      · id : bigint NOT NULL                                         4 table(s)                                                                                               │           │
-│1   ada@exa│      · order_id : bigint NOT NULL                                                                                                                                            │           │
-│2   linus@e│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
-│3   grace@e│      · qty : integer NOT NULL                                                                                                                                                │           │
-│4   alan@ex│      ◆ item_pkey                                                                                                                                                             │           │
-│5   edsger@│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
-│6   katheri│      · id : bigint NOT NULL                                                                                                                                                  │           │
-│           │      · order_id : bigint NOT NULL                                                                                                                                            │           │
+│  ORDER BY ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
+│           │▼ public  (4)                                                        schema: public                                                                                           │           │
+╰───────────│  ▼ item  (4 col, 1 cons)                                                                                                                                                     │───────────╯
+╭[ ◆ result │      · id : bigint NOT NULL                                         4 table(s)                                                                                               │───────────╮
+│id  email  │      · order_id : bigint NOT NULL                                                                                                                                            │           │
+│1   ada@exa│      · sku : varchar(40) NOT NULL                                   enter to expand — then arrow / j/k into the tables                                                       │           │
+│2   linus@e│      · qty : integer NOT NULL                                                                                                                                                │           │
+│3   grace@e│      ◆ item_pkey                                                                                                                                                             │           │
+│4   alan@ex│  ▼ order_items  (5 col, 1 cons)                                                                                                                                              │           │
+│5   edsger@│      · id : bigint NOT NULL                                                                                                                                                  │           │
+│6   katheri│      · order_id : bigint NOT NULL                                                                                                                                            │           │
 │           │      · sku : varchar(40) NOT NULL                                                                                                                                            │           │
 │           │      · qty : integer NOT NULL                                                                                                                                                │           │
 │           │      · price_cents : integer NOT NULL                                                                                                                                        │           │
@@ -43,13 +46,10 @@ expression: dump(&buf)
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘           │
+│           ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯           │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   expanded all

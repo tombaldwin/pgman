@@ -3,16 +3,16 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││      PostgreSQL   results │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 empty                                 ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                  │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ start ───────────────────────────────────────────────────────────────────────┐
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────╮
 │ connected to shop on localhost:5432 · pg 16.2 · RO                           │
 │ databases  受 注 管 理 デ ー タ ベ ー ス  812 MB · +2 more                             │
 │                                                                              │
@@ -25,5 +25,5 @@ expression: dump(&buf)
 │ recent                                                                       │
 │   SELECT * FROM users WHERE id = 42;                                         │
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                      │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · F1 +11 more

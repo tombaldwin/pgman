@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││   PostgreSQL   save query │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ result · 6 row(s) ───────────────────────────────────────────────────────────┐
-│id  ┌ save query · enter persist · esc cancel ───────────────────────────┐    │
-│1   │name:                                                               │    │
-│2   │select-id-email-plan-created_at                                     │    │
-│3   │                                                                    │    │
-│4   └────────────────────────────────────────────────────────────────────┘    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭[ ◆ ╭[ ◆ save query · enter persist · esc cancel ◆ ]─────────────────────╮────╮
+│id  │name:                                                               │    │
+│1   │select-id-email-plan-created_at                                     │    │
+│2   │                                                                    │    │
+│3   ╰────────────────────────────────────────────────────────────────────╯    │
+│4   alan@example.com       team  2026-02-17 19:05:00+00                       │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00                       │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
 │                                                                              │
 │                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   save query · type a name · enter persist · esc cancel

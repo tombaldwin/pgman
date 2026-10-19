@@ -9,11 +9,13 @@ use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
+mod chrome;
 mod editor;
+mod header;
 mod landing;
 mod panels;
 mod results;
@@ -48,7 +50,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // line) the row is worth more to the panes — unless a second tab
     // exists, when the operator needs to see which one they are on.
     let connected = matches!(app.conn_state, ConnState::Connected { .. });
-    let cramped = area.height.saturating_sub(2) < CRAMPED_BODY;
+    let header_h = header::header_rows(area.height);
+    let cramped = area.height.saturating_sub(header_h + 1) < CRAMPED_BODY;
     let tabbar_height: u16 = if app.tabs.len() > 1 || (connected && !cramped) {
         1
     } else {
@@ -56,7 +59,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     };
     // Everything between the header row (and tab bar) and the footer
     // row is the editor's and the grid's to share — see `pane_split`.
-    let body_height = area.height.saturating_sub(2 + tabbar_height);
+    let body_height = area.height.saturating_sub(header_h + 1 + tabbar_height);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let zoom = app.zoomed.then(|| zoomed_pane(app));
     let (editor_height, results_height) =
@@ -64,14 +67,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // `Alt-=` / `Alt--` clamp against the body they were pressed over.
     app.body_rows = body_height;
     let chunks = Layout::vertical([
-        Constraint::Length(1),              // header
+        Constraint::Length(header_h),       // header
         Constraint::Length(tabbar_height),  // optional tab bar
         Constraint::Length(editor_height),  // editor pane (border + lines + border)
         Constraint::Length(results_height), // results grid
         Constraint::Length(1),              // footer
     ])
     .split(area);
-    draw_header(f, chunks[0], app);
+    if header_h > 1 {
+        header::draw_tall_header(f, chunks[0], app);
+    } else {
+        draw_header(f, chunks[0], app);
+    }
     if tabbar_height > 0 {
         draw_tab_bar(f, chunks[1], app);
     }
@@ -106,7 +113,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // computed once, so no overlay can drift back out of it. The tab
     // bar is chrome like the header: an overlay centred over it
     // painted `┌ about ┐` across the tab labels on a short terminal.
-    let area = body_area(area, tabbar_height);
+    let area = body_area(area, header_h, tabbar_height);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -875,7 +882,8 @@ fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
         return;
     }
     let room = usize::from(last_x - start + 1);
-    buf.set_stringn(start, y, suffix, room, style);
+    // One space between the title and the suffix.
+    buf.set_stringn(start, y, format!(" {suffix}"), room, style);
 }
 
 /// Fit a ` · `-joined hint string into `width` columns without ever
@@ -888,6 +896,42 @@ fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
 /// string is never wider than `width` — if even the first item plus the
 /// marker can't fit, the marker alone is returned; if that doesn't fit
 /// either, an empty string is returned.
+/// The key of a `key action` hint: its first word, plus any `/ alt`
+/// alternatives (`esc / q close`). `None` for a hint that is all prose
+/// (`connecting…`). Pure.
+pub(crate) fn hint_key(hint: &str) -> Option<(&str, &str)> {
+    let mut end = hint.find(' ')?;
+    while let Some(rest) = hint[end..].strip_prefix(" / ") {
+        end += 3 + rest.find(' ').unwrap_or(rest.len());
+    }
+    let (key, action) = hint.split_at(end);
+    (!action.trim().is_empty()).then_some((key, action))
+}
+
+/// A fitted ` · `-joined hint string as ebman shows its key strip: each
+/// key bold in the accent colour, its action muted. Same text, so the
+/// width `fit_hints` measured still holds.
+pub(crate) fn hint_spans(fitted: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let key_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(theme.muted);
+    let mut spans = Vec::new();
+    for (i, hint) in fitted.split(" · ").enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.border_idle)));
+        }
+        match hint_key(hint) {
+            Some((key, action)) => {
+                spans.push(Span::styled(key.to_string(), key_style));
+                spans.push(Span::styled(action.to_string(), muted));
+            }
+            None => spans.push(Span::styled(hint.to_string(), muted)),
+        }
+    }
+    spans
+}
+
 pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     const SEP: &str = " · ";
     if hints.is_empty() || display_width(hints) <= width {
@@ -1429,10 +1473,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .saturating_sub(badge_width)
             .saturating_sub(LEADING_SPACE) as usize;
         let fitted = fit_hints(hints, available);
-        Line::from(Span::styled(
-            format!(" {fitted}"),
-            Style::default().fg(theme.muted),
-        ))
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(hint_spans(&fitted, theme));
+        Line::from(spans)
     };
     // Prepend persistent state badges: `[RO]` when read-only is in
     // effect (per safety profile), `[TX]` when an auto-tx is open.
@@ -2626,8 +2669,8 @@ pub(crate) fn short_server_version(v: &str) -> &str {
 /// terminal, so a popup can never paint over the connection state or
 /// the tab labels above, or the close hint below. Degrades to the
 /// input rect when there aren't enough rows to give up.
-fn body_area(area: Rect, tabbar: u16) -> Rect {
-    let above = 1 + tabbar;
+fn body_area(area: Rect, header: u16, tabbar: u16) -> Rect {
+    let above = header + tabbar;
     if area.height < above + 2 {
         return area;
     }
@@ -2698,13 +2741,9 @@ fn scroll_offset(cursor: usize, visible: usize) -> usize {
 
 /// A titled, idle-bordered block.
 fn bordered(theme: &Theme, title: &str) -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
+    crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_idle))
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(theme.title),
-        ))
+        .title(crate::ui::chrome::panel_title(theme, &format!(" {title} ")))
 }
 
 #[cfg(test)]

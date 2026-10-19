@@ -3,33 +3,33 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││                PostgreSQL   help │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY cre┌────────────────────────────────────────────────────────────────────┐              │
-│              │                                                                    │              │
-└──────────────│ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │──────────────┘
-┌ result · 6 ro│ notify)                                                            │──────────────┐
-│id  email     │                                                                    │              │
-│1   ada@exampl│   grid                                                             │              │
-│2   linus@exam│     q             quit (esc here is a no-op so a reflex press      │              │
-│3   grace@exam│                   doesn't lose the session)                        │              │
-│4   alan@examp│     ? / F1        toggle this help (both work from every           │              │
-│5   edsger@exa│                   non-typing mode)                                 │              │
-│6   katherine@│     :             command bar — see the ': commands' section       │              │
-│              │     A             about pgman (version, credits)                   │              │
+│  WHERE plan =╭────────────────────────────────────────────────────────────────────╮              │
+│  ORDER BY cre│                                                                    │              │
+│              │ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │              │
+╰──────────────│ notify)                                                            │──────────────╯
+╭[ ◆ result · 6│                                                                    │──────────────╮
+│id  email     │   grid                                                             │              │
+│1   ada@exampl│     q             quit (esc here is a no-op so a reflex press      │              │
+│2   linus@exam│                   doesn't lose the session)                        │              │
+│3   grace@exam│     ? / F1        toggle this help (both work from every           │              │
+│4   alan@examp│                   non-typing mode)                                 │              │
+│5   edsger@exa│     :             command bar — see the ': commands' section       │              │
+│6   katherine@│     A             about pgman (version, credits)                   │              │
 │              │     e / i / tab   focus editor                                     │              │
-│              │     c             change connection (opens the picker mid-session) │              │
-│              │     S             schema browser (psql `\d` equivalent)            │              │
-│              │ ↓ 277 more below                                                   │              │
+│              │ ↓ 279 more below                                                   │              │
 │              │                                                                    │              │
-│              └────────────────────────────────────────────────────────────────────┘              │
+│              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

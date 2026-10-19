@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││            PostgreSQL   sessions │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  W┌ active sessions — pg_stat_activity — r refresh · q close ────────────────────────────────┐   │
-│  O│     pid  user/app              state         age(s)   blocked  query                     │   │
-│   │    1234  alice/psql            active          12.5      5678  UPDATE accounts SET balanc│   │
-└───│    5678  bob/pgman             idle in tx     300.0         -  BEGIN                     │───┘
-┌ re│                                                                                          │───┐
+│  F╭[ ◆ active sessions ◆ ] pg_stat_activity — r refresh · q close ───────────────────────────╮   │
+│  W│     PID  USER/APP              STATE         AGE(S)   BLOCKED  QUERY                     │   │
+│  O│    1234  alice/psql            active          12.5      5678  UPDATE accounts SET balanc│   │
+│   │    5678  bob/pgman             idle in tx     300.0         -  BEGIN                     │   │
+╰───│                                                                                          │───╯
+╭[ ◆│                                                                                          │───╮
 │id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
@@ -24,12 +28,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · K terminate · r refresh · R auto-refresh · F1 +2 more

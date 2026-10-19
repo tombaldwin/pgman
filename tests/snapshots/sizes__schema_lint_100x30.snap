@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││         PostgreSQL   schema lint │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  W┌ schema wizard — y yank suggestion · r refresh · q close ─────────────────────────────────┐   │
-│  O│no findings — schema looks clean                                                          │   │
+│  F╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────╮   │
+│  W│no findings — schema looks clean                                                          │   │
+│  O│                                                                                          │   │
 │   │                                                                                          │   │
-└───│                                                                                          │───┘
-┌ re│                                                                                          │───┐
+╰───│                                                                                          │───╯
+╭[ ◆│                                                                                          │───╮
 │id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
@@ -24,12 +28,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help

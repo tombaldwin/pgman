@@ -20,6 +20,10 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 
+/// Rows the boxed header takes on a terminal 24 or more rows tall
+/// (`ui::header::TALL_HEADER_ROWS`).
+const TALL_HEADER: u16 = 5;
+
 fn render(app: &mut App, w: u16, h: u16) -> Buffer {
     let backend = TestBackend::new(w, h);
     let mut term = Terminal::new(backend).expect("terminal");
@@ -307,7 +311,7 @@ fn tap_monitor_pools_view_renders_pool_rows() {
     let buf = render(&mut a, 140, 30);
     let rendered = dump(&buf);
     assert!(
-        rendered.contains("peak") && rendered.contains("conns"),
+        rendered.contains("PEAK") && rendered.contains("CONNS"),
         "expected pool column headers; full render:\n{rendered}"
     );
     assert!(
@@ -756,14 +760,14 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     let lines: Vec<&str> = rendered.lines().collect();
     let panel_top = lines
         .iter()
-        .position(|l| l.starts_with("┌ pgman"))
+        .position(|l| l.starts_with("╭[ ◆ pgman"))
         .expect("results panel border");
     assert!(
         !lines[panel_top].contains("pick a connection"),
         "picker landed on the panel's top border row:\n{rendered}"
     );
     assert!(
-        lines[panel_top + 1].starts_with("│┌ pick a connection"),
+        lines[panel_top + 1].starts_with("│╭[ ◆ pick a connection"),
         "picker should float one row/column inside the panel:\n{rendered}"
     );
 
@@ -771,7 +775,7 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     // the longest target doesn't read as jammed against the frame.
     let right_border = lines[panel_top + 1]
         .chars()
-        .position(|c| c == '┐')
+        .position(|c| c == '╮')
         .expect("popup right border");
     for line in &lines[panel_top + 2..] {
         let chars: Vec<char> = line.chars().collect();
@@ -811,7 +815,7 @@ fn sessions_panel_left_aligns_text_columns_and_right_aligns_numbers() {
     let lines: Vec<&str> = rendered.lines().collect();
     let header = lines
         .iter()
-        .find(|l| l.contains("user/app"))
+        .find(|l| l.contains("USER/APP"))
         .expect("sessions header");
     let row = lines
         .iter()
@@ -824,23 +828,23 @@ fn sessions_panel_left_aligns_text_columns_and_right_aligns_numbers() {
     };
     // Text columns: value starts in the same column as its label.
     assert_eq!(
-        col_of(header, "user/app"),
+        col_of(header, "USER/APP"),
         col_of(row, "alice/psql"),
         "user/app column is not left-aligned:\n{rendered}"
     );
     assert_eq!(
-        col_of(header, "state"),
+        col_of(header, "STATE"),
         col_of(row, "idle in tx"),
         "state column is not left-aligned:\n{rendered}"
     );
     // Numbers: value ENDS in the same column as its label.
     assert_eq!(
-        col_of(header, "pid") + "pid".chars().count(),
+        col_of(header, "PID") + "pid".chars().count(),
         col_of(row, "1234") + "1234".chars().count(),
         "pid column is not right-aligned:\n{rendered}"
     );
     assert_eq!(
-        col_of(header, "age(s)") + "age(s)".chars().count(),
+        col_of(header, "AGE(S)") + "age(s)".chars().count(),
         col_of(row, "12.5") + "12.5".chars().count(),
         "age(s) column is not right-aligned:\n{rendered}"
     );
@@ -1060,7 +1064,7 @@ fn about_card_carries_the_full_server_version() {
         "About card should carry the full server version:\n{rendered}"
     );
     // And the header above it shows only the release number.
-    let header = rendered.lines().next().unwrap();
+    let header = rendered.lines().take(5).collect::<Vec<_>>().join("\n");
     assert!(header.contains("pg 16.15"), "{header}");
     assert!(!header.contains("Debian"), "{header}");
 }
@@ -1218,7 +1222,7 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
     // onto an unpadded continuation row. Rendered tall enough that the
     // card keeps its logs row under the five-line editor — at 30
     // columns every other row wraps, and the card does not shrink.
-    let text = dump(&render(&mut a, 30, 30));
+    let text = dump(&render(&mut a, 30, 34));
     let logs_row = text.lines().find(|l| l.contains("logs")).unwrap();
     assert!(logs_row.contains('…'), "{logs_row:?}");
     // The hint knows no password was supplied.
@@ -1317,14 +1321,14 @@ fn alt_z_twice_restores_the_exact_prior_split() {
     let before = render(&mut a, 80, 24);
     let body_before: Vec<String> = (0..23).map(|y| row_text(&before, y)).collect();
     assert!(
-        row_text(&before, 11).starts_with('└'),
+        row_text(&before, 11).starts_with('╰'),
         "8 lines + 2 borders under the header and tab bar: bottom border on row 11:\n{}",
         dump(&before)
     );
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
     let zoomed = render(&mut a, 80, 24);
     assert!(
-        row_text(&zoomed, 22).starts_with('└'),
+        row_text(&zoomed, 22).starts_with('╰'),
         "zoomed: the editor's bottom border is on the footer:\n{}",
         dump(&zoomed)
     );
@@ -1426,7 +1430,7 @@ fn connected_app() -> App {
 fn tab_bar_is_visible_with_a_single_tab_once_connected() {
     let mut a = connected_app();
     let buf = render(&mut a, 80, 24);
-    let bar = row_text(&buf, 1);
+    let bar = row_text(&buf, TALL_HEADER);
     assert!(
         bar.starts_with(" 1 empty "),
         "row 1 is the tab bar: {bar:?}"
@@ -1441,7 +1445,7 @@ fn tab_bar_is_visible_with_a_single_tab_once_connected() {
         "never wider than the terminal: {bar:?}"
     );
     assert!(
-        row_text(&buf, 2).starts_with('┌'),
+        row_text(&buf, TALL_HEADER + 1).starts_with('╭'),
         "the editor starts under the bar:\n{}",
         dump(&buf)
     );
@@ -1455,7 +1459,7 @@ fn tab_bar_is_hidden_before_a_connection() {
     a.conn_state = ConnState::Failed("refused".into());
     let buf = render(&mut a, 80, 24);
     assert!(
-        row_text(&buf, 1).starts_with('┌'),
+        row_text(&buf, TALL_HEADER).starts_with('╭'),
         "no tab bar on the failure card:\n{}",
         dump(&buf)
     );
@@ -1476,23 +1480,23 @@ fn tab_bar_labels_update_live_and_the_active_tab_is_accented() {
         a.on_key(KeyEvent::from(KeyCode::Char(c)));
     }
     let buf = render(&mut a, 80, 24);
-    let bar = row_text(&buf, 1);
+    let bar = row_text(&buf, TALL_HEADER);
     assert!(
         bar.contains(" 1 SELECT 1 ") && bar.contains(" 2 select count(*) f… "),
         "both tabs labelled, the long one cut at 18 columns: {bar:?}"
     );
     let theme = Theme::default();
-    let (x1, _) = find_cell(&buf, "1 SELECT 1").expect("tab 1 on the bar");
+    let (x1, y) = find_cell(&buf, "1 SELECT 1").expect("tab 1 on the bar");
     let (x2, _) = find_cell(&buf, "2 select").expect("tab 2 on the bar");
-    assert_eq!(buf[(x1, 1)].fg, theme.muted, "tab 1 is not active: muted");
-    assert_eq!(buf[(x2, 1)].fg, theme.accent, "tab 2 is active: accent");
+    assert_eq!(buf[(x1, y)].fg, theme.muted, "tab 1 is not active: muted");
+    assert_eq!(buf[(x2, y)].fg, theme.accent, "tab 2 is active: accent");
     // Back to tab 1 (alt-p works from the editor; alt-1 does not):
     // the accent moves with it.
     a.on_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::ALT));
     assert_eq!(a.active_tab, 0);
     let buf = render(&mut a, 80, 24);
-    assert_eq!(buf[(x1, 1)].fg, theme.accent);
-    assert_eq!(buf[(x2, 1)].fg, theme.muted);
+    assert_eq!(buf[(x1, y)].fg, theme.accent);
+    assert_eq!(buf[(x2, y)].fg, theme.muted);
 }
 
 /// A cramped terminal (body under 12 rows) gives the bar's row back
@@ -1503,7 +1507,7 @@ fn tab_bar_yields_its_row_on_a_cramped_terminal_unless_there_are_two_tabs() {
     let mut a = connected_app();
     let buf = render(&mut a, 60, 13);
     assert!(
-        row_text(&buf, 1).starts_with('┌'),
+        row_text(&buf, 1).starts_with('╭'),
         "60x13 is an 11-row body: no bar:\n{}",
         dump(&buf)
     );
