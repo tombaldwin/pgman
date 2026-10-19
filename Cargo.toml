@@ -36,7 +36,7 @@ include = [
 [dependencies]
 ratatui = "0.30"
 crossterm = { version = "0.29", features = ["event-stream"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "io-std", "fs"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.14"
 rustls = "0.23"

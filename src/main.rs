@@ -15,7 +15,8 @@ use std::io::IsTerminal;
 #[command(
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
-    about = "k9s-style Postgres TUI for Java/AWS shops (public beta)"
+    about = "k9s-style Postgres TUI for Java/AWS shops (public beta)",
+    after_help = "MCP server: `pgman mcp serve` runs a read-only stdio MCP server; see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -106,6 +107,19 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // `pgman mcp serve` is a sub-command the flat flag set can't express
+    // (clap would read `mcp` as the positional DSN). stdout belongs to
+    // the protocol, so diagnostics go to the rolling log file.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.get(1).map(String::as_str) == Some("mcp") {
+        init_logging();
+        if let Err(usage) = pgman::mcp::run(&argv[2..]).await {
+            eprintln!("{usage}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
+
     let cli = Cli::parse();
 
     // `--upgrade` is the only flag that doesn't enter the TUI. Handle it

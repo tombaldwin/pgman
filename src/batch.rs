@@ -517,7 +517,7 @@ async fn run_statement_typed_json(
 /// [`conn::TypedRows`] into a JSON array of objects, or (for a
 /// non-row-returning statement) the same one-row "status" shape the
 /// `Grid` path uses.
-fn render_typed_json(typed: &conn::TypedRows) -> String {
+pub(crate) fn render_typed_json(typed: &conn::TypedRows) -> String {
     if let Some(affected) = typed.affected {
         let mut out = String::from("[{");
         push_json_string(&mut out, "status");

@@ -16,6 +16,7 @@ pub mod discover;
 // sites and tests keep working untouched.
 pub use tui_common::font_probe;
 pub mod grid;
+pub mod mcp;
 pub mod project;
 pub mod query;
 /// Release metadata derived from `CHANGELOG.md` at build time.
