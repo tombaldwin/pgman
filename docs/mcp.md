@@ -41,8 +41,9 @@ tool cannot see.
 | `~/.config/pgman/connections.toml` (yours) | Yes, including ssh tunnels. This is where anything that tunnels or carries a secret belongs. |
 | `.pgman/pgman.toml`, Spring `application*`, IntelliJ data sources (the checkout's) | Only when the server runs with `--project-connections`, the same deliberate act as batch's `--discovered`. A discovered connection that tunnels is refused even then. |
 
-`connections.toml` uses the same `[[connections]]` shape as the project
-file:
+`connections.toml` uses the project file's `[[connections]]` shape,
+plus fields only your own file may carry: `secret`, `aws_region`,
+`aws_profile`, `aws_account` and `role`.
 
 ```toml
 [[connections]]
@@ -50,26 +51,60 @@ name = "ledger-local"
 url = "postgres://ledger@localhost:5432/ledger"
 password_env = "LEDGER_LOCAL_PASSWORD"   # read from the server's environment
 
+# Reads go to the replica: a write there is impossible, not just refused.
 [[connections]]
-name = "demo-replica"
-url = "postgres://readonly@demo-read-only-replica.example:5432/ledger?sslmode=require"
+name = "demo"
+url = "postgres://demo-read-only-replica.example.rds.amazonaws.com:5432/ledger?sslmode=require"
 ssh_tunnel = "ec2-user@jumphost.example"
-password_env = "LEDGER_DEMO_PASSWORD"
+secret = "demo/database/ledger_replica/credentials"
+aws_region = "us-west-1"
+aws_account = "210987654321"   # checked before the secret is read
+role = "replica"
+
+# The primary, for the pre-flight lock check only.
+[[connections]]
+name = "demo-primary"
+url = "postgres://demo.example.rds.amazonaws.com:5432/ledger?sslmode=require"
+ssh_tunnel = "ec2-user@jumphost.example"
+secret = "demo/database/ledger/credentials"
+aws_region = "us-west-1"
+aws_account = "210987654321"
+role = "primary"
 ```
 
 `${…}` placeholders are not resolved in `connections.toml`. A connection
-that has one is refused; name the password's variable with
-`password_env` instead.
+that has one is refused; use `password_env` or `secret` instead.
 
 A tunnel runs the system `ssh` with `BatchMode=yes`, so the key must
 work without a prompt: an `IdentityFile` in `~/.ssh/config` or a key
-loaded with `ssh-add`.
+loaded with `ssh-add`. Use `sslmode=require` through a tunnel:
+`verify-full` checks the certificate against the tunnel's local end.
 
-**Passwords.** `password_env` is read from the MCP server's environment.
+### Secrets
+
+`secret` names an AWS Secrets Manager secret, never its value. At each
+connect pgman runs the system `aws` CLI, with the ambient profile
+unless `aws_profile` names one. When `aws_account` is set, it first checks
+`aws sts get-caller-identity`. A wrong account then fails before the
+secret is read, instead of reading a same-named secret elsewhere. The
+secret must be a JSON object with `password` and optionally `username`
+(or `user`), which is the RDS shape. Its `username` replaces the url's
+user. The value goes no further than the connection: it never appears in
+a tool result, `doctor`, or the log. A connection with a `secret` and
+also another password (`password_env`, or one in the url) is refused.
+`doctor` says whether `aws` is on the server's `PATH`.
+
+`password_env` is read from the MCP server's environment.
 `claude mcp add -e VAR=value` stores that value in plain text in the
-client's config, so don't put a production password there. A
-Secrets Manager resolver is planned, so a connection can name a secret
-instead.
+client's config, so use `secret` for anything that matters.
+
+### Roles
+
+| `role` | Tools |
+| --- | --- |
+| *(none)* | All. For a local or single-server database. |
+| `replica` | All. Where reads should go. |
+| `primary` | `sessions_locks` only. A replica's sessions and locks are its own, so a pre-flight before a migration needs the primary's view: long transactions there are what block a migration. Everything else goes to the replica. The future two-phase patch apply will also use the primary. |
 
 ## Limits of this version
 
