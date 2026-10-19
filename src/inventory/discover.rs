@@ -542,6 +542,10 @@ pub fn render(p: &Proposal) -> String {
         if let Some(dir) = &v.patches {
             t.push_str(&format!(", patches = {}", q(dir)));
         }
+        if !v.databases.is_empty() {
+            let dbs: Vec<String> = v.databases.iter().map(|d| q(d)).collect();
+            t.push_str(&format!(", databases = [{}]", dbs.join(", ")));
+        }
         out.push_str(&format!("version_table = {{ {t} }}\n"));
     }
     if !e.secrets.is_empty() {
@@ -823,6 +827,7 @@ pub fn project_version_table(
             table: p.table,
             column: p.column,
             patches: Some(dir.display().to_string()),
+            databases: Vec::new(),
         },
     ))
 }
@@ -1362,6 +1367,9 @@ mod tests {
         // What a save writes loads back as proposed, probe included.
         let mut p = demo.clone();
         p.env.probe = true;
+        if let Some(v) = p.env.version_table.as_mut() {
+            v.databases = vec!["ledger".into()];
+        }
         let text = append("", &[&p]).unwrap();
         assert_eq!(parse_config(&text).unwrap()[0], p.env);
 

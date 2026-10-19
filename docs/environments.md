@@ -177,6 +177,9 @@ name = "demo"
 # … source, ssh_tunnel, secrets as above …
 probe = true
 version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }
+# Only some databases have the table? Name them; the others show no
+# patch level rather than an error:
+#   version_table = { …, databases = ["ledger"] }
 ```
 
 Every refresh (`E`, `r`, and every 30 s after `R`) then reads, from each database (and so does

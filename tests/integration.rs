@@ -2101,7 +2101,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         )
         .unwrap();
     }
-    let target = |table: &str| pgman::inventory::EnvReport {
+    let target = |table: &str, databases: &[&str]| pgman::inventory::EnvReport {
         name: "local".into(),
         source: "test".into(),
         targets: vec![pgman::inventory::Target {
@@ -2127,13 +2127,14 @@ fn environment_probe_reads_version_patch_level_and_pending() {
                 table: table.into(),
                 column: "id".into(),
                 patches: Some(dir.display().to_string()),
+                databases: databases.iter().map(|d| d.to_string()).collect(),
             }),
         }),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let probe = |table: &str| {
+    let probe = |table: &str, databases: &[&str]| {
         rt.block_on(pgman::inventory::probe::run(
-            target(table),
+            target(table, databases),
             std::sync::Arc::new(|_| panic!("no secret configured")),
         ))
         .remove(0)
@@ -2141,7 +2142,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         .expect("probe answered")
     };
 
-    let p = probe(&table);
+    let p = probe(&table, &[]);
     assert!(p.server_version.is_some(), "{p:?}");
     assert_eq!(p.in_recovery, Some(false));
     assert_eq!(p.schema_version, Some(3));
@@ -2149,7 +2150,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
     assert_eq!(p.schema_error, None);
 
     // A missing version table spoils only the patch level.
-    let p = probe("pgman_it_no_such_table");
+    let p = probe("pgman_it_no_such_table", &[]);
     assert!(p.server_version.is_some());
     assert!(
         p.schema_error
@@ -2159,6 +2160,13 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         "{p:?}"
     );
     assert_eq!(p.schema_version, None);
+
+    // Named for other databases only: not read here, so no error.
+    let p = probe("pgman_it_no_such_table", &["some_other_db"]);
+    assert_eq!((p.schema_version, &p.schema_error), (None, &None), "{p:?}");
+    assert!(p.server_version.is_some());
+    let p = probe(&table, &["pgman_test"]);
+    assert_eq!(p.schema_version, Some(3), "named: read");
 }
 
 /// Over MCP, `probe: true` reads the databases of environments that
@@ -2195,7 +2203,10 @@ fn mcp_environments_probe_reads_opted_in_environments_only() {
     let probe = &v["environments"][0]["databases"][0]["probe"];
     assert!(probe["server_version"].is_string(), "{text}");
     assert_eq!(probe["in_recovery"], false, "{text}");
-    assert!(probe["sessions"].as_i64().unwrap() >= 1, "the probe's own session counts: {text}");
+    assert!(
+        probe["sessions"].as_i64().unwrap() >= 1,
+        "the probe's own session counts: {text}"
+    );
     assert!(probe["size"].is_string(), "{text}");
     assert!(v["environments"][1]["probe"]
         .as_str()

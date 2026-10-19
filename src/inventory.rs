@@ -87,9 +87,18 @@ pub struct VersionTable {
     /// your home. Absolute otherwise.
     #[serde(default)]
     pub patches: Option<String>,
+    /// The databases that have the table; empty means every one. A
+    /// database left out shows no patch level rather than an error.
+    #[serde(default)]
+    pub databases: Vec<String>,
 }
 
 impl VersionTable {
+    /// Whether `database` keeps this version table.
+    pub fn applies_to(&self, database: &str) -> bool {
+        self.databases.is_empty() || self.databases.iter().any(|d| d == database)
+    }
+
     pub fn config(&self) -> crate::query::patches::PatchesConfig {
         crate::query::patches::PatchesConfig {
             dir: self.patches.clone().unwrap_or_default(),
@@ -1068,5 +1077,21 @@ sslmode = "require"
             ],
             "primaries keep their order; replicas under each database, by name"
         );
+    }
+
+    #[test]
+    fn a_version_table_can_name_the_databases_that_have_it() {
+        let envs = parse_config(
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"d\"] }\n\
+             version_table = { table = \"t_schema_version\", column = \"schema_version_id\", databases = [\"ledger\"] }\n",
+        )
+        .unwrap();
+        let v = envs[0].version_table.as_ref().unwrap();
+        assert!(v.applies_to("ledger") && !v.applies_to("ledgerlog"));
+        let every = VersionTable {
+            databases: Vec::new(),
+            ..v.clone()
+        };
+        assert!(every.applies_to("anything"), "empty means every database");
     }
 }
