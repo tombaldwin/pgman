@@ -68,6 +68,8 @@ and breaking changes.
   database by name, the bastion in its VPC. It reads names only, never a
   secret's value; `--save` appends to `environments.toml`. In the
   overview, `d` does the same with a preview of what each save appends.
+  Over MCP, `environments_discover` and `environments_save` do it for an
+  agent (save refused under `--read-only`).
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

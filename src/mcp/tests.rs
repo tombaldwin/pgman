@@ -73,7 +73,8 @@ async fn initialize_records_the_client_and_negotiates_the_version() {
     assert_eq!(resp["result"]["serverInfo"]["name"], "pgman");
     let text = resp["result"]["instructions"].as_str().unwrap();
     assert!(text.contains(env!("CARGO_PKG_VERSION")), "{text}");
-    assert!(text.contains("Read-only"), "{text}");
+    assert!(text.contains("No tool writes to a database"), "{text}");
+    assert!(text.contains("environments_save appends"), "{text}");
     assert_eq!(s.client_info(), ("claude-code".to_string(), true));
 }
 
@@ -206,5 +207,5 @@ async fn serve_answers_each_request_and_exits_when_input_closes() {
     assert_eq!(frames[1]["error"]["code"], -32700);
     assert_eq!(frames[2]["error"]["code"], -32600);
     assert_eq!(frames[3]["id"], 2);
-    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(frames[3]["result"]["tools"].as_array().unwrap().len(), 8);
 }

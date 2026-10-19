@@ -1863,3 +1863,111 @@ fn env_discover_proposes_then_appends_on_save() {
         "no secret value read: {calls}"
     );
 }
+
+/// Over MCP: discovery proposes and writes nothing; save appends the named
+/// proposal; a covered one, or any save under --read-only, is refused.
+#[cfg(unix)]
+#[test]
+fn mcp_environments_discover_and_save() {
+    let home = scratch_home("mcp-env-save", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    let _ = std::fs::remove_file(&cfg);
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [
+          {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10", "DBInstanceStatus": "available",
+           "DBInstanceClass": "db.t4g.medium", "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432},
+           "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}}
+        ]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |extra: &[&str], requests: &[serde_json::Value]| {
+        mcp_session_env(
+            &home,
+            &home,
+            extra,
+            &[
+                ("PATH", path.clone()),
+                ("FAKE_AWS_ACCOUNT", "210987654321".into()),
+                ("FAKE_RDS_JSON", rds.clone().into()),
+            ],
+            requests,
+        )
+    };
+
+    let frames = run(
+        &[],
+        &[tool_call(1, "environments_discover", serde_json::json!({}))],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["discovered_in"], "AWS account 210987654321, us-west-1");
+    assert_eq!(v["proposals"][0]["name"], "demo");
+    let toml = v["proposals"][0]["toml"].as_str().unwrap();
+    assert!(
+        toml.contains("\"demo\" = \"demo/database/ledger/credentials\""),
+        "{toml}"
+    );
+    assert!(!cfg.exists(), "discovery writes nothing");
+
+    let frames = run(
+        &["--read-only"],
+        &[tool_call(
+            1,
+            "environments_save",
+            serde_json::json!({"names": ["demo"]}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(is_error && text.contains("--read-only"), "{text}");
+    assert!(!cfg.exists(), "--read-only saves nothing");
+
+    let frames = run(
+        &[],
+        &[
+            tool_call(
+                1,
+                "environments_save",
+                serde_json::json!({"names": ["demo"]}),
+            ),
+            tool_call(
+                2,
+                "environments_save",
+                serde_json::json!({"names": ["demo"]}),
+            ),
+            tool_call(
+                3,
+                "environments_save",
+                serde_json::json!({"names": ["nope"]}),
+            ),
+        ],
+    );
+    // Calls run concurrently: whichever of 1 and 2 lands first adds demo,
+    // and the other finds it covered. Never both — that was a lost update.
+    let (a, b) = (reply(&frames, 1), reply(&frames, 2));
+    let (added, refused) = if a.1 { (b, a) } else { (a, b) };
+    assert!(!added.1, "{added:?} / {refused:?}");
+    assert!(added.0.contains("\"added\":[\"demo\"]"), "{}", added.0);
+    assert!(
+        refused.1 && refused.0.contains("already covered"),
+        "{}",
+        refused.0
+    );
+    let saved = std::fs::read_to_string(&cfg).unwrap();
+    assert_eq!(saved.matches("name = \"demo\"").count(), 1, "{saved}");
+    let (text, is_error) = reply(&frames, 3);
+    assert!(
+        is_error && text.contains("no proposed environment"),
+        "{text}"
+    );
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), saved);
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("get-secret-value"),
+        "no secret value read: {calls}"
+    );
+}
