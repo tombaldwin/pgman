@@ -4109,7 +4109,9 @@ impl App {
         };
         for ((state, outcome), t) in states.iter_mut().zip(outcomes).zip(&r.targets) {
             let Some(result) = outcome else { continue };
-            if let (Ok(p), crate::mcp::connections::Role::Replica) = (&result, t.role) {
+            // Only a standby reports lag (it is NULL on a primary), so
+            // every reading here is a replica's, whatever its role says.
+            if let Ok(p) = &result {
                 if let Some(lag) = p.lag_secs {
                     let h = self
                         .environments
