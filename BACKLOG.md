@@ -47,12 +47,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   `docker` and the other sources as needed. Connecting from the screen
   and AWS discovery came first, at Tom's ask (PLAN.md).
 
-### Environments — follow-ups from connect and discovery (2026-10-19)
-- **Discovery scope in the TUI** is the ambient profile and region only;
-  `pgman env discover` takes `--profile/--region/--account`. A picker,
-  or the profiles already named in environments.toml, would cover
-  multi-account setups.
-
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:

@@ -901,6 +901,8 @@ fn scr_env_discovery() -> App {
         error: None,
         chosen: (0..n).map(|i| i == 0).collect(),
         cursor: 0,
+        scope: Default::default(),
+        scopes: pgman::demo::discovery().scopes,
     });
     a
 }

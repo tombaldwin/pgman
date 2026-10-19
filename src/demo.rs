@@ -36,7 +36,7 @@ pub fn app(theme: Theme) -> App {
     a.update_check_enabled = false;
     a.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(environments()));
     a.env_discoverer = Some(crate::app::EnvDiscoverer {
-        discover: std::sync::Arc::new(|| Ok(discovery())),
+        discover: std::sync::Arc::new(|_| Ok(discovery())),
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
         immediate: true,
     });
@@ -815,6 +815,13 @@ pub fn discovery() -> crate::inventory::discover::Found {
         header: "AWS account 123456789012, eu-west-2".into(),
         warnings: Vec::new(),
         proposals: propose(&instances, &secrets, &hosts, &scope, &existing),
+        scopes: vec![
+            crate::aws_cli::AwsScope::default(),
+            crate::aws_cli::AwsScope {
+                profile: Some("staging".into()),
+                ..crate::aws_cli::AwsScope::default()
+            },
+        ],
     }
 }
 

@@ -68,6 +68,9 @@ pub struct Found {
     /// What couldn't be listed, and so is missing from the proposals.
     pub warnings: Vec<String>,
     pub proposals: Vec<Proposal>,
+    /// The scopes the overview can discover in next (`p`): the ambient
+    /// one first. Empty from the CLI, which takes flags instead.
+    pub scopes: Vec<AwsScope>,
 }
 
 impl Discovery {
@@ -99,8 +102,55 @@ impl Discovery {
             header: self.header(),
             warnings: self.warnings(),
             proposals: proposals(self, existing),
+            scopes: Vec::new(),
         }
     }
+}
+
+/// Where the overview can discover: the ambient profile, every distinct
+/// scope an `rds` environment already names, then each CLI profile not
+/// already among them. In that order, without repeats.
+pub fn scope_choices(existing: &[Environment], profiles: &[String]) -> Vec<AwsScope> {
+    let mut out = vec![AwsScope::default()];
+    for s in existing.iter().filter_map(|e| e.source.scope()) {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    for p in profiles {
+        if out.iter().all(|s| s.profile.as_deref() != Some(p.as_str())) {
+            out.push(AwsScope {
+                profile: Some(p.clone()),
+                ..AwsScope::default()
+            });
+        }
+    }
+    out
+}
+
+/// How a scope reads in the overview.
+pub fn scope_label(s: &AwsScope) -> String {
+    let mut bits = vec![match &s.profile {
+        Some(p) => format!("profile {p}"),
+        None => "ambient profile".to_string(),
+    }];
+    bits.extend(s.account.iter().map(|a| format!("account {a}")));
+    bits.extend(s.region.iter().cloned());
+    bits.join(" · ")
+}
+
+/// `aws configure list-profiles`; none when the CLI can't say. Blocking.
+pub fn list_profiles() -> Vec<String> {
+    let args = ["configure".to_string(), "list-profiles".to_string()];
+    crate::aws_cli::run(&args)
+        .map(|out| {
+            out.lines()
+                .map(str::trim)
+                .filter(|p| crate::aws_cli::plain_arg(p, "_.-@+=", 128))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn list_secrets_args(scope: &AwsScope) -> Vec<String> {
@@ -745,12 +795,14 @@ pub fn report(d: &Discovery, proposals: &[Proposal]) -> String {
     out
 }
 
-/// Discovery for the environments overview's `d`: the ambient AWS
-/// profile and region, against the environments already configured.
+/// Discovery for the environments overview's `d` and `p`: `scope`, against
+/// the environments already configured, plus the scopes `p` can try next.
 /// Blocking.
-pub fn discover_for_overview() -> Result<Found, String> {
+pub fn discover_for_overview(scope: &AwsScope) -> Result<Found, String> {
     let existing = super::load().environments?;
-    Ok(discover(&AwsScope::default())?.found(&existing))
+    let mut found = discover(scope)?.found(&existing);
+    found.scopes = scope_choices(&existing, &list_profiles());
+    Ok(found)
 }
 
 /// `pgman env discover`. Returns what to print. Blocking.
@@ -1188,5 +1240,32 @@ mod tests {
             "free once dropped"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scope_choices_start_ambient_and_never_repeat() {
+        let existing = parse_config(
+            "[[environments]]\nname = \"a\"\nsource = { kind = \"rds\", instances = [\"a\"], profile = \"work\", region = \"us-west-1\" }\n\
+             [[environments]]\nname = \"b\"\nsource = { kind = \"rds\", instances = [\"b\"], profile = \"work\", region = \"us-west-1\" }\n\
+             [[environments]]\nname = \"c\"\nsource = { kind = \"static\", connections = [\"x\"] }\n",
+        )
+        .unwrap();
+        let labels: Vec<String> = scope_choices(
+            &existing,
+            &["default".into(), "work".into(), "staging".into()],
+        )
+        .iter()
+        .map(scope_label)
+        .collect();
+        assert_eq!(
+            labels,
+            [
+                "ambient profile",
+                "profile work · us-west-1",
+                "profile default",
+                "profile staging"
+            ],
+            "work is already there with its region; static sources have no scope"
+        );
     }
 }

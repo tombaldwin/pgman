@@ -7,8 +7,8 @@ expression: dump(&buf)
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ discover — space choose · s save · q back ────────────────────────────┐   │
-│  │  AWS account 123456789012, eu-west-2                                  │   │
+│  ┌ discover — space choose · s save · p scope · q back ──────────────────┐   │
+│  │  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2  │   │
 │  │                                                                       │   │
 │  │  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note  │   │
 └──│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note  │───┘
@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · space choose · s save · d again · F1 +2 more
+ RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · F1 +3 more

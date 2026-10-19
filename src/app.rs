@@ -3782,7 +3782,7 @@ impl App {
 
     /// `d` in the environments overview: discover environments from the
     /// ambient AWS account and open the discovery view over the overview.
-    fn start_env_discovery(&mut self) {
+    fn start_env_discovery(&mut self, scope: crate::aws_cli::AwsScope) {
         if self
             .environments
             .discovery
@@ -3795,17 +3795,28 @@ impl App {
             self.last_error = Some("discovery is not available in this session".into());
             return;
         };
+        let scopes = self
+            .environments
+            .discovery
+            .take()
+            .map(|d| d.scopes)
+            .unwrap_or_default();
+        self.last_status = Some(format!(
+            "discovering with {}: RDS, secret names, EC2 hosts…",
+            crate::inventory::discover::scope_label(&scope)
+        ));
         self.environments.discovery = Some(DiscoveryUi {
             loading: true,
+            scope: scope.clone(),
+            scopes,
             ..DiscoveryUi::default()
         });
-        self.last_status = Some("discovering: RDS, secret names, EC2 hosts…".into());
         if discoverer.immediate {
-            self.on_env_discovered((discoverer.discover)());
+            self.on_env_discovered((discoverer.discover)(&scope));
         } else {
             let tx = self.msg_tx.clone();
             tokio::task::spawn_blocking(move || {
-                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)()));
+                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)(&scope)));
             });
         }
     }
@@ -3829,6 +3840,9 @@ impl App {
                 ));
                 d.chosen = vec![false; found.proposals.len()];
                 d.cursor = 0;
+                if !found.scopes.is_empty() {
+                    d.scopes = found.scopes.clone();
+                }
                 d.found = Some(found);
                 d.error = None;
             }

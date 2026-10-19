@@ -1281,6 +1281,18 @@ pub(crate) fn proposal_row(
     format!("  {mark} {}{}  {what}", p.env.name, " ".repeat(pad))
 }
 
+/// The discovery view's first line: where it looked, and through which
+/// scope, with `p`'s place among the others when there are any. Pure.
+pub(crate) fn discovery_heading(d: &crate::app::DiscoveryUi, header: &str) -> String {
+    let via = crate::inventory::discover::scope_label(&d.scope);
+    match d.scopes.iter().position(|s| *s == d.scope) {
+        Some(i) if d.scopes.len() > 1 => {
+            format!("  {header} · {via} · p scope {}/{}", i + 1, d.scopes.len())
+        }
+        _ => format!("  {header} · {via}"),
+    }
+}
+
 /// The discovery view (`d` in the overview): the proposals, then exactly
 /// what `s` would append for the one under the cursor.
 fn draw_env_discovery(f: &mut Frame, inner: Rect, app: &App, d: &crate::app::DiscoveryUi) {
@@ -1304,7 +1316,7 @@ fn draw_env_discovery(f: &mut Frame, inner: Rect, app: &App, d: &crate::app::Dis
         return;
     };
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
-        fit(&format!("  {}", found.header)),
+        fit(&discovery_heading(d, &found.header)),
         Style::default()
             .fg(theme.title)
             .add_modifier(Modifier::BOLD),
@@ -1383,7 +1395,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.border_active))
             .title(Span::styled(
-                " discover — space choose · s save · q back ",
+                " discover — space choose · s save · p scope · q back ",
                 Style::default().fg(theme.title),
             ));
         let inner = block.inner(popup);
@@ -2895,6 +2907,21 @@ mod tests {
             row("staging", true),
             "      staging    already in environment staging",
             "covered: never shown as chosen"
+        );
+    }
+
+    #[test]
+    fn the_discovery_heading_names_the_scope_and_its_place() {
+        let mut d = crate::app::DiscoveryUi::default();
+        assert_eq!(
+            discovery_heading(&d, "AWS account 1"),
+            "  AWS account 1 · ambient profile"
+        );
+        d.scopes = crate::demo::discovery().scopes;
+        d.scope = d.scopes[1].clone();
+        assert_eq!(
+            discovery_heading(&d, "AWS account 1"),
+            "  AWS account 1 · profile staging · p scope 2/2"
         );
     }
 }

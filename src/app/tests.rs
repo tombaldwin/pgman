@@ -9419,7 +9419,7 @@ fn recording_discoverer(
     fail: bool,
 ) -> EnvDiscoverer {
     EnvDiscoverer {
-        discover: std::sync::Arc::new(|| Ok(crate::demo::discovery())),
+        discover: std::sync::Arc::new(|_| Ok(crate::demo::discovery())),
         save: std::sync::Arc::new(move |chosen| {
             if fail {
                 return Err("environments.toml parse error".into());
@@ -9579,4 +9579,85 @@ async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
         }),
     });
     assert!(!a.replica_pin && !a.read_only);
+}
+
+#[test]
+fn p_discovers_again_in_the_next_scope_and_wraps() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        discover: std::sync::Arc::new(move |scope| {
+            log.lock()
+                .unwrap()
+                .push(crate::inventory::discover::scope_label(scope));
+            Ok(crate::demo::discovery())
+        }),
+        save: std::sync::Arc::new(|_| Err("not here".into())),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "ambient profile",
+            "profile staging",
+            "profile staging",
+            "ambient profile"
+        ],
+        "d starts ambient, p moves on, d repeats the current scope, p wraps"
+    );
+
+    // A failed discovery keeps the scopes it knew, so p still moves on.
+    a.environments.discovery = Some(DiscoveryUi {
+        loading: true,
+        scope: Default::default(),
+        scopes: crate::demo::discovery().scopes,
+        ..DiscoveryUi::default()
+    });
+    a.on_msg(AppMsg::EnvDiscovered(Err("AccessDenied".into())));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(seen.lock().unwrap().last().unwrap(), "profile staging");
+}
+
+#[test]
+fn a_failed_scope_does_not_lose_the_ones_after_it() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        discover: std::sync::Arc::new(move |scope| {
+            let label = crate::inventory::discover::scope_label(scope);
+            log.lock().unwrap().push(label.clone());
+            if label == "profile staging" {
+                return Err("expired SSO session".into());
+            }
+            let mut found = crate::demo::discovery();
+            found.scopes.push(crate::aws_cli::AwsScope {
+                profile: Some("work".into()),
+                ..Default::default()
+            });
+            Ok(found)
+        }),
+        save: std::sync::Arc::new(|_| Err("not here".into())),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        a.environments.discovery.as_ref().unwrap().error.as_deref(),
+        Some("expired SSO session")
+    );
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["ambient profile", "profile staging", "profile work"]
+    );
 }

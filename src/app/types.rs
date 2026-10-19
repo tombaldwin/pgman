@@ -932,6 +932,22 @@ pub struct DiscoveryUi {
     /// Parallel to `found.proposals`.
     pub chosen: Vec<bool>,
     pub cursor: usize,
+    /// The scope this discovery ran in.
+    pub scope: crate::aws_cli::AwsScope,
+    /// Where `p` can discover next; kept from the last discovery that
+    /// listed them, so a failed one can still move on.
+    pub scopes: Vec<crate::aws_cli::AwsScope>,
+}
+
+impl DiscoveryUi {
+    /// The scope after this one, wrapping; ambient when none are known.
+    pub fn next_scope(&self) -> crate::aws_cli::AwsScope {
+        let at = self.scopes.iter().position(|s| *s == self.scope);
+        match at {
+            Some(i) => self.scopes[(i + 1) % self.scopes.len()].clone(),
+            None => self.scopes.first().cloned().unwrap_or_default(),
+        }
+    }
 }
 
 impl DiscoveryUi {
@@ -959,8 +975,11 @@ impl ListCursorNav for DiscoveryUi {
     }
 }
 
-pub type DiscoverFn =
-    std::sync::Arc<dyn Fn() -> Result<crate::inventory::discover::Found, String> + Send + Sync>;
+pub type DiscoverFn = std::sync::Arc<
+    dyn Fn(&crate::aws_cli::AwsScope) -> Result<crate::inventory::discover::Found, String>
+        + Send
+        + Sync,
+>;
 
 pub type SaveProposalsFn = std::sync::Arc<
     dyn Fn(&[&crate::inventory::discover::Proposal]) -> Result<std::path::PathBuf, String>

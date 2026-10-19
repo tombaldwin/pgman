@@ -1326,7 +1326,7 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Enter => self.connect_to_environment_target(),
-            KeyCode::Char('d') => self.start_env_discovery(),
+            KeyCode::Char('d') => self.start_env_discovery(Default::default()),
             KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.environments.select_prev(),
             KeyCode::Char('g') | KeyCode::Home => self.environments.select_first(),
@@ -1351,7 +1351,14 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => d.select_last(),
             KeyCode::Char(' ') => self.toggle_env_proposal(),
             KeyCode::Char('s') => self.save_env_proposals(),
-            KeyCode::Char('d') => self.start_env_discovery(),
+            KeyCode::Char('d') => {
+                let again = d.scope.clone();
+                self.start_env_discovery(again)
+            }
+            KeyCode::Char('p') => {
+                let next = d.next_scope();
+                self.start_env_discovery(next)
+            }
             _ => {}
         }
     }

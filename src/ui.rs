@@ -1368,7 +1368,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
                 Mode::Environments if app.environments.discovery.is_some() => {
-                    "j/k navigate · space choose · s save · d again · q / esc back"
+                    "j/k navigate · space choose · s save · p scope · d again · q / esc back"
                 }
                 Mode::Environments => "j/k navigate · enter connect · d discover · r refresh · q / esc close",
                 Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
@@ -2124,7 +2124,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    d             discover from AWS: space choose · s append to environments.toml"),
+        row("    d             discover from AWS: space choose · s append · p next AWS profile"),
         &mut lines,
     );
     push(
