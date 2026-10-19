@@ -77,6 +77,8 @@ and breaking changes.
   and the global keys), coloured key hints in the footer, and uppercase
   panel column headers. The drawing vocabulary now lives in
   `tb-tui-common`, shared with ebman.
+- **`--batch --discovered`** accepts a checkout that declares one
+  database twice (identical URL and credentials) as a single candidate.
 - **Probes** — `probe = true` on an environment adds each database's
   patch level, pending patches and replica lag to the overview. It reads
   through replicas (a primary with a replica isn't touched), uses one

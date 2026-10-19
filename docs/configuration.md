@@ -147,7 +147,8 @@ candidates, in order, from `.pgman/pgman.toml`, a detected Spring
 project's `application*`/`bootstrap*` files, and IntelliJ's
 `dataSources.xml`, listing them all in the connection picker — nothing
 connects without a keypress. `--batch` has no picker: a lone candidate
-needs `--discovered`, and `--dsn` is required otherwise.
+needs `--discovered`, and `--dsn` is required otherwise. Entries that
+are the same connection count as one candidate.
 
 ## Placeholders
 
