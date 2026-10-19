@@ -493,12 +493,18 @@ pub fn render(p: &Proposal) -> String {
 /// `existing` with `proposals` appended, checked to parse. Covered
 /// proposals are refused, not skipped: the caller chose them by name.
 pub fn append(existing: &str, proposals: &[&Proposal]) -> Result<String, String> {
-    if let Some(p) = proposals.iter().find(|p| p.covered_by.is_some()) {
-        return Err(format!(
-            "{} is already covered by environment {:?}",
-            p.env.name,
-            p.covered_by.as_deref().unwrap_or_default()
-        ));
+    // Covered as of the text being appended to, not only as of the
+    // discovery: the file may have changed since.
+    let current = parse_config(existing)
+        .map_err(|e| format!("the existing file doesn't load, so nothing was saved: {e}"))?;
+    for p in proposals {
+        let primary = p.servers.first().unwrap_or(&p.env.name);
+        if let Some(by) = p.covered_by.clone().or_else(|| covering(primary, &current)) {
+            return Err(format!(
+                "{} is already covered by environment {by:?}",
+                p.env.name
+            ));
+        }
     }
     let mut out = existing.to_string();
     for p in proposals {
@@ -598,6 +604,11 @@ pub fn proposals(d: &Discovery, existing: &[Environment]) -> Vec<Proposal> {
 /// Append `chosen` to `environments.toml` under `util::config_dir()`,
 /// creating it (`0600`) when missing. Returns the path written.
 pub fn save(chosen: &[&Proposal]) -> Result<std::path::PathBuf, String> {
+    // One read-append-write at a time: the MCP server runs calls
+    // concurrently, and two saves that both read the old file would each
+    // write it back with only their own addition.
+    static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let path = crate::util::config_file("environments.toml");
     let existing = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -965,9 +976,15 @@ mod tests {
         for (p, l) in ps.iter().zip(&loaded[1..]) {
             assert_eq!(&p.env, l, "round trip of {}", p.env.name);
         }
-        // Appending an environment that exists already would not load.
+        // Appending an environment that exists already is refused.
         let again = append(&text, &[&ps[0]]);
-        assert!(again.unwrap_err().contains("nothing was saved"));
+        assert_eq!(
+            again.unwrap_err(),
+            "demo is already covered by environment \"demo\""
+        );
+        // A result that wouldn't load is never returned: the same one twice.
+        let twice = append("", &[&ps[0], &ps[0]]);
+        assert!(twice.unwrap_err().contains("nothing was saved"));
     }
 
     #[test]
@@ -1086,5 +1103,20 @@ mod tests {
             pick_secret("development", &both, "ledger", false),
             Ok("development/database/ledger/credentials")
         );
+    }
+
+    #[test]
+    fn append_rechecks_coverage_against_the_file_it_appends_to() {
+        // Proposed when nothing covered demo; the file has it since.
+        let p = propose(&all(), &[], &[], &scope(), &[]).remove(0);
+        assert_eq!(p.covered_by, None);
+        let now = "[[environments]]\nname = \"mine\"\nsource = { kind = \"rds\", instances = [\"de*\"] }\n";
+        assert_eq!(
+            append(now, &[&p]).unwrap_err(),
+            "demo is already covered by environment \"mine\""
+        );
+        assert!(append("not toml [", &[&p])
+            .unwrap_err()
+            .contains("existing file doesn't load"));
     }
 }
