@@ -1004,6 +1004,69 @@ pub struct EnvironmentsUi {
     pub lag_history: std::collections::HashMap<(String, String, String), Vec<f64>>,
     /// `l`: recent errors from the focused server's RDS log.
     pub logs: Option<LogsView>,
+    /// `P`: applying the focused database's pending patches.
+    pub patch: Option<PatchView>,
+}
+
+/// The patch view over the overview: a plan to confirm, then what ran.
+#[derive(Debug, Clone)]
+pub struct PatchView {
+    pub environment: String,
+    pub server: String,
+    pub database: String,
+    pub stage: PatchStage,
+    /// What has been typed toward a protected environment's name.
+    pub typed: String,
+    pub scroll: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatchStage {
+    Planning,
+    Plan(Result<crate::inventory::patching::PatchPlan, String>),
+    Applying(crate::inventory::patching::PatchPlan),
+    Done(
+        crate::inventory::patching::PatchPlan,
+        crate::inventory::patching::ApplyReport,
+    ),
+}
+
+/// Plans and applies an environment database's patches. Injected like
+/// [`EnvLogFetcher`]; `None` applies nothing.
+#[derive(Clone)]
+pub struct EnvPatcher {
+    /// (environment, server, database) → the plan.
+    pub plan: PatchPlanFn,
+    pub apply: PatchApplyFn,
+    /// Run at once on this thread (`--demo`, tests): the futures must
+    /// be ready when first polled.
+    pub immediate: bool,
+}
+
+pub type PatchPlanFn = std::sync::Arc<
+    dyn Fn(
+            String,
+            String,
+            String,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<crate::inventory::patching::PatchPlan, String>,
+        > + Send
+        + Sync,
+>;
+
+pub type PatchApplyFn = std::sync::Arc<
+    dyn Fn(
+            crate::inventory::patching::PatchPlan,
+        ) -> futures::future::BoxFuture<'static, crate::inventory::patching::ApplyReport>
+        + Send
+        + Sync,
+>;
+
+impl std::fmt::Debug for EnvPatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvPatcher")
+    }
 }
 
 /// The log view over the overview.

@@ -2183,6 +2183,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    P             apply the database's pending patches (plan, confirm, run)"),
+        &mut lines,
+    );
+    push(
         row("    r             list again: environments.toml, RDS via the aws CLI, connections.toml"),
         &mut lines,
     );

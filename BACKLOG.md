@@ -47,10 +47,12 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:
-- **Two-phase `apply_patches`**: pending patches in ONE transaction with
-  `SET LOCAL lock_timeout`, a dry run as `BEGIN … ROLLBACK`, and a
-  confirm through elicitation where a decline is final and Prod needs a
-  typed confirm. It gets its own safety review before it ships.
+- **`apply_patches` dry run.** Applying shipped (2026-10-20) as Tom
+  chose then: one transaction per patch, stop at the first failure, a
+  typed name for a protected environment. Not built: a dry run as
+  `BEGIN … ROLLBACK` before the real run. It takes the same locks as
+  the real thing, on the same server, so it wants its own decision —
+  probably only where the profile isn't protected.
 
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is

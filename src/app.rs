@@ -1283,6 +1283,8 @@ pub struct App {
     /// Reads RDS log errors for the overview's `l`; `None` until
     /// `main.rs` installs one.
     pub env_log_fetcher: Option<EnvLogFetcher>,
+    /// Plans and applies patches for the overview's `P`.
+    pub env_patcher: Option<EnvPatcher>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1497,6 +1499,7 @@ impl App {
             env_prober: None,
             environments_state_file: None,
             env_log_fetcher: None,
+            env_patcher: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3950,6 +3953,166 @@ impl App {
         }
     }
 
+    /// `P` in the overview: plan the focused database's pending patches,
+    /// in a view that asks before anything runs.
+    pub(super) fn start_env_patch(&mut self) {
+        let Some((env, t)) = self.environments.selected() else {
+            return;
+        };
+        let Some(patcher) = self.env_patcher.clone() else {
+            self.last_error = Some("applying patches is not available in this session".into());
+            return;
+        };
+        let (environment, server, database) =
+            (env.name.clone(), t.server.clone(), t.database.clone());
+        self.environments.patch = Some(PatchView {
+            environment: environment.clone(),
+            server: server.clone(),
+            database: database.clone(),
+            stage: PatchStage::Planning,
+            typed: String::new(),
+            scroll: 0,
+        });
+        self.last_status = Some(format!("planning {server}/{database}'s patches…"));
+        let fut = (patcher.plan)(environment.clone(), server.clone(), database.clone());
+        if patcher.immediate {
+            let result = futures::executor::block_on(fut);
+            self.on_env_patch_planned(&environment, &server, &database, result);
+        } else {
+            let tx = self.msg_tx.clone();
+            tokio::spawn(async move {
+                let result = fut.await;
+                let _ = tx.send(AppMsg::EnvPatchPlanned {
+                    environment,
+                    server,
+                    database,
+                    result,
+                });
+            });
+        }
+    }
+
+    fn on_env_patch_planned(
+        &mut self,
+        environment: &str,
+        server: &str,
+        database: &str,
+        result: Result<crate::inventory::patching::PatchPlan, String>,
+    ) {
+        // Closed, or another database's, while it planned: not ours.
+        let Some(v) = self.environments.patch.as_mut() else {
+            return;
+        };
+        if (
+            v.environment.as_str(),
+            v.server.as_str(),
+            v.database.as_str(),
+        ) != (environment, server, database)
+            || !matches!(v.stage, PatchStage::Planning)
+        {
+            return;
+        }
+        self.last_status = Some(patch_hint(&result));
+        v.stage = PatchStage::Plan(result);
+        v.scroll = 0;
+    }
+
+    /// The operator confirmed the plan in the view: run it.
+    fn confirm_env_patch(&mut self) {
+        let Some(patcher) = self.env_patcher.clone() else {
+            return;
+        };
+        let Some(v) = self.environments.patch.as_mut() else {
+            return;
+        };
+        let PatchStage::Plan(Ok(plan)) = &v.stage else {
+            return;
+        };
+        if plan.patches.is_empty() || (plan.protected && v.typed != plan.environment) {
+            return;
+        }
+        let plan = plan.clone();
+        v.stage = PatchStage::Applying(plan.clone());
+        self.last_status = Some(format!(
+            "applying {} patch(es) to {}/{}…",
+            plan.patches.len(),
+            plan.server,
+            plan.database
+        ));
+        tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), "patches confirmed");
+        let fut = (patcher.apply)(plan.clone());
+        if patcher.immediate {
+            let report = futures::executor::block_on(fut);
+            self.on_env_patched(plan, report);
+        } else {
+            let tx = self.msg_tx.clone();
+            tokio::spawn(async move {
+                let report = fut.await;
+                let _ = tx.send(AppMsg::EnvPatched { plan, report });
+            });
+        }
+    }
+
+    fn on_env_patched(
+        &mut self,
+        plan: crate::inventory::patching::PatchPlan,
+        report: crate::inventory::patching::ApplyReport,
+    ) {
+        let summary = format!("{}/{}: {}", plan.server, plan.database, report.summary());
+        match self.environments.patch.as_mut() {
+            Some(v) if matches!(&v.stage, PatchStage::Applying(p) if *p == plan) => {
+                v.stage = PatchStage::Done(plan, report.clone());
+                v.scroll = 0;
+            }
+            // The view can't close while applying, but say so anyway.
+            _ => {}
+        }
+        if report.failed().is_some() || report.error.is_some() {
+            self.last_error = Some(summary);
+        } else {
+            self.last_status = Some(summary);
+        }
+        // The pending counts moved.
+        if self.environments.reports.iter().any(|r| r.probe.is_some()) {
+            self.start_env_probes();
+        }
+    }
+
+    /// A key while the patch view is open.
+    pub(super) fn on_env_patch_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        let Some(v) = self.environments.patch.as_mut() else {
+            return;
+        };
+        let typing =
+            matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.protected && !p.patches.is_empty());
+        let confirmable = matches!(&v.stage, PatchStage::Plan(Ok(p)) if !p.patches.is_empty());
+        match key.code {
+            KeyCode::Down => v.scroll = v.scroll.saturating_add(1),
+            KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
+            _ if matches!(v.stage, PatchStage::Applying(_)) => {
+                self.last_status = Some("applying — wait for it to finish".into());
+            }
+            KeyCode::Esc => {
+                self.environments.patch = None;
+                self.last_status = None;
+            }
+            KeyCode::Backspace if typing => {
+                v.typed.pop();
+            }
+            KeyCode::Enter if typing => self.confirm_env_patch(),
+            KeyCode::Char(c) if typing => v.typed.push(c),
+            KeyCode::Char('y') if confirmable => self.confirm_env_patch(),
+            KeyCode::Char('q') | KeyCode::Char('n') => {
+                self.environments.patch = None;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') => v.scroll = v.scroll.saturating_add(1),
+            KeyCode::Char('k') => v.scroll = v.scroll.saturating_sub(1),
+            _ => {}
+        }
+    }
+
     fn on_env_logs(
         &mut self,
         environment: &str,
@@ -5085,3 +5248,16 @@ impl App {
 
 #[cfg(test)]
 mod tests;
+
+/// The status-bar hint for a plan: what to press. Pure.
+fn patch_hint(plan: &Result<crate::inventory::patching::PatchPlan, String>) -> String {
+    match plan {
+        Err(_) => "no plan · q back".into(),
+        Ok(p) if p.patches.is_empty() => "nothing to apply · q back".into(),
+        Ok(p) if p.protected => format!(
+            "{} is protected: type its name, then Enter · Esc cancel",
+            p.environment
+        ),
+        Ok(_) => "y apply · q cancel".into(),
+    }
+}

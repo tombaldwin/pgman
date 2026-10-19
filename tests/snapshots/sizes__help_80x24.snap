@@ -20,7 +20,7 @@ expression: dump(&buf)
 │1   ada@exa│   grid                                               │           │
 │2   linus@e│     q             quit (esc here is a no-op so a     │           │
 │3   grace@e│                   reflex press doesn't lose the      │           │
-│4   alan@ex│ ↓ 359 more below                                     │           │
+│4   alan@ex│ ↓ 361 more below                                     │           │
 │5   edsger@│                                                      │           │
 │6   katheri╰──────────────────────────────────────────────────────╯           │
 │                                                                              │

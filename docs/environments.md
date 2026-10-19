@@ -240,6 +240,32 @@ How a probe connects:
 - A failure reads `✗` plus its first line in the row; the detail line
   under the table has the whole message.
 
+## Applying patches
+
+With a `version_table` that names its `patches` directory, an
+environment's pending patches can be applied — `P` on a database in the
+overview, or `apply_patches` over [MCP](mcp.md). Either way it is two
+steps:
+
+1. **A plan, read-only.** The patches the database hasn't recorded, in
+   order, each checked against `safety.toml` like a `--batch` script.
+   The plan stops before the first patch that can't run here: the
+   database's profile is read-only (the default — set
+   `read_only = false` for it), a guard blocks a statement, the patch
+   has its own `BEGIN`/`COMMIT`, or it builds an index `CONCURRENTLY`.
+   Those you apply by hand.
+2. **Your confirmation, then the patches.** Each runs in its own
+   transaction with `lock_timeout = 5s`, so a busy table fails fast
+   instead of queueing behind live traffic. Before each one the version
+   table is read again; a patch someone else applied since the plan
+   stops the run. The first failure rolls that patch back and stops.
+   What runs is the text you were shown, not a fresh read of the file.
+
+A replica is never patched: its primary is. An environment is
+**protected** when it says `protected = true`, or — when it says
+nothing — when its name contains `prod`. A protected environment is
+confirmed by typing its name; `protected = false` turns that off.
+
 ## Keys
 
 | Key | Action |
@@ -247,6 +273,7 @@ How a probe connects:
 | `E` | Open from the grid or the connection picker. No connection is needed. |
 | `j` / `k`, `g` / `G` | Move between databases. |
 | `Enter` | Connect to the database under the cursor. |
+| `P` | Apply the database's pending patches: a plan to confirm (`y`, or the environment's name when it's protected), then each patch in its own transaction. See [applying patches](#applying-patches). |
 | `l` | Recent errors from the focused server's RDS log (ERROR, FATAL, PANIC from the newest files, grouped with a count). `STATEMENT` lines are left out. |
 | `v` | Schema drift: each database's version by environment, behind or pending in yellow. `v` again for the list. |
 | `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |

@@ -42,6 +42,27 @@ pub fn app(theme: Theme) -> App {
         fetch: std::sync::Arc::new(|_, _| Ok(log_errors())),
         immediate: true,
     });
+    a.env_patcher = Some(crate::app::EnvPatcher {
+        plan: std::sync::Arc::new(|e, s, d| {
+            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d))))
+        }),
+        apply: std::sync::Arc::new(|p| {
+            Box::pin(std::future::ready(
+                crate::inventory::patching::ApplyReport {
+                    results: p
+                        .patches
+                        .iter()
+                        .map(|x| crate::inventory::patching::PatchResult {
+                            file: x.file.file.clone(),
+                            outcome: Ok(x.statements.len()),
+                        })
+                        .collect(),
+                    error: None,
+                },
+            ))
+        }),
+        immediate: true,
+    });
     a.env_discoverer = Some(crate::app::EnvDiscoverer {
         discover: std::sync::Arc::new(|_| Ok(discovery())),
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
@@ -797,6 +818,54 @@ pub fn environment_probes(
             })),
         })
         .collect()
+}
+
+/// A patch plan in `--demo`: two pending patches and one left for a
+/// human; protected when the environment's name says production.
+pub fn patch_plan(
+    environment: &str,
+    server: &str,
+    database: &str,
+) -> crate::inventory::patching::PatchPlan {
+    let patch =
+        |id: i64, name: &str, statements: &[&str]| crate::inventory::patching::PlannedPatch {
+            file: crate::query::patches::PatchFile {
+                file: format!("{id}-{name}.sql"),
+                filename_number: Some(id),
+                version_id: Some(id),
+            },
+            text: statements.join("\n"),
+            statements: statements.iter().map(|s| s.to_string()).collect(),
+        };
+    crate::inventory::patching::PatchPlan {
+        environment: environment.into(),
+        server: server.into(),
+        database: database.into(),
+        protected: environment.to_ascii_lowercase().contains("prod"),
+        applied_max: Some(41),
+        patches: vec![
+            patch(
+                42,
+                "order-notes",
+                &[
+                    "INSERT INTO db_version (id) VALUES (42)",
+                    "ALTER TABLE orders ADD COLUMN notes text",
+                ],
+            ),
+            patch(
+                43,
+                "customer-tier",
+                &[
+                    "INSERT INTO db_version (id) VALUES (43)",
+                    "ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0",
+                ],
+            ),
+        ],
+        stopped_at: Some((
+            "44-orders-created-idx.sql".into(),
+            "the patch builds or drops an index CONCURRENTLY, which can't run in a transaction; apply it by hand".into(),
+        )),
+    }
 }
 
 /// Log errors in `--demo`: synthetic, in RDS's shape.

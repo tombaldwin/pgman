@@ -1625,10 +1625,102 @@ pub(crate) fn log_lines(v: &crate::app::LogsView) -> Vec<(String, bool)> {
     out
 }
 
-fn draw_env_logs(f: &mut Frame, inner: Rect, app: &App, v: &crate::app::LogsView) {
+/// The patch view's lines: a heading, then the plan or what ran. Pure.
+pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
+    use crate::app::PatchStage;
+    let mut out = vec![(
+        format!(
+            "  {} · {}/{} — pending patches",
+            v.environment, v.server, v.database
+        ),
+        false,
+    )];
+    let plan = match &v.stage {
+        PatchStage::Planning => {
+            out.push(("  planning…".into(), false));
+            return out;
+        }
+        PatchStage::Plan(Err(e)) => {
+            out.push((format!("  ✗ {e}"), true));
+            return out;
+        }
+        PatchStage::Plan(Ok(p)) | PatchStage::Applying(p) | PatchStage::Done(p, _) => p,
+    };
+    let recorded = plan
+        .applied_max
+        .map_or("nothing".to_string(), |m| m.to_string());
+    if let PatchStage::Done(_, report) = &v.stage {
+        if let Some(e) = &report.error {
+            out.push((format!("  ✗ nothing applied: {e}"), true));
+        }
+        for r in &report.results {
+            match &r.outcome {
+                Ok(n) => out.push((format!("  ✓ {} — {n} statement(s)", r.file), false)),
+                Err(e) => out.push((format!("  ✗ {} — {e}", r.file), true)),
+            }
+        }
+        let ran = report.results.len();
+        for p in plan.patches.iter().skip(ran) {
+            out.push((format!("  · {} — not run", p.file.file), false));
+        }
+        return out;
+    }
+    if plan.patches.is_empty() {
+        out.push((
+            format!("  nothing to apply · recorded up to {recorded}"),
+            false,
+        ));
+    } else {
+        out.push((
+            format!(
+                "  {} to apply, in order, each in its own transaction · recorded up to {recorded}",
+                plan.patches.len()
+            ),
+            false,
+        ));
+    }
+    for p in &plan.patches {
+        out.push((format!("  {}", p.file.file), false));
+        for s in &p.statements {
+            let first = s
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim();
+            out.push((format!("      {first}"), false));
+        }
+    }
+    if let Some((file, why)) = &plan.stopped_at {
+        out.push((format!("  not included: {file} — {why}"), true));
+    }
+    out
+}
+
+/// The line pinned under the plan: what to do next, or `None`. Pure.
+pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> {
+    use crate::app::PatchStage;
+    match &v.stage {
+        PatchStage::Applying(_) => Some(("  applying…".into(), false)),
+        PatchStage::Plan(Ok(p)) if p.patches.is_empty() => None,
+        PatchStage::Plan(Ok(p)) if p.protected => Some((
+            format!("  type {} to apply: {}▏", p.environment, v.typed),
+            true,
+        )),
+        PatchStage::Plan(Ok(_)) => Some(("  y apply · q cancel".into(), false)),
+        _ => None,
+    }
+}
+
+fn draw_env_lines(
+    f: &mut Frame,
+    inner: Rect,
+    app: &App,
+    all: &[(String, bool)],
+    scroll: usize,
+    footer: Option<(String, bool)>,
+) {
     let theme = &app.theme;
     let width = inner.width as usize;
-    let all = log_lines(v);
     let (head, body) = all.split_first().expect("a heading");
     let mut lines = vec![
         Line::from(Span::styled(
@@ -1639,8 +1731,8 @@ fn draw_env_logs(f: &mut Frame, inner: Rect, app: &App, v: &crate::app::LogsView
         )),
         Line::from(""),
     ];
-    let room = (inner.height as usize).saturating_sub(2);
-    let scroll = v.scroll.min(body.len().saturating_sub(room));
+    let room = (inner.height as usize).saturating_sub(2 + usize::from(footer.is_some()));
+    let scroll = scroll.min(body.len().saturating_sub(room));
     for (text, loud) in body.iter().skip(scroll).take(room) {
         let colour = if *loud {
             theme.health_red
@@ -1652,6 +1744,16 @@ fn draw_env_logs(f: &mut Frame, inner: Rect, app: &App, v: &crate::app::LogsView
         lines.push(Line::from(Span::styled(
             crate::grid::truncate_cell(text, width),
             Style::default().fg(colour),
+        )));
+    }
+    if let Some((text, loud)) = footer {
+        while lines.len() < (inner.height as usize).saturating_sub(1) {
+            lines.push(Line::from(""));
+        }
+        let colour = if loud { theme.health_red } else { theme.title };
+        lines.push(Line::from(Span::styled(
+            crate::grid::truncate_cell(&text, width),
+            Style::default().fg(colour).add_modifier(Modifier::BOLD),
         )));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -1915,8 +2017,12 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    if let Some(v) = &ui.patch {
+        draw_env_lines(f, inner, app, &patch_lines(v), v.scroll, patch_prompt(v));
+        return;
+    }
     if let Some(v) = &ui.logs {
-        draw_env_logs(f, inner, app, v);
+        draw_env_lines(f, inner, app, &log_lines(v), v.scroll, None);
         return;
     }
     if ui.drift {
@@ -2972,6 +3078,60 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_patch_view_shows_the_plan_then_what_ran() {
+        use crate::app::{PatchStage, PatchView};
+        let plan = crate::demo::patch_plan("production", "production", "shop");
+        let mut v = PatchView {
+            environment: "production".into(),
+            server: "production".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan.clone())),
+            typed: "prod".into(),
+            scroll: 0,
+        };
+        let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            text[1],
+            "  2 to apply, in order, each in its own transaction · recorded up to 41"
+        );
+        assert_eq!(text[2], "  42-order-notes.sql");
+        assert_eq!(text[4], "      ALTER TABLE orders ADD COLUMN notes text");
+        assert!(text[8].starts_with("  not included: 44-orders-created-idx.sql"));
+        assert_eq!(text.len(), 9, "the prompt is pinned, not in the list");
+        assert_eq!(
+            patch_prompt(&v),
+            Some(("  type production to apply: prod▏".into(), true))
+        );
+        v.stage = PatchStage::Done(
+            plan,
+            crate::inventory::patching::ApplyReport {
+                results: vec![
+                    crate::inventory::patching::PatchResult {
+                        file: "42-order-notes.sql".into(),
+                        outcome: Ok(2),
+                    },
+                    crate::inventory::patching::PatchResult {
+                        file: "43-customer-tier.sql".into(),
+                        outcome: Err("lock timeout".into()),
+                    },
+                ],
+                error: None,
+            },
+        );
+        let done = patch_lines(&v);
+        assert_eq!(
+            done[1],
+            ("  ✓ 42-order-notes.sql — 2 statement(s)".into(), false)
+        );
+        assert_eq!(
+            done[2],
+            ("  ✗ 43-customer-tier.sql — lock timeout".into(), true)
+        );
+        v.stage = PatchStage::Plan(Err("no version_table".into()));
+        assert_eq!(patch_lines(&v)[1], ("  ✗ no version_table".into(), true));
     }
 
     #[test]

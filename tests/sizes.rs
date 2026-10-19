@@ -923,6 +923,28 @@ fn env_logs() {
     run_sizes("env_logs", scr_env_logs);
 }
 
+fn scr_env_patch() -> App {
+    let mut a = scr_environments();
+    a.environments.patch = Some(pgman::app::PatchView {
+        environment: "production".into(),
+        server: "production".into(),
+        database: "shop".into(),
+        stage: pgman::app::PatchStage::Plan(Ok(pgman::demo::patch_plan(
+            "production",
+            "production",
+            "shop",
+        ))),
+        typed: "produc".into(),
+        scroll: 0,
+    });
+    a
+}
+
+#[test]
+fn env_patch() {
+    run_sizes("env_patch", scr_env_patch);
+}
+
 fn scr_env_drift() -> App {
     let mut a = scr_environments();
     a.environments.drift = true;

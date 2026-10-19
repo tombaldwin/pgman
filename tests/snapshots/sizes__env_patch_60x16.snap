@@ -1,0 +1,21 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+ pgman X.X.X │ shop  connected · pg 16.2
+ 1 SELECT id, email,…               ] [ switch · ctrl-t new
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+│  production · production/shop — pending patches          │
+│                                                          │
+│  2 to apply, in order, each in its own transaction · rec…│
+│  42-order-notes.sql                                      │
+│      INSERT INTO db_version (id) VALUES (42)             │
+│      ALTER TABLE orders ADD COLUMN notes text            │
+│  43-customer-tier.sql                                    │
+│      INSERT INTO db_version (id) VALUES (43)             │
+│      ALTER TABLE customers ADD COLUMN tier smallint NOT …│
+│  not included: 44-orders-created-idx.sql — the patch bui…│
+│  type production to apply: produc▏                       │
+╰──────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   j/k navigate · F1 +5 more
