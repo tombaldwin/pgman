@@ -68,11 +68,6 @@ and Tom's decisions that day:
   `SET LOCAL lock_timeout`, a dry run as `BEGIN … ROLLBACK`, and a
   confirm through elicitation where a decline is final and Prod needs a
   typed confirm. It gets its own safety review before it ships.
-- **`--batch` and same-database discovered candidates.** A Spring
-  checkout often declares one database twice (examplecorp: `dataSource` and
-  `replicaDataSource`, both `ledger`), and batch's single-candidate rule
-  counts them as two. MCP lists them with `same_database_as`. Batch could
-  collapse identical targets before counting.
 - **A connection pool, or at least a tunnel kept open, across `query`
   calls.** Today every call pays the connect, and the ssh handshake when
   there's a tunnel.

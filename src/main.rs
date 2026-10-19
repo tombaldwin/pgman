@@ -776,6 +776,26 @@ fn resolve_batch_dsn(cli: &Cli) -> Result<conn::Dsn, String> {
     batch_dsn_from_picks(picks, cli.discovered)
 }
 
+/// Drop discovered picks that are the same connection as an earlier one:
+/// a Spring checkout often declares one database twice (`dataSource`
+/// and `replicaDataSource`, both on `ledger`), and counting them as two
+/// candidates made `--batch` refuse an unambiguous target. Same means
+/// the whole DSN — host, port, database, user, password, parameters,
+/// tunnel; anything else stays a separate candidate. Order is kept.
+/// Pure.
+fn collapse_same_connection(picks: Vec<DataSourcePick>) -> Vec<DataSourcePick> {
+    let mut out: Vec<DataSourcePick> = Vec::new();
+    for p in picks {
+        // An unresolved `${NAME}` stays in the DSN as literal text, so
+        // equal DSNs carry equal placeholders too.
+        let same = out.iter().any(|q| q.dsn.is_some() && q.dsn == p.dsn);
+        if !same {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// Reduce the discovered candidate list to the one DSN `--batch` may
 /// use, or the reason it may not. Pure — the tree-walking that produced
 /// `picks` happens in `resolve_batch_dsn`.
@@ -794,6 +814,7 @@ fn batch_dsn_from_picks(
     picks: Vec<DataSourcePick>,
     allow_discovered: bool,
 ) -> Result<conn::Dsn, String> {
+    let picks = collapse_same_connection(picks);
     match picks.len() {
         0 => Err(
             "no DSN — pass --dsn or run from a project with .pgman/pgman.toml or .idea/dataSources.xml"
@@ -1529,6 +1550,45 @@ mod main_tests {
             unresolved_host: Vec::new(),
             creds: Default::default(),
         }
+    }
+
+    #[test]
+    fn batch_counts_one_database_declared_twice_as_one_candidate() {
+        let twice = || {
+            vec![
+                batch_pick("dataSource", "postgres://app:pw@db:5432/ledger"),
+                batch_pick("replicaDataSource", "postgres://app:pw@db:5432/ledger"),
+            ]
+        };
+        let got = batch_dsn_from_picks(twice(), true).unwrap();
+        assert_eq!(got.dbname, "ledger");
+        // Still discovered: the opt-in is still required, and the
+        // message names the first declaration.
+        let err = batch_dsn_from_picks(twice(), false).unwrap_err();
+        assert!(err.contains("'dataSource'"), "{err}");
+
+        // Any difference keeps them apart.
+        for other in [
+            "postgres://app:pw@db:5432/ledgerlog",
+            "postgres://app:other@db:5432/ledger",
+            "postgres://app:pw@db:5433/ledger",
+            "postgres://app:pw@db:5432/ledger?sslmode=require",
+            "postgres://app:pw@replica:5432/ledger",
+        ] {
+            let picks = vec![
+                batch_pick("a", "postgres://app:pw@db:5432/ledger"),
+                batch_pick("b", other),
+            ];
+            let err = batch_dsn_from_picks(picks, true).unwrap_err();
+            assert!(err.contains("found 2 candidate"), "{other}: {err}");
+        }
+        // Two picks with no usable URL are not "the same connection".
+        let err = batch_dsn_from_picks(
+            vec![batch_pick("a", "${URL}"), batch_pick("b", "${URL}")],
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("found 2 candidate"), "{err}");
     }
 
     #[test]
