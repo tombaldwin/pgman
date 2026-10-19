@@ -343,8 +343,13 @@ Design note:
 
 Landed on branch `mcp-part-a`: the capped typed runner, the
 safety-config loader and discovery moved into the library (one commit
-each), then the server. Remaining: a smoke test against examplecorp's local
-ledger-db once Tom says so.
+each), then the server. Smoke-tested 2026-10-19 against examplecorp's local ledger-db
+from `~/git/examplecorp` with `--project-connections`: four Spring/IntelliJ
+connections listed with no password values and the two `ledger` entries
+linked; `t_schema_version` read back (latest scriptId 248);
+`default_transaction_read_only` = `on`. It found one defect: a refused
+write relayed batch's "re-run with --yes", which an MCP client cannot
+do (fixed, with a guard). Remaining: review and merge of `mcp-part-a`.
 
 ## Release day
 
