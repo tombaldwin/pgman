@@ -3187,3 +3187,65 @@ fn table_has_id(home: &std::path::Path, table: &str, id: i64) -> bool {
         .lines()
         .any(|l| l.trim() == "1")
 }
+
+/// A statement the scanner reads as one can be several to a server whose
+/// lexer a patch has changed (`standard_conforming_strings = off`): each
+/// planned statement goes to the server alone, so the hidden `COMMIT` and
+/// `DROP` never run. Found by the 2026-10-20 safety review.
+#[test]
+fn a_patch_cannot_smuggle_statements_past_the_scanner() {
+    let home = scratch_home("apply-smuggle", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_sv_{pid}");
+    let victim = format!("pgman_it_victim_{pid}");
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {victim} (id int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let text = format!(
+        "INSERT INTO {vt} (id) VALUES (2);\nSET standard_conforming_strings = off;\nSELECT '\\''; COMMIT; DROP TABLE {victim} --';\n"
+    );
+    let patch = pgman::query::patches::patch_file("002-x.sql", &text, &cfg);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    // The check refuses it outright now…
+    let refused = pgman::query::apply::check_patch(&writable, "pgman_test", &text).unwrap_err();
+    assert!(refused.contains("SET"), "{refused}");
+    // …and were a statement like it to get through, the server runs it alone.
+    let statements: Vec<String> = vec![
+        format!("INSERT INTO {vt} (id) VALUES (2)"),
+        "SELECT set_config('standard_conforming_strings', 'off', true)".into(),
+        format!("SELECT '\\''; COMMIT; DROP TABLE {victim} --'"),
+    ];
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        let client = pgman::conn::connect_only(
+            pgman::conn::Dsn::parse(DSN).unwrap(),
+            false,
+            30_000,
+            notice_tx,
+            notification_tx,
+        )
+        .await
+        .unwrap()
+        .0;
+        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements)
+            .await
+            .unwrap_err();
+        assert!(err.contains("statement 3 of 3 failed"), "{err}");
+    });
+    assert!(table_exists(&home, &victim), "the hidden DROP never ran");
+    assert!(!table_has_id(&home, &vt, 2), "and the patch rolled back");
+}

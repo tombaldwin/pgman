@@ -11,9 +11,16 @@
 //! What is refused before anything runs: a database the profile keeps
 //! read-only; a statement a `Block` guard stops; a patch that manages its
 //! own transaction (`BEGIN`/`COMMIT`) or builds an index `CONCURRENTLY`,
-//! neither of which can run inside pgman's transaction — those are run by
-//! hand. The caller confirms each patch first; that confirmation is what
-//! answers the guards' `Confirm`.
+//! neither of which can run inside pgman's transaction; and a patch that
+//! changes session settings (`SET`, `RESET`, `set_config`) — it could lift
+//! the lock timeout, or change how the server reads the next statement
+//! (`standard_conforming_strings`) so that it isn't the statement pgman
+//! checked. Those are run by hand. The caller confirms each patch first;
+//! that confirmation is what answers the guards' `Confirm`.
+//!
+//! Each statement goes to the server on its own through the extended
+//! protocol, which refuses a string holding more than one command: what
+//! the server runs is one statement, whatever its lexer makes of it.
 
 use super::patches::{self, PatchFile, PatchesConfig};
 use crate::conn;
@@ -58,12 +65,21 @@ pub fn check_patch(
         return Err("the patch has no statements".to_string());
     }
     for s in &statements {
+        let tokens = crate::safety::code_tokens(s);
+        if matches!(tokens.first().map(String::as_str), Some("set" | "reset"))
+            || tokens.iter().any(|t| t == "set_config")
+        {
+            return Err(
+                "the patch changes session settings (SET, RESET or set_config); apply it by hand"
+                    .into(),
+            );
+        }
         if crate::safety::is_transaction_control(s) {
             return Err(
                 "the patch manages its own transaction (BEGIN/COMMIT); apply it by hand".into(),
             );
         }
-        if s.to_ascii_uppercase().contains("CONCURRENTLY") {
+        if tokens.iter().any(|t| t == "concurrently") {
             return Err(
                 "the patch builds or drops an index CONCURRENTLY, which can't run in a \
                  transaction; apply it by hand"
@@ -96,7 +112,17 @@ pub async fn apply(
         .await
         .map_err(|e| format!("could not begin: {e}"))?;
     for (i, stmt) in statements.iter().enumerate() {
-        if let Err(e) = client.batch_execute(stmt).await {
+        // Again before each statement: a function the patch calls could
+        // have changed it (`SET` and `set_config` themselves are refused).
+        let reset = client
+            .batch_execute(&format!("SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            .await;
+        // `execute` prepares: one command per string, or the server refuses.
+        let run = match reset {
+            Ok(()) => client.execute(stmt.as_str(), &[]).await.map(drop),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = run {
             let _ = client.batch_execute("ROLLBACK").await;
             let msg = e
                 .as_db_error()
@@ -176,6 +202,10 @@ mod tests {
         let ok = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
                   ALTER TABLE t ADD COLUMN c int;";
         assert_eq!(check_patch(&writable(), "ledger", ok).unwrap().len(), 2);
+        // SET inside a statement, and CONCURRENTLY in a string, are fine.
+        let fine = "ALTER TABLE t ALTER COLUMN c SET DEFAULT 0;\n\
+                    UPDATE t SET note = 'built concurrently' WHERE false;";
+        assert_eq!(check_patch(&writable(), "ledger", fine).unwrap().len(), 2);
         assert!(
             check_patch(&SafetyConfig::default(), "ledger", ok)
                 .unwrap_err()
@@ -187,6 +217,14 @@ mod tests {
             ("CREATE INDEX CONCURRENTLY i ON t (c);", "CONCURRENTLY"),
             ("", "no statements"),
             ("DROP TABLE t;", "blocked"),
+            ("SET lock_timeout = 0;", "session settings"),
+            ("RESET lock_timeout;", "session settings"),
+            ("SET LOCAL statement_timeout = 0;", "session settings"),
+            ("set standard_conforming_strings = off;", "session settings"),
+            (
+                "SELECT set_config('lock_timeout', '0', true);",
+                "session settings",
+            ),
         ] {
             let e = check_patch(&writable(), "ledger", bad).unwrap_err();
             assert!(e.contains(why), "{bad:?}: {e}");
