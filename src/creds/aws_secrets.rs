@@ -4,14 +4,10 @@
 //! goes no further than the DSN handed to the driver — never `tracing`,
 //! never a tool result, never `Debug` output ([`SecretCreds`] redacts).
 //!
-//! Subprocess-based, for the reasons `tunnel.rs` gives for `ssh`: the
-//! system `aws` CLI already honours the operator's profiles, SSO cache and
-//! `credential_process`, and it adds no crate to the dependency tree. The
-//! ambient profile is used unless the connection names one. Every argument
-//! pgman passes is validated first, so a config value can never be read by
-//! the CLI as an option.
-
-use std::process::{Command, Stdio};
+//! Read through the system `aws` CLI (`crate::aws_cli`), with the ambient
+//! profile unless the connection names one. Every argument pgman passes is
+//! validated first, so a config value can never be read by the CLI as an
+//! option.
 
 /// A connection's reference to its secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,35 +25,22 @@ pub struct SecretRef {
 impl SecretRef {
     /// Check every field is safe to hand the CLI as an argument value.
     pub fn validate(&self) -> Result<(), String> {
-        let ok = |v: &str, extra: &str, max: usize| {
-            !v.is_empty()
-                && v.len() <= max
-                && !v.starts_with('-')
-                && v.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || extra.contains(c))
-        };
-        if !ok(&self.id, "/_+=.@-:", 2048) {
+        if !crate::aws_cli::plain_arg(&self.id, "/_+=.@-:", 2048) {
             return Err(format!(
                 "secret {:?} is not a valid secret name or ARN",
                 self.id
             ));
         }
-        if let Some(r) = &self.region {
-            if !ok(r, "-", 32) {
-                return Err(format!("aws_region {r:?} is not a region name"));
-            }
+        self.scope().validate()
+    }
+
+    /// The region, profile and account this secret is read under.
+    pub fn scope(&self) -> crate::aws_cli::AwsScope {
+        crate::aws_cli::AwsScope {
+            region: self.region.clone(),
+            profile: self.profile.clone(),
+            account: self.account.clone(),
         }
-        if let Some(p) = &self.profile {
-            if !ok(p, "_.-", 128) {
-                return Err(format!("aws_profile {p:?} is not a profile name"));
-            }
-        }
-        if let Some(a) = &self.account {
-            if a.len() != 12 || !a.chars().all(|c| c.is_ascii_digit()) {
-                return Err(format!("aws_account {a:?} is not a 12-digit account id"));
-            }
-        }
-        Ok(())
     }
 
     /// How the secret is described wherever its value can't be shown.
@@ -119,25 +102,6 @@ pub fn parse_secret_string(text: &str) -> Result<SecretCreds, String> {
     Ok(SecretCreds { username, password })
 }
 
-/// Region and profile flags, shared by both calls.
-fn common_args(r: &SecretRef) -> Vec<String> {
-    let mut args = vec![
-        "--output".to_string(),
-        "text".to_string(),
-        "--cli-connect-timeout".to_string(),
-        "10".to_string(),
-        "--cli-read-timeout".to_string(),
-        "10".to_string(),
-    ];
-    if let Some(region) = &r.region {
-        args.extend(["--region".to_string(), region.clone()]);
-    }
-    if let Some(profile) = &r.profile {
-        args.extend(["--profile".to_string(), profile.clone()]);
-    }
-    args
-}
-
 /// `aws secretsmanager get-secret-value …` arguments. Pure so the shape
 /// is tested without spawning anything.
 pub fn get_secret_args(r: &SecretRef) -> Vec<String> {
@@ -149,58 +113,16 @@ pub fn get_secret_args(r: &SecretRef) -> Vec<String> {
         "--query".to_string(),
         "SecretString".to_string(),
     ];
-    args.extend(common_args(r));
+    args.extend(r.scope().common_args("text"));
     args
-}
-
-/// `aws sts get-caller-identity …` arguments.
-pub fn caller_account_args(r: &SecretRef) -> Vec<String> {
-    let mut args = vec![
-        "sts".to_string(),
-        "get-caller-identity".to_string(),
-        "--query".to_string(),
-        "Account".to_string(),
-    ];
-    args.extend(common_args(r));
-    args
-}
-
-/// Run `aws` with `args`; stdout on success. A failure carries the CLI's
-/// own stderr (trimmed, capped), which names the problem — expired SSO,
-/// access denied, no such secret — and never holds a secret value.
-fn run_aws(args: &[String]) -> Result<String, String> {
-    let out = Command::new("aws")
-        .args(args)
-        .env("AWS_PAGER", "")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("could not run the aws CLI ({e}); is it installed and on PATH?"))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let err: String = err.trim().chars().take(500).collect();
-        return Err(format!("aws {} failed: {err}", args[..2].join(" ")));
-    }
-    String::from_utf8(out.stdout).map_err(|_| "the aws CLI returned non-UTF-8 output".to_string())
 }
 
 /// Fetch and parse the secret, checking the account first when the
 /// reference names one. Blocking: call it from `spawn_blocking`.
 pub fn fetch(r: &SecretRef) -> Result<SecretCreds, String> {
     r.validate()?;
-    if let Some(want) = &r.account {
-        let got = run_aws(&caller_account_args(r))?;
-        let got = got.trim();
-        if got != want {
-            return Err(format!(
-                "the AWS credentials in use are for account {got}, not {want}; \
-                 refusing to read {}",
-                r.id
-            ));
-        }
-    }
-    let text = run_aws(&get_secret_args(r))?;
+    r.scope().check_account(&r.id)?;
+    let text = crate::aws_cli::run(&get_secret_args(r))?;
     parse_secret_string(&text).map_err(|e| format!("secret {}: {e}", r.id))
 }
 
@@ -315,10 +237,6 @@ mod tests {
         assert!(tail.contains("--output text"), "{tail}");
         assert!(tail.contains("--region us-west-1"), "{tail}");
         assert!(tail.contains("--profile examplecorp"), "{tail}");
-        assert_eq!(
-            caller_account_args(&x)[..4],
-            ["sts", "get-caller-identity", "--query", "Account"]
-        );
     }
 
     #[test]
