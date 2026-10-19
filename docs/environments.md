@@ -160,7 +160,8 @@ probe = true
 version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }
 ```
 
-Every refresh (`E`, `r`) then reads, from each database:
+Every refresh (`E`, `r`) then reads, from each database (and so does
+the MCP `environments` tool when called with `probe: true`):
 
 - **Version, recovery and lag**, in one round trip. A replica shows
   `lag 0.4s`; one that is not in recovery shows `NOT IN RECOVERY` in

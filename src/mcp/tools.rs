@@ -82,8 +82,14 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "environments",
-            "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. CAVEATS: nothing here connects to a database, so there is no schema version, pending-patch count or replica lag yet, and `status` is RDS's view of the instance, not proof that Postgres answers. Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
-            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+            "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. With `probe: true`, environments that opted in (`probe = true` in environments.toml) also report each database's server version, recovery state, replica lag and — with a `version_table` — patch level and pending patches, read over read-only connections; a primary with a replica of the same database is read through the replica (`via_replica`). CAVEATS: without `probe` nothing connects to a database, and `status` is RDS's view of the instance, not proof that Postgres answers. An environment that didn't opt in is never probed, whatever the argument says. Lag is the age of the last replayed change: an idle primary makes it grow too. Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "probe": {"type": "boolean", "description": "Connect to the databases of environments that opted into probes. Default false."}
+                },
+                "additionalProperties": false
+            },
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
         },
         {
@@ -139,7 +145,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         // connect + 10s read) for a secret, plus connecting.
         "query" | "sessions_locks" | "pending_patches" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
         // One aws CLI listing (plus an account check) per distinct scope.
-        "environments" => 60,
+        // Listings, then (with `probe`) a tunnel and up to 20s per database.
+        "environments" => 120,
         // sts, configure, then three listings, each bounded by the CLI.
         "environments_discover" | "environments_save" => 120,
         _ => 10,
@@ -154,7 +161,7 @@ impl Server {
             "query" => self.tool_query(args).await,
             "sessions_locks" => self.tool_sessions_locks(args).await,
             "pending_patches" => self.tool_pending_patches(args).await,
-            "environments" => tool_environments().await,
+            "environments" => tool_environments(args).await,
             "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
             "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
@@ -525,14 +532,56 @@ fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
 
 /// `environments`: every configured environment's databases, from the
 /// sources alone — nothing connects to a database.
-async fn tool_environments() -> Result<String, String> {
+async fn tool_environments(args: &Value) -> Result<String, String> {
+    let probe = match args.get("probe") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("'probe' must be true or false".to_string()),
+    };
     let reports = tokio::task::spawn_blocking(crate::inventory::load_and_gather)
         .await
         .map_err(|e| format!("environments task failed: {e}"))??;
+    let probes = if probe {
+        let runs = reports.iter().map(|r| {
+            let report = r.clone();
+            async move {
+                match report.probe {
+                    Some(_) => Some(
+                        crate::inventory::probe::run(
+                            report,
+                            std::sync::Arc::new(crate::creds::aws_secrets::fetch),
+                        )
+                        .await,
+                    ),
+                    None => None,
+                }
+            }
+        });
+        Some(futures::future::join_all(runs).await)
+    } else {
+        None
+    };
     Ok(render_environments(
         &crate::util::config_file("environments.toml"),
         &reports,
+        probes.as_deref(),
     ))
+}
+
+/// One database's probe as the `environments` tool reports it. Pure.
+pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
+    match outcome {
+        None => json!({"via_replica": true}),
+        Some(Err(e)) => json!({"error": e}),
+        Some(Ok(p)) => json!({
+            "server_version": p.server_version,
+            "in_recovery": p.in_recovery,
+            "lag_secs": p.lag_secs,
+            "schema_version": p.schema_version,
+            "pending": p.pending,
+            "schema_error": p.schema_error,
+        }),
+    }
 }
 
 /// The AWS scope an `environments_*` call names, validated.
@@ -616,18 +665,24 @@ pub fn save_names(args: &Value) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// `probes`, when the call asked to probe, is parallel to `reports`:
+/// `None` for an environment that didn't opt in.
 pub fn render_environments(
     path: &std::path::Path,
     reports: &[crate::inventory::EnvReport],
+    probes: Option<&[Option<Vec<crate::inventory::probe::Outcome>>]>,
 ) -> String {
     let envs: Vec<Value> = reports
         .iter()
-        .map(|r| {
+        .enumerate()
+        .map(|(ri, r)| {
+            let env_probes = probes.map(|p| p.get(ri).cloned().flatten());
             let rows: Vec<Value> = r
                 .targets
                 .iter()
-                .map(|t| {
-                    json!({
+                .enumerate()
+                .map(|(ti, t)| {
+                    let mut row = json!({
                         "database": t.database,
                         "server": t.server,
                         "role": t.role.label(),
@@ -638,10 +693,22 @@ pub fn render_environments(
                         "status": t.status,
                         "class": t.class,
                         "multi_az": t.multi_az,
-                    })
+                    });
+                    if let Some(Some(outcomes)) = &env_probes {
+                        if let Some(o) = outcomes.get(ti) {
+                            row["probe"] = render_probe(o);
+                        }
+                    }
+                    row
                 })
                 .collect();
-            json!({"name": r.name, "source": r.source, "error": r.error, "databases": rows})
+            let mut env =
+                json!({"name": r.name, "source": r.source, "error": r.error, "databases": rows});
+            if let Some(None) = env_probes {
+                env["probe"] =
+                    json!("not enabled for this environment (probe = true in environments.toml)");
+            }
+            env
         })
         .collect();
     json!({
@@ -988,6 +1055,41 @@ mod tests {
                 "environments_save"
             ]
         );
+    }
+
+    #[test]
+    fn environments_report_probes_only_when_asked_and_only_where_enabled() {
+        let mut reports = crate::demo::environments();
+        // staging probes (demo fixture); qa and local don't.
+        let probes: Vec<Option<Vec<crate::inventory::probe::Outcome>>> = reports
+            .iter()
+            .map(|r| r.probe.as_ref().map(|_| crate::demo::environment_probes(r)))
+            .collect();
+        let path = std::path::Path::new("/cfg/environments.toml");
+        let v: Value =
+            serde_json::from_str(&render_environments(path, &reports, Some(&probes))).unwrap();
+        let staging = &v["environments"][0];
+        assert_eq!(
+            staging["databases"][0]["probe"],
+            json!({"via_replica": true})
+        );
+        let replica = &staging["databases"][1]["probe"];
+        assert_eq!(replica["schema_version"], 251);
+        assert_eq!(replica["pending"], 1);
+        assert_eq!(replica["in_recovery"], true);
+        assert!(v["environments"][1]["probe"]
+            .as_str()
+            .unwrap()
+            .starts_with("not enabled"));
+        assert!(v["environments"][1]["databases"][0].get("probe").is_none());
+
+        // Not asked: no probe keys at all.
+        let v: Value = serde_json::from_str(&render_environments(path, &reports, None)).unwrap();
+        assert!(v["environments"][0].get("probe").is_none());
+        assert!(v["environments"][0]["databases"][1].get("probe").is_none());
+
+        reports.truncate(0);
+        assert!(render_environments(path, &reports, None).contains("no environments configured"));
     }
 
     #[test]

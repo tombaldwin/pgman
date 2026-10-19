@@ -2114,3 +2114,50 @@ fn environment_probe_reads_version_patch_level_and_pending() {
     );
     assert_eq!(p.schema_version, None);
 }
+
+/// Over MCP, `probe: true` reads the databases of environments that
+/// opted in, and leaves the others alone; without it nothing connects.
+#[cfg(unix)]
+#[test]
+fn mcp_environments_probe_reads_opted_in_environments_only() {
+    let home = scratch_home("mcp-env-probe", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"probed\"\nsource = { kind = \"static\", connections = [\"local\"] }\nprobe = true\n\
+         [[environments]]\nname = \"quiet\"\nsource = { kind = \"static\", connections = [\"local\"] }\n",
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(1, "environments", serde_json::json!({"probe": true})),
+            tool_call(2, "environments", serde_json::json!({})),
+            tool_call(3, "environments", serde_json::json!({"probe": "yes"})),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let probe = &v["environments"][0]["databases"][0]["probe"];
+    assert!(probe["server_version"].is_string(), "{text}");
+    assert_eq!(probe["in_recovery"], false, "{text}");
+    assert!(v["environments"][1]["probe"]
+        .as_str()
+        .unwrap()
+        .starts_with("not enabled"));
+    let (text, _) = reply(&frames, 2);
+    assert!(
+        !text.contains("server_version"),
+        "nothing connects unasked: {text}"
+    );
+    let (text, is_error) = reply(&frames, 3);
+    assert!(is_error && text.contains("'probe' must be"), "{text}");
+}

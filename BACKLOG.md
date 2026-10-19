@@ -55,9 +55,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 - **Background refresh.** Probes run on `E` and `r` only. A periodic
   refresh on the shared frame clock (house rule: no independent tickers)
   would keep lag current.
-- **Probes over MCP.** The `environments` tool still connects to nothing.
-  A `probe` argument (opt-in environments only) would give an agent the
-  same patch level and lag.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
