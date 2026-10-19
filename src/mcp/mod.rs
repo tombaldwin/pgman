@@ -480,11 +480,14 @@ where
             continue;
         }
         if req.get("method").and_then(Value::as_str) == Some("tools/call") {
-            let permit = Arc::clone(&slots).acquire_owned().await;
+            // The slot is taken in the task, not here: a call waiting on
+            // the operator (elicitation) holds one, and the reader must
+            // keep reading to deliver the answer it waits for.
+            let slots = Arc::clone(&slots);
             let server = Arc::clone(&server);
             let out_tx = out_tx.clone();
             tokio::spawn(async move {
-                let _permit = permit;
+                let _permit = slots.acquire_owned().await;
                 if let Some(resp) = server.handle_request(&req).await {
                     let _ = out_tx.send(resp.to_string()).await;
                 }
