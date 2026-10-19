@@ -101,6 +101,9 @@ pub struct Server {
     /// Requests sent to the client, waiting for its answer, by id.
     waiting: Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<Value>>>,
     next_request: AtomicU64,
+    /// (environment, server, database) the operator declined patches
+    /// for: not asked again while this server runs.
+    declined: Mutex<std::collections::HashSet<(String, String, String)>>,
 }
 
 /// How long the operator has to answer an elicitation.
@@ -120,7 +123,20 @@ impl Server {
             outbox: Mutex::new(None),
             waiting: Mutex::new(std::collections::HashMap::new()),
             next_request: AtomicU64::new(1),
+            declined: Mutex::new(std::collections::HashSet::new()),
         }
+    }
+
+    pub(crate) fn remember_decline(&self, environment: &str, server: &str, database: &str) {
+        if let Ok(mut d) = self.declined.lock() {
+            d.insert((environment.into(), server.into(), database.into()));
+        }
+    }
+
+    pub(crate) fn declined(&self, environment: &str, server: &str, database: &str) -> bool {
+        self.declined
+            .lock()
+            .is_ok_and(|d| d.contains(&(environment.into(), server.into(), database.into())))
     }
 
     /// Ask the operator, through the client (`elicitation/create`), and

@@ -233,6 +233,11 @@ impl Server {
         let environment = arg_str(args, "environment")?.to_string();
         let server = arg_str(args, "server")?.to_string();
         let database = arg_str(args, "database")?.to_string();
+        if self.declined(&environment, &server, &database) {
+            return Err(format!(
+                "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
+            ));
+        }
         let plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
@@ -244,6 +249,9 @@ impl Server {
         }
         let (message, schema) = confirm_request(&plan);
         let answer = self.elicit(&message, schema).await?;
+        if answer.get("action").and_then(Value::as_str) != Some("accept") {
+            self.remember_decline(&environment, &server, &database);
+        }
         if let Err(why) = confirmed(&plan, &answer) {
             tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, "apply_patches not confirmed: {why}");
             return Err(format!(

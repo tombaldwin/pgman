@@ -3171,6 +3171,24 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["results"][0]["applied"], true, "{text}");
     assert!(table_has_id(&home, &vt, 2));
+
+    // A decline is final: the next call is refused without asking.
+    std::fs::write(
+        dir.join("003-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (3);\n"),
+    )
+    .unwrap();
+    let (text, is_error, _) = call(4, serde_json::json!({"action": "decline"}));
+    assert!(is_error && text.contains("That answer is final"), "{text}");
+    writeln!(stdin, "{}", tool_call(5, "apply_patches", args.clone())).unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 5, "a reply, not another question: {frame}");
+    let (text, is_error) = reply(&[frame], 5);
+    assert!(
+        is_error && text.contains("declined patches for it-prod"),
+        "{text}"
+    );
+    assert!(!table_has_id(&home, &vt, 3));
     drop(stdin);
     assert!(child.wait().unwrap().success());
 }
