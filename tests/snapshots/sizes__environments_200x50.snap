@@ -10,11 +10,11 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ┌ environments — r refresh · q close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
+│       ┌ environments — enter connect · d discover · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
 └───────│  staging · RDS 123456789012 eu-west-2                                                                                                                                                │───────┘
-┌ result│    database  role     server             status     engine                                                                                                                           │───────┐
-│id  ema│    shop      primary  staging            available  postgres 16.4                                                                                                                    │       │
-│1   ada│    shop      replica  └ staging-replica  available  postgres 16.4                                                                                                                    │       │
+┌ result│    database  role     server             status     probe                        engine                                                                                              │───────┐
+│id  ema│    shop      primary  staging            available  via replica                  postgres 16.4                                                                                       │       │
+│1   ada│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgres 16.4                                                                                       │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│  qa · RDS 123456789012 eu-west-2                                                                                                                                                     │       │
 │4   ala│    database  role     server             status     engine                                                                                                                           │       │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · g/G top/bottom · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

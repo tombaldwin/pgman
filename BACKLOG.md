@@ -39,12 +39,20 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 - **Surfaces.** A TUI screen in ebman's style that refreshes in the
   background on the shared frame clock (house rule: no independent
   tickers), and an `environments` MCP tool returning the same rows.
-- **Order.** (1) is done (PLAN.md): the model, the `static` and `rds`
-  sources, the `E` screen and the `environments` MCP tool, with no
-  database connections. Next is (2): tunnel reuse (the connection-pool
-  item below becomes a prerequisite: ten databases must not mean ten ssh
-  handshakes), then the schema/pending/lag probes. After that, (3):
-  `docker` and the other sources as needed.
+- **Order.** (1) and (2) are done (PLAN.md): the model, the sources,
+  the `E` screen, connecting, AWS discovery, and opt-in probes with one
+  ssh per bastion. Next is (3): `docker` and the other sources as
+  needed.
+
+### Environments — after probes (2026-10-19)
+- **Background refresh.** Probes run on `E` and `r` only. A periodic
+  refresh on the shared frame clock (house rule: no independent tickers)
+  would keep lag current.
+- **Probes over MCP.** The `environments` tool still connects to nothing.
+  A `probe` argument (opt-in environments only) would give an agent the
+  same patch level and lag.
+- **Discovery could propose `probe` and `version_table`**, for instance
+  from a project's `[patches]`. Today they're added by hand.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session

@@ -14,7 +14,8 @@ only. Diagnostics go to the log file (`~/.cache/pgman/pgman.log.*`).
 
 ## This build is read-only
 
-There are no write tools. Every `query` session opens with
+No tool writes to a database. (`environments_save` appends to your
+`environments.toml`, and `--read-only` refuses it too.) Every `query` session opens with
 `default_transaction_read_only = on`, **whatever your `safety.toml`
 says**. Statements go through the same guards as `--batch` with no
 `--yes`: a statement a guard would ask a human to confirm is refused,
@@ -31,6 +32,8 @@ startup, not accepted and ignored.
 | `sessions_locks` | A pre-flight before a schema change. It reports sessions that have held a transaction open for at least `min_xact_age_secs` (default 60), are blocked, are blocking someone, or hold or wait for a lock on one of `tables`, and lists each one's locks on those tables. `server_is_replica` comes from `pg_is_in_recovery()`: on a replica you see the replica's sessions, not the primary's. |
 | `pending_patches` | Patch files whose id the database hasn't recorded. Each id comes from the file's own version-row `INSERT`. It also flags recent files with no version row, recorded ids whose file has no live version row (commented out, say), filename/id mismatches and duplicate ids. Configured by `[patches]` in `.pgman/pgman.toml`, or by passing `dir`, `table` and `column`. A file counts as applied when its id is recorded, not when its statements ran. |
 | `environments` | Every database in each environment of `environments.toml`, replicas under their primary, with role, status and engine version, from the sources alone. It connects to no database. See [Environments](environments.md). |
+| `environments_discover` | Proposals for `environments.toml` from an AWS account (optional `region`, `profile`, `account`): per primary, its replicas, matching secret names, the bastion, and exactly the TOML a save appends, with notes to check. Reads names only, never a secret's value. |
+| `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It's the only tool that writes anything, and it writes a config file, not a database. |
 
 Each tool's description ends in a CAVEATS paragraph that says what the
 tool cannot see.

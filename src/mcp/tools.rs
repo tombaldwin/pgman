@@ -85,6 +85,36 @@ pub fn tool_table() -> Value {
             "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. CAVEATS: nothing here connects to a database, so there is no schema version, pending-patch count or replica lag yet, and `status` is RDS's view of the instance, not proof that Postgres answers. Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
+            "name": "environments_discover",
+            "description": "Propose environments from an AWS account, for environments.toml: one per RDS Postgres primary with its read replicas, the Secrets Manager secret matching each database by NAME, the bastion (public EC2 host) in the instance's VPC, sslmode=require, the account and region pinned. Each proposal has `toml` (exactly what environments_save would append), `notes` to check first (ambiguous secrets are listed, not guessed), and `covered_by` when an existing environment already lists that primary. CAVEATS: reads names and endpoints only — it never reads a secret's value or connects to a database, so a proposed secret is a match by name, not a tested login. Without permission to list secrets or EC2 hosts, proposals come without them and `warnings` says why. Uses the aws CLI's ambient profile and region unless given.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "region": {"type": "string"},
+                    "profile": {"type": "string"},
+                    "account": {"type": "string", "description": "Refuse unless the AWS credentials belong to this account."}
+                },
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
+            "name": "environments_save",
+            "description": "Append the named proposals from a fresh environments_discover to environments.toml in pgman's config dir. Only what discovery proposes can be saved — names choose among proposals, nothing else is written — and the file's existing content is never rewritten; the result must load or nothing is written. A proposal an existing environment already covers is refused. CAVEATS: this writes the operator's config file (never a database); refused when the server was started with --read-only. Show the operator the proposal's `toml` and `notes` before saving.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": "Proposal names from environments_discover."},
+                    "region": {"type": "string"},
+                    "profile": {"type": "string"},
+                    "account": {"type": "string"}
+                },
+                "required": ["names"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": true}
         }
     ])
 }
@@ -110,6 +140,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "query" | "sessions_locks" | "pending_patches" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
         // One aws CLI listing (plus an account check) per distinct scope.
         "environments" => 60,
+        // sts, configure, then three listings, each bounded by the CLI.
+        "environments_discover" | "environments_save" => 120,
         _ => 10,
     }
 }
@@ -123,8 +155,32 @@ impl Server {
             "sessions_locks" => self.tool_sessions_locks(args).await,
             "pending_patches" => self.tool_pending_patches(args).await,
             "environments" => tool_environments().await,
+            "environments_discover" => tool_environments_discover(args).await,
+            "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
         }
+    }
+
+    /// `environments_save`: discover again and append the named
+    /// proposals. Refused under `--read-only`.
+    async fn tool_environments_save(&self, args: &Value) -> Result<String, String> {
+        if self.opts.read_only {
+            return Err(
+                "environments_save is refused: the server was started with --read-only".to_string(),
+            );
+        }
+        let names = save_names(args)?;
+        let scope = scope_from_args(args)?;
+        tokio::task::spawn_blocking(move || {
+            let existing = crate::inventory::load().environments?;
+            let d = crate::inventory::discover::discover(&scope)?;
+            let proposals = crate::inventory::discover::proposals(&d, &existing);
+            let chosen = crate::inventory::discover::choose(&proposals, &names)?;
+            let path = crate::inventory::discover::save(&chosen)?;
+            Ok(json!({"added": names, "config": path.display().to_string()}).to_string())
+        })
+        .await
+        .map_err(|e| format!("save task failed: {e}"))?
     }
 
     fn tool_doctor(&self) -> String {
@@ -144,7 +200,11 @@ impl Server {
                 "declared_elicitation": client.1,
                 "note": "elicitation is recorded, not used: this build has no tool that asks the operator anything",
             },
-            "write_surface": "none — this build has no write tools, and --allow-writes is refused at startup",
+            "write_surface": if self.opts.read_only {
+                "none — --read-only: environments_save is refused, and no tool writes to a database"
+            } else {
+                "environments_save appends discovered environments to environments.toml; no tool writes to a database, and --allow-writes is refused at startup"
+            },
             "read_only_floor": [
                 "every `query` connection opens with default_transaction_read_only=on, whatever safety.toml says",
                 "statements pass the same safety.rs guards as --batch; a guard that would ask for confirmation refuses",
@@ -372,50 +432,9 @@ pub fn mcp_connect_hint(err: &str, dsn: &conn::Dsn) -> Option<String> {
     conn::connect_hint(err, dsn)
 }
 
-/// Put a secret's credentials on the DSN: the password always, the user
-/// when the secret has one — the secret's password belongs to the
-/// secret's user, so a different user in the url would only fail to log in.
-pub fn apply_secret(dsn: &mut conn::Dsn, creds: crate::creds::aws_secrets::SecretCreds) {
-    if let Some(u) = creds.username {
-        dsn.user = Some(u);
-    }
-    dsn.password = Some(creds.password);
-}
+pub use crate::creds::aws_secrets::apply as apply_secret;
 
-/// Most version rows `pending_patches` will read. A version table is
-/// one row per patch; past this something is not what it seems.
-pub const MAX_APPLIED_IDS: usize = 100_000;
-
-/// Largest patch file read. The version row sits at the top; a data
-/// load can be huge, and only its head is needed.
-pub const MAX_PATCH_BYTES: u64 = 1024 * 1024;
-
-/// The recorded ids from the version-table query. A list cut at the row
-/// cap is refused rather than reported on: a missing id would read as a
-/// pending patch, which is the one wrong answer this tool must not give.
-pub fn applied_ids(
-    typed: &conn::TypedRows,
-    truncated: bool,
-    cfg: &patches::PatchesConfig,
-) -> Result<Vec<i64>, String> {
-    if truncated {
-        return Err(format!(
-            "{} holds more than {MAX_APPLIED_IDS} rows; refusing to report on a partial list",
-            cfg.table
-        ));
-    }
-    let mut out = Vec::new();
-    for row in &typed.rows {
-        // A NULL id records nothing.
-        if let Some(text) = row.first().and_then(|c| c.as_deref()) {
-            let id = text
-                .parse::<i64>()
-                .map_err(|_| format!("{}.{} holds a non-integer id", cfg.table, cfg.column))?;
-            out.push(id);
-        }
-    }
-    Ok(out)
-}
+pub use crate::query::patches::{applied_ids, read_patch_files, MAX_APPLIED_IDS, MAX_PATCH_BYTES};
 
 /// The `[patches]` block, with any of `dir` / `table` / `column` the
 /// client passed taking its place. All three must end up set.
@@ -466,36 +485,6 @@ pub fn patch_dir_within(root: &std::path::Path, dir: &str) -> Result<std::path::
     Ok(resolved)
 }
 
-/// Every `*.sql` file in `dir` (not recursive), parsed for its id.
-fn read_patch_files(
-    dir: &std::path::Path,
-    cfg: &patches::PatchesConfig,
-) -> Result<Vec<patches::PatchFile>, String> {
-    use std::io::Read;
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
-    let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(file) = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        if !file.to_ascii_lowercase().ends_with(".sql") || !path.is_file() {
-            continue;
-        }
-        let mut text = String::new();
-        std::fs::File::open(&path)
-            .and_then(|f| f.take(MAX_PATCH_BYTES).read_to_string(&mut text))
-            .map_err(|e| format!("cannot read {file}: {e}"))?;
-        out.push(patches::patch_file(&file, &text, cfg));
-    }
-    Ok(out)
-}
-
 pub fn render_pending_patches(
     name: &str,
     cfg: &patches::PatchesConfig,
@@ -539,6 +528,79 @@ async fn tool_environments() -> Result<String, String> {
         &crate::util::config_file("environments.toml"),
         &reports,
     ))
+}
+
+/// The AWS scope an `environments_*` call names, validated.
+pub fn scope_from_args(args: &Value) -> Result<crate::aws_cli::AwsScope, String> {
+    let s = |k: &str| -> Result<Option<String>, String> {
+        match args.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(v)) => Ok(Some(v.clone())),
+            Some(_) => Err(format!("'{k}' must be a string")),
+        }
+    };
+    let scope = crate::aws_cli::AwsScope {
+        region: s("region")?,
+        profile: s("profile")?,
+        account: s("account")?,
+    };
+    scope.validate()?;
+    Ok(scope)
+}
+
+pub fn render_found(found: &crate::inventory::discover::Found) -> String {
+    let proposals: Vec<Value> = found
+        .proposals
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.env.name,
+                "servers": p.servers,
+                "covered_by": p.covered_by,
+                "notes": p.notes,
+                "toml": (p.covered_by.is_none()).then(|| crate::inventory::discover::render(p)),
+            })
+        })
+        .collect();
+    json!({
+        "discovered_in": found.header,
+        "warnings": found.warnings,
+        "proposals": proposals,
+        "config": crate::util::config_file("environments.toml").display().to_string(),
+    })
+    .to_string()
+}
+
+/// `environments_discover`: proposals from the account; nothing written.
+async fn tool_environments_discover(args: &Value) -> Result<String, String> {
+    let scope = scope_from_args(args)?;
+    let found = tokio::task::spawn_blocking(move || {
+        let existing = crate::inventory::load().environments?;
+        Ok::<_, String>(crate::inventory::discover::discover(&scope)?.found(&existing))
+    })
+    .await
+    .map_err(|e| format!("discovery task failed: {e}"))??;
+    Ok(render_found(&found))
+}
+
+/// The proposal names an `environments_save` call names: a non-empty
+/// list of strings.
+pub fn save_names(args: &Value) -> Result<Vec<String>, String> {
+    let names: Vec<String> = args
+        .get("names")
+        .and_then(|n| n.as_array())
+        .ok_or("'names' is required: the proposals to save, from environments_discover")?
+        .iter()
+        .map(|n| {
+            n.as_str()
+                .map(str::to_string)
+                .ok_or("'names' must be strings")
+        })
+        .collect::<Result<_, _>>()?;
+    if names.is_empty() {
+        return Err("'names' is empty: name the proposals to save".to_string());
+    }
+    Ok(names)
 }
 
 pub fn render_environments(
@@ -896,7 +958,9 @@ mod tests {
         for d in tool_table().as_array().unwrap() {
             let desc = d["description"].as_str().unwrap();
             assert!(desc.contains("CAVEATS:"), "{} has no CAVEATS", d["name"]);
-            assert_eq!(d["annotations"]["readOnlyHint"], true, "{}", d["name"]);
+            // One tool writes anything, and it writes a config file.
+            let writes = d["name"] == "environments_save";
+            assert_eq!(d["annotations"]["readOnlyHint"], !writes, "{}", d["name"]);
         }
         assert_eq!(
             tool_names(),
@@ -906,9 +970,35 @@ mod tests {
                 "query",
                 "sessions_locks",
                 "pending_patches",
-                "environments"
+                "environments",
+                "environments_discover",
+                "environments_save"
             ]
         );
+    }
+
+    #[test]
+    fn environments_save_names_and_scope_are_checked() {
+        assert_eq!(
+            save_names(&json!({"names": ["demo", "test"]})).unwrap(),
+            ["demo", "test"]
+        );
+        for bad in [
+            json!({}),
+            json!({"names": []}),
+            json!({"names": "demo"}),
+            json!({"names": [1]}),
+        ] {
+            assert!(save_names(&bad).is_err(), "{bad}");
+        }
+        let scope =
+            scope_from_args(&json!({"region": "us-west-1", "account": "210987654321"})).unwrap();
+        assert_eq!(scope.region.as_deref(), Some("us-west-1"));
+        assert!(
+            scope_from_args(&json!({"profile": "--debug"})).is_err(),
+            "option-shaped"
+        );
+        assert!(scope_from_args(&json!({"region": 5})).is_err());
     }
 
     #[test]

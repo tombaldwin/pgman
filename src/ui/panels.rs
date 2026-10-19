@@ -1140,14 +1140,121 @@ pub(crate) enum EnvLine {
         text: String,
         index: usize,
         status: Option<String>,
+        /// What the probe found that wants attention, if anything.
+        alert: Option<ProbeAlert>,
     },
     Blank,
 }
 
-/// The environments panel's lines, columns sized to the data. Pure, so
-/// the layout is tested without a terminal.
+/// How loudly a probe cell should read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeAlert {
+    /// Pending patches, or a replica far behind.
+    Warn,
+    /// The probe failed, or a "replica" is not in recovery.
+    Bad,
+}
+
+/// A replica's lag as the overview shows it.
+fn lag_text(secs: f64) -> String {
+    if secs < 10.0 {
+        format!("lag {secs:.1}s")
+    } else if secs < 120.0 {
+        format!("lag {secs:.0}s")
+    } else if secs < 7200.0 {
+        format!("lag {:.0}m", secs / 60.0)
+    } else {
+        format!("lag {:.0}h", secs / 3600.0)
+    }
+}
+
+/// The probe column for one row, and whether it wants attention. Pure.
+pub(crate) fn probe_cell(
+    state: &crate::app::ProbeState,
+    role: crate::mcp::connections::Role,
+) -> (String, Option<ProbeAlert>) {
+    use crate::app::ProbeState;
+    let p = match state {
+        ProbeState::Off => return (String::new(), None),
+        ProbeState::Probing => return ("probing…".into(), None),
+        ProbeState::ViaReplica => return ("via replica".into(), None),
+        ProbeState::Done(Err(e)) => {
+            return (
+                format!("✗ {}", e.lines().next().unwrap_or_default()),
+                Some(ProbeAlert::Bad),
+            )
+        }
+        ProbeState::Done(Ok(p)) => p,
+    };
+    let mut parts = Vec::new();
+    let mut alert = None;
+    if let Some(v) = p.schema_version {
+        parts.push(format!("v{v}"));
+    }
+    match p.pending {
+        Some(0) => parts.push("up to date".into()),
+        Some(n) => {
+            parts.push(format!("{n} pending"));
+            alert = Some(ProbeAlert::Warn);
+        }
+        None => {}
+    }
+    if p.schema_error.is_some() {
+        parts.push("version ✗".into());
+        alert = Some(ProbeAlert::Warn);
+    }
+    if role == crate::mcp::connections::Role::Replica {
+        match (p.in_recovery, p.lag_secs) {
+            (Some(false), _) => {
+                parts.push("NOT IN RECOVERY".into());
+                alert = Some(ProbeAlert::Bad);
+            }
+            (_, Some(secs)) => {
+                parts.push(lag_text(secs));
+                if secs > crate::mcp::tools::REPLICA_LAG_NOTE_SECS {
+                    alert = alert.or(Some(ProbeAlert::Warn));
+                }
+            }
+            (_, None) => parts.push("lag ?".into()),
+        }
+    }
+    if parts.is_empty() {
+        parts.push("ok".into());
+    }
+    (parts.join(" · "), alert)
+}
+
+/// The environments panel's lines without probes. Pure.
+#[cfg(test)]
 pub(crate) fn environment_lines(reports: &[crate::inventory::EnvReport]) -> Vec<EnvLine> {
+    environment_lines_probed(reports, &[])
+}
+
+/// The environments panel's lines, columns sized to the data, with each
+/// row's probe (parallel to `reports`). The probe column shows only under
+/// an environment that probes. Pure, so the layout is tested without a
+/// terminal.
+pub(crate) fn environment_lines_probed(
+    reports: &[crate::inventory::EnvReport],
+    probes: &[Vec<crate::app::ProbeState>],
+) -> Vec<EnvLine> {
     let all = || reports.iter().flat_map(|r| r.targets.iter());
+    let off = crate::app::ProbeState::Off;
+    let state = |ri: usize, ti: usize| probes.get(ri).and_then(|r| r.get(ti)).unwrap_or(&off);
+    // The source's engine, else the version a probe read.
+    let engine = |ri: usize, ti: usize, t: &crate::inventory::Target| -> String {
+        if let Some(e) = &t.engine {
+            return e.clone();
+        }
+        match state(ri, ti) {
+            crate::app::ProbeState::Done(Ok(p)) => p
+                .server_version
+                .as_ref()
+                .map(|v| format!("postgres {v}"))
+                .unwrap_or_else(|| "—".into()),
+            _ => "—".into(),
+        }
+    };
     let server = |t: &crate::inventory::Target| {
         if t.replica_of.is_some() {
             format!("└ {}", t.server)
@@ -1172,6 +1279,17 @@ pub(crate) fn environment_lines(reports: &[crate::inventory::EnvReport]) -> Vec<
             .map(|t| t.status.clone().unwrap_or_default())
             .collect(),
     );
+    // The probe column, before engine: what a probe found matters more
+    // than a version, and a narrow terminal cuts from the right.
+    let pr_w = w(
+        "probe",
+        reports
+            .iter()
+            .enumerate()
+            .flat_map(|(ri, r)| r.targets.iter().enumerate().map(move |(ti, t)| (ri, ti, t)))
+            .map(|(ri, ti, t)| probe_cell(state(ri, ti), t.role).0)
+            .collect(),
+    );
     let pad = |c: &str, width: usize| {
         let n = width.saturating_sub(crate::ui::display_width(c));
         format!("{c}{}", " ".repeat(n))
@@ -1189,25 +1307,37 @@ pub(crate) fn environment_lines(reports: &[crate::inventory::EnvReport]) -> Vec<
         if r.targets.is_empty() {
             continue;
         }
-        out.push(EnvLine::Columns(format!(
-            "    {}  {}  {}  {}  engine",
+        let head = format!(
+            "    {}  {}  {}  {}  ",
             pad("database", db_w),
             pad("role", role_w),
             pad("server", srv_w),
             pad("status", st_w),
-        )));
-        for t in &r.targets {
+        );
+        let probes_here = r.probe.is_some();
+        out.push(EnvLine::Columns(if probes_here {
+            format!("{head}{}  engine", pad("probe", pr_w))
+        } else {
+            format!("{head}engine")
+        }));
+        for (ti, t) in r.targets.iter().enumerate() {
+            let (cell, alert) = probe_cell(state(i, ti), t.role);
+            let mut text = format!(
+                "    {}  {}  {}  {}  ",
+                pad(&t.database, db_w),
+                pad(t.role.label(), role_w),
+                pad(&server(t), srv_w),
+                pad(t.status.as_deref().unwrap_or("—"), st_w),
+            );
+            if probes_here {
+                text.push_str(&format!("{}  ", pad(&cell, pr_w)));
+            }
+            text.push_str(&engine(i, ti, t));
             out.push(EnvLine::Row {
-                text: format!(
-                    "    {}  {}  {}  {}  {}",
-                    pad(&t.database, db_w),
-                    pad(t.role.label(), role_w),
-                    pad(&server(t), srv_w),
-                    pad(t.status.as_deref().unwrap_or("—"), st_w),
-                    t.engine.as_deref().unwrap_or("—"),
-                ),
+                text,
                 index,
                 status: t.status.clone(),
+                alert,
             });
             index += 1;
         }
@@ -1240,18 +1370,195 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
     format!("  {}", parts.join(" · "))
 }
 
+/// [`environment_detail`], led by what a probe couldn't do: the column
+/// shows only the first line of an error. Pure.
+pub(crate) fn environment_detail_probed(
+    t: &crate::inventory::Target,
+    probe: &crate::app::ProbeState,
+) -> String {
+    use crate::app::ProbeState;
+    let what = match probe {
+        ProbeState::Done(Err(e)) => Some(format!("✗ {}", e.replace('\n', " "))),
+        ProbeState::Done(Ok(p)) => p
+            .schema_error
+            .as_ref()
+            .map(|e| format!("version table: {}", e.replace('\n', " "))),
+        _ => None,
+    };
+    match what {
+        Some(w) => format!("  {}/{} · {w}", t.server, t.database),
+        None => environment_detail(t),
+    }
+}
+
 /// The panel height below which the detail line is left out.
 const DETAIL_MIN_HEIGHT: u16 = 12;
+
+/// One proposal's line in the discovery view: whether it is chosen,
+/// and what saving it would add. `name_w` aligns the names. Pure.
+pub(crate) fn proposal_row(
+    p: &crate::inventory::discover::Proposal,
+    chosen: bool,
+    name_w: usize,
+) -> String {
+    let n =
+        |count: usize, what: &str| format!("{count} {what}{}", if count == 1 { "" } else { "s" });
+    let mark = match (&p.covered_by, chosen) {
+        (Some(_), _) => "   ",
+        (None, true) => "[x]",
+        (None, false) => "[ ]",
+    };
+    let pad = name_w.saturating_sub(crate::ui::display_width(&p.env.name));
+    let what = match &p.covered_by {
+        Some(by) => format!("already in environment {by}"),
+        None => {
+            let databases = p.env.databases.len().max(1);
+            let mut bits = vec![
+                n(p.servers.len().saturating_sub(1), "replica"),
+                n(databases, "database"),
+                n(p.env.secrets.len(), "secret"),
+                if p.env.ssh_tunnel.is_some() {
+                    "tunnel".to_string()
+                } else {
+                    "direct".to_string()
+                },
+            ];
+            if !p.notes.is_empty() {
+                bits.push(n(p.notes.len(), "note"));
+            }
+            bits.join(" · ")
+        }
+    };
+    format!("  {mark} {}{}  {what}", p.env.name, " ".repeat(pad))
+}
+
+/// The discovery view's first line: where it looked, and through which
+/// scope, with `p`'s place among the others when there are any. Pure.
+pub(crate) fn discovery_heading(d: &crate::app::DiscoveryUi, header: &str) -> String {
+    let via = crate::inventory::discover::scope_label(&d.scope);
+    match d.scopes.iter().position(|s| *s == d.scope) {
+        Some(i) if d.scopes.len() > 1 => {
+            format!("  {header} · {via} · p scope {}/{}", i + 1, d.scopes.len())
+        }
+        _ => format!("  {header} · {via}"),
+    }
+}
+
+/// The discovery view (`d` in the overview): the proposals, then exactly
+/// what `s` would append for the one under the cursor.
+fn draw_env_discovery(f: &mut Frame, inner: Rect, app: &App, d: &crate::app::DiscoveryUi) {
+    let theme = &app.theme;
+    let width = inner.width as usize;
+    let fit = |t: &str| crate::grid::truncate_cell(t, width);
+    let Some(found) = &d.found else {
+        let (msg, colour) = match &d.error {
+            Some(e) => (format!("discovery failed: {e}"), theme.health_red),
+            None => (
+                "discovering: RDS instances, secret names, EC2 hosts…".to_string(),
+                theme.muted,
+            ),
+        };
+        f.render_widget(
+            Paragraph::new(Text::from(msg))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(colour)),
+            inner,
+        );
+        return;
+    };
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        fit(&discovery_heading(d, &found.header)),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    for w in &found.warnings {
+        lines.push(Line::from(Span::styled(
+            fit(&format!("  {w}")),
+            Style::default().fg(theme.health_yellow),
+        )));
+    }
+    lines.push(Line::from(""));
+    if found.proposals.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no Postgres instances found",
+            Style::default().fg(theme.muted),
+        )));
+    }
+    let name_w = found
+        .proposals
+        .iter()
+        .map(|p| crate::ui::display_width(&p.env.name))
+        .max()
+        .unwrap_or(0);
+    // Rows scroll to keep the cursor in view; the preview of what `s`
+    // appends gets whatever height is left.
+    let room = (inner.height as usize).saturating_sub(lines.len()).max(1);
+    let shown = found.proposals.len().min(room);
+    let scroll = scroll_offset(d.cursor, shown);
+    for (i, p) in found.proposals.iter().enumerate().skip(scroll).take(shown) {
+        let text = fit(&proposal_row(
+            p,
+            d.chosen.get(i).copied().unwrap_or(false),
+            name_w,
+        ));
+        let style = if i == d.cursor {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if p.covered_by.is_some() {
+            Style::default().fg(theme.muted)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    if let Some(p) = d.selected().filter(|p| p.covered_by.is_none()) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            fit(&format!("  s appends for {}:", p.env.name)),
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for l in crate::inventory::discover::render(p).lines() {
+            let colour = if l.starts_with('#') {
+                theme.health_yellow
+            } else {
+                theme.muted
+            };
+            lines.push(Line::from(Span::styled(
+                fit(&format!("  {l}")),
+                Style::default().fg(colour),
+            )));
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
 
 pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
+    if let Some(d) = &app.environments.discovery {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.border_active))
+            .title(Span::styled(
+                " discover — space choose · s save · p scope · q back ",
+                Style::default().fg(theme.title),
+            ));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        draw_env_discovery(f, inner, app, d);
+        return;
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_active))
         .title(Span::styled(
-            " environments — r refresh · q close ",
+            " environments — enter connect · d discover · q close ",
             Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
@@ -1266,7 +1573,8 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         } else {
             (
                 format!(
-                    "no environments configured — add {} (see docs/environments.md)",
+                    "no environments configured — d discovers them from AWS, or add {} \
+                     (see docs/environments.md)",
                     crate::util::config_file("environments.toml").display()
                 ),
                 theme.muted,
@@ -1306,14 +1614,17 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     if let (Some(t), Some(at)) = (focused, detail_area) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                crate::grid::truncate_cell(&environment_detail(t), at.width as usize),
+                crate::grid::truncate_cell(
+                    &environment_detail_probed(t, ui.selected_probe()),
+                    at.width as usize,
+                ),
                 Style::default().fg(theme.muted),
             ))),
             at,
         );
     }
     let inner = table;
-    let env_lines = environment_lines(&ui.reports);
+    let env_lines = environment_lines_probed(&ui.reports, &ui.probes);
     let focus_line = env_lines
         .iter()
         .position(|l| matches!(l, EnvLine::Row { index, .. } if *index == ui.cursor))
@@ -1357,6 +1668,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
                 text,
                 index,
                 status,
+                alert,
             } => {
                 let style = if *index == ui.cursor {
                     Style::default()
@@ -1364,10 +1676,12 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
                         .bg(theme.row_selected_bg)
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(match status.as_deref() {
-                        Some("available") | None => theme.text,
-                        Some("stopped") | Some("stopping") => theme.health_grey,
-                        Some(_) => theme.health_yellow,
+                    Style::default().fg(match (alert, status.as_deref()) {
+                        (Some(ProbeAlert::Bad), _) => theme.health_red,
+                        (Some(ProbeAlert::Warn), _) => theme.health_yellow,
+                        (None, Some("available") | None) => theme.text,
+                        (None, Some("stopped") | Some("stopping")) => theme.health_grey,
+                        (None, Some(_)) => theme.health_yellow,
                     })
                 };
                 Line::from(Span::styled(fit(text), style))
@@ -2237,12 +2551,165 @@ mod tests {
     }
 
     #[test]
+    fn probe_cells_say_what_was_found_and_flag_what_matters() {
+        use crate::app::ProbeState;
+        use crate::mcp::connections::Role;
+        use crate::query::probe::Probe;
+        let done = |p: Probe| ProbeState::Done(Ok(p));
+        let replica = Probe {
+            in_recovery: Some(true),
+            lag_secs: Some(0.42),
+            schema_version: Some(251),
+            pending: Some(0),
+            ..Probe::default()
+        };
+        assert_eq!(
+            probe_cell(&done(replica.clone()), Role::Replica),
+            ("v251 · up to date · lag 0.4s".to_string(), None)
+        );
+        assert_eq!(
+            probe_cell(
+                &done(Probe {
+                    lag_secs: Some(400.0),
+                    pending: Some(2),
+                    ..replica.clone()
+                }),
+                Role::Replica
+            ),
+            (
+                "v251 · 2 pending · lag 7m".to_string(),
+                Some(ProbeAlert::Warn)
+            )
+        );
+        assert_eq!(
+            probe_cell(
+                &done(Probe {
+                    in_recovery: Some(false),
+                    ..replica.clone()
+                }),
+                Role::Replica
+            ),
+            (
+                "v251 · up to date · NOT IN RECOVERY".to_string(),
+                Some(ProbeAlert::Bad)
+            ),
+            "a replica that is a primary is the loudest thing on the screen"
+        );
+        assert_eq!(
+            probe_cell(&done(Probe::default()), Role::Direct),
+            ("ok".to_string(), None),
+            "nothing configured to show, but it answered"
+        );
+        assert_eq!(
+            probe_cell(
+                &ProbeState::Done(Err("password authentication failed\nmore".into())),
+                Role::Primary
+            ),
+            (
+                "✗ password authentication failed".to_string(),
+                Some(ProbeAlert::Bad)
+            )
+        );
+        assert_eq!(
+            probe_cell(&ProbeState::ViaReplica, Role::Primary).0,
+            "via replica"
+        );
+        assert_eq!(probe_cell(&ProbeState::Off, Role::Direct).0, "");
+        assert_eq!(lag_text(42.0), "lag 42s");
+        assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_probe_column_shows_only_when_an_environment_probes_and_lines_up() {
+        use crate::app::ProbeState;
+        let mut envs = crate::demo::environments();
+        let probes: Vec<Vec<ProbeState>> = envs
+            .iter()
+            .map(|r| match r.probe {
+                Some(_) => crate::demo::environment_probes(r)
+                    .into_iter()
+                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .collect(),
+                None => vec![ProbeState::Off; r.targets.len()],
+            })
+            .collect();
+        let lines = environment_lines_probed(&envs, &probes);
+        let texts: Vec<String> = lines
+            .iter()
+            .filter_map(|l| match l {
+                EnvLine::Columns(t) | EnvLine::Row { text: t, .. } => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        let at = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
+        assert_eq!(at(&texts[1], "via replica"), at(&texts[0], "probe"));
+        assert_eq!(at(&texts[2], "v251"), at(&texts[0], "probe"));
+        assert!(texts[2].contains("1 pending"), "{}", texts[2]);
+        assert!(
+            texts[0].find("probe").unwrap() < texts[0].find("engine").unwrap(),
+            "probe before engine: {}",
+            texts[0]
+        );
+        assert!(
+            !texts[3].contains("probe"),
+            "qa doesn't probe: {}",
+            texts[3]
+        );
+
+        // No environment probes: the old layout, no probe column.
+        for e in &mut envs {
+            e.probe = None;
+        }
+        let plain = environment_lines_probed(&envs, &[]);
+        assert!(plain
+            .iter()
+            .all(|l| !matches!(l, EnvLine::Columns(t) if t.contains("probe"))));
+    }
+
+    #[test]
+    fn a_probe_reads_the_version_the_source_could_not() {
+        use crate::app::ProbeState;
+        let mut envs = crate::demo::environments();
+        envs[2].probe = Some(crate::inventory::ProbeSettings {
+            version_table: None,
+        });
+        let probes = vec![
+            vec![ProbeState::Off; 2],
+            vec![ProbeState::Off; 1],
+            vec![ProbeState::Done(Ok(crate::query::probe::Probe {
+                server_version: Some("17.2".into()),
+                ..Default::default()
+            }))],
+        ];
+        let lines = environment_lines_probed(&envs, &probes);
+        let local = lines
+            .iter()
+            .find_map(|l| match l {
+                EnvLine::Row { text, index: 3, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert!(local.contains("postgres 17.2"), "{local}");
+
+        let t = &envs[2].targets[0];
+        assert_eq!(
+            environment_detail_probed(t, &ProbeState::Done(Err("no route\nto host".into()))),
+            "  shop-local/shop · ✗ no route to host"
+        );
+        assert_eq!(
+            environment_detail_probed(t, &ProbeState::Probing),
+            environment_detail(t)
+        );
+    }
+
+    #[test]
     fn a_failed_environment_keeps_its_heading_and_its_error() {
         let reports = vec![crate::inventory::EnvReport {
             name: "prod".into(),
             source: "RDS".into(),
             targets: Vec::new(),
             error: Some("aws sts failed: token expired".into()),
+            probe: None,
         }];
         let lines = environment_lines(&reports);
         assert_eq!(
@@ -2729,5 +3196,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn proposal_rows_say_what_saving_adds_or_who_has_it_already() {
+        let found = crate::demo::discovery();
+        let row = |name: &str, chosen: bool| {
+            let p = found.proposals.iter().find(|p| p.env.name == name).unwrap();
+            proposal_row(p, chosen, 9)
+        };
+        assert_eq!(
+            row("analytics", true),
+            "  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note"
+        );
+        assert_eq!(
+            row("qa", false),
+            "  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note"
+        );
+        assert_eq!(
+            row("staging", true),
+            "      staging    already in environment staging",
+            "covered: never shown as chosen"
+        );
+    }
+
+    #[test]
+    fn the_discovery_heading_names_the_scope_and_its_place() {
+        let mut d = crate::app::DiscoveryUi::default();
+        assert_eq!(
+            discovery_heading(&d, "AWS account 1"),
+            "  AWS account 1 · ambient profile"
+        );
+        d.scopes = crate::demo::discovery().scopes;
+        d.scope = d.scopes[1].clone();
+        assert_eq!(
+            discovery_heading(&d, "AWS account 1"),
+            "  AWS account 1 · profile staging · p scope 2/2"
+        );
     }
 }

@@ -1451,7 +1451,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -1745,4 +1745,372 @@ fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
             .contains("NOT in recovery"),
         "{text}"
     );
+}
+
+/// `pgman env discover` proposes from the account and saves only when
+/// asked, appending; a second save of the same environment is refused.
+/// No secret value is ever read.
+#[cfg(unix)]
+#[test]
+fn env_discover_proposes_then_appends_on_save() {
+    let home = scratch_home("env-discover", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    std::fs::write(
+        &cfg,
+        "# mine\n[[environments]]\nname = \"prod\"\nsource = { kind = \"rds\", instances = [\"production\"] }\n",
+    )
+    .unwrap();
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [
+          {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10", "DBInstanceStatus": "available",
+           "DBInstanceClass": "db.t4g.medium", "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaDBInstanceIdentifiers": ["demo-read-only-replica"], "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}},
+          {"DBInstanceIdentifier": "demo-read-only-replica", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+           "Endpoint": {"Address": "demo-read-only-replica.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaSourceDBInstanceIdentifier": "demo", "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}},
+          {"DBInstanceIdentifier": "production", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium", "DBName": "prod"}
+        ]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |args: &[&str]| {
+        Command::new(pgman_binary())
+            .env("PATH", &path)
+            .env("FAKE_AWS_ACCOUNT", "210987654321")
+            .env("FAKE_RDS_JSON", &rds)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .current_dir(&home)
+            .args(["env", "discover"])
+            .args(args)
+            .output()
+            .expect("spawn pgman env discover")
+    };
+
+    let out = run(&[]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("# discovered in AWS account 210987654321, us-west-1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("ssh_tunnel = \"bastion.example.com\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("\"demo-read-only-replica\" = \"demo/database/ledger_replica/credentials\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("# production: already covered by environment \"prod\""),
+        "{text}"
+    );
+    assert!(
+        !text.contains("demo-database-password"),
+        "never a master-password secret: {text}"
+    );
+    assert!(
+        std::fs::read_to_string(&cfg)
+            .unwrap()
+            .ends_with("instances = [\"production\"] }\n"),
+        "printing saves nothing"
+    );
+
+    let out = run(&["--save"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("added demo to "));
+    let saved = std::fs::read_to_string(&cfg).unwrap();
+    assert!(
+        saved.starts_with("# mine\n[[environments]]\nname = \"prod\""),
+        "kept: {saved}"
+    );
+    assert!(saved.contains("name = \"demo\""), "{saved}");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    let out = run(&["--save", "demo"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already covered by environment \"demo\"")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cfg).unwrap(),
+        saved,
+        "a refused save writes nothing"
+    );
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("get-secret-value"),
+        "no secret value read: {calls}"
+    );
+}
+
+/// Over MCP: discovery proposes and writes nothing; save appends the named
+/// proposal; a covered one, or any save under --read-only, is refused.
+#[cfg(unix)]
+#[test]
+fn mcp_environments_discover_and_save() {
+    let home = scratch_home("mcp-env-save", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    let _ = std::fs::remove_file(&cfg);
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [
+          {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10", "DBInstanceStatus": "available",
+           "DBInstanceClass": "db.t4g.medium", "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432},
+           "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}}
+        ]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |extra: &[&str], requests: &[serde_json::Value]| {
+        mcp_session_env(
+            &home,
+            &home,
+            extra,
+            &[
+                ("PATH", path.clone()),
+                ("FAKE_AWS_ACCOUNT", "210987654321".into()),
+                ("FAKE_RDS_JSON", rds.clone().into()),
+            ],
+            requests,
+        )
+    };
+
+    let frames = run(
+        &[],
+        &[tool_call(1, "environments_discover", serde_json::json!({}))],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["discovered_in"], "AWS account 210987654321, us-west-1");
+    assert_eq!(v["proposals"][0]["name"], "demo");
+    let toml = v["proposals"][0]["toml"].as_str().unwrap();
+    assert!(
+        toml.contains("\"demo\" = \"demo/database/ledger/credentials\""),
+        "{toml}"
+    );
+    assert!(!cfg.exists(), "discovery writes nothing");
+
+    let frames = run(
+        &["--read-only"],
+        &[tool_call(
+            1,
+            "environments_save",
+            serde_json::json!({"names": ["demo"]}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(is_error && text.contains("--read-only"), "{text}");
+    assert!(!cfg.exists(), "--read-only saves nothing");
+
+    let frames = run(
+        &[],
+        &[
+            tool_call(
+                1,
+                "environments_save",
+                serde_json::json!({"names": ["demo"]}),
+            ),
+            tool_call(
+                2,
+                "environments_save",
+                serde_json::json!({"names": ["demo"]}),
+            ),
+            tool_call(
+                3,
+                "environments_save",
+                serde_json::json!({"names": ["nope"]}),
+            ),
+        ],
+    );
+    // Calls run concurrently: whichever of 1 and 2 lands first adds demo,
+    // and the other finds it covered. Never both — that was a lost update.
+    let (a, b) = (reply(&frames, 1), reply(&frames, 2));
+    let (added, refused) = if a.1 { (b, a) } else { (a, b) };
+    assert!(!added.1, "{added:?} / {refused:?}");
+    assert!(added.0.contains("\"added\":[\"demo\"]"), "{}", added.0);
+    assert!(
+        refused.1 && refused.0.contains("already covered"),
+        "{}",
+        refused.0
+    );
+    let saved = std::fs::read_to_string(&cfg).unwrap();
+    assert_eq!(saved.matches("name = \"demo\"").count(), 1, "{saved}");
+    let (text, is_error) = reply(&frames, 3);
+    assert!(
+        is_error && text.contains("no proposed environment"),
+        "{text}"
+    );
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), saved);
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("get-secret-value"),
+        "no secret value read: {calls}"
+    );
+}
+
+/// A save in another process waits for the lock, then lands.
+#[cfg(unix)]
+#[test]
+fn env_discover_save_waits_for_another_process_holding_the_lock() {
+    let home = scratch_home("env-lock", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    let _ = std::fs::remove_file(&cfg);
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+           "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432}, "DBName": "ledger"}]}"#,
+    )
+    .unwrap();
+    let (path, _log) = fake_aws(&home);
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join(".config/pgman/.environments.toml.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut child = Command::new(pgman_binary())
+        .env("PATH", &path)
+        .env("FAKE_AWS_ACCOUNT", "210987654321")
+        .env("FAKE_RDS_JSON", &rds)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["env", "discover", "--save"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "still waiting for the lock"
+    );
+    assert!(
+        !cfg.exists(),
+        "nothing written while another process holds it"
+    );
+    lock.unlock().unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("added demo"));
+    assert!(std::fs::read_to_string(&cfg)
+        .unwrap()
+        .contains("name = \"demo\""));
+}
+
+/// A probe against a real server: version and recovery from the status
+/// read, the patch level from the version table, pending from the patch
+/// files. Read-only: the table is set up beforehand.
+#[test]
+fn environment_probe_reads_version_patch_level_and_pending() {
+    let home = scratch_home("env-probe", WRITABLE_PROFILE);
+    // A table of this run's own: the profile blocks DROP, and the test
+    // database is a throwaway container.
+    let table = format!("pgman_it_versions_{}", std::process::id());
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3)"),
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    for id in 1..=3 {
+        std::fs::write(
+            dir.join(format!("{id:03}.sql")),
+            format!("INSERT INTO {table} (id) VALUES ({id});\n"),
+        )
+        .unwrap();
+    }
+    let target = |table: &str| pgman::inventory::EnvReport {
+        name: "local".into(),
+        source: "test".into(),
+        targets: vec![pgman::inventory::Target {
+            database: "pgman_test".into(),
+            server: "local".into(),
+            role: pgman::mcp::connections::Role::Direct,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Ok(pgman::inventory::ConnectSpec {
+                dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+                secret: None,
+            }),
+        }],
+        error: None,
+        probe: Some(pgman::inventory::ProbeSettings {
+            version_table: Some(pgman::inventory::VersionTable {
+                table: table.into(),
+                column: "id".into(),
+                patches: Some(dir.display().to_string()),
+            }),
+        }),
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let probe = |table: &str| {
+        rt.block_on(pgman::inventory::probe::run(
+            target(table),
+            std::sync::Arc::new(|_| panic!("no secret configured")),
+        ))
+        .remove(0)
+        .expect("connected, not via a replica")
+        .expect("probe answered")
+    };
+
+    let p = probe(&table);
+    assert!(p.server_version.is_some(), "{p:?}");
+    assert_eq!(p.in_recovery, Some(false));
+    assert_eq!(p.schema_version, Some(3));
+    assert_eq!(p.pending, Some(1), "002 is not recorded");
+    assert_eq!(p.schema_error, None);
+
+    // A missing version table spoils only the patch level.
+    let p = probe("pgman_it_no_such_table");
+    assert!(p.server_version.is_some());
+    assert!(
+        p.schema_error
+            .as_deref()
+            .unwrap()
+            .contains("does not exist"),
+        "{p:?}"
+    );
+    assert_eq!(p.schema_version, None);
 }

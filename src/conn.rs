@@ -718,6 +718,7 @@ pub async fn connect_only(
 > {
     let (client, tunnel) = connect_inner(
         dsn,
+        None,
         read_only,
         statement_timeout_ms,
         notice_tx,
@@ -725,6 +726,32 @@ pub async fn connect_only(
     )
     .await?;
     Ok((Arc::new(client), tunnel))
+}
+
+/// A read-only connection through a forward someone else already opened
+/// (`tunnel::SshTunnel::open_many`): TCP goes to `127.0.0.1:<via>`,
+/// while `dsn.host` stays the name TLS checks. `dsn.ssh_tunnel` must be
+/// unset — the caller owns the tunnel. Notices are dropped.
+pub async fn connect_via(
+    dsn: Dsn,
+    via: Option<u16>,
+    statement_timeout_ms: u64,
+) -> Result<Arc<tokio_postgres::Client>, String> {
+    if dsn.ssh_tunnel.is_some() {
+        return Err("connect_via: the caller opens the tunnel".to_string());
+    }
+    let (notice_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (client, _) = connect_inner(
+        dsn,
+        via,
+        true,
+        statement_timeout_ms,
+        notice_tx,
+        notification_tx,
+    )
+    .await?;
+    Ok(Arc::new(client))
 }
 
 pub async fn connect_and_bootstrap(
@@ -737,6 +764,7 @@ pub async fn connect_and_bootstrap(
 ) -> Result<Booted, String> {
     let (client, tunnel) = connect_inner(
         dsn,
+        None,
         read_only,
         statement_timeout_ms,
         notice_tx,
@@ -775,6 +803,7 @@ pub async fn connect_and_bootstrap(
 /// (non-Arc) client so callers can choose how to wrap it.
 async fn connect_inner(
     dsn: Dsn,
+    via: Option<u16>,
     read_only: bool,
     statement_timeout_ms: u64,
     notice_tx: tokio::sync::mpsc::UnboundedSender<NoticeMsg>,
@@ -810,8 +839,8 @@ async fn connect_inner(
     };
 
     let mut cfg = tokio_postgres::Config::new();
-    match &tunnel {
-        Some(t) => {
+    match tunnel.as_ref().map(|t| t.local_port).or(via) {
+        Some(local_port) => {
             // `host` is the canonical name — used for TLS SNI and cert
             // verification — and stays as the real server we'd be
             // talking to without the tunnel. `hostaddr` overrides
@@ -820,7 +849,7 @@ async fn connect_inner(
             // tunnel working without disabling hostname checks.
             cfg.host(&dsn.host)
                 .hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
-                .port(t.local_port)
+                .port(local_port)
                 .dbname(&dsn.dbname);
         }
         None => {
@@ -1357,7 +1386,7 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
 /// `prefer` (encrypt-without-verifying, falls back to plaintext), which
 /// is a strictly weaker guarantee than most of the other five modes —
 /// exactly the kind of security setting that must never fail open.
-const KNOWN_SSLMODES: [&str; 6] = [
+pub(crate) const KNOWN_SSLMODES: [&str; 6] = [
     "disable",
     "allow",
     "prefer",
@@ -2289,6 +2318,14 @@ mod tests {
         assert_eq!(application_name(&d), "svc@box");
         let d = Dsn::parse("postgres://h/db?Application_Name=svc").unwrap();
         assert_eq!(application_name(&d), "svc");
+    }
+
+    #[tokio::test]
+    async fn connect_via_refuses_a_dsn_that_would_open_its_own_tunnel() {
+        let dsn = Dsn::parse("postgres://db.internal/app?ssh_tunnel=bastion").unwrap();
+        assert!(dsn.ssh_tunnel.is_some());
+        let err = connect_via(dsn, Some(1), 1000).await.unwrap_err();
+        assert!(err.contains("the caller opens the tunnel"), "{err}");
     }
 
     #[test]

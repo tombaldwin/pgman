@@ -9232,3 +9232,503 @@ fn environments_open_from_the_connection_picker_and_close_back_to_it() {
     press(&mut a, KeyCode::Esc);
     assert_eq!(a.mode, Mode::Normal);
 }
+
+/// One environment with a replica (secret-less) and a primary (with a
+/// secret), both on a closed local port.
+fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
+    use crate::creds::aws_secrets::SecretRef;
+    use crate::inventory::{ConnectSpec, EnvReport, Target};
+    use crate::mcp::connections::Role;
+    let row = |server: &str, role: Role, secret: Option<&str>| Target {
+        database: "ledger".into(),
+        server: server.into(),
+        role,
+        replica_of: None,
+        host: Some("127.0.0.1".into()),
+        port: Some(1),
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(ConnectSpec {
+            dsn: crate::conn::Dsn::parse("postgres://127.0.0.1:1/ledger").unwrap(),
+            secret: secret.map(|id| SecretRef {
+                id: id.into(),
+                region: Some("us-west-1".into()),
+                profile: None,
+                account: None,
+            }),
+        }),
+    };
+    let mut broken = row("stopped-one", Role::Direct, None);
+    broken.connect = Err("stopped-one has no endpoint yet".into());
+    vec![EnvReport {
+        name: "demo".into(),
+        source: "RDS".into(),
+        targets: vec![
+            row("demo-replica", Role::Replica, None),
+            row(
+                "demo",
+                Role::Primary,
+                Some("demo/database/ledger/credentials"),
+            ),
+            broken,
+        ],
+        error: None,
+        probe: None,
+    }]
+}
+
+fn writable_app() -> App {
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    a.mode = Mode::ConnPick;
+    press(&mut a, KeyCode::Char('E'));
+    a
+}
+
+#[tokio::test]
+async fn enter_on_a_replica_connects_read_only_whatever_the_profile_says() {
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal, "{:?}", a.last_error);
+    assert_eq!(a.dsn.as_ref().map(|d| d.port), Some(1));
+    assert!(a.read_only, "a replica opens read-only");
+    assert_eq!(
+        a.dsn_origin.as_deref(),
+        Some("environment demo demo-replica/ledger (replica, read-only)")
+    );
+    // Closing nothing: the overview is gone, and q no longer returns to
+    // the picker it was opened from.
+    assert_eq!(a.environments.opened_from, None);
+}
+
+#[tokio::test]
+async fn a_primary_reads_its_secret_first_then_gets_the_normal_profile() {
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Environments, "waits for the secret");
+    assert_eq!(a.dsn, None);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .contains("reading secret demo/database/ledger/credentials"));
+
+    // A stale answer connects nothing.
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token: token + 1,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: Some("old".into()),
+            password: "stale".into(),
+        }),
+    });
+    assert_eq!(a.dsn, None);
+
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: Some("ledger_app".into()),
+            password: "s3cret-value".into(),
+        }),
+    });
+    let dsn = a.dsn.as_ref().expect("connected");
+    assert_eq!(
+        (dsn.user.as_deref(), dsn.password.as_deref()),
+        (Some("ledger_app"), Some("s3cret-value"))
+    );
+    assert!(!a.read_only, "a primary follows its safety profile");
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(origin.contains("(primary)"), "{origin}");
+    assert!(
+        origin.contains("creds from AWS Secrets Manager secret demo/database/ledger/credentials"),
+        "{origin}"
+    );
+    for shown in [origin, a.last_status.clone().unwrap_or_default()] {
+        assert!(!shown.contains("s3cret-value"), "never shown: {shown}");
+    }
+    assert!(a.environments.connecting.is_none());
+}
+
+#[tokio::test]
+async fn a_secret_that_arrives_after_the_overview_closed_connects_nothing() {
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    press(&mut a, KeyCode::Char('q'));
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "late".into(),
+        }),
+    });
+    assert_eq!(a.dsn, None, "cancelled by closing");
+    assert_eq!(a.mode, Mode::ConnPick);
+}
+
+#[tokio::test]
+async fn environment_connect_failures_say_why() {
+    // No fetcher installed: the secret is never read.
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.environments.connecting.is_none());
+    assert!(a
+        .last_error
+        .as_deref()
+        .unwrap()
+        .contains("secrets are not available"));
+
+    // A row the source can't connect to.
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("can't connect to demo stopped-one/ledger: stopped-one has no endpoint yet")
+    );
+    assert_eq!(a.mode, Mode::Environments);
+
+    // The secret lookup itself failing.
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Err("aws sts failed: expired".into()),
+    });
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("secret not read: aws sts failed: expired")
+    );
+    assert_eq!(a.dsn, None);
+}
+
+/// A discoverer over the demo account whose save records what it was
+/// handed, failing when `fail` is set.
+fn recording_discoverer(
+    saved: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    fail: bool,
+) -> EnvDiscoverer {
+    EnvDiscoverer {
+        discover: std::sync::Arc::new(|_| Ok(crate::demo::discovery())),
+        save: std::sync::Arc::new(move |chosen| {
+            if fail {
+                return Err("environments.toml parse error".into());
+            }
+            saved
+                .lock()
+                .unwrap()
+                .extend(chosen.iter().map(|p| p.env.name.clone()));
+            Ok(std::path::PathBuf::from("/cfg/environments.toml"))
+        }),
+        immediate: true,
+    }
+}
+
+#[test]
+fn discovery_needs_an_installed_discoverer() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    assert!(a.environments.discovery.is_none());
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("discovery is not available in this session")
+    );
+}
+
+#[tokio::test]
+async fn discovery_chooses_then_appends_only_what_was_chosen() {
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    // Connectable rows under the view, so an Enter that leaked through
+    // to the overview would connect.
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    a.env_discoverer = Some(recording_discoverer(saved.clone(), false));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    let names: Vec<String> = a
+        .environments
+        .discovery
+        .as_ref()
+        .unwrap()
+        .proposals()
+        .iter()
+        .map(|p| p.env.name.clone())
+        .collect();
+    assert_eq!(names, ["analytics", "qa", "staging"]);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("found 3 · 2 new · space choose · s save")
+    );
+
+    press(&mut a, KeyCode::Char('s'));
+    assert!(
+        saved.lock().unwrap().is_empty(),
+        "nothing chosen, nothing saved"
+    );
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("nothing chosen"));
+
+    // staging is covered: space refuses it.
+    press(&mut a, KeyCode::Char('G'));
+    press(&mut a, KeyCode::Char(' '));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("staging is already covered by environment staging")
+    );
+    // Choose analytics, choose and unchoose qa.
+    press(&mut a, KeyCode::Char('g'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char(' '));
+    // Enter here is not the overview's connect.
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.dsn, None);
+    press(&mut a, KeyCode::Char('s'));
+    assert_eq!(*saved.lock().unwrap(), ["analytics"]);
+    assert!(a.environments.discovery.is_none(), "back to the overview");
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("added analytics to /cfg/environments.toml")
+    );
+}
+
+#[test]
+fn a_failed_save_keeps_the_choices_and_says_why() {
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(recording_discoverer(saved, true));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char('s'));
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("not saved: environments.toml parse error")
+    );
+    let d = a.environments.discovery.as_ref().expect("still open");
+    assert_eq!(d.chosen, [true, false, false]);
+}
+
+#[test]
+fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(recording_discoverer(Default::default(), false));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Esc);
+    assert!(a.environments.discovery.is_none());
+    assert_eq!(a.mode, Mode::Environments, "q/esc backs out one level");
+    a.on_msg(AppMsg::EnvDiscovered(Ok(crate::demo::discovery())));
+    assert!(
+        a.environments.discovery.is_none(),
+        "a late result reopens nothing"
+    );
+
+    a.environments.discovery = Some(DiscoveryUi {
+        loading: true,
+        ..DiscoveryUi::default()
+    });
+    a.on_msg(AppMsg::EnvDiscovered(Err("aws sts failed: expired".into())));
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
+    assert!(!d.loading);
+}
+
+#[tokio::test]
+async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Enter);
+    assert!(a.read_only && a.replica_pin);
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only, "refused on a replica");
+    assert!(a.last_error.as_deref().unwrap().contains("read replica"));
+    run_command(&mut a, "connect ledgerlog");
+    assert_eq!(a.dsn.as_ref().map(|d| d.dbname.as_str()), Some("ledgerlog"));
+    assert!(a.read_only, "same server, still a replica");
+
+    // A primary from the overview is not pinned.
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "x".into(),
+        }),
+    });
+    assert!(!a.replica_pin && !a.read_only);
+}
+
+#[test]
+fn p_discovers_again_in_the_next_scope_and_wraps() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        discover: std::sync::Arc::new(move |scope| {
+            log.lock()
+                .unwrap()
+                .push(crate::inventory::discover::scope_label(scope));
+            Ok(crate::demo::discovery())
+        }),
+        save: std::sync::Arc::new(|_| Err("not here".into())),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            "ambient profile",
+            "profile staging",
+            "profile staging",
+            "ambient profile"
+        ],
+        "d starts ambient, p moves on, d repeats the current scope, p wraps"
+    );
+
+    // A failed discovery keeps the scopes it knew, so p still moves on.
+    a.environments.discovery = Some(DiscoveryUi {
+        loading: true,
+        scope: Default::default(),
+        scopes: crate::demo::discovery().scopes,
+        ..DiscoveryUi::default()
+    });
+    a.on_msg(AppMsg::EnvDiscovered(Err("AccessDenied".into())));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(seen.lock().unwrap().last().unwrap(), "profile staging");
+}
+
+#[test]
+fn a_failed_scope_does_not_lose_the_ones_after_it() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        discover: std::sync::Arc::new(move |scope| {
+            let label = crate::inventory::discover::scope_label(scope);
+            log.lock().unwrap().push(label.clone());
+            if label == "profile staging" {
+                return Err("expired SSO session".into());
+            }
+            let mut found = crate::demo::discovery();
+            found.scopes.push(crate::aws_cli::AwsScope {
+                profile: Some("work".into()),
+                ..Default::default()
+            });
+            Ok(found)
+        }),
+        save: std::sync::Arc::new(|_| Err("not here".into())),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        a.environments.discovery.as_ref().unwrap().error.as_deref(),
+        Some("expired SSO session")
+    );
+    press(&mut a, KeyCode::Char('p'));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["ambient profile", "profile staging", "profile work"]
+    );
+}
+
+#[test]
+fn probes_mark_rows_then_fill_in_and_a_stale_answer_is_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    // Answers held back, so the in-between state can be seen.
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(
+        a.environments.probes[0],
+        [ProbeState::ViaReplica, ProbeState::Probing],
+        "staging probes: its primary is read through the replica"
+    );
+    assert_eq!(
+        a.environments.probes[1],
+        [ProbeState::Off],
+        "qa doesn't probe"
+    );
+    let seq = a.environments.probe_seq;
+    let answer = |v: &str| {
+        vec![
+            None,
+            Some(Ok(crate::query::probe::Probe {
+                server_version: Some(v.into()),
+                ..Default::default()
+            })),
+        ]
+    };
+    a.on_msg(AppMsg::EnvProbed {
+        seq: seq.wrapping_sub(1),
+        report: 0,
+        outcomes: answer("old"),
+    });
+    assert_eq!(
+        a.environments.probes[0][1],
+        ProbeState::Probing,
+        "stale: dropped"
+    );
+    a.on_msg(AppMsg::EnvProbed {
+        seq,
+        report: 0,
+        outcomes: answer("16.4"),
+    });
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Ok(p)) if p.server_version.as_deref() == Some("16.4"))
+    );
+    assert_eq!(a.environments.probes[0][0], ProbeState::ViaReplica);
+    assert!(matches!(
+        a.environments.selected_probe(),
+        ProbeState::ViaReplica
+    ));
+
+    // r lists again: a new sequence, rows back to probing.
+    press(&mut a, KeyCode::Char('r'));
+    assert_ne!(a.environments.probe_seq, seq);
+    assert_eq!(a.environments.probes[0][1], ProbeState::Probing);
+}
+
+#[test]
+fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Err(e)) if e.contains("not available"))
+    );
+    assert_eq!(a.environments.probes[2], [ProbeState::Off]);
+}

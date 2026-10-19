@@ -292,6 +292,13 @@ impl App {
     /// pointing at a connection it never opened, with the *new*
     /// database's safety profile installed over the demo's.
     pub(super) fn connect_to_pick(&mut self, dsn: Dsn, origin: String) {
+        self.connect_to_target(dsn, origin, false);
+    }
+
+    /// [`Self::connect_to_pick`], with `pin_read_only` opening the
+    /// session read-only whatever the database's profile says — a
+    /// replica, where a write can only fail.
+    pub(super) fn connect_to_target(&mut self, dsn: Dsn, origin: String, pin_read_only: bool) {
         if self.demo {
             self.last_status =
                 Some("--demo has no server — restart without --demo to connect".into());
@@ -303,7 +310,9 @@ impl App {
         // override the toggle lasted exactly until the next connect
         // and then vanished with no message — see
         // `App::read_only_override`.
-        self.read_only = profile.read_only || self.read_only_override == Some(true);
+        self.read_only =
+            profile.read_only || self.read_only_override == Some(true) || pin_read_only;
+        self.replica_pin = pin_read_only;
         self.statement_timeout_ms = profile.statement_timeout_ms;
         self.dsn = Some(dsn);
         self.dsn_origin = Some(origin);
@@ -570,6 +579,26 @@ impl App {
                 true
             }
         }
+    }
+
+    /// Read an environment connect's secret on a blocking thread (the
+    /// aws CLI runs there). `false` when no fetcher is installed.
+    pub(super) fn spawn_secret_fetch(
+        &self,
+        token: u64,
+        secret: crate::creds::aws_secrets::SecretRef,
+    ) -> bool {
+        let Some(fetch) = self.secret_fetcher.clone() else {
+            return false;
+        };
+        let tx = self.msg_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = tx.send(AppMsg::EnvSecretResolved {
+                token,
+                result: fetch(&secret),
+            });
+        });
+        true
     }
 
     pub(super) fn spawn_sessions_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {

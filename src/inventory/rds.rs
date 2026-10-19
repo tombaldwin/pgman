@@ -21,6 +21,8 @@ pub struct RdsInstance {
     pub replicas: Vec<String>,
     /// The database RDS created the instance with (`DBName`).
     pub db_name: Option<String>,
+    /// The VPC the instance sits in, for finding a bastion beside it.
+    pub vpc_id: Option<String>,
 }
 
 impl RdsInstance {
@@ -78,6 +80,11 @@ pub fn parse_describe(json: &str) -> Result<Vec<RdsInstance>, String> {
                     })
                     .unwrap_or_default(),
                 db_name: s(i, "DBName"),
+                vpc_id: i
+                    .get("DBSubnetGroup")
+                    .and_then(|g| g.get("VpcId"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
             })
         })
         .collect())
@@ -147,11 +154,13 @@ pub(crate) mod tests {
       {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10",
        "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium", "MultiAZ": false,
        "Endpoint": {"Address": "demo.x.us-west-1.rds.amazonaws.com", "Port": 5432},
-       "ReadReplicaDBInstanceIdentifiers": ["demo-read-only-replica"], "DBName": "ledger"},
+       "ReadReplicaDBInstanceIdentifiers": ["demo-read-only-replica"], "DBName": "ledger",
+       "DBSubnetGroup": {"VpcId": "vpc-0a1b2c3d"}},
       {"DBInstanceIdentifier": "demo-read-only-replica", "Engine": "postgres", "EngineVersion": "16.10",
        "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
        "Endpoint": {"Address": "demo-read-only-replica.x.us-west-1.rds.amazonaws.com", "Port": 5432},
-       "ReadReplicaSourceDBInstanceIdentifier": "demo", "ReadReplicaDBInstanceIdentifiers": [], "DBName": "ledger"},
+       "ReadReplicaSourceDBInstanceIdentifier": "demo", "ReadReplicaDBInstanceIdentifiers": [], "DBName": "ledger",
+       "DBSubnetGroup": {"VpcId": "vpc-0a1b2c3d"}},
       {"DBInstanceIdentifier": "development", "Engine": "postgres", "EngineVersion": "16.10",
        "DBInstanceStatus": "stopped", "DBInstanceClass": "db.t4g.medium",
        "Endpoint": {"Address": "development.x.us-west-1.rds.amazonaws.com", "Port": 5432}, "DBName": "demo"},
@@ -178,6 +187,8 @@ pub(crate) mod tests {
         assert_eq!(all[1].source.as_deref(), Some("demo"));
         assert_eq!(all[2].status, "stopped");
         assert!(all[3].multi_az);
+        assert_eq!(all[0].vpc_id.as_deref(), Some("vpc-0a1b2c3d"));
+        assert_eq!(all[2].vpc_id, None);
         assert!(!all[5].is_postgres());
         assert!(parse_describe("{}").is_err());
         assert!(parse_describe("not json").is_err());

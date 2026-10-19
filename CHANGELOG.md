@@ -60,6 +60,20 @@ and breaking changes.
 - **Environments overview** — `E` lists every database in each
   environment, replicas under their primary, from RDS (via the `aws`
   CLI) or hand-listed connections, without connecting to any of them.
+  `Enter` connects to a row: replicas read-only, the password read from
+  AWS Secrets Manager at that moment, through the environment's ssh
+  tunnel.
+- **`pgman env discover`** proposes environments from an AWS account:
+  one per RDS primary with its replicas, the secret matching each
+  database by name, the bastion in its VPC. It reads names only, never a
+  secret's value; `--save` appends to `environments.toml`. In the
+  overview, `d` does the same with a preview of what each save appends.
+  Over MCP, `environments_discover` and `environments_save` do it for an
+  agent (save refused under `--read-only`).
+- **Probes** — `probe = true` on an environment adds each database's
+  patch level, pending patches and replica lag to the overview. It reads
+  through replicas (a primary with a replica isn't touched), uses one
+  ssh per bastion, and every connection is read-only.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

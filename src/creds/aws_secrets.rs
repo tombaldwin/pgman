@@ -126,6 +126,16 @@ pub fn fetch(r: &SecretRef) -> Result<SecretCreds, String> {
     parse_secret_string(&text).map_err(|e| format!("secret {}: {e}", r.id))
 }
 
+/// Put a secret's credentials on the DSN: the password always, the user
+/// when the secret has one — the secret's password belongs to the
+/// secret's user, so a different user in the url would only fail to log in.
+pub fn apply(dsn: &mut crate::conn::Dsn, creds: SecretCreds) {
+    if let Some(u) = creds.username {
+        dsn.user = Some(u);
+    }
+    dsn.password = Some(creds.password);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

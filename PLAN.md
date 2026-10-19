@@ -408,6 +408,44 @@ database connections: demo, prod and dev+test, 10 databases. Demo's
 primary showed `backing-up` at the time. Driven by hand in tmux, which
 is what moved the endpoint out of the table and into the detail line.
 
+## Environments: connect and discovery — 2026-10-19 · behaviour · **in review**
+
+Tom: "a way of connecting to an environment in the ui", and tools to set
+environments up, including auto-discovery of AWS. Branch
+`env-connect-model`, one commit per step:
+
+- `environments.toml` carries `ssh_tunnel`, `sslmode`, `user` and
+  `[environments.secrets]` (per server or server/database); every row
+  gets a `ConnectSpec` or the reason it has none.
+- `Enter` in the overview connects. A replica opens read-only; a primary
+  gets its safety profile (Tom's choice). A secret is read from Secrets
+  Manager at that moment through an injected fetcher, `None` by default.
+- `pgman env discover [--save]`, `d` in the overview (choose, preview
+  what is appended, save) and the MCP tools `environments_discover` /
+  `environments_save` (refused under `--read-only`). Discovery groups
+  each primary with its replicas, matches secrets by name and leaves ties
+  as notes, and finds the bastion in the VPC. It reads names only, never
+  a secret's value. A save only appends, and the result must load.
+
+Run against examplecorp's account (print only, nothing saved): demo,
+development, production and test, with the right per-database secrets
+and the bastion. No database was connected to.
+
+Then the open items:
+
+- Saves take a lock file, so a TUI save and an MCP or CLI save in
+  another process can't lose one another's addition.
+- `p` in the discovery view tries the next AWS scope: the ambient
+  profile, the scopes environments.toml names, then CLI profiles.
+- Environments step 2: `probe = true` adds patch level, pending patches
+  and replica lag. It reads through replicas, uses one ssh per bastion
+  (`SshTunnel::open_many`, with `conn::connect_via` keeping the real
+  hostname for TLS), and every connection is read-only and bounded.
+  Tested against the local test Postgres only; no examplecorp database was
+  probed.
+- The candor `Unknown` on `on_msg` predates this branch (a fresh scan of
+  main shows it).
+
 ## Release day
 
 ```

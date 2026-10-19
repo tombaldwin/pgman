@@ -1221,6 +1221,15 @@ pub struct App {
     /// What fills the environments panel; `None` until `main.rs` (or
     /// `--demo`) installs one.
     pub environments_loader: Option<EnvironmentsLoader>,
+    /// Reads an environment database's secret at connect; `None` until
+    /// `main.rs` installs the aws CLI one.
+    pub secret_fetcher: Option<SecretFetcher>,
+    /// Environment discovery for the overview's `d`; `None` until
+    /// `main.rs` (or `--demo`) installs one.
+    pub env_discoverer: Option<EnvDiscoverer>,
+    /// Probes environments that opted in; `None` until `main.rs` (or
+    /// `--demo`) installs one.
+    pub env_prober: Option<EnvProber>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1262,6 +1271,10 @@ pub struct App {
     /// and `:readonly off` against such a profile is refused outright
     /// before it gets set (`dispatch_read_only`).
     pub read_only_override: Option<bool>,
+    /// The connected server is a replica opened from the environments
+    /// overview: read-only for the whole session, `\c <db>` included,
+    /// and `:readonly off` is refused.
+    pub replica_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
@@ -1425,6 +1438,10 @@ impl App {
             sessions: SessionsUi::default(),
             environments: EnvironmentsUi::default(),
             environments_loader: None,
+            secret_fetcher: None,
+            replica_pin: false,
+            env_discoverer: None,
+            env_prober: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3714,6 +3731,283 @@ impl App {
             self.environments.error =
                 Some("environments are not available in this session".to_string());
             self.last_status = None;
+        }
+    }
+
+    /// Enter in the environments overview: connect to the database under
+    /// the cursor. A replica opens read-only; anything else gets its
+    /// database's safety profile, as any connection does. With a
+    /// secret, the password is read first and the connect waits for it.
+    fn connect_to_environment_target(&mut self) {
+        if self.environments.connecting.is_some() {
+            self.last_status = Some("already connecting — wait, or q to cancel".into());
+            return;
+        }
+        let Some((env, target)) = self.environments.selected() else {
+            return;
+        };
+        let what = format!("{} {}/{}", env.name, target.server, target.database);
+        let spec = match &target.connect {
+            Ok(spec) => spec.clone(),
+            Err(why) => {
+                self.last_error = Some(format!("can't connect to {what}: {why}"));
+                return;
+            }
+        };
+        let read_only = target.role == crate::mcp::connections::Role::Replica;
+        let mut origin = format!(
+            "environment {what} ({}{})",
+            target.role.label(),
+            if read_only { ", read-only" } else { "" }
+        );
+        let Some(secret) = spec.secret else {
+            self.environments.opened_from = None;
+            self.connect_to_target(spec.dsn, origin, read_only);
+            return;
+        };
+        origin.push_str(&format!(" · creds from {}", secret.provenance()));
+        let token = self.environments.connect_token.wrapping_add(1);
+        self.environments.connect_token = token;
+        self.environments.connecting = Some(PendingEnvConnect {
+            token,
+            dsn: spec.dsn,
+            origin,
+            read_only,
+        });
+        if self.spawn_secret_fetch(token, secret.clone()) {
+            self.last_status = Some(format!("{what}: reading secret {}…", secret.id));
+        } else {
+            self.environments.connecting = None;
+            self.last_error = Some(format!(
+                "can't connect to {what}: secrets are not available in this session"
+            ));
+        }
+    }
+
+    /// `d` in the environments overview: discover environments from the
+    /// ambient AWS account and open the discovery view over the overview.
+    fn start_env_discovery(&mut self, scope: crate::aws_cli::AwsScope) {
+        if self
+            .environments
+            .discovery
+            .as_ref()
+            .is_some_and(|d| d.loading)
+        {
+            return;
+        }
+        let Some(discoverer) = self.env_discoverer.clone() else {
+            self.last_error = Some("discovery is not available in this session".into());
+            return;
+        };
+        let scopes = self
+            .environments
+            .discovery
+            .take()
+            .map(|d| d.scopes)
+            .unwrap_or_default();
+        self.last_status = Some(format!(
+            "discovering with {}: RDS, secret names, EC2 hosts…",
+            crate::inventory::discover::scope_label(&scope)
+        ));
+        self.environments.discovery = Some(DiscoveryUi {
+            loading: true,
+            scope: scope.clone(),
+            scopes,
+            ..DiscoveryUi::default()
+        });
+        if discoverer.immediate {
+            self.on_env_discovered((discoverer.discover)(&scope));
+        } else {
+            let tx = self.msg_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)(&scope)));
+            });
+        }
+    }
+
+    fn on_env_discovered(&mut self, result: Result<crate::inventory::discover::Found, String>) {
+        // Closed while it ran: nothing to show it in.
+        let Some(d) = self.environments.discovery.as_mut() else {
+            return;
+        };
+        d.loading = false;
+        match result {
+            Ok(found) => {
+                let new = found
+                    .proposals
+                    .iter()
+                    .filter(|p| p.covered_by.is_none())
+                    .count();
+                self.last_status = Some(format!(
+                    "found {} · {new} new · space choose · s save",
+                    found.proposals.len()
+                ));
+                d.chosen = vec![false; found.proposals.len()];
+                d.cursor = 0;
+                if !found.scopes.is_empty() {
+                    d.scopes = found.scopes.clone();
+                }
+                d.found = Some(found);
+                d.error = None;
+            }
+            Err(e) => {
+                self.last_status = None;
+                d.error = Some(e);
+            }
+        }
+    }
+
+    fn toggle_env_proposal(&mut self) {
+        let Some(d) = self.environments.discovery.as_mut() else {
+            return;
+        };
+        let Some(p) = d.selected() else {
+            return;
+        };
+        if let Some(by) = &p.covered_by {
+            self.last_status = Some(format!(
+                "{} is already covered by environment {by}",
+                p.env.name
+            ));
+            return;
+        }
+        if let Some(c) = d.chosen.get_mut(d.cursor) {
+            *c = !*c;
+        }
+    }
+
+    /// `s` in the discovery view: append the chosen proposals, close the
+    /// view and list the environments again.
+    fn save_env_proposals(&mut self) {
+        let Some(d) = self.environments.discovery.as_ref() else {
+            return;
+        };
+        let chosen: Vec<&crate::inventory::discover::Proposal> = d
+            .proposals()
+            .iter()
+            .zip(&d.chosen)
+            .filter(|(_, c)| **c)
+            .map(|(p, _)| p)
+            .collect();
+        if chosen.is_empty() {
+            self.last_status = Some("nothing chosen — space chooses an environment".into());
+            return;
+        }
+        let Some(discoverer) = self.env_discoverer.clone() else {
+            return;
+        };
+        let names: Vec<String> = chosen.iter().map(|p| p.env.name.clone()).collect();
+        match (discoverer.save)(&chosen) {
+            Ok(path) => {
+                self.environments.discovery = None;
+                self.refresh_environments();
+                self.last_status =
+                    Some(format!("added {} to {}", names.join(", "), path.display()));
+            }
+            Err(e) => self.last_error = Some(format!("not saved: {e}")),
+        }
+    }
+
+    /// After a listing: probe every environment that opted in, marking
+    /// its rows probing (or via-replica) until the answers land.
+    fn start_env_probes(&mut self) {
+        use crate::inventory::probe::{plan, Step};
+        self.environments.probe_seq = self.environments.probe_seq.wrapping_add(1);
+        let seq = self.environments.probe_seq;
+        let prober = self.env_prober.clone();
+        let mut states = Vec::new();
+        let mut to_run = Vec::new();
+        for (i, r) in self.environments.reports.iter().enumerate() {
+            if r.probe.is_none() {
+                states.push(vec![ProbeState::Off; r.targets.len()]);
+                continue;
+            }
+            if prober.is_none() {
+                states.push(vec![
+                    ProbeState::Done(Err(
+                        "probes are not available in this session".into()
+                    ));
+                    r.targets.len()
+                ]);
+                continue;
+            }
+            states.push(
+                plan(&r.targets)
+                    .into_iter()
+                    .map(|s| match s {
+                        Step::Connect => ProbeState::Probing,
+                        Step::ViaReplica => ProbeState::ViaReplica,
+                    })
+                    .collect(),
+            );
+            to_run.push(i);
+        }
+        self.environments.probes = states;
+        let Some(prober) = prober else {
+            return;
+        };
+        for i in to_run {
+            let report = self.environments.reports[i].clone();
+            match &prober {
+                EnvProber::Immediate(f) => {
+                    let outcomes = f(&report);
+                    self.on_env_probed(seq, i, outcomes);
+                }
+                EnvProber::Async(f) => {
+                    let fut = f(report);
+                    let tx = self.msg_tx.clone();
+                    tokio::spawn(async move {
+                        let outcomes = fut.await;
+                        let _ = tx.send(AppMsg::EnvProbed {
+                            seq,
+                            report: i,
+                            outcomes,
+                        });
+                    });
+                }
+            }
+        }
+    }
+
+    fn on_env_probed(
+        &mut self,
+        seq: u64,
+        report: usize,
+        outcomes: Vec<crate::inventory::probe::Outcome>,
+    ) {
+        if seq != self.environments.probe_seq {
+            return;
+        }
+        let Some(states) = self.environments.probes.get_mut(report) else {
+            return;
+        };
+        for (state, outcome) in states.iter_mut().zip(outcomes) {
+            if let Some(result) = outcome {
+                *state = ProbeState::Done(result);
+            }
+        }
+    }
+
+    /// The secret for a pending environment connect arrived.
+    fn on_env_secret(
+        &mut self,
+        token: u64,
+        result: Result<crate::creds::aws_secrets::SecretCreds, String>,
+    ) {
+        let Some(pending) = self.environments.connecting.take_if(|p| p.token == token) else {
+            return;
+        };
+        match result {
+            Ok(creds) => {
+                let mut dsn = pending.dsn;
+                crate::creds::aws_secrets::apply(&mut dsn, creds);
+                self.environments.opened_from = None;
+                self.connect_to_target(dsn, pending.origin, pending.read_only);
+            }
+            Err(e) => {
+                self.last_status = None;
+                self.last_error = Some(format!("secret not read: {e}"));
+            }
         }
     }
 

@@ -8,7 +8,12 @@ impl App {
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
         if !matches!(
             msg,
-            AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_) | AppMsg::EnvironmentsLoaded(_)
+            AppMsg::TapEvent { .. }
+                | AppMsg::UpdateCheck(_)
+                | AppMsg::EnvironmentsLoaded(_)
+                | AppMsg::EnvSecretResolved { .. }
+                | AppMsg::EnvDiscovered(_)
+                | AppMsg::EnvProbed { .. }
         ) && msg.generation() != self.generation
         {
             tracing::debug!(
@@ -275,6 +280,7 @@ impl App {
                         let failed = reports.iter().filter(|r| r.error.is_some()).count();
                         self.environments.reports = reports;
                         self.environments.error = None;
+                        self.start_env_probes();
                         self.environments.cursor = self
                             .environments
                             .cursor
@@ -288,11 +294,19 @@ impl App {
                     Err(e) => {
                         tracing::warn!("environments load failed: {e}");
                         self.environments.reports.clear();
+                        self.environments.probes.clear();
                         self.environments.error = Some(e);
                         self.last_status = None;
                     }
                 }
             }
+            AppMsg::EnvSecretResolved { token, result } => self.on_env_secret(token, result),
+            AppMsg::EnvDiscovered(result) => self.on_env_discovered(result),
+            AppMsg::EnvProbed {
+                seq,
+                report,
+                outcomes,
+            } => self.on_env_probed(seq, report, outcomes),
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
                     self.last_error = None;

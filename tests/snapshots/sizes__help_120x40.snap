@@ -33,7 +33,7 @@ expression: dump(&buf)
 │                 │     E             environments overview (no connection needed)                   │                 │
 │                 │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)    │                 │
 │                 │     h / l  ← →    move column cursor                                             │                 │
-│                 │ ↓ 221 more below                                                                 │                 │
+│                 │ ↓ 224 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 └──────────────────────────────────────────────────────────────────────────────────┘                 │
 │                                                                                                                      │

@@ -79,6 +79,21 @@ pub enum AppMsg {
     /// The environments gather finished. Not tied to a connection, so it
     /// bypasses the generation filter like tap events.
     EnvironmentsLoaded(Result<Vec<crate::inventory::EnvReport>, String>),
+    /// One environment's probes finished. `seq` names the listing they
+    /// belong to; `report` its index in it.
+    EnvProbed {
+        seq: u64,
+        report: usize,
+        outcomes: Vec<crate::inventory::probe::Outcome>,
+    },
+    /// Environment discovery finished. Not tied to a connection.
+    EnvDiscovered(Result<crate::inventory::discover::Found, String>),
+    /// An environment connect's secret was read (or not). Matched to its
+    /// connect by `token`, not the generation: no connection owns it yet.
+    EnvSecretResolved {
+        token: u64,
+        result: Result<crate::creds::aws_secrets::SecretCreds, String>,
+    },
     /// `pg_stat_activity` snapshot finished loading.
     SessionsLoaded {
         generation: u64,
@@ -148,7 +163,12 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. } => *generation,
-            AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_) | AppMsg::EnvironmentsLoaded(_) => 0,
+            AppMsg::TapEvent { .. }
+            | AppMsg::UpdateCheck(_)
+            | AppMsg::EnvironmentsLoaded(_)
+            | AppMsg::EnvSecretResolved { .. }
+            | AppMsg::EnvDiscovered(_)
+            | AppMsg::EnvProbed { .. } => 0,
         }
     }
 }

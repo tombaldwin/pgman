@@ -882,6 +882,21 @@ fn scr_environments() -> App {
     let mut a = base();
     a.mode = Mode::Environments;
     a.environments.reports = pgman::demo::environments();
+    a.environments.probes = a
+        .environments
+        .reports
+        .iter()
+        .map(|r| match r.probe {
+            Some(_) => pgman::demo::environment_probes(r)
+                .into_iter()
+                .map(|o| {
+                    o.map(pgman::app::ProbeState::Done)
+                        .unwrap_or(pgman::app::ProbeState::ViaReplica)
+                })
+                .collect(),
+            None => vec![pgman::app::ProbeState::Off; r.targets.len()],
+        })
+        .collect();
     a.environments.cursor = 1;
     a
 }
@@ -889,6 +904,27 @@ fn scr_environments() -> App {
 #[test]
 fn environments() {
     run_sizes("environments", scr_environments);
+}
+
+fn scr_env_discovery() -> App {
+    let mut a = scr_environments();
+    let found = pgman::demo::discovery();
+    let n = found.proposals.len();
+    a.environments.discovery = Some(pgman::app::DiscoveryUi {
+        loading: false,
+        found: Some(found),
+        error: None,
+        chosen: (0..n).map(|i| i == 0).collect(),
+        cursor: 0,
+        scope: Default::default(),
+        scopes: pgman::demo::discovery().scopes,
+    });
+    a
+}
+
+#[test]
+fn env_discovery() {
+    run_sizes("env_discovery", scr_env_discovery);
 }
 
 #[test]

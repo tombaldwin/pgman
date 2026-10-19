@@ -900,6 +900,45 @@ impl std::fmt::Debug for EnvironmentsLoader {
     }
 }
 
+/// A probe's state for one row of the overview.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProbeState {
+    /// The environment doesn't probe.
+    Off,
+    Probing,
+    /// A primary read through its replica instead.
+    ViaReplica,
+    Done(Result<crate::query::probe::Probe, String>),
+}
+
+/// Probes an environment's databases. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default) connects to nothing.
+#[derive(Clone)]
+pub enum EnvProber {
+    /// Runs on the tokio runtime (connects, tunnels, reads secrets).
+    Async(ProbeAsyncFn),
+    /// Fixed answers, applied at once — `--demo`, tests.
+    Immediate(ProbeNowFn),
+}
+
+pub type ProbeAsyncFn = std::sync::Arc<
+    dyn Fn(
+            crate::inventory::EnvReport,
+        ) -> futures::future::BoxFuture<'static, Vec<crate::inventory::probe::Outcome>>
+        + Send
+        + Sync,
+>;
+
+pub type ProbeNowFn = std::sync::Arc<
+    dyn Fn(&crate::inventory::EnvReport) -> Vec<crate::inventory::probe::Outcome> + Send + Sync,
+>;
+
+impl std::fmt::Debug for EnvProber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvProber")
+    }
+}
+
 /// Environments panel state: the last gathered reports and the cursor,
 /// which moves over databases (environment headings are not stops).
 #[derive(Debug, Default)]
@@ -913,13 +952,159 @@ pub struct EnvironmentsUi {
     /// Where closing the panel returns to: `Some(ConnPick)` when it was
     /// opened from the connection picker, `None` for the grid.
     pub opened_from: Option<Mode>,
+    /// A connect waiting on its secret. Closing the panel drops it, and
+    /// a secret that arrives after that connects nothing.
+    pub connecting: Option<PendingEnvConnect>,
+    /// Numbers each connect, so a late secret matches only its own.
+    pub connect_token: u64,
+    /// `Some` while the discovery view (`d`) is open over the overview.
+    pub discovery: Option<DiscoveryUi>,
+    /// Parallel to `reports`: each row's probe.
+    pub probes: Vec<Vec<ProbeState>>,
+    /// Numbers each listing, so probes of an older one are dropped.
+    pub probe_seq: u64,
+}
+
+/// The overview's discovery view: proposed environments, which ones the
+/// operator chose, and the cursor.
+#[derive(Debug, Default)]
+pub struct DiscoveryUi {
+    pub loading: bool,
+    pub found: Option<crate::inventory::discover::Found>,
+    pub error: Option<String>,
+    /// Parallel to `found.proposals`.
+    pub chosen: Vec<bool>,
+    pub cursor: usize,
+    /// The scope this discovery ran in.
+    pub scope: crate::aws_cli::AwsScope,
+    /// Where `p` can discover next; kept from the last discovery that
+    /// listed them, so a failed one can still move on.
+    pub scopes: Vec<crate::aws_cli::AwsScope>,
+}
+
+impl DiscoveryUi {
+    /// The scope after this one, wrapping; ambient when none are known.
+    pub fn next_scope(&self) -> crate::aws_cli::AwsScope {
+        let at = self.scopes.iter().position(|s| *s == self.scope);
+        match at {
+            Some(i) => self.scopes[(i + 1) % self.scopes.len()].clone(),
+            None => self.scopes.first().cloned().unwrap_or_default(),
+        }
+    }
+}
+
+impl DiscoveryUi {
+    pub fn proposals(&self) -> &[crate::inventory::discover::Proposal] {
+        self.found
+            .as_ref()
+            .map(|f| f.proposals.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn selected(&self) -> Option<&crate::inventory::discover::Proposal> {
+        self.proposals().get(self.cursor)
+    }
+}
+
+impl ListCursorNav for DiscoveryUi {
+    fn nav_len(&self) -> usize {
+        self.proposals().len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
+}
+
+pub type DiscoverFn = std::sync::Arc<
+    dyn Fn(&crate::aws_cli::AwsScope) -> Result<crate::inventory::discover::Found, String>
+        + Send
+        + Sync,
+>;
+
+pub type SaveProposalsFn = std::sync::Arc<
+    dyn Fn(&[&crate::inventory::discover::Proposal]) -> Result<std::path::PathBuf, String>
+        + Send
+        + Sync,
+>;
+
+/// Discovers and saves environments for the overview. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default) means no AWS call and no
+/// write to `environments.toml` can happen.
+#[derive(Clone)]
+pub struct EnvDiscoverer {
+    /// Blocking: runs the aws CLI.
+    pub discover: DiscoverFn,
+    /// Appends the chosen proposals; the path written.
+    pub save: SaveProposalsFn,
+    /// Run `discover` at once on this thread (`--demo`, tests) instead of
+    /// on a blocking one.
+    pub immediate: bool,
+}
+
+impl std::fmt::Debug for EnvDiscoverer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvDiscoverer")
+    }
 }
 
 impl EnvironmentsUi {
+    /// The probe of the row under the cursor.
+    pub fn selected_probe(&self) -> &ProbeState {
+        let mut left = self.cursor;
+        for (ri, r) in self.reports.iter().enumerate() {
+            if left < r.targets.len() {
+                return self.probe(ri, left);
+            }
+            left -= r.targets.len();
+        }
+        &ProbeState::Off
+    }
+
+    /// A row's probe; `Off` when unknown.
+    pub fn probe(&self, report: usize, target: usize) -> &ProbeState {
+        self.probes
+            .get(report)
+            .and_then(|r| r.get(target))
+            .unwrap_or(&ProbeState::Off)
+    }
+
     pub fn target_count(&self) -> usize {
         self.reports.iter().map(|r| r.targets.len()).sum()
     }
+
+    /// The environment and database under the cursor.
+    pub fn selected(&self) -> Option<(&crate::inventory::EnvReport, &crate::inventory::Target)> {
+        self.reports
+            .iter()
+            .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+            .nth(self.cursor)
+    }
 }
+
+/// An environment connect whose password is being read from Secrets
+/// Manager. The DSN has no password yet.
+#[derive(Debug, Clone)]
+pub struct PendingEnvConnect {
+    pub token: u64,
+    pub dsn: Dsn,
+    pub origin: String,
+    /// A replica: the session opens read-only whatever safety.toml says.
+    pub read_only: bool,
+}
+
+/// Reads a secret for an environment connect. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default, and every test that
+/// doesn't install one) means no secret is ever read.
+pub type SecretFetcher = std::sync::Arc<
+    dyn Fn(
+            &crate::creds::aws_secrets::SecretRef,
+        ) -> Result<crate::creds::aws_secrets::SecretCreds, String>
+        + Send
+        + Sync,
+>;
 
 impl ListCursorNav for EnvironmentsUi {
     fn nav_len(&self) -> usize {

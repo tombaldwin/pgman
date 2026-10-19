@@ -26,6 +26,7 @@ pub mod params;
 pub mod patches;
 pub mod pglog;
 pub mod preflight;
+pub mod probe;
 pub mod reconstruct;
 pub mod row_diff;
 pub mod schema;

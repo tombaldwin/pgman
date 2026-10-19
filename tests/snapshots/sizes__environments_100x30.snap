@@ -8,11 +8,11 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ environments — r refresh · q close ──────────────────────────────────────────────────────┐   │
+│  W┌ environments — enter connect · d discover · q close ─────────────────────────────────────┐   │
 │  O│  staging · RDS 123456789012 eu-west-2                                                    │   │
-│   │    database  role     server             status     engine                               │   │
-└───│    shop      primary  staging            available  postgres 16.4                        │───┘
-┌ re│    shop      replica  └ staging-replica  available  postgres 16.4                        │───┐
+│   │    database  role     server             status     probe                        engine  │   │
+└───│    shop      primary  staging            available  via replica                  postgre…│───┘
+┌ re│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgre…│───┐
 │id │                                                                                          │   │
 │1  │  qa · RDS 123456789012 eu-west-2                                                         │   │
 │2  │    database  role     server             status     engine                               │   │
@@ -32,4 +32,4 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · g/G top/bottom · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

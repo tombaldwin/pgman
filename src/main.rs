@@ -124,6 +124,24 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if argv.get(1).map(String::as_str) == Some("env") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::inventory::discover::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let result = pgman::inventory::discover::parse_cli(&argv[2..])
+            .and_then(|opts| pgman::inventory::discover::run_cli(&opts));
+        match result {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+        return Ok(());
+    }
+
     let cli = Cli::parse();
 
     // `--upgrade` is the only flag that doesn't enter the TUI. Handle it
@@ -290,6 +308,18 @@ async fn main() -> anyhow::Result<()> {
     application.environments_loader = Some(app::EnvironmentsLoader::Blocking(std::sync::Arc::new(
         pgman::inventory::load_and_gather,
     )));
+    application.secret_fetcher = Some(std::sync::Arc::new(pgman::creds::aws_secrets::fetch));
+    application.env_prober = Some(app::EnvProber::Async(std::sync::Arc::new(|report| {
+        Box::pin(pgman::inventory::probe::run(
+            report,
+            std::sync::Arc::new(pgman::creds::aws_secrets::fetch),
+        ))
+    })));
+    application.env_discoverer = Some(app::EnvDiscoverer {
+        discover: std::sync::Arc::new(pgman::inventory::discover::discover_for_overview),
+        save: std::sync::Arc::new(pgman::inventory::discover::save),
+        immediate: false,
+    });
     application.dsn_origin = dsn_origin;
     // Update check: opt-out via --no-update-check or the env var.
     // (--demo and --batch never reach here — --demo builds its own

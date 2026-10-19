@@ -17,9 +17,13 @@
 //! never a project file: like `connections.toml`, they name hosts and
 //! accounts the operator chose.
 
+pub mod discover;
+pub mod probe;
 pub mod rds;
 
 use crate::aws_cli::AwsScope;
+use crate::conn::Dsn;
+use crate::creds::aws_secrets::SecretRef;
 use crate::mcp::connections::{Entry, Role};
 use std::collections::HashMap;
 
@@ -40,6 +44,88 @@ pub struct Environment {
     /// the source names (an RDS instance's `DBName`).
     #[serde(default)]
     pub databases: Vec<String>,
+    /// `[user@]host[:port]` of the ssh bastion this environment's
+    /// databases are reached through.
+    #[serde(default)]
+    pub ssh_tunnel: Option<String>,
+    /// `sslmode` for every database in the environment.
+    #[serde(default)]
+    pub sslmode: Option<String>,
+    /// User name when no secret supplies one.
+    #[serde(default)]
+    pub user: Option<String>,
+    /// AWS Secrets Manager secret holding the credentials, keyed by
+    /// server (`"demo"`) or, more specifically, server and database
+    /// (`"demo/ledger"`). Read with the source's region, profile and
+    /// account, and only when connecting.
+    #[serde(default)]
+    pub secrets: std::collections::BTreeMap<String, String>,
+    /// Connect to each database on every refresh to read its version,
+    /// recovery state and lag (and, with `version_table`, its patch
+    /// level). Off unless set: a refresh then touches every database.
+    #[serde(default)]
+    pub probe: bool,
+    /// Where the patch level lives, for probes.
+    #[serde(default)]
+    pub version_table: Option<VersionTable>,
+}
+
+/// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VersionTable {
+    pub table: String,
+    pub column: String,
+    /// Directory of patch files to count pending ones against; `~/` is
+    /// your home. Absolute otherwise.
+    #[serde(default)]
+    pub patches: Option<String>,
+}
+
+impl VersionTable {
+    pub fn config(&self) -> crate::query::patches::PatchesConfig {
+        crate::query::patches::PatchesConfig {
+            dir: self.patches.clone().unwrap_or_default(),
+            table: self.table.clone(),
+            column: self.column.clone(),
+        }
+    }
+
+    /// Whether `patches` is shaped right: `~/…` or absolute. Pure, so
+    /// parsing the file reads nothing from the environment.
+    fn check_patches(&self) -> Result<(), String> {
+        match &self.patches {
+            Some(raw) if !raw.starts_with("~/") && !std::path::Path::new(raw).is_absolute() => Err(
+                format!("version_table.patches {raw:?} must be absolute or start with ~/"),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    /// The patch directory, `~/` expanded; it must end up absolute.
+    pub fn patch_dir(&self) -> Option<Result<std::path::PathBuf, String>> {
+        let raw = self.patches.as_ref()?;
+        let path = match raw.strip_prefix("~/") {
+            Some(rest) => match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => return Some(Err("version_table.patches uses ~/ but HOME is unset".into())),
+            },
+            None => std::path::PathBuf::from(raw),
+        };
+        Some(if path.is_absolute() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "version_table.patches {raw:?} must be absolute or start with ~/"
+            ))
+        })
+    }
+}
+
+/// What a probe of an environment needs beyond its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeSettings {
+    pub version_table: Option<VersionTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -97,6 +183,100 @@ impl Source {
     }
 }
 
+impl Environment {
+    /// The connection settings are for discovered servers; a static
+    /// environment's connections carry their own in `connections.toml`.
+    fn check_connection_settings(&self) -> Result<(), String> {
+        if matches!(self.source, Source::Static { .. })
+            && (self.ssh_tunnel.is_some()
+                || self.sslmode.is_some()
+                || self.user.is_some()
+                || !self.secrets.is_empty())
+        {
+            return Err(
+                "ssh_tunnel, sslmode, user and secrets belong on each connection in \
+                 connections.toml for a static environment"
+                    .to_string(),
+            );
+        }
+        if let Some(t) = &self.ssh_tunnel {
+            crate::tunnel::SshTunnelSpec::parse(t).map_err(|e| format!("ssh_tunnel {t:?}: {e}"))?;
+        }
+        if let Some(m) = &self.sslmode {
+            if !crate::conn::KNOWN_SSLMODES.contains(&m.as_str()) {
+                return Err(format!(
+                    "unknown sslmode {m:?}; use one of {}",
+                    crate::conn::KNOWN_SSLMODES.join(", ")
+                ));
+            }
+        }
+        if let Some(v) = &self.version_table {
+            crate::query::patches::applied_ids_sql(&v.config())
+                .map_err(|e| format!("version_table: {e}"))?;
+            v.check_patches()?;
+        }
+        for (key, id) in &self.secrets {
+            self.secret_ref(id)
+                .validate()
+                .map_err(|e| format!("secrets.{key}: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn secret_ref(&self, id: &str) -> SecretRef {
+        let scope = self.source.scope().unwrap_or_default();
+        SecretRef {
+            id: id.to_string(),
+            region: scope.region,
+            profile: scope.profile,
+            account: scope.account,
+        }
+    }
+
+    /// The secret for `database` on `server`: the `server/database` key
+    /// first, then the `server` key.
+    pub fn secret_for(&self, server: &str, database: &str) -> Option<SecretRef> {
+        self.secrets
+            .get(&format!("{server}/{database}"))
+            .or_else(|| self.secrets.get(server))
+            .map(|id| self.secret_ref(id))
+    }
+
+    /// How to connect to one database on a discovered server.
+    fn connect_spec(
+        &self,
+        server: &str,
+        database: &str,
+        host: Option<&str>,
+        port: Option<u16>,
+    ) -> Result<ConnectSpec, String> {
+        let host = host.ok_or_else(|| format!("{server} has no endpoint yet"))?;
+        let ssh_tunnel = match &self.ssh_tunnel {
+            Some(t) => Some(
+                crate::tunnel::SshTunnelSpec::parse(t)
+                    .map_err(|e| format!("ssh_tunnel {t:?}: {e}"))?,
+            ),
+            None => None,
+        };
+        Ok(ConnectSpec {
+            dsn: Dsn {
+                host: host.to_string(),
+                port: port.unwrap_or(5432),
+                user: self.user.clone(),
+                password: None,
+                dbname: database.to_string(),
+                params: self
+                    .sslmode
+                    .iter()
+                    .map(|m| ("sslmode".to_string(), m.clone()))
+                    .collect(),
+                ssh_tunnel,
+            },
+            secret: self.secret_for(server, database),
+        })
+    }
+}
+
 /// Parse `environments.toml`. Unknown keys are errors — a typo in a
 /// filter must not silently widen what an environment covers. Names must
 /// be unique and non-empty.
@@ -134,6 +314,8 @@ pub fn parse_config(text: &str) -> Result<Vec<Environment>, String> {
                 .validate()
                 .map_err(|err| format!("environments.toml: environment {:?}: {err}", e.name))?;
         }
+        e.check_connection_settings()
+            .map_err(|err| format!("environments.toml: environment {:?}: {err}", e.name))?;
     }
     Ok(f.environments)
 }
@@ -155,6 +337,16 @@ pub struct Target {
     pub status: Option<String>,
     pub class: Option<String>,
     pub multi_az: Option<bool>,
+    /// How to connect, or why this row can't be connected to.
+    pub connect: Result<ConnectSpec, String>,
+}
+
+/// Everything a connect needs except the password, which is read from
+/// `secret` at connect time when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectSpec {
+    pub dsn: Dsn,
+    pub secret: Option<SecretRef>,
 }
 
 /// An environment's rows, or why there are none.
@@ -164,6 +356,8 @@ pub struct EnvReport {
     pub source: String,
     pub targets: Vec<Target>,
     pub error: Option<String>,
+    /// `Some` when the environment opted into probes.
+    pub probe: Option<ProbeSettings>,
 }
 
 /// RDS rows for one environment from an already-fetched instance list.
@@ -187,6 +381,7 @@ pub fn rds_targets(env: &Environment, all: &[rds::RdsInstance]) -> Vec<Target> {
         };
         for db in dbs {
             out.push(Target {
+                connect: env.connect_spec(&i.id, &db, i.host.as_deref(), i.port),
                 database: db,
                 server: i.id.clone(),
                 role,
@@ -230,6 +425,10 @@ pub fn static_targets(names: &[String], entries: &[Entry]) -> Result<Vec<Target>
                 status: None,
                 class: None,
                 multi_az: None,
+                connect: Ok(ConnectSpec {
+                    dsn: dsn.clone(),
+                    secret: e.secret.clone(),
+                }),
             })
         })
         .collect()
@@ -269,6 +468,9 @@ pub fn gather(
                 source: env.source.label(),
                 targets,
                 error,
+                probe: env.probe.then(|| ProbeSettings {
+                    version_table: env.version_table.clone(),
+                }),
             }
         })
         .collect()
@@ -415,6 +617,12 @@ source = { kind = "static", connections = ["ledger-local"] }
                 account: None,
             },
             databases: vec![],
+            ssh_tunnel: None,
+            sslmode: None,
+            user: None,
+            secrets: Default::default(),
+            probe: false,
+            version_table: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);
@@ -464,5 +672,154 @@ source = { kind = "static", connections = ["ledger-local"] }
         assert!(static_targets(&["nope".into()], &entries)
             .unwrap_err()
             .contains("no connection"));
+    }
+
+    const CONNECTABLE: &str = r#"
+[[environments]]
+name = "demo"
+source = { kind = "rds", instances = ["demo"], region = "us-west-1", account = "210987654321" }
+ssh_tunnel = "ec2-user@bastion.example.com"
+sslmode = "require"
+
+[environments.secrets]
+"demo" = "demo/database/ledger/credentials"
+"demo-read-only-replica" = "demo/database/ledger_replica/credentials"
+"demo/ledgerlog" = "demo/database/ledgerlog/credentials"
+"#;
+
+    #[test]
+    fn rds_rows_carry_how_to_connect() {
+        let mut envs = parse_config(CONNECTABLE).unwrap();
+        envs[0].databases = vec!["ledger".into(), "ledgerlog".into()];
+        let t = rds_targets(&envs[0], &all());
+        let spec = t[0].connect.as_ref().unwrap();
+        assert_eq!(
+            (
+                spec.dsn.host.as_str(),
+                spec.dsn.port,
+                spec.dsn.dbname.as_str()
+            ),
+            ("demo.x.us-west-1.rds.amazonaws.com", 5432, "ledger")
+        );
+        assert_eq!(spec.dsn.password, None, "read at connect, never stored");
+        assert_eq!(
+            spec.dsn.params,
+            [("sslmode".to_string(), "require".to_string())]
+        );
+        let tunnel = spec.dsn.ssh_tunnel.as_ref().unwrap();
+        assert_eq!(
+            (tunnel.user.as_deref(), tunnel.host.as_str()),
+            (Some("ec2-user"), "bastion.example.com")
+        );
+        let secret = spec.secret.as_ref().unwrap();
+        assert_eq!(secret.id, "demo/database/ledger/credentials");
+        assert_eq!(
+            (secret.region.as_deref(), secret.account.as_deref()),
+            (Some("us-west-1"), Some("210987654321")),
+            "read in the source's scope"
+        );
+        let secret_of = |i: usize| t[i].connect.as_ref().unwrap().secret.clone().unwrap().id;
+        assert_eq!(
+            secret_of(1),
+            "demo/database/ledgerlog/credentials",
+            "server/database beats server"
+        );
+        assert_eq!(secret_of(2), "demo/database/ledger_replica/credentials");
+        assert_eq!(
+            secret_of(3),
+            "demo/database/ledger_replica/credentials",
+            "the server key covers every database on it"
+        );
+    }
+
+    #[test]
+    fn rows_without_settings_still_connect_and_without_an_endpoint_do_not() {
+        let envs = parse_config(CONFIG).unwrap();
+        let t = rds_targets(&envs[0], &all());
+        let spec = t[0].connect.as_ref().unwrap();
+        assert!(spec.secret.is_none() && spec.dsn.ssh_tunnel.is_none());
+        assert!(spec.dsn.params.is_empty());
+
+        let mut no_endpoint = all();
+        no_endpoint[0].host = None;
+        let t = rds_targets(&envs[0], &no_endpoint);
+        assert!(t[0].connect.as_ref().unwrap_err().contains("no endpoint"));
+    }
+
+    #[test]
+    fn connection_setting_mistakes_are_errors() {
+        let rds =
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"d\"] }\n";
+        let fixed = "[[environments]]\nname = \"x\"\nsource = { kind = \"static\", connections = [\"a\"] }\n";
+        for (bad, why) in [
+            (
+                format!("{rds}ssh_tunnel = \"-oProxyCommand=x\"\n"),
+                "option-shaped tunnel",
+            ),
+            (
+                format!("{rds}ssh_tunnel = \"h:notaport\"\n"),
+                "bad tunnel port",
+            ),
+            (format!("{rds}sslmode = \"requir\"\n"), "typo'd sslmode"),
+            (
+                format!("{rds}[environments.secrets]\nd = \"--debug\"\n"),
+                "option-shaped secret",
+            ),
+            (format!("{fixed}sslmode = \"require\"\n"), "static sslmode"),
+            (
+                format!("{fixed}[environments.secrets]\na = \"s\"\n"),
+                "static secrets",
+            ),
+            (format!("{rds}secret = \"s\"\n"), "singular typo"),
+        ] {
+            assert!(parse_config(&bad).is_err(), "{why}");
+        }
+        assert!(parse_config(&format!("{rds}sslmode = \"verify-full\"\nuser = \"me\"\n")).is_ok());
+    }
+
+    #[test]
+    fn static_rows_connect_with_the_personal_entry_and_its_secret() {
+        let personal = crate::mcp::connections::parse_personal(
+            "[[connections]]\nname = \"r\"\nurl = \"postgres://h:5432/d\"\n\
+             secret = \"env/database/d/credentials\"\naws_region = \"us-west-1\"\nrole = \"replica\"\n",
+        );
+        let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
+        let t = static_targets(&["r".into()], &entries).unwrap();
+        let spec = t[0].connect.as_ref().unwrap();
+        assert_eq!(spec.dsn.host, "h");
+        assert_eq!(
+            spec.secret.as_ref().map(|s| s.id.as_str()),
+            Some("env/database/d/credentials")
+        );
+        assert_eq!(t[0].role, Role::Replica);
+    }
+
+    #[test]
+    fn probes_are_opt_in_and_their_version_table_is_checked() {
+        let base =
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"d\"] }\n";
+        assert!(!parse_config(base).unwrap()[0].probe, "off unless set");
+        let ok = parse_config(&format!(
+            "{base}probe = true\nversion_table = {{ table = \"public.db_version\", column = \"id\", patches = \"~/src/db\" }}\n"
+        ))
+        .unwrap();
+        assert!(ok[0].probe);
+        let v = ok[0].version_table.as_ref().unwrap();
+        assert!(v.patch_dir().unwrap().unwrap().is_absolute());
+        for (bad, why) in [
+            (format!("{base}version_table = {{ table = \"t; drop\", column = \"id\" }}\n"), "not an identifier"),
+            (format!("{base}version_table = {{ table = \"t\", column = \"s.id\" }}\n"), "qualified column"),
+            (format!("{base}version_table = {{ table = \"t\", column = \"id\", patches = \"db/patches\" }}\n"), "relative dir"),
+            (format!("{base}version_table = {{ table = \"t\", colum = \"id\" }}\n"), "typo"),
+            (format!("{base}probes = true\n"), "typo'd opt-in"),
+        ] {
+            assert!(parse_config(&bad).is_err(), "{why}");
+        }
+        // The report carries the settings only when the environment opts in.
+        let envs = parse_config(&format!("{base}probe = true\n")).unwrap();
+        let reports = gather(&envs, &[], |_| Ok(all()));
+        assert!(reports[0].probe.is_some());
+        let reports = gather(&parse_config(base).unwrap(), &[], |_| Ok(all()));
+        assert!(reports[0].probe.is_none());
     }
 }
