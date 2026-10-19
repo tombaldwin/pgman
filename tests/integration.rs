@@ -2818,3 +2818,108 @@ fn mcp_environment_logs_reads_only_listed_servers() {
         "an unlisted server's logs are never asked for: {calls}"
     );
 }
+
+/// Applying a patch: it runs and records itself; a failing statement
+/// rolls the whole patch back; a locked table fails fast.
+#[test]
+fn applying_a_patch_runs_records_rolls_back_and_times_out() {
+    let home = scratch_home("apply", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_dbv_{pid}");
+    let tbl = format!("pgman_it_target_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (scriptid int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "scriptid".into(),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let patch = |id: i64, body: &str| {
+        let text = format!("INSERT INTO {vt} (scriptid) VALUES ({id});\n{body}");
+        (
+            pgman::query::patches::patch_file(&format!("{id:03}-x.sql"), &text, &cfg),
+            text,
+        )
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let connect = || async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            pgman::conn::connect_only(
+                pgman::conn::Dsn::parse(DSN).unwrap(),
+                false,
+                30_000,
+                notice_tx,
+                notification_tx,
+            )
+            .await
+            .unwrap()
+            .0
+        };
+        let client = connect().await;
+
+        // 2: applies and records itself.
+        let (p2, sql2) = patch(2, &format!("ALTER TABLE {tbl} ADD COLUMN c int;"));
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2).unwrap();
+        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts)
+            .await
+            .unwrap();
+        assert!(done.recorded, "{done:?}");
+        let applied = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert!(applied.contains(&2));
+        let next =
+            pgman::query::apply::next_patch(&[p2.clone(), patch(3, "SELECT 1;").0], &applied);
+        assert_eq!(next.map(|p| p.file), Some("003-x.sql".to_string()));
+
+        // 3: the second statement fails, so its version row is rolled back too.
+        let (p3, sql3) = patch(3, "SELECT * FROM pgman_it_no_such_table;");
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3).unwrap();
+        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("statement 2 of 2 failed, nothing applied"),
+            "{err}"
+        );
+        let applied = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert!(!applied.contains(&3), "rolled back");
+
+        // 4: a table someone else holds: fails on the lock timeout, not a hang.
+        let holder = connect().await;
+        holder
+            .batch_execute(&format!("BEGIN; LOCK TABLE {tbl} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        let (p4, sql4) = patch(4, &format!("ALTER TABLE {tbl} ADD COLUMN d int;"));
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql4).unwrap();
+        let started = std::time::Instant::now();
+        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts)
+            .await
+            .unwrap_err();
+        assert!(err.contains("lock timeout"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(15));
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        assert!(!pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap()
+            .contains(&4));
+    });
+}

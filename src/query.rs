@@ -9,6 +9,7 @@
 //! [`subst`] does the type-aware placeholder substitution shared by all three.
 //! [`nplus1`] clusters reconstructed queries to surface N+1 selects.
 
+pub mod apply;
 pub mod backslash;
 pub mod clause;
 pub mod complete;
