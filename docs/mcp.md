@@ -28,6 +28,7 @@ startup, not accepted and ignored.
 | `doctor` | The build, the client capabilities it saw, the write surface, the read-only floor, limits, which config files it read and any errors in them. Call it first when something is refused. |
 | `connections` | The names `query` accepts: host, port, database, user, tunnel, where the password comes from (never the password), whether the connection is usable and why not, and which entries reach the same database. |
 | `query` | One statement against a named connection, returned as typed JSON rows (the same typing as `--batch --format json`). `max_rows` defaults to 200 and is capped at 5000. `truncated` says whether rows were cut. The statement timeout is your profile's, capped at 30 s. |
+| `sessions_locks` | A pre-flight before a schema change. It reports sessions that have held a transaction open for at least `min_xact_age_secs` (default 60), are blocked, are blocking someone, or hold or wait for a lock on one of `tables`, and lists each one's locks on those tables. `server_is_replica` comes from `pg_is_in_recovery()`: on a replica you see the replica's sessions, not the primary's. |
 
 Each tool's description ends in a CAVEATS paragraph that says what the
 tool cannot see.
@@ -74,4 +75,4 @@ instead.
 - Each `query` call opens and closes its own connection, and its own
   tunnel if it has one. `SET`, temp tables and other session state do
   not carry over between calls.
-- There are no tools yet for sessions/locks or pending patches.
+- There is no pending-patches tool yet.
