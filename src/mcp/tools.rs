@@ -66,7 +66,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "pending_patches",
-            "description": "Which schema patch files the database has not recorded as applied. Reads every *.sql file in the patch directory, takes each file's id from its own version-row INSERT (INSERT INTO <table> (<column>, ...) VALUES (<id>, ...)), and compares that with the ids in <table>.<column>. Also reports recent files with no version row, files whose filename number and recorded id disagree, ids carried by two files, ids recorded whose file has no live version row (e.g. it is commented out), and ids recorded with no file at all. dir, table and column come from the [patches] block in .pgman/pgman.toml, and any of them can be passed to override it. CAVEATS: a file counts as applied when its id is in the table, NOT when its statements ran; a patch that failed partway but committed its version row looks applied. Only the first matching INSERT with an integer literal id counts. Files are read up to 1 MB each, the directory is not searched recursively, and it must resolve inside the server's working tree. Run it against the database the patches will be applied to: a replica can lag its primary.",
+            "description": "Which schema patch files the database has not recorded as applied. Reads every *.sql file in the patch directory, takes each file's id from its own version-row INSERT (INSERT INTO <table> (<column>, ...) VALUES (<id>, ...)), and compares that with the ids in <table>.<column>. Also reports recent files with no version row, files whose filename number and recorded id disagree, ids carried by two files, ids recorded whose file has no live version row (e.g. it is commented out), and ids recorded with no file at all. dir, table and column come from the [patches] block in .pgman/pgman.toml, and any of them can be passed to override it. CAVEATS: a file counts as applied when its id is in the table, NOT when its statements ran; a patch that failed partway but committed its version row looks applied. Only the first matching INSERT with an integer literal id counts. Files are read up to 1 MB each, the directory is not searched recursively, and it must resolve inside the server's working tree. Run it against the database the patches were applied to. A replica can lag its primary, so after applying a patch check on the `primary` connection (pending_patches is allowed there); a replica connection's result carries a `replica` object with its lag.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -161,7 +161,8 @@ impl Server {
                 "discovered connections are refused unless the server runs with --project-connections",
                 "a discovered connection that opens an ssh tunnel is always refused; tunnels belong in connections.toml",
                 "${…} placeholders in connections.toml are not resolved; use password_env or secret",
-                "a connection with role = \"primary\" serves only sessions_locks; query and pending_patches go to the replica",
+                "a connection with role = \"primary\" serves only sessions_locks and pending_patches (pgman's own fixed reads); query goes to the replica",
+                "results from a role = \"replica\" connection carry a `replica` object: whether the server is in recovery and how old its last replayed change is",
                 "a secret is read with the aws CLI at every connect, using the ambient AWS profile unless the connection names one; its value is never returned or logged",
             ],
             "config": {
@@ -191,12 +192,17 @@ impl Server {
         let target = self.prepare(name, "query")?;
         let statement = single_checked_statement(&target.safety, &target.dsn.dbname, sql)?;
         tracing::info!(target: "pgman::mcp", connection = name, db = %target.dsn.dbname, "query");
+        let role = target.role;
         let (client, _tunnel) = connect(name, target).await?;
         let (typed, truncated) =
             conn::run_statement_typed_capped(&client, &statement, Some(max_rows))
                 .await
                 .map_err(|e| e.msg)?;
-        Ok(render_query(name, &typed, truncated, max_rows))
+        let replica = replica_state(&client, role).await;
+        Ok(with_replica(
+            render_query(name, &typed, truncated, max_rows),
+            replica,
+        ))
     }
 
     async fn tool_sessions_locks(&self, args: &Value) -> Result<String, String> {
@@ -214,6 +220,7 @@ impl Server {
         // a read-only floor that only holds for client SQL is not one.
         let statement = single_checked_statement(&target.safety, &target.dsn.dbname, &sql)?;
         tracing::info!(target: "pgman::mcp", connection = name, "sessions_locks");
+        let role = target.role;
         let (client, _tunnel) = connect(name, target).await?;
         let (replica, _) =
             conn::run_statement_typed_capped(&client, preflight::IS_REPLICA_SQL, Some(1))
@@ -229,8 +236,10 @@ impl Server {
             conn::run_statement_typed_capped(&client, &statement, Some(MAX_MAX_ROWS))
                 .await
                 .map_err(|e| e.msg)?;
-        Ok(render_sessions_locks(
-            name, is_replica, min_age, &tables, &typed, truncated,
+        let replica = replica_state(&client, role).await;
+        Ok(with_replica(
+            render_sessions_locks(name, is_replica, min_age, &tables, &typed, truncated),
+            replica,
         ))
     }
 
@@ -248,6 +257,7 @@ impl Server {
         let target = self.prepare(name, "pending_patches")?;
         let statement = single_checked_statement(&target.safety, &target.dsn.dbname, &sql)?;
         tracing::info!(target: "pgman::mcp", connection = name, dir = %dir.display(), "pending_patches");
+        let role = target.role;
         let (client, _tunnel) = connect(name, target).await?;
         let (typed, truncated) =
             conn::run_statement_typed_capped(&client, &statement, Some(MAX_APPLIED_IDS))
@@ -255,7 +265,11 @@ impl Server {
                 .map_err(|e| e.msg)?;
         let applied = applied_ids(&typed, truncated, &cfg)?;
         let report = patches::reconcile(files, &applied);
-        Ok(render_pending_patches(name, &cfg, &dir, &report))
+        let replica = replica_state(&client, role).await;
+        Ok(with_replica(
+            render_pending_patches(name, &cfg, &dir, &report),
+            replica,
+        ))
     }
 
     /// Everything about a connection that can be decided before
@@ -278,6 +292,7 @@ impl Server {
             safety,
             timeout_ms,
             secret: entry.secret,
+            role: entry.role,
         })
     }
 }
@@ -289,6 +304,8 @@ pub(super) struct Target {
     pub timeout_ms: u64,
     /// Read from AWS Secrets Manager just before connecting.
     pub secret: Option<crate::creds::aws_secrets::SecretRef>,
+    /// The connection's configured role, for the replica report.
+    pub role: connections::Role,
 }
 
 /// Open `target` read-only, reading its secret first when it names one.
@@ -562,6 +579,95 @@ pub fn render_environments(
         },
     })
     .to_string()
+}
+
+/// Above this many seconds, a replica result carries a note that recent
+/// changes may not show yet.
+pub const REPLICA_LAG_NOTE_SECS: f64 = 5.0;
+
+/// What a `role = "replica"` connection reported about itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplicaState {
+    pub in_recovery: Option<bool>,
+    pub lag_secs: Option<f64>,
+}
+
+/// Measured on a replica connection only; a primary or direct connection
+/// gets nothing added. A failed measurement reads as unknown rather than
+/// failing the call it rides on.
+async fn replica_state(
+    client: &tokio_postgres::Client,
+    role: connections::Role,
+) -> Option<ReplicaState> {
+    if role != connections::Role::Replica {
+        return None;
+    }
+    let unknown = ReplicaState {
+        in_recovery: None,
+        lag_secs: None,
+    };
+    let Ok((typed, _)) =
+        conn::run_statement_typed_capped(client, preflight::REPLICA_LAG_SQL, Some(1)).await
+    else {
+        return Some(unknown);
+    };
+    let cell = |i: usize| {
+        typed
+            .rows
+            .first()
+            .and_then(|r| r.get(i))
+            .and_then(|c| c.clone())
+    };
+    Some(ReplicaState {
+        in_recovery: cell(0).map(|v| v == "t"),
+        lag_secs: cell(1).and_then(|v| v.parse().ok()),
+    })
+}
+
+/// The note a replica's state needs, if any. Pure / testable.
+pub fn replica_note(s: &ReplicaState) -> Option<String> {
+    match (s.in_recovery, s.lag_secs) {
+        (Some(false), _) => Some(
+            "this connection is configured as a replica, but the server is NOT in recovery: \
+             it is a primary, and only pgman's read-only session stands between a write and \
+             the data. Check its role in connections.toml."
+                .to_string(),
+        ),
+        (None, _) => Some(
+            "could not tell whether this replica is in recovery or how far behind it is"
+                .to_string(),
+        ),
+        (Some(true), Some(lag)) if lag > REPLICA_LAG_NOTE_SECS => Some(format!(
+            "the replica's last replayed change is {lag:.0}s old: a change made on the \
+             primary in that time may not show here yet (an idle primary also grows this \
+             number). To check a patch landed, run pending_patches on the primary connection."
+        )),
+        (Some(true), None) => {
+            Some("the replica has not replayed any change yet, so its lag is unknown".to_string())
+        }
+        (Some(true), Some(_)) => None,
+    }
+}
+
+/// Add a `replica` object to a tool's JSON result when there is one.
+pub fn with_replica(json_text: String, replica: Option<ReplicaState>) -> String {
+    let Some(r) = replica else {
+        return json_text;
+    };
+    let Ok(mut v) = serde_json::from_str::<Value>(&json_text) else {
+        return json_text;
+    };
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert(
+            "replica".to_string(),
+            json!({
+                "in_recovery": r.in_recovery,
+                "lag_secs": r.lag_secs,
+                "note": replica_note(&r),
+            }),
+        );
+    }
+    v.to_string()
 }
 
 /// A required string argument.
@@ -914,7 +1020,7 @@ mod tests {
         assert!(pick_entry(&entries, "p", "query")
             .unwrap_err()
             .contains("PRIMARY"));
-        assert!(pick_entry(&entries, "p", "pending_patches").is_err());
+        assert!(pick_entry(&entries, "p", "pending_patches").is_ok());
     }
 
     #[test]
@@ -1093,6 +1199,42 @@ mod tests {
                 .contains("outside"));
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_replica_result_says_how_stale_it_may_be_and_flags_a_primary_posing_as_one() {
+        let st = |in_recovery, lag_secs| ReplicaState {
+            in_recovery,
+            lag_secs,
+        };
+        assert_eq!(replica_note(&st(Some(true), Some(0.4))), None);
+        assert!(replica_note(&st(Some(true), Some(43.0)))
+            .unwrap()
+            .contains("43s old"));
+        assert!(replica_note(&st(Some(false), None))
+            .unwrap()
+            .contains("NOT in recovery"));
+        assert!(replica_note(&st(Some(true), None))
+            .unwrap()
+            .contains("not replayed"));
+        assert!(replica_note(&st(None, None))
+            .unwrap()
+            .contains("could not tell"));
+
+        let base = json!({"connection": "c"}).to_string();
+        assert_eq!(
+            with_replica(base.clone(), None),
+            base,
+            "nothing added off a replica"
+        );
+        let v: Value =
+            serde_json::from_str(&with_replica(base, Some(st(Some(true), Some(43.0))))).unwrap();
+        assert_eq!(v["replica"]["in_recovery"], true);
+        assert_eq!(v["replica"]["lag_secs"], 43.0);
+        assert!(v["replica"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("pending_patches"));
     }
 
     #[test]

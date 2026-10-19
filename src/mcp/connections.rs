@@ -53,10 +53,13 @@ impl Role {
     /// Why `tool` may not run on a connection with this role, if it may not.
     pub fn refuses(self, tool: &str) -> Option<String> {
         match (self, tool) {
-            (Role::Primary, "sessions_locks") => None,
+            // Both run only pgman's own fixed reads: the lock pre-flight,
+            // and "did the patch land?" against the version table, which
+            // a lagging replica can answer wrongly.
+            (Role::Primary, "sessions_locks" | "pending_patches") => None,
             (Role::Primary, _) => Some(format!(
-                "is the PRIMARY (role = \"primary\"), which serves only sessions_locks; run \
-                 {tool} against the replica connection instead"
+                "is the PRIMARY (role = \"primary\"), which serves only sessions_locks and \
+                 pending_patches; run {tool} against the replica connection instead"
             )),
             _ => None,
         }
@@ -540,13 +543,11 @@ mod tests {
     }
 
     #[test]
-    fn the_primary_serves_only_the_lock_preflight() {
+    fn the_primary_serves_only_pgmans_own_fixed_reads() {
         assert_eq!(Role::Primary.refuses("sessions_locks"), None);
-        for tool in ["query", "pending_patches"] {
-            assert!(
-                Role::Primary.refuses(tool).unwrap().contains("replica"),
-                "{tool}"
-            );
+        assert_eq!(Role::Primary.refuses("pending_patches"), None);
+        assert!(Role::Primary.refuses("query").unwrap().contains("replica"));
+        for tool in ["query", "pending_patches", "sessions_locks"] {
             assert_eq!(Role::Replica.refuses(tool), None);
             assert_eq!(Role::Direct.refuses(tool), None);
         }
