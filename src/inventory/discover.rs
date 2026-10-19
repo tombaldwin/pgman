@@ -533,6 +533,16 @@ pub fn render(p: &Proposal) -> String {
             out.push_str(&format!("{k} = {}\n", q(v)));
         }
     }
+    if e.probe {
+        out.push_str("probe = true\n");
+    }
+    if let Some(v) = &e.version_table {
+        let mut t = format!("table = {}, column = {}", q(&v.table), q(&v.column));
+        if let Some(dir) = &v.patches {
+            t.push_str(&format!(", patches = {}", q(dir)));
+        }
+        out.push_str(&format!("version_table = {{ {t} }}\n"));
+    }
     if !e.secrets.is_empty() {
         out.push_str("\n[environments.secrets]\n");
         for (k, v) in &e.secrets {
@@ -797,12 +807,55 @@ pub fn report(d: &Discovery, proposals: &[Proposal]) -> String {
     out
 }
 
+/// The version table a project in or above `cwd` declares in its
+/// `[patches]`, its patch directory made absolute, and the config file
+/// it came from. Reads the project file.
+pub fn project_version_table(
+    cwd: &std::path::Path,
+) -> Option<(std::path::PathBuf, super::VersionTable)> {
+    let (root, cfg) = crate::project::load_from(cwd)?;
+    let p = cfg.patches?;
+    let dir = root.join(&p.dir);
+    Some((
+        crate::project::config_path(&root),
+        super::VersionTable {
+            table: p.table,
+            column: p.column,
+            patches: Some(dir.display().to_string()),
+        },
+    ))
+}
+
+/// Give every new proposal the project's version table, saying where it
+/// came from. `probe` stays off: turning it on connects to every
+/// database on each refresh, and that is the operator's call per
+/// environment. Pure.
+pub fn with_version_table(
+    proposals: &mut [Proposal],
+    project: Option<&(std::path::PathBuf, super::VersionTable)>,
+) {
+    let Some((from, vt)) = project else {
+        return;
+    };
+    for p in proposals.iter_mut().filter(|p| p.covered_by.is_none()) {
+        p.env.version_table = Some(vt.clone());
+        p.notes.push(format!(
+            "version_table from {}; set probe = true to read the patch level, pending patches \
+             and lag on every refresh (it connects to each database)",
+            from.display()
+        ));
+    }
+}
+
 /// Discovery for the environments overview's `d` and `p`: `scope`, against
 /// the environments already configured, plus the scopes `p` can try next.
 /// Blocking.
 pub fn discover_for_overview(scope: &AwsScope) -> Result<Found, String> {
     let existing = super::load().environments?;
     let mut found = discover(scope)?.found(&existing);
+    if let Ok(cwd) = std::env::current_dir() {
+        with_version_table(&mut found.proposals, project_version_table(&cwd).as_ref());
+    }
     found.scopes = scope_choices(&existing, &list_profiles());
     Ok(found)
 }
@@ -817,7 +870,10 @@ pub fn run_cli(opts: &CliOpts) -> Result<String, String> {
         (Err(_), None) => Vec::new(),
     };
     let d = discover(&opts.scope)?;
-    let proposals = proposals(&d, &existing);
+    let mut proposals = proposals(&d, &existing);
+    if let Ok(cwd) = std::env::current_dir() {
+        with_version_table(&mut proposals, project_version_table(&cwd).as_ref());
+    }
     let Some(names) = &opts.save else {
         let mut out = report(&d, &proposals);
         if proposals.iter().any(|p| p.covered_by.is_none()) {
@@ -1269,5 +1325,46 @@ mod tests {
             ],
             "work is already there with its region; static sources have no scope"
         );
+    }
+
+    #[test]
+    fn a_projects_version_table_rides_on_new_proposals_and_round_trips() {
+        let dir = std::env::temp_dir().join(format!("pgman-vt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".pgman")).unwrap();
+        std::fs::write(
+            dir.join(".pgman/pgman.toml"),
+            "[patches]\ndir = \"db/patches\"\ntable = \"public.db_version\"\ncolumn = \"id\"\n",
+        )
+        .unwrap();
+        let project = project_version_table(&dir.join(".pgman")).expect("found from inside");
+        assert_eq!(project.1.table, "public.db_version");
+        let patches = project.1.patches.clone().unwrap();
+        assert!(
+            std::path::Path::new(&patches).is_absolute() && patches.ends_with("db/patches"),
+            "{patches}"
+        );
+
+        let existing = parse_config(
+            "[[environments]]\nname = \"prod\"\nsource = { kind = \"rds\", instances = [\"production\"] }\n",
+        )
+        .unwrap();
+        let mut ps = propose(&all(), &[], &[], &scope(), &existing);
+        with_version_table(&mut ps, Some(&project));
+        let demo = by_name(&ps, "demo");
+        assert_eq!(demo.env.version_table.as_ref(), Some(&project.1));
+        assert!(!demo.env.probe, "probing stays the operator's call");
+        assert!(demo.notes.iter().any(|n| n.contains("set probe = true")));
+        let prod = by_name(&ps, "production");
+        assert!(prod.env.version_table.is_none(), "covered: untouched");
+
+        // What a save writes loads back as proposed, probe included.
+        let mut p = demo.clone();
+        p.env.probe = true;
+        let text = append("", &[&p]).unwrap();
+        assert_eq!(parse_config(&text).unwrap()[0], p.env);
+
+        with_version_table(&mut ps, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

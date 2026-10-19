@@ -58,8 +58,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 - **Probes over MCP.** The `environments` tool still connects to nothing.
   A `probe` argument (opt-in environments only) would give an agent the
   same patch level and lag.
-- **Discovery could propose `probe` and `version_table`**, for instance
-  from a project's `[patches]`. Today they're added by hand.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session

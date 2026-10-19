@@ -67,6 +67,11 @@ database or read any secret's value:
   comes from `~/.ssh/config`.
 - `sslmode = "require"`, and the account (from `sts
   get-caller-identity`) and region are pinned.
+- **`version_table`**: when you discover from inside a project whose
+  `.pgman/pgman.toml` has `[patches]`, each proposal gets that table,
+  column and patch directory, ready for [probes](#probes). `probe`
+  itself stays off; a note says how to turn it on, because it connects
+  to each database on every refresh.
 
 Every proposal carries its notes as comments; read them before saving.
 A primary that an existing environment already lists (by name or

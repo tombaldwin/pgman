@@ -155,7 +155,7 @@ impl Server {
             "sessions_locks" => self.tool_sessions_locks(args).await,
             "pending_patches" => self.tool_pending_patches(args).await,
             "environments" => tool_environments().await,
-            "environments_discover" => tool_environments_discover(args).await,
+            "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
             "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
         }
@@ -171,10 +171,15 @@ impl Server {
         }
         let names = save_names(args)?;
         let scope = scope_from_args(args)?;
+        let cwd = self.cwd.clone();
         tokio::task::spawn_blocking(move || {
             let existing = crate::inventory::load().environments?;
             let d = crate::inventory::discover::discover(&scope)?;
-            let proposals = crate::inventory::discover::proposals(&d, &existing);
+            let mut proposals = crate::inventory::discover::proposals(&d, &existing);
+            crate::inventory::discover::with_version_table(
+                &mut proposals,
+                crate::inventory::discover::project_version_table(&cwd).as_ref(),
+            );
             let chosen = crate::inventory::discover::choose(&proposals, &names)?;
             let path = crate::inventory::discover::save(&chosen)?;
             Ok(json!({"added": names, "config": path.display().to_string()}).to_string())
@@ -572,11 +577,19 @@ pub fn render_found(found: &crate::inventory::discover::Found) -> String {
 }
 
 /// `environments_discover`: proposals from the account; nothing written.
-async fn tool_environments_discover(args: &Value) -> Result<String, String> {
+async fn tool_environments_discover(
+    args: &Value,
+    cwd: std::path::PathBuf,
+) -> Result<String, String> {
     let scope = scope_from_args(args)?;
     let found = tokio::task::spawn_blocking(move || {
         let existing = crate::inventory::load().environments?;
-        Ok::<_, String>(crate::inventory::discover::discover(&scope)?.found(&existing))
+        let mut found = crate::inventory::discover::discover(&scope)?.found(&existing);
+        crate::inventory::discover::with_version_table(
+            &mut found.proposals,
+            crate::inventory::discover::project_version_table(&cwd).as_ref(),
+        );
+        Ok::<_, String>(found)
     })
     .await
     .map_err(|e| format!("discovery task failed: {e}"))??;
