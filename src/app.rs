@@ -4001,6 +4001,8 @@ impl App {
                     .map(|s| match s {
                         Step::Connect => ProbeState::Probing,
                         Step::ViaReplica => ProbeState::ViaReplica,
+                        // Nothing to read: the row's status says why.
+                        Step::NotRunning => ProbeState::Off,
                     })
                     .collect(),
             );

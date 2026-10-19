@@ -8,7 +8,7 @@ expression: dump(&buf)
 ╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
 │  staging · RDS 123456789012 eu-west-2                    │
 │    DATABASE  ROLE     SERVER             STATUS     SCHE…│
-│    shop      primary  staging            available  via …│
+│    shop      primary  staging            available  v251…│
 │    shop      replica  └ staging-replica  available  v251…│
 │                                                          │
 │  qa · RDS 123456789012 eu-west-2                         │

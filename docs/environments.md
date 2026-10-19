@@ -200,8 +200,12 @@ Version, recovery, lag, sessions and size come back in one round trip.
 How a probe connects:
 
 - **A primary with a replica of the same database is not connected
-  to.** It reads `via replica`, and the replica answers for it. A
-  primary is probed only when there's no replica to read instead.
+  to.** Its `SCHEMA` is the replica's (physical replication makes them
+  the same), and the detail line says so. `SESSIONS` and `SIZE` stay
+  blank, because they're per server. A primary is probed only when
+  there's no replica to read instead.
+- **A server that isn't running** (stopped, starting, or a container
+  that exited) isn't probed. Its status says why.
 - **One ssh per bastion.** Every database behind the same bastion rides
   one `ssh` carrying a forward each, closed when the probe ends.
 - **Read-only, bounded.** Every connection is read-only, with a 5 s
