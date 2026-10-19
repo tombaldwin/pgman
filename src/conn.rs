@@ -1357,7 +1357,7 @@ fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
 /// `prefer` (encrypt-without-verifying, falls back to plaintext), which
 /// is a strictly weaker guarantee than most of the other five modes —
 /// exactly the kind of security setting that must never fail open.
-const KNOWN_SSLMODES: [&str; 6] = [
+pub(crate) const KNOWN_SSLMODES: [&str; 6] = [
     "disable",
     "allow",
     "prefer",

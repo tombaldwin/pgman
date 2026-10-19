@@ -699,6 +699,7 @@ fn query(
 pub fn environments() -> Vec<crate::inventory::EnvReport> {
     use crate::inventory::{EnvReport, Target};
     use crate::mcp::connections::Role;
+    const NO_SERVER: &str = "--demo has no server — restart without --demo to connect";
     let rds = |db: &str, server: &str, role: Role, of: Option<&str>, status: &str| Target {
         database: db.into(),
         server: server.into(),
@@ -710,6 +711,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
         status: Some(status.into()),
         class: Some("db.t4g.medium".into()),
         multi_az: Some(false),
+        connect: Err(NO_SERVER.into()),
     };
     vec![
         EnvReport {
@@ -747,6 +749,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 status: None,
                 class: None,
                 multi_az: None,
+                connect: Err(NO_SERVER.into()),
             }],
             error: None,
         },
