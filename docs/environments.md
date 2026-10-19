@@ -22,7 +22,45 @@ staging · RDS 123456789012 eu-west-2
 
 Environments live in your own config dir, never in a project file:
 like `connections.toml`, they name accounts and hosts you chose.
-pgman never writes this file.
+pgman only ever appends to it, when you save a discovery, and never
+rewrites what's already there.
+
+## Discovering environments from AWS
+
+```sh
+pgman env discover                       # print proposals as TOML
+pgman env discover --save                # append every new one
+pgman env discover --save demo test      # append just these
+pgman env discover --region eu-west-2 --profile staging --account 123456789012
+```
+
+Discovery reads names and endpoints only. It doesn't connect to any
+database or read any secret's value:
+
+- **One environment per RDS Postgres primary**, named after it, with
+  its read replicas. A replica whose primary isn't listed gets an
+  environment of its own.
+- **Databases** come from secret paths like
+  `<env>/database/<db>/credentials` when there are any, otherwise from
+  the instance's `DBName`.
+- **Secrets** are matched by name. The first path segment is the
+  environment, or a prefix of it (`dev` for `development`) that isn't
+  another environment's name. A segment names the database, and a
+  replica prefers a `<db>_replica` secret. Master-password secrets like
+  `demo-database-password` never match. A tie isn't guessed: it becomes
+  a note listing the candidates.
+- **The ssh tunnel** goes through the running EC2 host with a public DNS
+  name in the instance's VPC. With several, the one named
+  `bastion`/`jump` wins; otherwise a note lists them. The ssh user
+  comes from `~/.ssh/config`.
+- `sslmode = "require"`, and the account (from `sts
+  get-caller-identity`) and region are pinned.
+
+Every proposal carries its notes as comments; read them before saving.
+A primary that an existing environment already lists (by name or
+`instances` glob) is shown as covered and never saved twice. Without
+permission to list secrets or EC2 hosts, discovery still proposes
+environments, without secrets or tunnels, and says why.
 
 ```toml
 # Every database on the demo instance and its read replica.

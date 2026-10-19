@@ -63,6 +63,10 @@ and breaking changes.
   `Enter` connects to a row: replicas read-only, the password read from
   AWS Secrets Manager at that moment, through the environment's ssh
   tunnel.
+- **`pgman env discover`** proposes environments from an AWS account:
+  one per RDS primary with its replicas, the secret matching each
+  database by name, the bastion in its VPC. It reads names only, never a
+  secret's value; `--save` appends to `environments.toml`.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

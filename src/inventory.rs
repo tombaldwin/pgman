@@ -17,6 +17,7 @@
 //! never a project file: like `connections.toml`, they name hosts and
 //! accounts the operator chose.
 
+pub mod discover;
 pub mod rds;
 
 use crate::aws_cli::AwsScope;

@@ -124,6 +124,24 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if argv.get(1).map(String::as_str) == Some("env") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::inventory::discover::USAGE);
+            return Ok(());
+        }
+        init_logging();
+        let result = pgman::inventory::discover::parse_cli(&argv[2..])
+            .and_then(|opts| pgman::inventory::discover::run_cli(&opts));
+        match result {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+        return Ok(());
+    }
+
     let cli = Cli::parse();
 
     // `--upgrade` is the only flag that doesn't enter the TUI. Handle it

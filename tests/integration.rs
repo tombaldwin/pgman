@@ -1451,7 +1451,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -1744,5 +1744,122 @@ fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
             .unwrap()
             .contains("NOT in recovery"),
         "{text}"
+    );
+}
+
+/// `pgman env discover` proposes from the account and saves only when
+/// asked, appending; a second save of the same environment is refused.
+/// No secret value is ever read.
+#[cfg(unix)]
+#[test]
+fn env_discover_proposes_then_appends_on_save() {
+    let home = scratch_home("env-discover", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    std::fs::write(
+        &cfg,
+        "# mine\n[[environments]]\nname = \"prod\"\nsource = { kind = \"rds\", instances = [\"production\"] }\n",
+    )
+    .unwrap();
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [
+          {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10", "DBInstanceStatus": "available",
+           "DBInstanceClass": "db.t4g.medium", "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaDBInstanceIdentifiers": ["demo-read-only-replica"], "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}},
+          {"DBInstanceIdentifier": "demo-read-only-replica", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+           "Endpoint": {"Address": "demo-read-only-replica.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaSourceDBInstanceIdentifier": "demo", "DBName": "ledger", "DBSubnetGroup": {"VpcId": "vpc-1"}},
+          {"DBInstanceIdentifier": "production", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium", "DBName": "prod"}
+        ]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |args: &[&str]| {
+        Command::new(pgman_binary())
+            .env("PATH", &path)
+            .env("FAKE_AWS_ACCOUNT", "210987654321")
+            .env("FAKE_RDS_JSON", &rds)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_DATA_HOME", home.join(".local/share"))
+            .env("XDG_CACHE_HOME", home.join(".cache"))
+            .current_dir(&home)
+            .args(["env", "discover"])
+            .args(args)
+            .output()
+            .expect("spawn pgman env discover")
+    };
+
+    let out = run(&[]);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("# discovered in AWS account 210987654321, us-west-1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("ssh_tunnel = \"bastion.example.com\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("\"demo-read-only-replica\" = \"demo/database/ledger_replica/credentials\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("# production: already covered by environment \"prod\""),
+        "{text}"
+    );
+    assert!(
+        !text.contains("demo-database-password"),
+        "never a master-password secret: {text}"
+    );
+    assert!(
+        std::fs::read_to_string(&cfg)
+            .unwrap()
+            .ends_with("instances = [\"production\"] }\n"),
+        "printing saves nothing"
+    );
+
+    let out = run(&["--save"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("added demo to "));
+    let saved = std::fs::read_to_string(&cfg).unwrap();
+    assert!(
+        saved.starts_with("# mine\n[[environments]]\nname = \"prod\""),
+        "kept: {saved}"
+    );
+    assert!(saved.contains("name = \"demo\""), "{saved}");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&cfg).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    let out = run(&["--save", "demo"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already covered by environment \"demo\"")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&cfg).unwrap(),
+        saved,
+        "a refused save writes nothing"
+    );
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("get-secret-value"),
+        "no secret value read: {calls}"
     );
 }
