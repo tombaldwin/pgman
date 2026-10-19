@@ -33,9 +33,7 @@ use tui_common::TextInput;
 
 /// The query M0 runs on connect — a read-only database overview. Every column
 /// is text, so it renders without type-specific decoding.
-const BOOTSTRAP_SQL: &str = "select datname as database, \
-    pg_size_pretty(pg_database_size(datname)) as size \
-    from pg_database where not datistemplate order by datname";
+pub(crate) use crate::conn::BOOTSTRAP_SQL;
 
 /// The footer line for a statement the per-database guard refuses.
 /// Names the statement in words (`DELETE without WHERE`), never the
@@ -152,7 +150,9 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
         .filter_map(|row| {
             let name = row.first()?.clone();
             let size = row.get(1)?.clone();
-            Some(DatabaseInfo { name, size })
+            // No size means no CONNECT (RDS's `rdsadmin`): not one to
+            // offer on the start card.
+            (!size.is_empty()).then_some(DatabaseInfo { name, size })
         })
         .collect()
 }

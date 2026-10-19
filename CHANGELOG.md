@@ -82,6 +82,11 @@ and breaking changes.
 - **MCP tunnels stay open between calls** to the same database (5
   minutes idle), so a run of `query` calls pays the ssh handshake once;
   each call still gets a fresh read-only session.
+- **Connecting to RDS works for ordinary users.** The start card sized
+  every database on the server, and RDS's `rdsadmin` refuses that to
+  anyone but RDS, so the whole connection failed. Only databases you
+  can connect to are sized now, and a failed list never fails the
+  connection.
 - **A `docker` environment source** — local Postgres containers, from
   `docker ps`, reached on their published port. Environments can name
   `password_env` for databases without a secret. (Earlier docs said

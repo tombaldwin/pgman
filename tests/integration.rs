@@ -2314,3 +2314,66 @@ fn mcp_reuses_one_tunnel_across_calls() {
     );
     assert_ne!(a, b, "a fresh backend (session) per call");
 }
+
+/// RDS has a database nobody may connect to (`rdsadmin`), and sizing it
+/// fails. Connecting as a user like that must still work: the start
+/// card's list was failing the whole connection.
+#[test]
+fn connecting_works_when_a_database_on_the_server_refuses_connect() {
+    let home = scratch_home("noconnect", WRITABLE_PROFILE);
+    for sql in [
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
+         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$",
+        "CREATE DATABASE pgman_noconnect",
+        "REVOKE CONNECT ON DATABASE pgman_noconnect FROM PUBLIC",
+    ] {
+        // CREATE DATABASE fails harmlessly once the database exists.
+        let _ = batch_with_home(&home, &["--yes", "--sql", sql]);
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dsn = pgman::conn::Dsn::parse(
+        "postgres://pgman_lim:pgman_lim@127.0.0.1:55432/pgman_test?sslmode=disable",
+    )
+    .unwrap();
+    let booted = rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        pgman::conn::connect_and_bootstrap(
+            dsn,
+            true,
+            5_000,
+            pgman::conn::BOOTSTRAP_SQL.to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+    });
+    let booted = booted.unwrap_or_else(|e| panic!("connect failed: {e}"));
+    let names: Vec<&str> = booted.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    assert!(names.contains(&"pgman_test"), "{names:?}");
+    assert!(
+        names.contains(&"pgman_noconnect"),
+        "listed, just not sized: {names:?}"
+    );
+
+    // And a list that fails outright still leaves a connection.
+    let dsn = pgman::conn::Dsn::parse(
+        "postgres://pgman_lim:pgman_lim@127.0.0.1:55432/pgman_test?sslmode=disable",
+    )
+    .unwrap();
+    let booted = rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        pgman::conn::connect_and_bootstrap(
+            dsn,
+            true,
+            5_000,
+            "select 1/0".to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+    });
+    let booted = booted.unwrap_or_else(|e| panic!("a failed list failed the connection: {e}"));
+    assert!(booted.grid.rows.is_empty());
+}

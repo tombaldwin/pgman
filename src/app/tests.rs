@@ -9822,3 +9822,18 @@ async fn an_environment_password_comes_from_its_variable_at_connect() {
     );
     assert!(!origin.contains("hunter2"));
 }
+
+#[test]
+fn databases_the_user_cannot_connect_to_stay_off_the_start_card() {
+    let grid = Grid {
+        columns: vec!["database".into(), "size".into()],
+        rows: vec![
+            vec!["ledger".into(), "1203 MB".into()],
+            vec!["rdsadmin".into(), String::new()],
+        ],
+        truncated: false,
+    };
+    let dbs = parse_bootstrap_databases(&grid);
+    assert_eq!(dbs.len(), 1);
+    assert_eq!(dbs[0].name, "ledger");
+}
