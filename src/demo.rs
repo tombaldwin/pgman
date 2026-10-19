@@ -811,6 +811,7 @@ pub fn discovery() -> crate::inventory::discover::Found {
         replicas: replicas.iter().map(|r| r.to_string()).collect(),
         db_name: Some(db.into()),
         vpc_id: Some("vpc-demo".into()),
+        upgrades: None,
     };
     let instances = vec![
         inst("staging", None, &["staging-replica"], "shop"),

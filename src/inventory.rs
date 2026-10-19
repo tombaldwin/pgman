@@ -455,7 +455,10 @@ pub fn rds_targets(env: &Environment, all: &[rds::RdsInstance]) -> Vec<Target> {
                 replica_of: i.source.clone(),
                 host: i.host.clone(),
                 port: i.port,
-                engine: Some(format!("{} {}", i.engine, i.engine_version)),
+                engine: Some(match i.upgrades.as_ref().and_then(|u| u.label()) {
+                    Some(up) => format!("{} {} ({up})", i.engine, i.engine_version),
+                    None => format!("{} {}", i.engine, i.engine_version),
+                }),
                 status: Some(i.status.clone()),
                 class: Some(i.class.clone()),
                 multi_az: Some(i.multi_az),
@@ -591,7 +594,26 @@ pub fn gather(
 pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
     scope.validate()?;
     scope.check_account("RDS instances")?;
-    rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)
+    let mut all = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)?;
+    // Upgrade targets, once per engine version. Best effort: without
+    // them the engine column just shows the version.
+    let mut seen: HashMap<(String, String), Option<rds::Upgrades>> = HashMap::new();
+    for i in all.iter_mut().filter(|i| i.is_postgres()) {
+        let key = (i.engine.clone(), i.engine_version.clone());
+        let up = seen.entry(key.clone()).or_insert_with(|| {
+            match crate::aws_cli::run(&rds::engine_versions_args(scope, &key.0, &key.1))
+                .and_then(|j| rds::parse_upgrades(&j))
+            {
+                Ok(u) => Some(u),
+                Err(e) => {
+                    tracing::warn!("upgrade targets for {} {} unavailable: {e}", key.0, key.1);
+                    None
+                }
+            }
+        });
+        i.upgrades = up.clone();
+    }
+    Ok(all)
 }
 
 /// What [`load`] read: the environments (or why there are none) and the
@@ -1093,5 +1115,25 @@ sslmode = "require"
             ..v.clone()
         };
         assert!(every.applies_to("anything"), "empty means every database");
+    }
+
+    #[test]
+    fn the_engine_column_names_the_upgrades_available() {
+        let envs = parse_config(CONFIG).unwrap();
+        let mut instances = all();
+        instances[0].upgrades = Some(rds::Upgrades {
+            minor: Some("16.15".into()),
+            major: Some("18.6".into()),
+        });
+        let t = rds_targets(&envs[0], &instances);
+        assert_eq!(
+            t[0].engine.as_deref(),
+            Some("postgres 16.10 (↑16.15 · 18.6)")
+        );
+        assert_eq!(
+            t[1].engine.as_deref(),
+            Some("postgres 16.10"),
+            "the replica: not looked up here"
+        );
     }
 }

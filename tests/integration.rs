@@ -1496,7 +1496,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"rds describe-db-engine-versions\") echo '{{\"DBEngineVersions\":[{{\"ValidUpgradeTarget\":[{{\"EngineVersion\":\"16.15\",\"IsMajorVersionUpgrade\":false}},{{\"EngineVersion\":\"18.6\",\"IsMajorVersionUpgrade\":true}}]}}]}}' ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -1678,7 +1678,16 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
             ),
         ]
     );
+    assert_eq!(
+        v["environments"][0]["databases"][0]["engine"], "postgres 16.10 (↑16.15 · 18.6)",
+        "{text}"
+    );
     let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        calls.matches("describe-db-engine-versions").count(),
+        1,
+        "one lookup per engine version, not per instance: {calls}"
+    );
     let sts = calls
         .find("sts get-caller-identity")
         .expect("account checked");
