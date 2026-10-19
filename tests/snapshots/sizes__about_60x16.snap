@@ -1,12 +1,13 @@
 ---
 source: tests/sizes.rs
+assertion_line: 250
 expression: dump(&buf)
 ---
- pgman │ shop  connected · pg 16.2
+ pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ┌ edit┌ about ───────────────────────────────────────┐─────┐
 │  FRO│                                              │     │
-│  WHE│              pgman 0.1.0 · beta              │     │
+│  WHE│              pgman X.X.X · beta              │     │
 │  ORD│       installed via a standalone binary      │     │
 └─────│   k9s-style Postgres TUI for Java/AWS shops  │─────┘
 ┌ resu│            server: pg 16.2 (demo)            │─────┐

@@ -63,7 +63,28 @@ fn dump(buf: &Buffer) -> String {
         out.push_str(s.trim_end());
         out.push('\n');
     }
-    out
+    redact_build(out)
+}
+
+/// The running build's version and release date, wherever the UI shows
+/// them, replaced by placeholders of the same width (digits become `X`) — so a release
+/// bump does not rewrite every snapshot that has a header in it.
+fn redact_build(out: String) -> String {
+    let out = out.replace(
+        concat!("pgman ", env!("CARGO_PKG_VERSION")),
+        &format!(
+            "pgman {}",
+            env!("CARGO_PKG_VERSION")
+                .chars()
+                .map(|c| if c.is_ascii_digit() { 'X' } else { c })
+                .collect::<String>()
+        ),
+    );
+    if pgman::RELEASE_DATE.is_empty() {
+        out
+    } else {
+        out.replace(pgman::RELEASE_DATE, "YYYY-MM-DD")
+    }
 }
 
 // ---------------------------------------------------------------

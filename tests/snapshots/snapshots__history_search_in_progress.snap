@@ -1,8 +1,9 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 284
 expression: dump(&buf)
 ---
- pgman │ test  connected · pg 16.0
+ pgman X.X.X │ test  connected · pg 16.0
  1 SELECT * FROM use…                    ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
 │> SELECT * FROM users                                                         │

@@ -1,8 +1,9 @@
 ---
 source: tests/sizes.rs
+assertion_line: 250
 expression: dump(&buf)
 ---
- pgman │ shop  connected · pg 16.2
+ pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ┌ editor (e to focus) ─────────────────────────────────────┐
 │ ┌ Result diff — A: public.users (6 rows) vs B: public.┐  │
