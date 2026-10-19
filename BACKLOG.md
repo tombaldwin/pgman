@@ -52,9 +52,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   one process and re-checks coverage against the file it appends to, but
   a TUI `s` and an MCP `environments_save` in another process at the
   same moment can still lose one addition. Needs a lock file.
-- **`\c <db>` after a replica connect** drops the read-only pin back to
-  the database's profile. The replica still refuses writes server-side,
-  but pgman should keep the pin for the session.
 - **Discovery scope in the TUI** is the ambient profile and region only;
   `pgman env discover` takes `--profile/--region/--account`. A picker,
   or the profiles already named in environments.toml, would cover

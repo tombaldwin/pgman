@@ -1268,6 +1268,10 @@ pub struct App {
     /// and `:readonly off` against such a profile is refused outright
     /// before it gets set (`dispatch_read_only`).
     pub read_only_override: Option<bool>,
+    /// The connected server is a replica opened from the environments
+    /// overview: read-only for the whole session, `\c <db>` included,
+    /// and `:readonly off` is refused.
+    pub replica_pin: bool,
     statement_timeout_ms: u64,
     msg_tx: UnboundedSender<AppMsg>,
     msg_rx: Option<UnboundedReceiver<AppMsg>>,
@@ -1432,6 +1436,7 @@ impl App {
             environments: EnvironmentsUi::default(),
             environments_loader: None,
             secret_fetcher: None,
+            replica_pin: false,
             env_discoverer: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),

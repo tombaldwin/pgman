@@ -341,6 +341,12 @@ impl App {
             self.last_error = Some(read_only_escape_refusal(safety_toml_exists()));
             return;
         }
+        if !want && self.replica_pin {
+            self.last_error = Some(
+                "this is a read replica: it stays read-only (the server refuses writes too)".into(),
+            );
+            return;
+        }
         self.read_only = want;
         // Sticky: `connect_to_pick` recomputes `read_only` from the
         // picked database's profile, which used to discard this the
@@ -450,7 +456,9 @@ impl App {
             return;
         };
         dsn.dbname = name.clone();
-        self.connect_to_pick(dsn, format!("\\c switched database to '{name}'"));
+        // Same server: a replica stays pinned read-only.
+        let pin = self.replica_pin;
+        self.connect_to_target(dsn, format!("\\c switched database to '{name}'"), pin);
     }
 
     /// `\i <path>` handler. Reads the whole file and replaces the

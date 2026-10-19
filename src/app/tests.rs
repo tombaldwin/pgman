@@ -9552,3 +9552,31 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
     assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
     assert!(!d.loading);
 }
+
+#[tokio::test]
+async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Enter);
+    assert!(a.read_only && a.replica_pin);
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only, "refused on a replica");
+    assert!(a.last_error.as_deref().unwrap().contains("read replica"));
+    run_command(&mut a, "connect ledgerlog");
+    assert_eq!(a.dsn.as_ref().map(|d| d.dbname.as_str()), Some("ledgerlog"));
+    assert!(a.read_only, "same server, still a replica");
+
+    // A primary from the overview is not pinned.
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "x".into(),
+        }),
+    });
+    assert!(!a.replica_pin && !a.read_only);
+}

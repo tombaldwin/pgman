@@ -88,8 +88,9 @@ source = { kind = "static", connections = ["ledger-local", "ledgerlog-local"] }
 
 `Enter` connects to the database under the cursor:
 
-- **A replica** opens read-only, whatever `safety.toml` says. A write
-  can only fail there.
+- **A replica** opens read-only, whatever `safety.toml` says, and stays
+  that way for the session: `\c <db>` keeps it, and `:readonly off` is
+  refused. A write can only fail there.
 - **A primary or a standalone instance** gets its database's safety
   profile, like any other connection.
 - **Credentials**: with a secret configured, the password (and user) is

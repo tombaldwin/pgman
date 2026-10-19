@@ -312,6 +312,7 @@ impl App {
         // `App::read_only_override`.
         self.read_only =
             profile.read_only || self.read_only_override == Some(true) || pin_read_only;
+        self.replica_pin = pin_read_only;
         self.statement_timeout_ms = profile.statement_timeout_ms;
         self.dsn = Some(dsn);
         self.dsn_origin = Some(origin);
