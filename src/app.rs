@@ -4054,7 +4054,13 @@ impl App {
         } else {
             let tx = self.msg_tx.clone();
             tokio::spawn(async move {
-                let report = fut.await;
+                // A panic in the run still ends the Applying stage.
+                let report = tokio::spawn(fut).await.unwrap_or_else(|e| {
+                    crate::inventory::patching::ApplyReport {
+                        results: Vec::new(),
+                        error: Some(format!("the apply task failed: {e}")),
+                    }
+                });
                 let _ = tx.send(AppMsg::EnvPatched { plan, report });
             });
         }

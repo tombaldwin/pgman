@@ -251,7 +251,14 @@ impl Server {
             ));
         }
         tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), "apply_patches confirmed");
-        let report = crate::inventory::patching::apply_for(plan.clone()).await;
+        // Its own task: if this call times out, the run still finishes
+        // (and logs each patch) rather than being dropped mid-patch.
+        let report = tokio::spawn(crate::inventory::patching::apply_for(plan.clone()))
+            .await
+            .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
+                results: Vec::new(),
+                error: Some(format!("the apply task failed: {e}")),
+            });
         Ok(render_apply(&plan, Some(&report), &report.summary()))
     }
 
