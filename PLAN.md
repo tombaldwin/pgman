@@ -446,6 +446,32 @@ Then the open items:
 - The candor `Unknown` on `on_msg` predates this branch (a fresh scan of
   main shows it).
 
+## Backlog batch — 2026-10-19 · behaviour · **in review**
+
+Tom: "do the other items in the backlog". Branch `backlog-batch`, one
+commit per item:
+
+- Result headers are bold and underlined, never re-cased.
+- `--batch --discovered` counts one database declared twice as one
+  candidate.
+- Discovery proposals carry the project's `version_table`; `probe`
+  stays off, with a note.
+- MCP `environments` takes `probe: true` (opted-in environments only).
+- `R` in the overview probes again every 30 s while it's open (opt-in).
+- MCP keeps an ssh tunnel open between calls to the same database (5
+  minutes idle); every call still gets a fresh read-only session. It's
+  tested end to end with a fake `ssh` forwarding to the test Postgres.
+- A `docker` environment source, plus `password_env`. That fixed docs
+  that promised `~/.pgpass` and `PGPASSWORD`, which pgman never read for
+  environments.
+
+Skipped: two-phase `apply_patches`. It writes to databases (Prod
+included) through MCP, and needs its own safety review and Tom's design
+decisions first.
+
+ebman's switch to `tui_common::chrome` was handed to the ebman session
+(ebman-50), which is reconciling `tb-tui-common` (0.2.2) as it goes.
+
 ## Release day
 
 ```
