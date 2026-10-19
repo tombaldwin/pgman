@@ -1,8 +1,9 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 164
 expression: dump(&buf)
 ---
- pgman │ test  connected · pg 16.0
+ pgman X.X.X │ test  connected · pg 16.0
  1 SELECT id, email                      ] [ switch · ctrl-t new · ctrl-w close
 ┌ editor ──────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email                                                            │

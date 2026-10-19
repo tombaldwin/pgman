@@ -305,12 +305,6 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         ),
     };
     let mut spans = vec![
-        Span::styled(
-            " pgman ",
-            Style::default()
-                .fg(theme.title)
-                .add_modifier(Modifier::BOLD),
-        ),
         Span::styled("│ ", Style::default().fg(theme.border_idle)),
         Span::styled(db, Style::default().fg(theme.text)),
         Span::raw("  "),
@@ -333,7 +327,40 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    // The build's identity goes in front, as wide as the rest allows.
+    let rest: usize = spans.iter().map(|sp| display_width(&sp.content)).sum();
+    let build = header_build(area.width as usize, rest);
+    let mut head = vec![
+        Span::styled(
+            " pgman",
+            Style::default()
+                .fg(theme.title)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{build} "), Style::default().fg(theme.muted)),
+    ];
+    head.append(&mut spans);
+    f.render_widget(Paragraph::new(Line::from(head)), area);
+}
+
+/// What follows "pgman" in the header: ` 0.1.0 · 2026-10-19`, or without
+/// the date, or nothing, whichever is the widest that leaves the rest of
+/// the header (`rest` columns) whole in `width`. The date goes first and
+/// then the version, as in ebman — a half-cut date reads worse than none.
+/// Pure / testable.
+pub(crate) fn header_build(width: usize, rest: usize) -> String {
+    let version = format!(" {}", env!("CARGO_PKG_VERSION"));
+    let full = if crate::RELEASE_DATE.is_empty() {
+        version.clone()
+    } else {
+        format!("{version} · {}", crate::RELEASE_DATE)
+    };
+    // " pgman" plus the space after the build.
+    let fixed = display_width(" pgman") + 1 + rest;
+    [full, version]
+        .into_iter()
+        .find(|c| fixed + display_width(c) <= width)
+        .unwrap_or_default()
 }
 
 fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {

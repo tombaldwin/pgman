@@ -1173,3 +1173,32 @@ fn tab_bar_cells_shrink_labels_until_every_tab_fits() {
     assert_eq!(tab_bar_cells(&labels, 10).len(), 5);
     assert!(tab_bar_cells(&[], 10).is_empty());
 }
+
+#[test]
+fn the_header_names_the_build_and_gives_way_before_the_connection_does() {
+    let version = format!(" {}", env!("CARGO_PKG_VERSION"));
+    let full = if crate::RELEASE_DATE.is_empty() {
+        version.clone()
+    } else {
+        format!("{version} · {}", crate::RELEASE_DATE)
+    };
+    // " pgman" + build + " " + rest.
+    let need = |s: &str| display_width(" pgman") + display_width(s) + 1;
+    assert_eq!(header_build(200, 40), full);
+    assert_eq!(
+        header_build(need(&full) + 40, 40),
+        full,
+        "exactly enough room"
+    );
+    assert_eq!(
+        header_build(need(&version) + 40, 40),
+        version,
+        "date goes first"
+    );
+    assert_eq!(
+        header_build(need(&version) + 39, 40),
+        "",
+        "then the version"
+    );
+    assert_eq!(header_build(10, 40), "", "never at the rest's expense");
+}
