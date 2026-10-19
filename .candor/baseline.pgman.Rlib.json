@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 2262,
-    "digest": "61b70c753a2ec17b"
+    "count": 2270,
+    "digest": "860001fecee6bb27"
   },
   "resolves": [
     "fs",
@@ -233,18 +233,6 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "5ccc040b33f0e94f5ebe8f32e0b167f3",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:45:39: 45:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
       "hash": "5ccc040b33f0e94f5eec32aafc21e9f8",
       "invisible": [
         "serde_core"
@@ -258,6 +246,30 @@
       "undeclared": [],
       "overdeclared": [],
       "hash": "5ccc040b33f0e94f9a9d04de610d1639",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
+      "loc": "src/inventory.rs:45:39: 45:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94f5ebe8f32e0b167f3",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "loc": "src/inventory.rs:45:39: 45:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94f99ee477a0b94a400",
       "invisible": [
         "serde_core"
       ]
@@ -287,15 +299,15 @@
       ]
     },
     {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
       "loc": "src/inventory.rs:45:39: 45:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "5ccc040b33f0e94f99ee477a0b94a400",
+      "hash": "5ccc040b33f0e94fdf37694b47a89f10",
       "invisible": [
-        "serde_core"
+        "serde"
       ]
     },
     {
@@ -311,20 +323,8 @@
       ]
     },
     {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
-      "loc": "src/inventory.rs:45:39: 45:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "5ccc040b33f0e94fdf37694b47a89f10",
-      "invisible": [
-        "serde"
-      ]
-    },
-    {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bool",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -336,7 +336,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_borrowed_bytes",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -348,7 +348,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_borrowed_str",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -360,7 +360,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -372,7 +372,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_char",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -384,7 +384,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_f32",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -396,7 +396,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_f64",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -408,7 +408,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_i16",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -420,7 +420,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_i32",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -432,7 +432,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_i64",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -444,7 +444,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_i8",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -456,7 +456,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_str",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -468,7 +468,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u16",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -480,7 +480,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u32",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -492,7 +492,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -504,7 +504,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u8",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -516,7 +516,7 @@
     },
     {
       "fn": "<mcp::connections::_::<impl dbunit::_::_serde::Deserialize<'de> for mcp::connections::PersonalConnection>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
-      "loc": "src/mcp/connections.rs:68:24: 68:42",
+      "loc": "src/mcp/connections.rs:71:24: 71:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6357,7 +6357,7 @@
     },
     {
       "fn": "mcp::connections::build",
-      "loc": "src/mcp/connections.rs:167:1: 171:16",
+      "loc": "src/mcp/connections.rs:170:1: 174:16",
       "inferred": [
         "Env",
         "Log"
@@ -6378,7 +6378,7 @@
     },
     {
       "fn": "mcp::connections::load",
-      "loc": "src/mcp/connections.rs:312:1: 312:85",
+      "loc": "src/mcp/connections.rs:315:1: 315:85",
       "inferred": [
         "Env",
         "Fs",
@@ -6421,7 +6421,7 @@
     },
     {
       "fn": "mcp::connections::parse_personal",
-      "loc": "src/mcp/connections.rs:137:1: 137:46",
+      "loc": "src/mcp/connections.rs:140:1: 140:46",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6433,7 +6433,7 @@
     },
     {
       "fn": "mcp::connections::personal_entry",
-      "loc": "src/mcp/connections.rs:192:1: 192:52",
+      "loc": "src/mcp/connections.rs:195:1: 195:52",
       "inferred": [
         "Env",
         "Log"
@@ -6655,7 +6655,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::prepare",
-      "loc": "src/mcp/tools.rs:264:5: 264:72",
+      "loc": "src/mcp/tools.rs:278:5: 278:72",
       "inferred": [
         "Env",
         "Fs",
@@ -6691,7 +6691,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_connections",
-      "loc": "src/mcp/tools.rs:182:5: 182:41",
+      "loc": "src/mcp/tools.rs:183:5: 183:41",
       "inferred": [
         "Env",
         "Fs",
@@ -6766,7 +6766,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_pending_patches",
-      "loc": "src/mcp/tools.rs:237:5: 237:81",
+      "loc": "src/mcp/tools.rs:246:5: 246:81",
       "inferred": [
         "Clock",
         "Db",
@@ -6808,6 +6808,7 @@
         "mcp::tools::connect",
         "mcp::tools::patch_dir_within",
         "mcp::tools::read_patch_files",
+        "mcp::tools::replica_state",
         "mcp::tools::single_checked_statement",
         "project::load_from"
       ],
@@ -6833,7 +6834,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_query",
-      "loc": "src/mcp/tools.rs:187:5: 187:71",
+      "loc": "src/mcp/tools.rs:188:5: 188:71",
       "inferred": [
         "Clock",
         "Db",
@@ -6873,6 +6874,7 @@
         "mcp::tools::<impl mcp::Server>::prepare",
         "mcp::tools::<impl mcp::Server>::tool_query::{closure#0}::__CALLSITE",
         "mcp::tools::connect",
+        "mcp::tools::replica_state",
         "mcp::tools::single_checked_statement"
       ],
       "invisible": [
@@ -6898,7 +6900,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_sessions_locks",
-      "loc": "src/mcp/tools.rs:202:5: 202:80",
+      "loc": "src/mcp/tools.rs:208:5: 208:80",
       "inferred": [
         "Clock",
         "Db",
@@ -6938,6 +6940,7 @@
         "mcp::tools::<impl mcp::Server>::prepare",
         "mcp::tools::<impl mcp::Server>::tool_sessions_locks::{closure#0}::__CALLSITE",
         "mcp::tools::connect",
+        "mcp::tools::replica_state",
         "mcp::tools::single_checked_statement"
       ],
       "invisible": [
@@ -6962,7 +6965,7 @@
     },
     {
       "fn": "mcp::tools::arg_str",
-      "loc": "src/mcp/tools.rs:568:1: 568:70",
+      "loc": "src/mcp/tools.rs:674:1: 674:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6974,7 +6977,7 @@
     },
     {
       "fn": "mcp::tools::connect",
-      "loc": "src/mcp/tools.rs:297:1: 306:2",
+      "loc": "src/mcp/tools.rs:314:1: 323:2",
       "inferred": [
         "Clock",
         "Db",
@@ -7023,7 +7026,7 @@
     },
     {
       "fn": "mcp::tools::find_on_path",
-      "loc": "src/mcp/tools.rs:509:1: 509:58",
+      "loc": "src/mcp/tools.rs:526:1: 526:58",
       "inferred": [
         "Env",
         "Fs"
@@ -7045,7 +7048,7 @@
     },
     {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:628:1: 628:66",
+      "loc": "src/mcp/tools.rs:734:1: 734:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7057,7 +7060,7 @@
     },
     {
       "fn": "mcp::tools::parse_tables",
-      "loc": "src/mcp/tools.rs:576:1: 576:70",
+      "loc": "src/mcp/tools.rs:682:1: 682:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7069,7 +7072,7 @@
     },
     {
       "fn": "mcp::tools::patch_dir_within",
-      "loc": "src/mcp/tools.rs:432:1: 432:97",
+      "loc": "src/mcp/tools.rs:449:1: 449:97",
       "inferred": [
         "Fs"
       ],
@@ -7091,7 +7094,7 @@
     },
     {
       "fn": "mcp::tools::patches_config",
-      "loc": "src/mcp/tools.rs:405:1: 408:44",
+      "loc": "src/mcp/tools.rs:422:1: 425:44",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7103,7 +7106,7 @@
     },
     {
       "fn": "mcp::tools::read_patch_files",
-      "loc": "src/mcp/tools.rs:453:1: 456:45",
+      "loc": "src/mcp/tools.rs:470:1: 473:45",
       "inferred": [
         "Fs",
         "Unknown"
@@ -7132,7 +7135,7 @@
     },
     {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:716:1: 716:85",
+      "loc": "src/mcp/tools.rs:822:1: 822:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7144,7 +7147,7 @@
     },
     {
       "fn": "mcp::tools::render_environments",
-      "loc": "src/mcp/tools.rs:527:1: 530:12",
+      "loc": "src/mcp/tools.rs:544:1: 547:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7156,7 +7159,7 @@
     },
     {
       "fn": "mcp::tools::render_pending_patches",
-      "loc": "src/mcp/tools.rs:482:1: 487:12",
+      "loc": "src/mcp/tools.rs:499:1: 504:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7168,7 +7171,7 @@
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:751:1: 756:12",
+      "loc": "src/mcp/tools.rs:857:1: 862:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7181,7 +7184,7 @@
     },
     {
       "fn": "mcp::tools::render_sessions_locks",
-      "loc": "src/mcp/tools.rs:593:1: 600:12",
+      "loc": "src/mcp/tools.rs:699:1: 706:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7192,8 +7195,38 @@
       ]
     },
     {
+      "fn": "mcp::tools::replica_state",
+      "loc": "src/mcp/tools.rs:598:1: 601:26",
+      "inferred": [
+        "Db",
+        "Env",
+        "Fs"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Db",
+        "Env",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94fba220b74c75dcb31",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "conn::run_statement_typed_capped"
+      ],
+      "invisible": [
+        "tokio_postgres"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs"
+      ]
+    },
+    {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:671:1: 675:28",
+      "loc": "src/mcp/tools.rs:777:1: 781:28",
       "inferred": [
         "Log"
       ],
@@ -7212,7 +7245,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments",
-      "loc": "src/mcp/tools.rs:517:1: 517:55",
+      "loc": "src/mcp/tools.rs:534:1: 534:55",
       "inferred": [
         "Env",
         "Exec",
@@ -7268,6 +7301,18 @@
       "undeclared": [],
       "overdeclared": [],
       "hash": "5ccc040b33f0e94f9e4cb5fd8ae401a3",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::tools::with_replica",
+      "loc": "src/mcp/tools.rs:653:1: 653:80",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94f59f14d8021b5a305",
       "invisible": [
         "serde_json"
       ]
