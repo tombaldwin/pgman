@@ -54,6 +54,7 @@ once a query has run share one key map.
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
 | `E` | Environments: every database and replica, no connection needed; `Enter` connects, `d` discovers from AWS ([Environments](environments.md)) |
+| `Esc` | Back to the environments overview, when environments are configured |
 | `F3` | NOTIFY arrivals panel (also reachable from any mode) |
 | `]` / `[` / `1`..`9` / `Ctrl-T` | Next / previous tab, jump to tab N, new tab — see [Tabs](#tabs) |
 | `z` | Zoom the results to the whole body; `z` again restores the split exactly as it was |
@@ -190,12 +191,15 @@ JSON cells (value parses as an object/array):
 
 ## Schema browser
 
-Opened with `S`, or `\d [name]` / `\dt` / `\dn`.
+Opened with `S`, or `\d [name]` / `\dt` / `\dn`. A database with a
+single schema opens with it expanded, on its first table. Partitions
+don't list beside their table: an expanded partitioned table shows one
+`N partitions` row, sub-partitions included, which expands to list them.
 
 | Key | Action |
 |---|---|
 | `j` / `k` / `↓` / `↑` | Navigate schemas / tables / columns / constraints |
-| `Enter` / `Space` / `←` / `→` | Expand / collapse the focused schema or table |
+| `Enter` / `Space` / `←` / `→` | Expand / collapse the focused schema, table or partitions group |
 | `[` / `]` | Jump to previous / next schema (skips past table internals) |
 | `+` / `=` | Expand all (cursor stays put) |
 | `-` / `_` | Collapse all |

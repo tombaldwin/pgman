@@ -2390,3 +2390,48 @@ fn connecting_works_when_a_database_on_the_server_refuses_connect() {
     let booted = booted.unwrap_or_else(|e| panic!("a failed list failed the connection: {e}"));
     assert!(booted.grid.rows.is_empty());
 }
+
+/// The schema fetch learns each partition's parent from a real server,
+/// sub-partitions included.
+#[test]
+fn schema_fetch_reads_partition_parents() {
+    let home = scratch_home("partitions", WRITABLE_PROFILE);
+    let suffix = std::process::id();
+    let sql = format!(
+        "CREATE TABLE pgman_it_ev_{suffix} (id int, at date) PARTITION BY RANGE (at); \
+         CREATE TABLE pgman_it_ev_{suffix}_2024 PARTITION OF pgman_it_ev_{suffix} \
+           FOR VALUES FROM ('2024-01-01') TO ('2025-01-01') PARTITION BY RANGE (at); \
+         CREATE TABLE pgman_it_ev_{suffix}_2024_01 PARTITION OF pgman_it_ev_{suffix}_2024 \
+           FOR VALUES FROM ('2024-01-01') TO ('2024-02-01')"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let cache = rt.block_on(async {
+        let client = pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+            .await
+            .unwrap();
+        pgman::query::schema::fetch(&client).await
+    });
+    let parent = |c: &str| {
+        cache
+            .partition_parent
+            .get(&("public".to_string(), c.to_string()))
+            .map(|(_, p)| p.clone())
+    };
+    let root = format!("pgman_it_ev_{suffix}");
+    assert_eq!(parent(&format!("{root}_2024")), Some(root.clone()));
+    assert_eq!(
+        parent(&format!("{root}_2024_01")),
+        Some(format!("{root}_2024"))
+    );
+    assert_eq!(parent(&root), None, "the table itself is no partition");
+    assert_eq!(
+        cache.partition_root("public", &format!("{root}_2024_01")),
+        Some(("public".to_string(), root.clone()))
+    );
+}

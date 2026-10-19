@@ -107,6 +107,9 @@ pub struct SchemaCache {
     /// CONSTRAINT` can name). Fetched from `pg_constraint` separately
     /// from the main relation query.
     pub constraints: Vec<ConstraintMeta>,
+    /// Each partition's direct parent, keyed `(schema, partition)`.
+    /// The schema browser folds partitions under their table.
+    pub partition_parent: HashMap<(String, String), (String, String)>,
 }
 
 /// Pretty-print a byte count using IEC units (KiB, MiB, GiB).
@@ -131,6 +134,41 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 impl SchemaCache {
+    /// The table a partition ultimately belongs to — its parent's
+    /// parent, and so on — or `None` when it isn't a partition.
+    pub fn partition_root(&self, schema: &str, name: &str) -> Option<(String, String)> {
+        let mut at = self
+            .partition_parent
+            .get(&(schema.to_string(), name.to_string()))?
+            .clone();
+        // Bounded: a cycle can't come out of pg_inherits, but a cache
+        // built by hand could hold one.
+        for _ in 0..64 {
+            match self.partition_parent.get(&at) {
+                Some(up) => at = up.clone(),
+                None => break,
+            }
+        }
+        Some(at)
+    }
+
+    /// Every partition, at any depth, of `(schema, table)`, sorted.
+    pub fn partitions_of(&self, schema: &str, table: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .partition_parent
+            .keys()
+            .filter(|(s, n)| {
+                self.partition_root(s, n)
+                    .as_ref()
+                    .map(|(rs, rt)| (rs.as_str(), rt.as_str()))
+                    == Some((schema, table))
+            })
+            .cloned()
+            .collect();
+        out.sort();
+        out
+    }
+
     /// True when there's nothing to complete against — used by callers
     /// that want to skip the candidate computation early.
     pub fn is_empty(&self) -> bool {
@@ -216,6 +254,16 @@ ORDER BY n.nspname, c.relname, a.attnum";
 /// `pg_constraint` (type 'f') with `pg_attribute` on both sides
 /// using `array_position(conkey, attnum)` so the column order is
 /// preserved across multi-column FKs.
+/// Every partition and its direct parent.
+pub const PARTITIONS_SQL: &str = "\
+SELECT cn.nspname, c.relname, pn.nspname, p.relname \
+FROM pg_inherits i \
+JOIN pg_class c ON c.oid = i.inhrelid \
+JOIN pg_namespace cn ON cn.oid = c.relnamespace \
+JOIN pg_class p ON p.oid = i.inhparent \
+JOIN pg_namespace pn ON pn.oid = p.relnamespace \
+WHERE c.relispartition";
+
 pub const FK_EDGES_SQL: &str = "\
 SELECT \
     nsp.nspname AS child_schema, \
@@ -270,11 +318,12 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one
     // (e.g. pg_constraint) degrades that feature without killing the cache.
-    let (schema_res, constraint_res, size_res, fk_res) = tokio::join!(
+    let (schema_res, constraint_res, size_res, fk_res, part_res) = tokio::join!(
         client.query(SCHEMA_SQL, &[]),
         client.query(CONSTRAINTS_SQL, &[]),
         client.query(TABLE_SIZES_SQL, &[]),
         client.query(FK_EDGES_SQL, &[]),
+        client.query(PARTITIONS_SQL, &[]),
     );
     let rows = match schema_res {
         Ok(rows) => rows,
@@ -395,6 +444,17 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // Fourth-pass: FK edges (one row per column pair). Same
     // best-effort stance — a permission gap on pg_constraint
     // is rare but recoverable.
+    match part_res {
+        Ok(rows) => {
+            for row in &rows {
+                let get = |i: usize| row.try_get::<usize, String>(i).ok();
+                if let (Some(cs), Some(c), Some(ps), Some(p)) = (get(0), get(1), get(2), get(3)) {
+                    cache.partition_parent.insert((cs, c), (ps, p));
+                }
+            }
+        }
+        Err(e) => tracing::warn!("partitions fetch failed: {e}; partitions list as tables"),
+    }
     match fk_res {
         Ok(rows) => {
             for row in &rows {

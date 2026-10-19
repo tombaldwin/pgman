@@ -823,10 +823,14 @@ impl App {
         match key.code {
             // q (and Ctrl-C) are the only quit keys. Esc used to also
             // quit, but a reflex Esc shouldn't ever lose the session —
-            // overlays bind Esc to "close me", and in Normal mode Esc
-            // is a no-op so an extra press from inside a closed overlay
-            // is harmless.
+            // overlays bind Esc to "close me".
             KeyCode::Char('q') => self.should_quit = true,
+            // Esc goes one level up, as everywhere: editor → results →
+            // the environments overview, when there is one. Without
+            // environments it stays a no-op, so an extra press after
+            // closing an overlay is still harmless; with them it only
+            // moves to the overview — the connection stays open.
+            KeyCode::Esc if !self.environments.reports.is_empty() => self.start_environments(),
             // `?` is handled globally in `on_key` (every non-typing
             // mode opens help on it), so there is no arm for it here.
             KeyCode::Char('e') | KeyCode::Char('i') | KeyCode::Tab => {
@@ -1222,6 +1226,19 @@ impl App {
                         ..
                     }) => {
                         let key = schema_browser_table_key(schema, name);
+                        if *expanded {
+                            self.schema_browser.expanded.remove(&key);
+                        } else {
+                            self.schema_browser.expanded.insert(key);
+                        }
+                    }
+                    Some(SchemaBrowserRow::Partitions {
+                        schema,
+                        table,
+                        expanded,
+                        ..
+                    }) => {
+                        let key = schema_browser_partitions_key(schema, table);
                         if *expanded {
                             self.schema_browser.expanded.remove(&key);
                         } else {

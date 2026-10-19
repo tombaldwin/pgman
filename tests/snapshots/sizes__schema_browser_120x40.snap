@@ -13,16 +13,16 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHER╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
-│  ORDE│▼ public  (4)                            schema: public                                                │       │
+│  ORDE│▼ public  (4)                            public.item                                                   │       │
 │      │  ▼ item  (4 col, 1 cons)                                                                              │       │
-╰──────│      · id : bigint NOT NULL             4 table(s)                                                    │───────╯
-╭[ ◆ re│      · order_id : bigint NOT NULL                                                                     │───────╮
-│id  em│      · sku : varchar(40) NOT NULL       enter to expand — then arrow / j/k into the tables            │       │
-│1   ad│      · qty : integer NOT NULL                                                                         │       │
-│2   li│      ◆ item_pkey                                                                                      │       │
+╰──────│      · id : bigint NOT NULL             columns (4)                                                   │───────╯
+╭[ ◆ re│      · order_id : bigint NOT NULL         · id                                                        │───────╮
+│id  em│      · sku : varchar(40) NOT NULL         · order_id                                                  │       │
+│1   ad│      · qty : integer NOT NULL             · sku                                                       │       │
+│2   li│      ◆ item_pkey                          · qty                                                       │       │
 │3   gr│  ▼ order_items  (5 col, 1 cons)                                                                       │       │
-│4   al│      · id : bigint NOT NULL                                                                           │       │
-│5   ed│      · order_id : bigint NOT NULL                                                                     │       │
+│4   al│      · id : bigint NOT NULL             constraints (1)                                               │       │
+│5   ed│      · order_id : bigint NOT NULL         · item_pkey                                                 │       │
 │6   ka│      · sku : varchar(40) NOT NULL                                                                     │       │
 │      │      · qty : integer NOT NULL                                                                         │       │
 │      │      · price_cents : integer NOT NULL                                                                 │       │

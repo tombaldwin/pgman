@@ -518,6 +518,20 @@ pub enum SchemaBrowserRow {
         table: String,
         name: String,
     },
+    /// The folded group of a partitioned table's partitions.
+    Partitions {
+        schema: String,
+        table: String,
+        count: usize,
+        expanded: bool,
+    },
+    /// One partition, under its table's group. `table` is the table it
+    /// belongs to; `schema` and `name` are the partition's own.
+    Partition {
+        schema: String,
+        table: String,
+        name: String,
+    },
 }
 /// Search direction for [`next_schema_row_idx`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -842,6 +856,9 @@ pub struct SlowQueriesUi {
     /// `Mode::SlowQueries` is active.
     pub rows: Vec<crate::query::slow_queries::SlowQueryRow>,
     pub cursor: usize,
+    /// Why the last load failed, shown in the panel — which stays open
+    /// so the operator can read it.
+    pub error: Option<String>,
 }
 
 impl ListCursorNav for SlowQueriesUi {

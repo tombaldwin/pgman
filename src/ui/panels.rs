@@ -1010,6 +1010,15 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
+    if let Some(e) = &app.slow_queries.error {
+        f.render_widget(
+            Paragraph::new(Text::from(format!("couldn't read pg_stat_statements: {e}")))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(theme.health_red)),
+            inner,
+        );
+        return;
+    }
     if app.slow_queries.rows.is_empty() {
         // Either still loading, or genuinely no rows. last_status
         // carries the right phrasing either way; render it inside
