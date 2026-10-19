@@ -70,6 +70,10 @@ and breaking changes.
   overview, `d` does the same with a preview of what each save appends.
   Over MCP, `environments_discover` and `environments_save` do it for an
   agent (save refused under `--read-only`).
+- **Probes** — `probe = true` on an environment adds each database's
+  patch level, pending patches and replica lag to the overview. It reads
+  through replicas (a primary with a replica isn't touched), uses one
+  ssh per bastion, and every connection is read-only.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

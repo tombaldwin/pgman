@@ -1227,6 +1227,9 @@ pub struct App {
     /// Environment discovery for the overview's `d`; `None` until
     /// `main.rs` (or `--demo`) installs one.
     pub env_discoverer: Option<EnvDiscoverer>,
+    /// Probes environments that opted in; `None` until `main.rs` (or
+    /// `--demo`) installs one.
+    pub env_prober: Option<EnvProber>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1438,6 +1441,7 @@ impl App {
             secret_fetcher: None,
             replica_pin: false,
             env_discoverer: None,
+            env_prober: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3901,6 +3905,86 @@ impl App {
                     Some(format!("added {} to {}", names.join(", "), path.display()));
             }
             Err(e) => self.last_error = Some(format!("not saved: {e}")),
+        }
+    }
+
+    /// After a listing: probe every environment that opted in, marking
+    /// its rows probing (or via-replica) until the answers land.
+    fn start_env_probes(&mut self) {
+        use crate::inventory::probe::{plan, Step};
+        self.environments.probe_seq = self.environments.probe_seq.wrapping_add(1);
+        let seq = self.environments.probe_seq;
+        let prober = self.env_prober.clone();
+        let mut states = Vec::new();
+        let mut to_run = Vec::new();
+        for (i, r) in self.environments.reports.iter().enumerate() {
+            if r.probe.is_none() {
+                states.push(vec![ProbeState::Off; r.targets.len()]);
+                continue;
+            }
+            if prober.is_none() {
+                states.push(vec![
+                    ProbeState::Done(Err(
+                        "probes are not available in this session".into()
+                    ));
+                    r.targets.len()
+                ]);
+                continue;
+            }
+            states.push(
+                plan(&r.targets)
+                    .into_iter()
+                    .map(|s| match s {
+                        Step::Connect => ProbeState::Probing,
+                        Step::ViaReplica => ProbeState::ViaReplica,
+                    })
+                    .collect(),
+            );
+            to_run.push(i);
+        }
+        self.environments.probes = states;
+        let Some(prober) = prober else {
+            return;
+        };
+        for i in to_run {
+            let report = self.environments.reports[i].clone();
+            match &prober {
+                EnvProber::Immediate(f) => {
+                    let outcomes = f(&report);
+                    self.on_env_probed(seq, i, outcomes);
+                }
+                EnvProber::Async(f) => {
+                    let fut = f(report);
+                    let tx = self.msg_tx.clone();
+                    tokio::spawn(async move {
+                        let outcomes = fut.await;
+                        let _ = tx.send(AppMsg::EnvProbed {
+                            seq,
+                            report: i,
+                            outcomes,
+                        });
+                    });
+                }
+            }
+        }
+    }
+
+    fn on_env_probed(
+        &mut self,
+        seq: u64,
+        report: usize,
+        outcomes: Vec<crate::inventory::probe::Outcome>,
+    ) {
+        if seq != self.environments.probe_seq {
+            return;
+        }
+        let Some(states) = self.environments.probes.get_mut(report) else {
+            return;
+        };
+        for (state, outcome) in states.iter_mut().zip(outcomes) {
+            if let Some(result) = outcome {
+                *state = ProbeState::Done(result);
+            }
         }
     }
 

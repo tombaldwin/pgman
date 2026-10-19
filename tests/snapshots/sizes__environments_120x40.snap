@@ -11,9 +11,9 @@ expression: dump(&buf)
 │  WHERE plan = 'pro'                                                                                                  │
 │  OR┌ environments — enter connect · d discover · q close ───────────────────────────────────────────────────────┐    │
 │    │  staging · RDS 123456789012 eu-west-2                                                                      │    │
-└────│    database  role     server             status     engine                                                 │────┘
-┌ res│    shop      primary  staging            available  postgres 16.4                                          │────┐
-│id  │    shop      replica  └ staging-replica  available  postgres 16.4                                          │    │
+└────│    database  role     server             status     probe                        engine                    │────┘
+┌ res│    shop      primary  staging            available  via replica                  postgres 16.4             │────┐
+│id  │    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgres 16.4             │    │
 │1   │                                                                                                            │    │
 │2   │  qa · RDS 123456789012 eu-west-2                                                                           │    │
 │3   │    database  role     server             status     engine                                                 │    │

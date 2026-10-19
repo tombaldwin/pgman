@@ -431,6 +431,21 @@ Run against examplecorp's account (print only, nothing saved): demo,
 development, production and test, with the right per-database secrets
 and the bastion. No database was connected to.
 
+Then the open items:
+
+- Saves take a lock file, so a TUI save and an MCP or CLI save in
+  another process can't lose one another's addition.
+- `p` in the discovery view tries the next AWS scope: the ambient
+  profile, the scopes environments.toml names, then CLI profiles.
+- Environments step 2: `probe = true` adds patch level, pending patches
+  and replica lag. It reads through replicas, uses one ssh per bastion
+  (`SshTunnel::open_many`, with `conn::connect_via` keeping the real
+  hostname for TLS), and every connection is read-only and bounded.
+  Tested against the local test Postgres only; no examplecorp database was
+  probed.
+- The candor `Unknown` on `on_msg` predates this branch (a fresh scan of
+  main shows it).
+
 ## Release day
 
 ```

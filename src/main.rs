@@ -309,6 +309,12 @@ async fn main() -> anyhow::Result<()> {
         pgman::inventory::load_and_gather,
     )));
     application.secret_fetcher = Some(std::sync::Arc::new(pgman::creds::aws_secrets::fetch));
+    application.env_prober = Some(app::EnvProber::Async(std::sync::Arc::new(|report| {
+        Box::pin(pgman::inventory::probe::run(
+            report,
+            std::sync::Arc::new(pgman::creds::aws_secrets::fetch),
+        ))
+    })));
     application.env_discoverer = Some(app::EnvDiscoverer {
         discover: std::sync::Arc::new(pgman::inventory::discover::discover_for_overview),
         save: std::sync::Arc::new(pgman::inventory::discover::save),

@@ -900,6 +900,45 @@ impl std::fmt::Debug for EnvironmentsLoader {
     }
 }
 
+/// A probe's state for one row of the overview.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProbeState {
+    /// The environment doesn't probe.
+    Off,
+    Probing,
+    /// A primary read through its replica instead.
+    ViaReplica,
+    Done(Result<crate::query::probe::Probe, String>),
+}
+
+/// Probes an environment's databases. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default) connects to nothing.
+#[derive(Clone)]
+pub enum EnvProber {
+    /// Runs on the tokio runtime (connects, tunnels, reads secrets).
+    Async(ProbeAsyncFn),
+    /// Fixed answers, applied at once — `--demo`, tests.
+    Immediate(ProbeNowFn),
+}
+
+pub type ProbeAsyncFn = std::sync::Arc<
+    dyn Fn(
+            crate::inventory::EnvReport,
+        ) -> futures::future::BoxFuture<'static, Vec<crate::inventory::probe::Outcome>>
+        + Send
+        + Sync,
+>;
+
+pub type ProbeNowFn = std::sync::Arc<
+    dyn Fn(&crate::inventory::EnvReport) -> Vec<crate::inventory::probe::Outcome> + Send + Sync,
+>;
+
+impl std::fmt::Debug for EnvProber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvProber")
+    }
+}
+
 /// Environments panel state: the last gathered reports and the cursor,
 /// which moves over databases (environment headings are not stops).
 #[derive(Debug, Default)]
@@ -920,6 +959,10 @@ pub struct EnvironmentsUi {
     pub connect_token: u64,
     /// `Some` while the discovery view (`d`) is open over the overview.
     pub discovery: Option<DiscoveryUi>,
+    /// Parallel to `reports`: each row's probe.
+    pub probes: Vec<Vec<ProbeState>>,
+    /// Numbers each listing, so probes of an older one are dropped.
+    pub probe_seq: u64,
 }
 
 /// The overview's discovery view: proposed environments, which ones the
@@ -1008,6 +1051,26 @@ impl std::fmt::Debug for EnvDiscoverer {
 }
 
 impl EnvironmentsUi {
+    /// The probe of the row under the cursor.
+    pub fn selected_probe(&self) -> &ProbeState {
+        let mut left = self.cursor;
+        for (ri, r) in self.reports.iter().enumerate() {
+            if left < r.targets.len() {
+                return self.probe(ri, left);
+            }
+            left -= r.targets.len();
+        }
+        &ProbeState::Off
+    }
+
+    /// A row's probe; `Off` when unknown.
+    pub fn probe(&self, report: usize, target: usize) -> &ProbeState {
+        self.probes
+            .get(report)
+            .and_then(|r| r.get(target))
+            .unwrap_or(&ProbeState::Off)
+    }
+
     pub fn target_count(&self) -> usize {
         self.reports.iter().map(|r| r.targets.len()).sum()
     }

@@ -18,6 +18,7 @@
 //! accounts the operator chose.
 
 pub mod discover;
+pub mod probe;
 pub mod rds;
 
 use crate::aws_cli::AwsScope;
@@ -59,6 +60,61 @@ pub struct Environment {
     /// account, and only when connecting.
     #[serde(default)]
     pub secrets: std::collections::BTreeMap<String, String>,
+    /// Connect to each database on every refresh to read its version,
+    /// recovery state and lag (and, with `version_table`, its patch
+    /// level). Off unless set: a refresh then touches every database.
+    #[serde(default)]
+    pub probe: bool,
+    /// Where the patch level lives, for probes.
+    #[serde(default)]
+    pub version_table: Option<VersionTable>,
+}
+
+/// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VersionTable {
+    pub table: String,
+    pub column: String,
+    /// Directory of patch files to count pending ones against; `~/` is
+    /// your home. Absolute otherwise.
+    #[serde(default)]
+    pub patches: Option<String>,
+}
+
+impl VersionTable {
+    pub fn config(&self) -> crate::query::patches::PatchesConfig {
+        crate::query::patches::PatchesConfig {
+            dir: self.patches.clone().unwrap_or_default(),
+            table: self.table.clone(),
+            column: self.column.clone(),
+        }
+    }
+
+    /// The patch directory, `~/` expanded; it must end up absolute.
+    pub fn patch_dir(&self) -> Option<Result<std::path::PathBuf, String>> {
+        let raw = self.patches.as_ref()?;
+        let path = match raw.strip_prefix("~/") {
+            Some(rest) => match std::env::var_os("HOME") {
+                Some(home) => std::path::PathBuf::from(home).join(rest),
+                None => return Some(Err("version_table.patches uses ~/ but HOME is unset".into())),
+            },
+            None => std::path::PathBuf::from(raw),
+        };
+        Some(if path.is_absolute() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "version_table.patches {raw:?} must be absolute or start with ~/"
+            ))
+        })
+    }
+}
+
+/// What a probe of an environment needs beyond its rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeSettings {
+    pub version_table: Option<VersionTable>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -141,6 +197,13 @@ impl Environment {
                     "unknown sslmode {m:?}; use one of {}",
                     crate::conn::KNOWN_SSLMODES.join(", ")
                 ));
+            }
+        }
+        if let Some(v) = &self.version_table {
+            crate::query::patches::applied_ids_sql(&v.config())
+                .map_err(|e| format!("version_table: {e}"))?;
+            if let Some(Err(e)) = v.patch_dir() {
+                return Err(e);
             }
         }
         for (key, id) in &self.secrets {
@@ -284,6 +347,8 @@ pub struct EnvReport {
     pub source: String,
     pub targets: Vec<Target>,
     pub error: Option<String>,
+    /// `Some` when the environment opted into probes.
+    pub probe: Option<ProbeSettings>,
 }
 
 /// RDS rows for one environment from an already-fetched instance list.
@@ -394,6 +459,9 @@ pub fn gather(
                 source: env.source.label(),
                 targets,
                 error,
+                probe: env.probe.then(|| ProbeSettings {
+                    version_table: env.version_table.clone(),
+                }),
             }
         })
         .collect()
@@ -544,6 +612,8 @@ source = { kind = "static", connections = ["ledger-local"] }
             sslmode: None,
             user: None,
             secrets: Default::default(),
+            probe: false,
+            version_table: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);
@@ -713,5 +783,34 @@ sslmode = "require"
             Some("env/database/d/credentials")
         );
         assert_eq!(t[0].role, Role::Replica);
+    }
+
+    #[test]
+    fn probes_are_opt_in_and_their_version_table_is_checked() {
+        let base =
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"d\"] }\n";
+        assert!(!parse_config(base).unwrap()[0].probe, "off unless set");
+        let ok = parse_config(&format!(
+            "{base}probe = true\nversion_table = {{ table = \"public.db_version\", column = \"id\", patches = \"~/src/db\" }}\n"
+        ))
+        .unwrap();
+        assert!(ok[0].probe);
+        let v = ok[0].version_table.as_ref().unwrap();
+        assert!(v.patch_dir().unwrap().unwrap().is_absolute());
+        for (bad, why) in [
+            (format!("{base}version_table = {{ table = \"t; drop\", column = \"id\" }}\n"), "not an identifier"),
+            (format!("{base}version_table = {{ table = \"t\", column = \"s.id\" }}\n"), "qualified column"),
+            (format!("{base}version_table = {{ table = \"t\", column = \"id\", patches = \"db/patches\" }}\n"), "relative dir"),
+            (format!("{base}version_table = {{ table = \"t\", colum = \"id\" }}\n"), "typo"),
+            (format!("{base}probes = true\n"), "typo'd opt-in"),
+        ] {
+            assert!(parse_config(&bad).is_err(), "{why}");
+        }
+        // The report carries the settings only when the environment opts in.
+        let envs = parse_config(&format!("{base}probe = true\n")).unwrap();
+        let reports = gather(&envs, &[], |_| Ok(all()));
+        assert!(reports[0].probe.is_some());
+        let reports = gather(&parse_config(base).unwrap(), &[], |_| Ok(all()));
+        assert!(reports[0].probe.is_none());
     }
 }

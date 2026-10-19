@@ -472,6 +472,8 @@ pub fn propose(
                 sslmode: Some("require".to_string()),
                 user: None,
                 secrets: chosen,
+                probe: false,
+                version_table: None,
             };
             Proposal {
                 covered_by: covering(&name, existing),

@@ -5,11 +5,11 @@ environment, replicas included, side by side. It's like ebman's main
 screen, but for Postgres. The same rows are available to an MCP client
 through the `environments` tool ([MCP server](mcp.md)).
 
-The overview shows what the sources know without connecting to any
-database: role, server, status, engine version and endpoint. Press
-`Enter` on a row to connect to that database. Schema version, pending
-patches and replica lag per row need a connection per database, and
-come next.
+By default the overview shows what the sources know without connecting
+to any database: role, server, status, engine version and endpoint. An
+environment with `probe = true` also gets a `probe` column: its patch
+level, pending patches and replica lag, read from each database (see
+[Probes](#probes)). Press `Enter` on a row to connect to that database.
 
 ```
 staging · RDS 123456789012 eu-west-2
@@ -141,6 +141,42 @@ environment's heading; the other environments still show.
 
 Docker, Cloud SQL, Azure Database and others are planned as further
 sources behind the same model (BACKLOG.md).
+
+## Probes
+
+Probes are off unless an environment asks for them, because a refresh
+then connects to every database in it:
+
+```toml
+[[environments]]
+name = "demo"
+# … source, ssh_tunnel, secrets as above …
+probe = true
+version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }
+```
+
+Every refresh (`E`, `r`) then reads, from each database:
+
+- **Version, recovery and lag**, in one round trip. A replica shows
+  `lag 0.4s`; one that is not in recovery shows `NOT IN RECOVERY` in
+  red, because it's a primary posing as a replica.
+- **Patch level**, the highest id in `version_table`, as `v251`.
+- **Pending patches**: files in `patches` whose id the table hasn't
+  recorded, as `up to date` or `2 pending` (yellow). It's the same
+  matching as the MCP `pending_patches` tool.
+
+How a probe connects:
+
+- **A primary with a replica of the same database is not connected
+  to.** It reads `via replica`, and the replica answers for it. A
+  primary is probed only when there's no replica to read instead.
+- **One ssh per bastion.** Every database behind the same bastion rides
+  one `ssh` carrying a forward each, closed when the probe ends.
+- **Read-only, bounded.** Every connection is read-only, with a 5 s
+  statement timeout and a 20 s overall deadline per database. A secret
+  is read once per refresh, however many databases share it.
+- A failure reads `✗` plus its first line in the row; the detail line
+  under the table has the whole message.
 
 ## Keys
 

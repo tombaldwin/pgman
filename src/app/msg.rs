@@ -79,6 +79,13 @@ pub enum AppMsg {
     /// The environments gather finished. Not tied to a connection, so it
     /// bypasses the generation filter like tap events.
     EnvironmentsLoaded(Result<Vec<crate::inventory::EnvReport>, String>),
+    /// One environment's probes finished. `seq` names the listing they
+    /// belong to; `report` its index in it.
+    EnvProbed {
+        seq: u64,
+        report: usize,
+        outcomes: Vec<crate::inventory::probe::Outcome>,
+    },
     /// Environment discovery finished. Not tied to a connection.
     EnvDiscovered(Result<crate::inventory::discover::Found, String>),
     /// An environment connect's secret was read (or not). Matched to its
@@ -160,7 +167,8 @@ impl AppMsg {
             | AppMsg::UpdateCheck(_)
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }
-            | AppMsg::EnvDiscovered(_) => 0,
+            | AppMsg::EnvDiscovered(_)
+            | AppMsg::EnvProbed { .. } => 0,
         }
     }
 }

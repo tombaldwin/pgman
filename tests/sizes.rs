@@ -882,6 +882,21 @@ fn scr_environments() -> App {
     let mut a = base();
     a.mode = Mode::Environments;
     a.environments.reports = pgman::demo::environments();
+    a.environments.probes = a
+        .environments
+        .reports
+        .iter()
+        .map(|r| match r.probe {
+            Some(_) => pgman::demo::environment_probes(r)
+                .into_iter()
+                .map(|o| {
+                    o.map(pgman::app::ProbeState::Done)
+                        .unwrap_or(pgman::app::ProbeState::ViaReplica)
+                })
+                .collect(),
+            None => vec![pgman::app::ProbeState::Off; r.targets.len()],
+        })
+        .collect();
     a.environments.cursor = 1;
     a
 }

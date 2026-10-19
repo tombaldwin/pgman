@@ -9275,6 +9275,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
             broken,
         ],
         error: None,
+        probe: None,
     }]
 }
 
@@ -9660,4 +9661,74 @@ fn a_failed_scope_does_not_lose_the_ones_after_it() {
         *seen.lock().unwrap(),
         ["ambient profile", "profile staging", "profile work"]
     );
+}
+
+#[test]
+fn probes_mark_rows_then_fill_in_and_a_stale_answer_is_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    // Answers held back, so the in-between state can be seen.
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(
+        a.environments.probes[0],
+        [ProbeState::ViaReplica, ProbeState::Probing],
+        "staging probes: its primary is read through the replica"
+    );
+    assert_eq!(
+        a.environments.probes[1],
+        [ProbeState::Off],
+        "qa doesn't probe"
+    );
+    let seq = a.environments.probe_seq;
+    let answer = |v: &str| {
+        vec![
+            None,
+            Some(Ok(crate::query::probe::Probe {
+                server_version: Some(v.into()),
+                ..Default::default()
+            })),
+        ]
+    };
+    a.on_msg(AppMsg::EnvProbed {
+        seq: seq.wrapping_sub(1),
+        report: 0,
+        outcomes: answer("old"),
+    });
+    assert_eq!(
+        a.environments.probes[0][1],
+        ProbeState::Probing,
+        "stale: dropped"
+    );
+    a.on_msg(AppMsg::EnvProbed {
+        seq,
+        report: 0,
+        outcomes: answer("16.4"),
+    });
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Ok(p)) if p.server_version.as_deref() == Some("16.4"))
+    );
+    assert_eq!(a.environments.probes[0][0], ProbeState::ViaReplica);
+    assert!(matches!(
+        a.environments.selected_probe(),
+        ProbeState::ViaReplica
+    ));
+
+    // r lists again: a new sequence, rows back to probing.
+    press(&mut a, KeyCode::Char('r'));
+    assert_ne!(a.environments.probe_seq, seq);
+    assert_eq!(a.environments.probes[0][1], ProbeState::Probing);
+}
+
+#[test]
+fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Err(e)) if e.contains("not available"))
+    );
+    assert_eq!(a.environments.probes[2], [ProbeState::Off]);
 }

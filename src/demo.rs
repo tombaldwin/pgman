@@ -35,6 +35,9 @@ pub fn app(theme: Theme) -> App {
     // would violate all three.
     a.update_check_enabled = false;
     a.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(environments()));
+    a.env_prober = Some(crate::app::EnvProber::Immediate(std::sync::Arc::new(
+        environment_probes,
+    )));
     a.env_discoverer = Some(crate::app::EnvDiscoverer {
         discover: std::sync::Arc::new(|_| Ok(discovery())),
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
@@ -733,12 +736,16 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ),
             ],
             error: None,
+            probe: Some(crate::inventory::ProbeSettings {
+                version_table: None,
+            }),
         },
         EnvReport {
             name: "qa".into(),
             source: "RDS 123456789012 eu-west-2".into(),
             targets: vec![rds("shop", "qa", Role::Direct, None, "stopped")],
             error: None,
+            probe: None,
         },
         EnvReport {
             name: "local".into(),
@@ -757,8 +764,31 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 connect: Err(NO_SERVER.into()),
             }],
             error: None,
+            probe: None,
         },
     ]
+}
+
+/// Probe answers in `--demo`: staging's replica is read (its primary
+/// via it), a patch behind.
+pub fn environment_probes(
+    report: &crate::inventory::EnvReport,
+) -> Vec<crate::inventory::probe::Outcome> {
+    use crate::inventory::probe::{plan, Step};
+    plan(&report.targets)
+        .into_iter()
+        .map(|step| match step {
+            Step::ViaReplica => None,
+            Step::Connect => Some(Ok(crate::query::probe::Probe {
+                server_version: Some("16.4".into()),
+                in_recovery: Some(true),
+                lag_secs: Some(0.4),
+                schema_version: Some(251),
+                pending: Some(1),
+                schema_error: None,
+            })),
+        })
+        .collect()
 }
 
 /// The discovery view in `--demo`: proposals from a synthetic account,

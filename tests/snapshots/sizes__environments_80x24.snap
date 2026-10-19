@@ -9,9 +9,9 @@ expression: dump(&buf)
 │> SELECT id, email, plan, created_at                                          │
 │  ┌ environments — enter connect · d discover · q close ──────────────────┐   │
 │  │  staging · RDS 123456789012 eu-west-2                                 │   │
-│  │    database  role     server             status     engine            │   │
-│  │    shop      primary  staging            available  postgres 16.4     │   │
-└──│    shop      replica  └ staging-replica  available  postgres 16.4     │───┘
+│  │    database  role     server             status     probe            …│   │
+│  │    shop      primary  staging            available  via replica      …│   │
+└──│    shop      replica  └ staging-replica  available  v251 · 1 pending …│───┘
 ┌ r│                                                                       │───┐
 │id│  qa · RDS 123456789012 eu-west-2                                      │   │
 │1 │    database  role     server             status     engine            │   │

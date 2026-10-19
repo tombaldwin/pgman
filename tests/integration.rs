@@ -2024,3 +2024,93 @@ fn env_discover_save_waits_for_another_process_holding_the_lock() {
         .unwrap()
         .contains("name = \"demo\""));
 }
+
+/// A probe against a real server: version and recovery from the status
+/// read, the patch level from the version table, pending from the patch
+/// files. Read-only: the table is set up beforehand.
+#[test]
+fn environment_probe_reads_version_patch_level_and_pending() {
+    let home = scratch_home("env-probe", WRITABLE_PROFILE);
+    // A table of this run's own: the profile blocks DROP, and the test
+    // database is a throwaway container.
+    let table = format!("pgman_it_versions_{}", std::process::id());
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3)"),
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    for id in 1..=3 {
+        std::fs::write(
+            dir.join(format!("{id:03}.sql")),
+            format!("INSERT INTO {table} (id) VALUES ({id});\n"),
+        )
+        .unwrap();
+    }
+    let target = |table: &str| pgman::inventory::EnvReport {
+        name: "local".into(),
+        source: "test".into(),
+        targets: vec![pgman::inventory::Target {
+            database: "pgman_test".into(),
+            server: "local".into(),
+            role: pgman::mcp::connections::Role::Direct,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Ok(pgman::inventory::ConnectSpec {
+                dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+                secret: None,
+            }),
+        }],
+        error: None,
+        probe: Some(pgman::inventory::ProbeSettings {
+            version_table: Some(pgman::inventory::VersionTable {
+                table: table.into(),
+                column: "id".into(),
+                patches: Some(dir.display().to_string()),
+            }),
+        }),
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let probe = |table: &str| {
+        rt.block_on(pgman::inventory::probe::run(
+            target(table),
+            std::sync::Arc::new(|_| panic!("no secret configured")),
+        ))
+        .remove(0)
+        .expect("connected, not via a replica")
+        .expect("probe answered")
+    };
+
+    let p = probe(&table);
+    assert!(p.server_version.is_some(), "{p:?}");
+    assert_eq!(p.in_recovery, Some(false));
+    assert_eq!(p.schema_version, Some(3));
+    assert_eq!(p.pending, Some(1), "002 is not recorded");
+    assert_eq!(p.schema_error, None);
+
+    // A missing version table spoils only the patch level.
+    let p = probe("pgman_it_no_such_table");
+    assert!(p.server_version.is_some());
+    assert!(
+        p.schema_error
+            .as_deref()
+            .unwrap()
+            .contains("does not exist"),
+        "{p:?}"
+    );
+    assert_eq!(p.schema_version, None);
+}
