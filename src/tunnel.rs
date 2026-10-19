@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 /// `port` is optional and defaults to the OpenSSH default (22). `user` is
 /// optional and defaults to whatever `~/.ssh/config` resolves (we don't
 /// pass `-l` when unset, so ssh's own resolution wins).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SshTunnelSpec {
     pub user: Option<String>,
     pub host: String,
@@ -172,13 +172,35 @@ impl SshTunnel {
         remote_host: &str,
         remote_port: u16,
     ) -> Result<SshTunnel, String> {
-        let local_port = pick_free_local_port()?;
-        let forward = format!("127.0.0.1:{local_port}:{remote_host}:{remote_port}");
+        Self::open_many(spec, &[(remote_host.to_string(), remote_port)]).map(|(t, _)| t)
+    }
+
+    /// One `ssh` to the bastion carrying a forward per remote, so several
+    /// databases behind it cost one handshake. Returns the tunnel (its
+    /// `local_port` is the first forward's) and every forward's local
+    /// port, in `remotes` order. All forwards are up when this returns.
+    pub fn open_many(
+        spec: &SshTunnelSpec,
+        remotes: &[(String, u16)],
+    ) -> Result<(SshTunnel, Vec<u16>), String> {
+        if remotes.is_empty() {
+            return Err("no databases to tunnel to".to_string());
+        }
+        let ports = remotes
+            .iter()
+            .map(|_| pick_free_local_port())
+            .collect::<Result<Vec<u16>, String>>()?;
+        let forwards: Vec<String> = remotes
+            .iter()
+            .zip(&ports)
+            .map(|((host, port), local)| format!("127.0.0.1:{local}:{host}:{port}"))
+            .collect();
+        let local_port = ports[0];
         let bastion = match &spec.user {
             Some(u) => format!("{u}@{}", spec.host),
             None => spec.host.clone(),
         };
-        let args = build_ssh_args(spec, &forward, &bastion);
+        let args = build_ssh_args_many(spec, &forwards, &bastion);
         // The argv verbatim — options, the forward, `--`, the bastion.
         // Nothing in it is a credential (BatchMode means keys / agent
         // only), so logging it whole is the honest record of what ran,
@@ -207,12 +229,15 @@ impl SshTunnel {
                     if stderr.is_empty() { "" } else { ": " }
                 ));
             }
-            if std::net::TcpStream::connect_timeout(
-                &format!("127.0.0.1:{local_port}").parse().unwrap(),
-                Duration::from_millis(200),
-            )
-            .is_ok()
-            {
+            // ExitOnForwardFailure makes ssh exit if any forward fails
+            // to bind; all of them accepting means the tunnel is up.
+            if ports.iter().all(|p| {
+                std::net::TcpStream::connect_timeout(
+                    &format!("127.0.0.1:{p}").parse().unwrap(),
+                    Duration::from_millis(200),
+                )
+                .is_ok()
+            }) {
                 // Drain ssh's stderr to tracing for the lifetime of
                 // the tunnel — otherwise the ~64 KiB kernel pipe
                 // buffer fills (ServerAlive warnings, `channel N: open
@@ -228,7 +253,7 @@ impl SshTunnel {
                         }
                     });
                 }
-                return Ok(tunnel);
+                return Ok((tunnel, ports));
             }
             if Instant::now() >= deadline {
                 // Kill + wait + then read stderr to EOF. Waiting
@@ -297,7 +322,12 @@ impl Drop for SshTunnel {
 /// runs. It's compatible with every other option here: none of
 /// `ExitOnForwardFailure`, `ServerAliveInterval/CountMax`, `-p`, `-L`,
 /// `-N`, or `-T` involve any further interactive prompt.
+#[cfg(test)]
 fn build_ssh_args(spec: &SshTunnelSpec, forward: &str, bastion: &str) -> Vec<String> {
+    build_ssh_args_many(spec, &[forward.to_string()], bastion)
+}
+
+fn build_ssh_args_many(spec: &SshTunnelSpec, forwards: &[String], bastion: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "-N".to_string(), // no remote command
         "-T".to_string(), // no pty
@@ -314,8 +344,10 @@ fn build_ssh_args(spec: &SshTunnelSpec, forward: &str, bastion: &str) -> Vec<Str
         args.push("-p".to_string());
         args.push(p.to_string());
     }
-    args.push("-L".to_string());
-    args.push(forward.to_string());
+    for forward in forwards {
+        args.push("-L".to_string());
+        args.push(forward.clone());
+    }
     args.push("--".to_string());
     args.push(bastion.to_string());
     args
@@ -515,6 +547,32 @@ mod tests {
                 "--",
                 "bastion",
             ]
+        );
+    }
+
+    #[test]
+    fn one_ssh_carries_a_forward_per_database() {
+        let spec = SshTunnelSpec::parse("bastion").unwrap();
+        let args = super::build_ssh_args_many(
+            &spec,
+            &[
+                "127.0.0.1:1:a:5432".to_string(),
+                "127.0.0.1:2:b:5432".to_string(),
+            ],
+            "bastion",
+        );
+        let tail: Vec<&str> = args.iter().skip(10).map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            [
+                "-L",
+                "127.0.0.1:1:a:5432",
+                "-L",
+                "127.0.0.1:2:b:5432",
+                "--",
+                "bastion"
+            ],
+            "every forward before the `--`, the destination last"
         );
     }
 
