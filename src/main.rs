@@ -112,6 +112,10 @@ async fn main() -> anyhow::Result<()> {
     // the protocol, so diagnostics go to the rolling log file.
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("mcp") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", pgman::mcp::USAGE);
+            return Ok(());
+        }
         init_logging();
         if let Err(usage) = pgman::mcp::run(&argv[2..]).await {
             eprintln!("{usage}");

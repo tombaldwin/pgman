@@ -13,6 +13,20 @@ fn server() -> Server {
 }
 
 #[test]
+fn help_is_recognised_wherever_it_appears() {
+    for a in [
+        &["serve", "--help"][..],
+        &["serve", "--read-only", "-h"],
+        &["--help"],
+        &["help"],
+    ] {
+        assert!(wants_help(&args(a)), "{a:?}");
+    }
+    assert!(!wants_help(&args(&["serve", "--read-only"])));
+    assert!(!wants_help(&args(&[])));
+}
+
+#[test]
 fn serve_is_required_and_flags_parse() {
     assert!(parse_args(&args(&[])).is_err());
     assert!(parse_args(&args(&["setup"])).is_err());

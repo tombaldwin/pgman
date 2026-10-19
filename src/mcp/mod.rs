@@ -50,6 +50,14 @@ pub struct Opts {
     pub project_connections: bool,
 }
 
+/// `true` when the arguments after `pgman mcp` ask for help (`-h` /
+/// `--help` anywhere, or `help` as the sub-verb). Checked before
+/// [`parse_args`], so `pgman mcp serve --help` prints the usage and exits
+/// 0 instead of failing as an unknown argument.
+pub fn wants_help(args: &[String]) -> bool {
+    args.first().is_some_and(|a| a == "help") || args.iter().any(|a| a == "-h" || a == "--help")
+}
+
 /// Parse the arguments after `pgman mcp`. `args[0]` is the sub-verb.
 pub fn parse_args(args: &[String]) -> Result<Opts, String> {
     match args.first().map(String::as_str) {
