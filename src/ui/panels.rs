@@ -1243,15 +1243,159 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
 /// The panel height below which the detail line is left out.
 const DETAIL_MIN_HEIGHT: u16 = 12;
 
+/// One proposal's line in the discovery view: whether it is chosen,
+/// and what saving it would add. `name_w` aligns the names. Pure.
+pub(crate) fn proposal_row(
+    p: &crate::inventory::discover::Proposal,
+    chosen: bool,
+    name_w: usize,
+) -> String {
+    let n =
+        |count: usize, what: &str| format!("{count} {what}{}", if count == 1 { "" } else { "s" });
+    let mark = match (&p.covered_by, chosen) {
+        (Some(_), _) => "   ",
+        (None, true) => "[x]",
+        (None, false) => "[ ]",
+    };
+    let pad = name_w.saturating_sub(crate::ui::display_width(&p.env.name));
+    let what = match &p.covered_by {
+        Some(by) => format!("already in environment {by}"),
+        None => {
+            let databases = p.env.databases.len().max(1);
+            let mut bits = vec![
+                n(p.servers.len().saturating_sub(1), "replica"),
+                n(databases, "database"),
+                n(p.env.secrets.len(), "secret"),
+                if p.env.ssh_tunnel.is_some() {
+                    "tunnel".to_string()
+                } else {
+                    "direct".to_string()
+                },
+            ];
+            if !p.notes.is_empty() {
+                bits.push(n(p.notes.len(), "note"));
+            }
+            bits.join(" · ")
+        }
+    };
+    format!("  {mark} {}{}  {what}", p.env.name, " ".repeat(pad))
+}
+
+/// The discovery view (`d` in the overview): the proposals, then exactly
+/// what `s` would append for the one under the cursor.
+fn draw_env_discovery(f: &mut Frame, inner: Rect, app: &App, d: &crate::app::DiscoveryUi) {
+    let theme = &app.theme;
+    let width = inner.width as usize;
+    let fit = |t: &str| crate::grid::truncate_cell(t, width);
+    let Some(found) = &d.found else {
+        let (msg, colour) = match &d.error {
+            Some(e) => (format!("discovery failed: {e}"), theme.health_red),
+            None => (
+                "discovering: RDS instances, secret names, EC2 hosts…".to_string(),
+                theme.muted,
+            ),
+        };
+        f.render_widget(
+            Paragraph::new(Text::from(msg))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(colour)),
+            inner,
+        );
+        return;
+    };
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        fit(&format!("  {}", found.header)),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    for w in &found.warnings {
+        lines.push(Line::from(Span::styled(
+            fit(&format!("  {w}")),
+            Style::default().fg(theme.health_yellow),
+        )));
+    }
+    lines.push(Line::from(""));
+    if found.proposals.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  no Postgres instances found",
+            Style::default().fg(theme.muted),
+        )));
+    }
+    let name_w = found
+        .proposals
+        .iter()
+        .map(|p| crate::ui::display_width(&p.env.name))
+        .max()
+        .unwrap_or(0);
+    // Rows scroll to keep the cursor in view; the preview of what `s`
+    // appends gets whatever height is left.
+    let room = (inner.height as usize).saturating_sub(lines.len()).max(1);
+    let shown = found.proposals.len().min(room);
+    let scroll = scroll_offset(d.cursor, shown);
+    for (i, p) in found.proposals.iter().enumerate().skip(scroll).take(shown) {
+        let text = fit(&proposal_row(
+            p,
+            d.chosen.get(i).copied().unwrap_or(false),
+            name_w,
+        ));
+        let style = if i == d.cursor {
+            Style::default()
+                .fg(theme.text)
+                .bg(theme.row_selected_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if p.covered_by.is_some() {
+            Style::default().fg(theme.muted)
+        } else {
+            Style::default().fg(theme.text)
+        };
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    if let Some(p) = d.selected().filter(|p| p.covered_by.is_none()) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            fit(&format!("  s appends for {}:", p.env.name)),
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for l in crate::inventory::discover::render(p).lines() {
+            let colour = if l.starts_with('#') {
+                theme.health_yellow
+            } else {
+                theme.muted
+            };
+            lines.push(Line::from(Span::styled(
+                fit(&format!("  {l}")),
+                Style::default().fg(colour),
+            )));
+        }
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
+    if let Some(d) = &app.environments.discovery {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.border_active))
+            .title(Span::styled(
+                " discover — space choose · s save · q back ",
+                Style::default().fg(theme.title),
+            ));
+        let inner = block.inner(popup);
+        f.render_widget(block, popup);
+        draw_env_discovery(f, inner, app, d);
+        return;
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.border_active))
         .title(Span::styled(
-            " environments — r refresh · q close ",
+            " environments — enter connect · d discover · q close ",
             Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
@@ -1266,7 +1410,8 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         } else {
             (
                 format!(
-                    "no environments configured — add {} (see docs/environments.md)",
+                    "no environments configured — d discovers them from AWS, or add {} \
+                     (see docs/environments.md)",
                     crate::util::config_file("environments.toml").display()
                 ),
                 theme.muted,
@@ -2729,5 +2874,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn proposal_rows_say_what_saving_adds_or_who_has_it_already() {
+        let found = crate::demo::discovery();
+        let row = |name: &str, chosen: bool| {
+            let p = found.proposals.iter().find(|p| p.env.name == name).unwrap();
+            proposal_row(p, chosen, 9)
+        };
+        assert_eq!(
+            row("analytics", true),
+            "  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note"
+        );
+        assert_eq!(
+            row("qa", false),
+            "  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note"
+        );
+        assert_eq!(
+            row("staging", true),
+            "      staging    already in environment staging",
+            "covered: never shown as chosen"
+        );
     }
 }

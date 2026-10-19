@@ -66,7 +66,8 @@ and breaking changes.
 - **`pgman env discover`** proposes environments from an AWS account:
   one per RDS primary with its replicas, the secret matching each
   database by name, the bastion in its VPC. It reads names only, never a
-  secret's value; `--save` appends to `environments.toml`.
+  secret's value; `--save` appends to `environments.toml`. In the
+  overview, `d` does the same with a preview of what each save appends.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

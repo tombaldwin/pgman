@@ -8,7 +8,7 @@ expression: dump(&buf)
 ┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ environments — r refresh · q close ──────────────────────────────────────────────────────┐   │
+│  W┌ environments — enter connect · d discover · q close ─────────────────────────────────────┐   │
 │  O│  staging · RDS 123456789012 eu-west-2                                                    │   │
 │   │    database  role     server             status     engine                               │   │
 └───│    shop      primary  staging            available  postgres 16.4                        │───┘
@@ -32,4 +32,4 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · enter connect · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

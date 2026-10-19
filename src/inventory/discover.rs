@@ -56,6 +56,51 @@ pub struct Proposal {
     /// The name of an existing environment that already covers this
     /// primary. A covered proposal is shown but never saved.
     pub covered_by: Option<String>,
+    /// The primary first, then its replicas.
+    pub servers: Vec<String>,
+}
+
+/// A discovery as the environments overview shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Found {
+    /// `AWS account …, region`.
+    pub header: String,
+    /// What couldn't be listed, and so is missing from the proposals.
+    pub warnings: Vec<String>,
+    pub proposals: Vec<Proposal>,
+}
+
+impl Discovery {
+    fn header(&self) -> String {
+        format!(
+            "AWS account {}{}",
+            self.scope.account.as_deref().unwrap_or("?"),
+            self.scope
+                .region
+                .as_deref()
+                .map(|r| format!(", {r}"))
+                .unwrap_or_default()
+        )
+    }
+
+    fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Err(e) = &self.secrets {
+            out.push(format!("secret names not listed, so no secrets: {e}"));
+        }
+        if let Err(e) = &self.hosts {
+            out.push(format!("EC2 hosts not listed, so no tunnels: {e}"));
+        }
+        out
+    }
+
+    pub fn found(&self, existing: &[Environment]) -> Found {
+        Found {
+            header: self.header(),
+            warnings: self.warnings(),
+            proposals: proposals(self, existing),
+        }
+    }
 }
 
 pub fn list_secrets_args(scope: &AwsScope) -> Vec<String> {
@@ -380,6 +425,7 @@ pub fn propose(
             };
             Proposal {
                 covered_by: covering(&name, existing),
+                servers: servers.iter().map(|s| s.id.clone()).collect(),
                 env,
                 notes,
             }
@@ -618,20 +664,9 @@ pub fn parse_cli(args: &[String]) -> Result<CliOpts, String> {
 /// What `pgman env discover` prints for a discovery: where it looked,
 /// what it couldn't list, then each proposal as TOML.
 pub fn report(d: &Discovery, proposals: &[Proposal]) -> String {
-    let mut out = format!(
-        "# discovered in AWS account {}{}\n",
-        d.scope.account.as_deref().unwrap_or("?"),
-        d.scope
-            .region
-            .as_deref()
-            .map(|r| format!(", {r}"))
-            .unwrap_or_default()
-    );
-    if let Err(e) = &d.secrets {
-        out.push_str(&format!("# secret names not listed, so no secrets: {e}\n"));
-    }
-    if let Err(e) = &d.hosts {
-        out.push_str(&format!("# EC2 hosts not listed, so no tunnels: {e}\n"));
+    let mut out = format!("# discovered in {}\n", d.header());
+    for w in d.warnings() {
+        out.push_str(&format!("# {w}\n"));
     }
     if proposals.is_empty() {
         out.push_str("# no Postgres instances found\n");
@@ -647,6 +682,14 @@ pub fn report(d: &Discovery, proposals: &[Proposal]) -> String {
         }
     }
     out
+}
+
+/// Discovery for the environments overview's `d`: the ambient AWS
+/// profile and region, against the environments already configured.
+/// Blocking.
+pub fn discover_for_overview() -> Result<Found, String> {
+    let existing = super::load().environments?;
+    Ok(discover(&AwsScope::default())?.found(&existing))
 }
 
 /// `pgman env discover`. Returns what to print. Blocking.

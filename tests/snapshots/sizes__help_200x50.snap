@@ -41,7 +41,7 @@ expression: dump(&buf)
 │                             │     D             pin result as A · run another query, D again to diff as B                                                              │                             │
 │                             │     m<a-z>        set bookmark at focused (row, col)                                                                                     │                             │
 │                             │     '<a-z>        jump to bookmark                                                                                                       │                             │
-│                             │ ↓ 203 more below                                                                                                                         │                             │
+│                             │ ↓ 204 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                             │
 │                                                                                                                                                                                                      │

@@ -1315,6 +1315,10 @@ impl App {
     }
 
     pub(super) fn on_environments_key(&mut self, key: KeyEvent) {
+        if self.environments.discovery.is_some() {
+            self.on_env_discovery_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = self.environments.opened_from.take().unwrap_or(Mode::Normal);
@@ -1322,11 +1326,32 @@ impl App {
                 self.last_status = None;
             }
             KeyCode::Enter => self.connect_to_environment_target(),
+            KeyCode::Char('d') => self.start_env_discovery(),
             KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.environments.select_prev(),
             KeyCode::Char('g') | KeyCode::Home => self.environments.select_first(),
             KeyCode::Char('G') | KeyCode::End => self.environments.select_last(),
             KeyCode::Char('r') => self.refresh_environments(),
+            _ => {}
+        }
+    }
+
+    fn on_env_discovery_key(&mut self, key: KeyEvent) {
+        let Some(d) = self.environments.discovery.as_mut() else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.environments.discovery = None;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => d.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => d.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => d.select_first(),
+            KeyCode::Char('G') | KeyCode::End => d.select_last(),
+            KeyCode::Char(' ') => self.toggle_env_proposal(),
+            KeyCode::Char('s') => self.save_env_proposals(),
+            KeyCode::Char('d') => self.start_env_discovery(),
             _ => {}
         }
     }

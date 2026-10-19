@@ -1,0 +1,21 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+ pgman X.X.X │ shop  connected · pg 16.2
+ 1 SELECT id, email,…               ] [ switch · ctrl-t new
+┌ editor (e to focus) ─────────────────────────────────────┐
+│ ┌ discover — space choose · s save · q back ──────────┐  │
+│ │  AWS account 123456789012, eu-west-2                │  │
+│ │                                                     │  │
+└─│  [x] analytics  1 replica · 1 database · 2 secrets …│──┘
+┌ │  [ ] qa         0 replicas · 1 database · 1 secret …│──┐
+│i│      staging    already in environment staging      │  │
+│1│                                                     │  │
+│2│  s appends for analytics:                           │  │
+│3│  # tunnels through bastion (i-0demo); the ssh user …│  │
+│4└─────────────────────────────────────────────────────┘  │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+└──────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · F1 +5 more

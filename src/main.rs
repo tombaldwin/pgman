@@ -309,6 +309,11 @@ async fn main() -> anyhow::Result<()> {
         pgman::inventory::load_and_gather,
     )));
     application.secret_fetcher = Some(std::sync::Arc::new(pgman::creds::aws_secrets::fetch));
+    application.env_discoverer = Some(app::EnvDiscoverer {
+        discover: std::sync::Arc::new(pgman::inventory::discover::discover_for_overview),
+        save: std::sync::Arc::new(pgman::inventory::discover::save),
+        immediate: false,
+    });
     application.dsn_origin = dsn_origin;
     // Update check: opt-out via --no-update-check or the env var.
     // (--demo and --batch never reach here — --demo builds its own

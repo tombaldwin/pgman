@@ -891,6 +891,25 @@ fn environments() {
     run_sizes("environments", scr_environments);
 }
 
+fn scr_env_discovery() -> App {
+    let mut a = scr_environments();
+    let found = pgman::demo::discovery();
+    let n = found.proposals.len();
+    a.environments.discovery = Some(pgman::app::DiscoveryUi {
+        loading: false,
+        found: Some(found),
+        error: None,
+        chosen: (0..n).map(|i| i == 0).collect(),
+        cursor: 0,
+    });
+    a
+}
+
+#[test]
+fn env_discovery() {
+    run_sizes("env_discovery", scr_env_discovery);
+}
+
 #[test]
 fn schema_lint() {
     run_sizes("schema_lint", scr_schema_lint);

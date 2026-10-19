@@ -1224,6 +1224,9 @@ pub struct App {
     /// Reads an environment database's secret at connect; `None` until
     /// `main.rs` installs the aws CLI one.
     pub secret_fetcher: Option<SecretFetcher>,
+    /// Environment discovery for the overview's `d`; `None` until
+    /// `main.rs` (or `--demo`) installs one.
+    pub env_discoverer: Option<EnvDiscoverer>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1429,6 +1432,7 @@ impl App {
             environments: EnvironmentsUi::default(),
             environments_loader: None,
             secret_fetcher: None,
+            env_discoverer: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3768,6 +3772,116 @@ impl App {
             self.last_error = Some(format!(
                 "can't connect to {what}: secrets are not available in this session"
             ));
+        }
+    }
+
+    /// `d` in the environments overview: discover environments from the
+    /// ambient AWS account and open the discovery view over the overview.
+    fn start_env_discovery(&mut self) {
+        if self
+            .environments
+            .discovery
+            .as_ref()
+            .is_some_and(|d| d.loading)
+        {
+            return;
+        }
+        let Some(discoverer) = self.env_discoverer.clone() else {
+            self.last_error = Some("discovery is not available in this session".into());
+            return;
+        };
+        self.environments.discovery = Some(DiscoveryUi {
+            loading: true,
+            ..DiscoveryUi::default()
+        });
+        self.last_status = Some("discovering: RDS, secret names, EC2 hosts…".into());
+        if discoverer.immediate {
+            self.on_env_discovered((discoverer.discover)());
+        } else {
+            let tx = self.msg_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)()));
+            });
+        }
+    }
+
+    fn on_env_discovered(&mut self, result: Result<crate::inventory::discover::Found, String>) {
+        // Closed while it ran: nothing to show it in.
+        let Some(d) = self.environments.discovery.as_mut() else {
+            return;
+        };
+        d.loading = false;
+        match result {
+            Ok(found) => {
+                let new = found
+                    .proposals
+                    .iter()
+                    .filter(|p| p.covered_by.is_none())
+                    .count();
+                self.last_status = Some(format!(
+                    "found {} · {new} new · space choose · s save",
+                    found.proposals.len()
+                ));
+                d.chosen = vec![false; found.proposals.len()];
+                d.cursor = 0;
+                d.found = Some(found);
+                d.error = None;
+            }
+            Err(e) => {
+                self.last_status = None;
+                d.error = Some(e);
+            }
+        }
+    }
+
+    fn toggle_env_proposal(&mut self) {
+        let Some(d) = self.environments.discovery.as_mut() else {
+            return;
+        };
+        let Some(p) = d.selected() else {
+            return;
+        };
+        if let Some(by) = &p.covered_by {
+            self.last_status = Some(format!(
+                "{} is already covered by environment {by}",
+                p.env.name
+            ));
+            return;
+        }
+        if let Some(c) = d.chosen.get_mut(d.cursor) {
+            *c = !*c;
+        }
+    }
+
+    /// `s` in the discovery view: append the chosen proposals, close the
+    /// view and list the environments again.
+    fn save_env_proposals(&mut self) {
+        let Some(d) = self.environments.discovery.as_ref() else {
+            return;
+        };
+        let chosen: Vec<&crate::inventory::discover::Proposal> = d
+            .proposals()
+            .iter()
+            .zip(&d.chosen)
+            .filter(|(_, c)| **c)
+            .map(|(p, _)| p)
+            .collect();
+        if chosen.is_empty() {
+            self.last_status = Some("nothing chosen — space chooses an environment".into());
+            return;
+        }
+        let Some(discoverer) = self.env_discoverer.clone() else {
+            return;
+        };
+        let names: Vec<String> = chosen.iter().map(|p| p.env.name.clone()).collect();
+        match (discoverer.save)(&chosen) {
+            Ok(path) => {
+                self.environments.discovery = None;
+                self.refresh_environments();
+                self.last_status =
+                    Some(format!("added {} to {}", names.join(", "), path.display()));
+            }
+            Err(e) => self.last_error = Some(format!("not saved: {e}")),
         }
     }
 

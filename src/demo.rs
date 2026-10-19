@@ -35,6 +35,11 @@ pub fn app(theme: Theme) -> App {
     // would violate all three.
     a.update_check_enabled = false;
     a.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(environments()));
+    a.env_discoverer = Some(crate::app::EnvDiscoverer {
+        discover: std::sync::Arc::new(|| Ok(discovery())),
+        save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
+        immediate: true,
+    });
     a.dsn_origin = Some("--demo (synthetic data)".into());
     a.conn_state = ConnState::Connected {
         server_version: "16.2 (demo)".into(),
@@ -754,6 +759,63 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
             error: None,
         },
     ]
+}
+
+/// The discovery view in `--demo`: proposals from a synthetic account,
+/// `staging` already covered.
+pub fn discovery() -> crate::inventory::discover::Found {
+    use crate::inventory::discover::{propose, Ec2Host, Found};
+    use crate::inventory::rds::RdsInstance;
+    let inst = |id: &str, source: Option<&str>, replicas: &[&str], db: &str| RdsInstance {
+        id: id.into(),
+        host: Some(format!("{id}.c1x2y3.eu-west-2.rds.amazonaws.com")),
+        port: Some(5432),
+        engine: "postgres".into(),
+        engine_version: "16.4".into(),
+        status: "available".into(),
+        class: "db.t4g.medium".into(),
+        multi_az: false,
+        source: source.map(str::to_string),
+        replicas: replicas.iter().map(|r| r.to_string()).collect(),
+        db_name: Some(db.into()),
+        vpc_id: Some("vpc-demo".into()),
+    };
+    let instances = vec![
+        inst("staging", None, &["staging-replica"], "shop"),
+        inst("staging-replica", Some("staging"), &[], "shop"),
+        inst("qa", None, &[], "shop"),
+        inst("analytics", None, &["analytics-replica"], "warehouse"),
+        inst("analytics-replica", Some("analytics"), &[], "warehouse"),
+    ];
+    let secrets: Vec<String> = [
+        "staging/database/shop/credentials",
+        "qa/database/shop/credentials",
+        "analytics/database/warehouse/credentials",
+        "analytics/database/warehouse_replica/credentials",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let hosts = vec![Ec2Host {
+        id: "i-0demo".into(),
+        name: Some("bastion".into()),
+        vpc_id: Some("vpc-demo".into()),
+        public_dns: "bastion.eu-west-2.compute.amazonaws.com".into(),
+    }];
+    let scope = crate::aws_cli::AwsScope {
+        region: Some("eu-west-2".into()),
+        profile: None,
+        account: Some("123456789012".into()),
+    };
+    let existing = crate::inventory::parse_config(
+        "[[environments]]\nname = \"staging\"\nsource = { kind = \"rds\", instances = [\"staging\"] }\n",
+    )
+    .unwrap_or_default();
+    Found {
+        header: "AWS account 123456789012, eu-west-2".into(),
+        warnings: Vec::new(),
+        proposals: propose(&instances, &secrets, &hosts, &scope, &existing),
+    }
 }
 
 #[cfg(test)]

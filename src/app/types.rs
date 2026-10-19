@@ -918,6 +918,74 @@ pub struct EnvironmentsUi {
     pub connecting: Option<PendingEnvConnect>,
     /// Numbers each connect, so a late secret matches only its own.
     pub connect_token: u64,
+    /// `Some` while the discovery view (`d`) is open over the overview.
+    pub discovery: Option<DiscoveryUi>,
+}
+
+/// The overview's discovery view: proposed environments, which ones the
+/// operator chose, and the cursor.
+#[derive(Debug, Default)]
+pub struct DiscoveryUi {
+    pub loading: bool,
+    pub found: Option<crate::inventory::discover::Found>,
+    pub error: Option<String>,
+    /// Parallel to `found.proposals`.
+    pub chosen: Vec<bool>,
+    pub cursor: usize,
+}
+
+impl DiscoveryUi {
+    pub fn proposals(&self) -> &[crate::inventory::discover::Proposal] {
+        self.found
+            .as_ref()
+            .map(|f| f.proposals.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn selected(&self) -> Option<&crate::inventory::discover::Proposal> {
+        self.proposals().get(self.cursor)
+    }
+}
+
+impl ListCursorNav for DiscoveryUi {
+    fn nav_len(&self) -> usize {
+        self.proposals().len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
+}
+
+pub type DiscoverFn =
+    std::sync::Arc<dyn Fn() -> Result<crate::inventory::discover::Found, String> + Send + Sync>;
+
+pub type SaveProposalsFn = std::sync::Arc<
+    dyn Fn(&[&crate::inventory::discover::Proposal]) -> Result<std::path::PathBuf, String>
+        + Send
+        + Sync,
+>;
+
+/// Discovers and saves environments for the overview. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default) means no AWS call and no
+/// write to `environments.toml` can happen.
+#[derive(Clone)]
+pub struct EnvDiscoverer {
+    /// Blocking: runs the aws CLI.
+    pub discover: DiscoverFn,
+    /// Appends the chosen proposals; the path written.
+    pub save: SaveProposalsFn,
+    /// Run `discover` at once on this thread (`--demo`, tests) instead of
+    /// on a blocking one.
+    pub immediate: bool,
+}
+
+impl std::fmt::Debug for EnvDiscoverer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvDiscoverer")
+    }
 }
 
 impl EnvironmentsUi {

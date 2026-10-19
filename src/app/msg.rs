@@ -79,6 +79,8 @@ pub enum AppMsg {
     /// The environments gather finished. Not tied to a connection, so it
     /// bypasses the generation filter like tap events.
     EnvironmentsLoaded(Result<Vec<crate::inventory::EnvReport>, String>),
+    /// Environment discovery finished. Not tied to a connection.
+    EnvDiscovered(Result<crate::inventory::discover::Found, String>),
     /// An environment connect's secret was read (or not). Matched to its
     /// connect by `token`, not the generation: no connection owns it yet.
     EnvSecretResolved {
@@ -157,7 +159,8 @@ impl AppMsg {
             AppMsg::TapEvent { .. }
             | AppMsg::UpdateCheck(_)
             | AppMsg::EnvironmentsLoaded(_)
-            | AppMsg::EnvSecretResolved { .. } => 0,
+            | AppMsg::EnvSecretResolved { .. }
+            | AppMsg::EnvDiscovered(_) => 0,
         }
     }
 }

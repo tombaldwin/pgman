@@ -27,6 +27,15 @@ rewrites what's already there.
 
 ## Discovering environments from AWS
 
+In the overview, press `d`. pgman discovers with your ambient AWS
+profile and region, and lists one proposal per primary. `space` chooses
+a proposal, and the lower half shows exactly what `s` will append for
+the one under the cursor, notes included. `s` saves the chosen ones and
+returns to the overview, which lists them at once. `q` backs out
+without saving.
+
+From a shell, with a choice of profile, region and account:
+
 ```sh
 pgman env discover                       # print proposals as TOML
 pgman env discover --save                # append every new one
@@ -136,6 +145,7 @@ sources behind the same model (BACKLOG.md).
 | `E` | Open from the grid or the connection picker. No connection is needed. |
 | `j` / `k`, `g` / `G` | Move between databases. |
 | `Enter` | Connect to the database under the cursor. |
+| `d` | Discover environments from AWS (`space` choose, `s` save, `q` back). |
 | `r` | List again. |
 | `q` / `Esc` | Close, cancelling a connect that is still reading its secret. |
 

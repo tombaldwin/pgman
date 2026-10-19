@@ -9411,3 +9411,144 @@ async fn environment_connect_failures_say_why() {
     );
     assert_eq!(a.dsn, None);
 }
+
+/// A discoverer over the demo account whose save records what it was
+/// handed, failing when `fail` is set.
+fn recording_discoverer(
+    saved: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    fail: bool,
+) -> EnvDiscoverer {
+    EnvDiscoverer {
+        discover: std::sync::Arc::new(|| Ok(crate::demo::discovery())),
+        save: std::sync::Arc::new(move |chosen| {
+            if fail {
+                return Err("environments.toml parse error".into());
+            }
+            saved
+                .lock()
+                .unwrap()
+                .extend(chosen.iter().map(|p| p.env.name.clone()));
+            Ok(std::path::PathBuf::from("/cfg/environments.toml"))
+        }),
+        immediate: true,
+    }
+}
+
+#[test]
+fn discovery_needs_an_installed_discoverer() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    assert!(a.environments.discovery.is_none());
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("discovery is not available in this session")
+    );
+}
+
+#[tokio::test]
+async fn discovery_chooses_then_appends_only_what_was_chosen() {
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    // Connectable rows under the view, so an Enter that leaked through
+    // to the overview would connect.
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    a.env_discoverer = Some(recording_discoverer(saved.clone(), false));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    let names: Vec<String> = a
+        .environments
+        .discovery
+        .as_ref()
+        .unwrap()
+        .proposals()
+        .iter()
+        .map(|p| p.env.name.clone())
+        .collect();
+    assert_eq!(names, ["analytics", "qa", "staging"]);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("found 3 · 2 new · space choose · s save")
+    );
+
+    press(&mut a, KeyCode::Char('s'));
+    assert!(
+        saved.lock().unwrap().is_empty(),
+        "nothing chosen, nothing saved"
+    );
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("nothing chosen"));
+
+    // staging is covered: space refuses it.
+    press(&mut a, KeyCode::Char('G'));
+    press(&mut a, KeyCode::Char(' '));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("staging is already covered by environment staging")
+    );
+    // Choose analytics, choose and unchoose qa.
+    press(&mut a, KeyCode::Char('g'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char(' '));
+    // Enter here is not the overview's connect.
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.dsn, None);
+    press(&mut a, KeyCode::Char('s'));
+    assert_eq!(*saved.lock().unwrap(), ["analytics"]);
+    assert!(a.environments.discovery.is_none(), "back to the overview");
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("added analytics to /cfg/environments.toml")
+    );
+}
+
+#[test]
+fn a_failed_save_keeps_the_choices_and_says_why() {
+    let saved = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(recording_discoverer(saved, true));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Char(' '));
+    press(&mut a, KeyCode::Char('s'));
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("not saved: environments.toml parse error")
+    );
+    let d = a.environments.discovery.as_ref().expect("still open");
+    assert_eq!(d.chosen, [true, false, false]);
+}
+
+#[test]
+fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(recording_discoverer(Default::default(), false));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    press(&mut a, KeyCode::Esc);
+    assert!(a.environments.discovery.is_none());
+    assert_eq!(a.mode, Mode::Environments, "q/esc backs out one level");
+    a.on_msg(AppMsg::EnvDiscovered(Ok(crate::demo::discovery())));
+    assert!(
+        a.environments.discovery.is_none(),
+        "a late result reopens nothing"
+    );
+
+    a.environments.discovery = Some(DiscoveryUi {
+        loading: true,
+        ..DiscoveryUi::default()
+    });
+    a.on_msg(AppMsg::EnvDiscovered(Err("aws sts failed: expired".into())));
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
+    assert!(!d.loading);
+}

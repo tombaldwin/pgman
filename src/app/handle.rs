@@ -12,6 +12,7 @@ impl App {
                 | AppMsg::UpdateCheck(_)
                 | AppMsg::EnvironmentsLoaded(_)
                 | AppMsg::EnvSecretResolved { .. }
+                | AppMsg::EnvDiscovered(_)
         ) && msg.generation() != self.generation
         {
             tracing::debug!(
@@ -297,6 +298,7 @@ impl App {
                 }
             }
             AppMsg::EnvSecretResolved { token, result } => self.on_env_secret(token, result),
+            AppMsg::EnvDiscovered(result) => self.on_env_discovered(result),
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
                     self.last_error = None;

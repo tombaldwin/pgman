@@ -92,7 +92,7 @@ expression: dump(&buf)
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
-│              │ ↓ 219 more below                                                   │              │
+│              │ ↓ 221 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

@@ -10,7 +10,7 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ┌ environments — r refresh · q close ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
+│       ┌ environments — enter connect · d discover · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐       │
 └───────│  staging · RDS 123456789012 eu-west-2                                                                                                                                                │───────┘
 ┌ result│    database  role     server             status     engine                                                                                                                           │───────┐
 │id  ema│    shop      primary  staging            available  postgres 16.4                                                                                                                    │       │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   j/k navigate · enter connect · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help
