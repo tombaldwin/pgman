@@ -57,6 +57,9 @@ pub struct PatchPlan {
     pub stopped_at: Option<(String, String)>,
     /// Where the patch files are, for the operator to read them.
     pub dir: String,
+    /// Every id recorded when planned, sorted: the run checks the
+    /// database is still exactly here (plus what it has applied).
+    pub recorded: Vec<i64>,
 }
 
 impl PatchPlan {
@@ -244,8 +247,31 @@ pub async fn plan(
         patches: Vec::new(),
         stopped_at: None,
         dir: dir.display().to_string(),
+        recorded: {
+            let mut r = applied.clone();
+            r.sort_unstable();
+            r.dedup();
+            r
+        },
     };
+    let duplicated: std::collections::BTreeSet<i64> =
+        report.duplicate_ids.iter().map(|(id, _)| *id).collect();
     for file in report.pending {
+        let id = PatchPlan::id(&file).unwrap_or_default();
+        if duplicated.contains(&id) {
+            plan.stopped_at = Some((
+                file.file,
+                format!("another file records version {id} too; fix the files first"),
+            ));
+            break;
+        }
+        if let Some(n) = file.filename_number.filter(|n| *n != id) {
+            plan.stopped_at = Some((
+                file.file,
+                format!("its name says {n} but it records version {id}; fix the file first"),
+            ));
+            break;
+        }
         let path = dir.join(&file.file);
         let text = match std::fs::read_to_string(&path) {
             Ok(t) => t,
@@ -288,6 +314,26 @@ async fn connect(
 /// Whether `applied` is where `plan` left it, `done` patches in: the
 /// earlier planned ones recorded, this one and the rest not. Pure.
 pub fn still_as_planned(plan: &PatchPlan, done: usize, applied: &[i64]) -> Result<(), String> {
+    let planned: Vec<i64> = plan
+        .patches
+        .iter()
+        .filter_map(|p| PatchPlan::id(&p.file))
+        .collect();
+    // Anything recorded that is neither from the plan's start nor one of
+    // its own patches: someone else is patching this database.
+    if let Some(other) = applied
+        .iter()
+        .find(|id| !plan.recorded.contains(id) && !planned.contains(id))
+    {
+        return Err(format!(
+            "version {other} was recorded since the plan, by someone else; plan again"
+        ));
+    }
+    if let Some(gone) = plan.recorded.iter().find(|id| !applied.contains(id)) {
+        return Err(format!(
+            "version {gone} was recorded at the plan but isn't now; plan again"
+        ));
+    }
     for (i, p) in plan.patches.iter().enumerate() {
         let Some(id) = PatchPlan::id(&p.file) else {
             return Err(format!("{} has no version id", p.file.file));
@@ -456,6 +502,7 @@ mod tests {
                 .collect(),
             stopped_at: None,
             dir: "/p".into(),
+            recorded: vec![1],
         }
     }
 
@@ -479,6 +526,15 @@ mod tests {
         assert!(still_as_planned(&p, 1, &[1])
             .unwrap_err()
             .contains("no longer recorded"));
+        assert!(
+            still_as_planned(&p, 0, &[1, 9])
+                .unwrap_err()
+                .contains("version 9 was recorded since"),
+            "an id outside the plan"
+        );
+        assert!(still_as_planned(&p, 0, &[])
+            .unwrap_err()
+            .contains("version 1 was recorded at the plan"));
     }
 
     #[test]

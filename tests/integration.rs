@@ -3040,7 +3040,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             r.summary()
         );
 
-        // Fix 003 on disk; the old plan still carries the text that failed.
+        // Fix 003 on disk and plan again.
         std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();
         let p2 = plan(&env, &target, &writable, &no_secrets).await.unwrap();
         assert_eq!(p2.applied_max, Some(2));
@@ -3072,6 +3072,50 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
                 .await
                 .unwrap()
                 .protected
+        );
+
+        // A plan whose statements aren't its text's is refused.
+        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert_eq!(fresh.patches[0].file.file, "003-bad.sql");
+        fresh.patches[0].statements.push("SELECT 1".into());
+        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("differ from the plan"), "{err}");
+
+        // A patch that runs but doesn't record its own id stops the run.
+        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let wrong = format!("INSERT INTO {vt} (id) VALUES (33);");
+        fresh.patches[0].text = wrong.clone();
+        fresh.patches[0].statements = vec![wrong.trim_end_matches(';').to_string()];
+        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("recorded no version row 3"), "{err}");
+        assert_eq!(r.results.len(), 1, "and nothing after it runs");
+
+        // Two files with one id, or a name that disagrees with its id: fix the files first.
+        std::fs::write(dir.join("003-dup.sql"), row(3)).unwrap();
+        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+            .await
+            .unwrap()
+            .stopped_at
+            .unwrap();
+        assert!(
+            at.starts_with("003-") && why.contains("records version 3 too"),
+            "{why}"
+        );
+        std::fs::remove_file(dir.join("003-dup.sql")).unwrap();
+        // (Without 005, which would sort first and stop on CONCURRENTLY.)
+        std::fs::remove_file(dir.join("005-idx.sql")).unwrap();
+        std::fs::write(dir.join("003-bad.sql"), row(7)).unwrap();
+        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+            .await
+            .unwrap()
+            .stopped_at
+            .unwrap();
+        assert_eq!(at, "003-bad.sql");
+        assert!(
+            why.contains("its name says 3 but it records version 7"),
+            "{why}"
         );
     });
 }

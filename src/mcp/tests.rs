@@ -297,6 +297,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         }],
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
         dir: "/src/patches".into(),
+        recorded: (1..=251).collect(),
     };
     let (message, schema) = tools::confirm_request(&plan);
     assert!(message.contains("recorded up to 251"), "{message}");
