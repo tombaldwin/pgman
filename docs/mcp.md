@@ -105,7 +105,16 @@ client's config, so use `secret` for anything that matters.
 | --- | --- |
 | *(none)* | All. For a local or single-server database. |
 | `replica` | All. Where reads should go. |
-| `primary` | `sessions_locks` only. A replica's sessions and locks are its own, so a pre-flight before a migration needs the primary's view: long transactions there are what block a migration. Everything else goes to the replica. The future two-phase patch apply will also use the primary. |
+| `primary` | `sessions_locks` and `pending_patches` only: pgman's own fixed reads, never client SQL. A replica's sessions and locks are its own, so a pre-flight before a migration needs the primary's view. After a patch, a lagging replica can still show the old version, so "did the patch land?" is checked on the primary too. `query` is refused; it goes to the replica. The future two-phase patch apply will also use the primary. |
+
+Every result from a `replica` connection carries a `replica` object with
+`in_recovery`, `lag_secs` (the age of the replica's last replayed change)
+and a `note`. The note appears when the lag is over 5 s, and the advice is
+to verify on the primary. An idle primary also grows that number, so a
+large value isn't necessarily lag. It also appears when the server is
+**not** in recovery at all: then a connection marked `replica` is really a
+primary, and only pgman's read-only session stands between a write and
+the data.
 
 ## Limits of this version
 

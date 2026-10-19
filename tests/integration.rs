@@ -1175,6 +1175,10 @@ fn mcp_query_returns_typed_rows_and_says_when_it_truncated() {
         serde_json::json!([{"n": 1, "t": null}, {"n": 2, "t": null}])
     );
     assert_eq!(v["truncated"], true);
+    assert!(
+        v.get("replica").is_none(),
+        "a direct connection gets no replica report: {text}"
+    );
 }
 
 /// The read-only floor holds server-side, not just in the classifier:
@@ -1657,5 +1661,88 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
     assert!(
         !calls.contains("rds describe"),
         "listed despite the wrong account: {calls}"
+    );
+}
+
+/// A `primary` connection may answer "did the patch land?" but still not
+/// run client SQL; a `replica` connection that is really a primary says
+/// so in every result.
+#[test]
+fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
+    let home = scratch_home("mcp-roles", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!(
+            "[[connections]]\nname = \"primary\"\nurl = \"{DSN}\"\nrole = \"primary\"\n\
+             [[connections]]\nname = \"not-really-a-replica\"\nurl = \"{DSN}\"\nrole = \"replica\"\n"
+        ),
+    )
+    .unwrap();
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_dbversion_roles (scriptId int); \
+             DELETE FROM pgman_dbversion_roles WHERE TRUE; \
+             INSERT INTO pgman_dbversion_roles VALUES (1)",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("001-a.sql"),
+        "INSERT INTO pgman_dbversion_roles (scriptId) VALUES (1);",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("002-b.sql"),
+        "INSERT INTO pgman_dbversion_roles (scriptId) VALUES (2);",
+    )
+    .unwrap();
+    let patches = serde_json::json!({"dir": "patches", "table": "pgman_dbversion_roles", "column": "scriptId"});
+    let mut on_primary = patches.clone();
+    on_primary["connection"] = "primary".into();
+    let mut on_replica = patches;
+    on_replica["connection"] = "not-really-a-replica".into();
+    let frames = mcp_session(
+        &home,
+        &home,
+        &[],
+        &[
+            tool_call(1, "pending_patches", on_primary),
+            tool_call(
+                2,
+                "query",
+                serde_json::json!({"connection": "primary", "sql": "SELECT 1"}),
+            ),
+            tool_call(3, "pending_patches", on_replica),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["pending"][0]["id"], 2);
+    assert!(
+        v.get("replica").is_none(),
+        "no replica report on a primary: {text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("PRIMARY"), "{text}");
+    let (text, is_error) = reply(&frames, 3);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["replica"]["in_recovery"], false);
+    assert!(
+        v["replica"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("NOT in recovery"),
+        "{text}"
     );
 }
