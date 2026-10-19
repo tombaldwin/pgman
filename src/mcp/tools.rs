@@ -232,13 +232,30 @@ pub fn single_checked_statement(
     if sql.trim().is_empty() {
         return Err("sql is empty".to_string());
     }
-    let mut statements = crate::batch::check_batch_safety(cfg, db, sql, false)?;
+    let mut statements =
+        crate::batch::check_statements(cfg, db, sql, false).map_err(mcp_refusal)?;
     match statements.len() {
         1 => Ok(statements.remove(0)),
         0 => Err("sql has no statement".to_string()),
         n => Err(format!(
             "sql has {n} statements; `query` runs exactly one per call"
         )),
+    }
+}
+
+/// A guard refusal worded for an MCP client. Batch's wording offers
+/// `--yes` or a `safety.toml` edit; neither exists here — this server is
+/// read-only whatever the operator's config says — so an agent told to
+/// "re-run with --yes" would be sent after a control it cannot reach.
+pub fn mcp_refusal(r: crate::batch::Refusal) -> String {
+    use crate::batch::Refusal;
+    match r {
+        Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
+        Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
+        Refusal::Confirm { kind, db, stmt } | Refusal::Block { kind, db, stmt } => format!(
+            "refused: {kind} on '{db}' is not a read, and this MCP server only reads — \
+             there is no flag or setting that lets `query` run it (statement: {stmt})"
+        ),
     }
 }
 
@@ -364,6 +381,22 @@ mod tests {
         // a Confirm guard is a refusal too.
         assert!(single_checked_statement(&cfg, "db", "DELETE FROM t").is_err());
         assert!(single_checked_statement(&cfg, "db", "BEGIN").is_err());
+    }
+
+    #[test]
+    fn a_refused_write_never_points_the_client_at_batch_only_controls() {
+        let cfg = read_only_safety(SafetyConfig::default());
+        for sql in [
+            "CREATE TABLE t (id int)",
+            "DELETE FROM t",
+            "INSERT INTO t VALUES (1)",
+            "DROP TABLE t",
+        ] {
+            let err = single_checked_statement(&cfg, "db", sql).unwrap_err();
+            assert!(err.contains("only reads"), "{sql}: {err}");
+            assert!(!err.contains("--yes"), "{sql}: {err}");
+            assert!(!err.contains("safety.toml"), "{sql}: {err}");
+        }
     }
 
     #[test]
