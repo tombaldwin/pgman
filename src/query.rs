@@ -21,6 +21,7 @@ pub mod jdbc;
 pub mod json_cell;
 pub mod lint;
 pub mod logdetect;
+pub mod migrations;
 pub mod nplus1;
 pub mod params;
 pub mod patches;

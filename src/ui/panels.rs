@@ -1188,6 +1188,21 @@ pub(crate) struct ProbeCells {
 /// The patch level as the `SCHEMA` column shows it, and whether it wants
 /// attention (patches pending, or the table unreadable). Pure.
 pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<ProbeAlert>) {
+    // A migration tool's own version, found without configuration.
+    if let Some(tool) = &p.migration_tool {
+        let label = p
+            .schema_label
+            .as_deref()
+            .map(|v| crate::grid::truncate_cell(v, 24))
+            .unwrap_or_else(|| "—".into());
+        let base = format!("{tool} {label}");
+        return match (&p.schema_error, p.pending) {
+            // A failed migration is the loudest thing a version can say.
+            (Some(_), _) => (format!("{base} ✗"), Some(ProbeAlert::Bad)),
+            (None, Some(n)) if n > 0 => (format!("{base} (+{n})"), Some(ProbeAlert::Warn)),
+            _ => (base, None),
+        };
+    }
     match (p.schema_version, p.pending, &p.schema_error) {
         (_, _, Some(_)) => ("version ✗".to_string(), Some(ProbeAlert::Warn)),
         (Some(v), Some(n), None) if n > 0 => (format!("v{v} (+{n})"), Some(ProbeAlert::Warn)),
@@ -2706,6 +2721,40 @@ mod tests {
     }
 
     #[test]
+    fn a_detected_migration_tool_shows_its_own_version() {
+        use crate::query::probe::Probe;
+        let p = |label: &str, pending, error: Option<&str>| Probe {
+            migration_tool: Some("flyway".into()),
+            schema_label: Some(label.into()),
+            pending,
+            schema_error: error.map(str::to_string),
+            ..Probe::default()
+        };
+        assert_eq!(
+            schema_cell(&p("2.3.1", Some(0), None)),
+            ("flyway 2.3.1".into(), None)
+        );
+        assert_eq!(
+            schema_cell(&p("2.3.1", Some(2), None)),
+            ("flyway 2.3.1 (+2)".into(), Some(ProbeAlert::Warn))
+        );
+        assert_eq!(
+            schema_cell(&p("2.3.1", None, Some("flyway migration 2.4 failed"))),
+            ("flyway 2.3.1 ✗".into(), Some(ProbeAlert::Bad))
+        );
+        let long = schema_cell(&p(
+            "20240101120000_add_a_very_long_migration_name",
+            None,
+            None,
+        ))
+        .0;
+        assert!(
+            crate::ui::display_width(&long) <= "flyway ".len() + 24,
+            "{long}"
+        );
+    }
+
+    #[test]
     fn a_primary_read_through_its_replica_shows_the_replicas_schema() {
         use crate::app::ProbeState;
         let envs = crate::demo::environments();
@@ -2814,6 +2863,7 @@ mod tests {
         let mut envs = crate::demo::environments();
         envs[2].probe = Some(crate::inventory::ProbeSettings {
             version_table: None,
+            ..Default::default()
         });
         let probes = vec![
             vec![ProbeState::Off; 2],

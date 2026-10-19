@@ -72,9 +72,14 @@ pub struct Environment {
     /// level). Off unless set: a refresh then touches every database.
     #[serde(default)]
     pub probe: bool,
-    /// Where the patch level lives, for probes.
+    /// Where the patch level lives, for probes. Without one, a probe
+    /// recognises the common migration tools' own tables.
     #[serde(default)]
     pub version_table: Option<VersionTable>,
+    /// A Flyway migration directory (`V<version>__<name>.sql`), for a
+    /// pending count; `~/` is your home.
+    #[serde(default)]
+    pub migrations_dir: Option<String>,
 }
 
 /// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
@@ -139,9 +144,34 @@ impl VersionTable {
 }
 
 /// What a probe of an environment needs beyond its rows.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProbeSettings {
     pub version_table: Option<VersionTable>,
+    pub migrations_dir: Option<String>,
+}
+
+impl ProbeSettings {
+    /// `migrations_dir` with `~/` expanded; it must end up absolute.
+    pub fn migrations_dir(&self) -> Option<Result<std::path::PathBuf, String>> {
+        let raw = self.migrations_dir.as_ref()?;
+        Some(expand_home_dir(raw, "migrations_dir"))
+    }
+}
+
+/// `~/x` against `$HOME`, else the path as written; it must be absolute.
+fn expand_home_dir(raw: &str, what: &str) -> Result<std::path::PathBuf, String> {
+    let path = match raw.strip_prefix("~/") {
+        Some(rest) => std::path::PathBuf::from(
+            std::env::var_os("HOME").ok_or(format!("{what} uses ~/ but HOME is unset"))?,
+        )
+        .join(rest),
+        None => std::path::PathBuf::from(raw),
+    };
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(format!("{what} {raw:?} must be absolute or start with ~/"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -252,6 +282,13 @@ impl Environment {
                 return Err(format!(
                     "unknown sslmode {m:?}; use one of {}",
                     crate::conn::KNOWN_SSLMODES.join(", ")
+                ));
+            }
+        }
+        if let Some(d) = &self.migrations_dir {
+            if !d.starts_with("~/") && !std::path::Path::new(d).is_absolute() {
+                return Err(format!(
+                    "migrations_dir {d:?} must be absolute or start with ~/"
                 ));
             }
         }
@@ -583,6 +620,7 @@ pub fn gather(
                 error,
                 probe: env.probe.then(|| ProbeSettings {
                     version_table: env.version_table.clone(),
+                    migrations_dir: env.migrations_dir.clone(),
                 }),
             }
         })
@@ -757,6 +795,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             secrets: Default::default(),
             probe: false,
             version_table: None,
+            migrations_dir: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);

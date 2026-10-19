@@ -425,6 +425,19 @@ fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Outpu
         .expect("spawn pgman")
 }
 
+/// `batch_with_home`, against `dsn` instead of the default database.
+fn batch_with_home_dsn(home: &std::path::Path, dsn: &str, args: &[&str]) -> std::process::Output {
+    Command::new(pgman_binary())
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["--batch", "--dsn", dsn])
+        .args(args)
+        .output()
+        .expect("spawn pgman")
+}
+
 /// `read_only = false`, everything else default — the exact profile the
 /// security report used. `drop` is still `block` by default.
 const WRITABLE_PROFILE: &str = "[default]\nread_only = false\n";
@@ -2138,6 +2151,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
                 patches: Some(dir.display().to_string()),
                 databases: databases.iter().map(|d| d.to_string()).collect(),
             }),
+            ..Default::default()
         }),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2485,4 +2499,146 @@ fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
         .iter()
         .any(|f| f["code"] == "LINT001" && f["object"].as_str().unwrap().ends_with(&table));
     assert!(hit, "{text}");
+}
+
+/// With no version table configured, a probe recognises the migration
+/// tool from its own table: one database per tool, real table shapes.
+#[test]
+fn probes_recognise_common_migration_tools() {
+    let home = scratch_home("migtools", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let tools: [(&str, &str); 4] = [
+        (
+            "flyway",
+            "CREATE TABLE flyway_schema_history (installed_rank int PRIMARY KEY, version varchar(50), \
+             description varchar(200), type varchar(20), script varchar(1000), checksum int, \
+             installed_by varchar(100), installed_on timestamp DEFAULT now(), execution_time int, success boolean); \
+             INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, installed_by, execution_time, success) VALUES \
+             (1, '1', 'init', 'SQL', 'V1__init.sql', 'me', 1, true), \
+             (2, '1.1', 'users', 'SQL', 'V1_1__users.sql', 'me', 1, true), \
+             (3, '1.2', 'orders', 'SQL', 'V1_2__orders.sql', 'me', 1, false)",
+        ),
+        (
+            "django",
+            "CREATE TABLE django_migrations (id serial PRIMARY KEY, app varchar(255), name varchar(255), applied timestamptz); \
+             INSERT INTO django_migrations (app, name, applied) VALUES \
+             ('auth', '0001_initial', now() - interval '1 day'), ('shop', '0007_orders', now())",
+        ),
+        (
+            "prisma",
+            "CREATE TABLE _prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64), finished_at timestamptz, \
+             migration_name varchar(255), logs text, rolled_back_at timestamptz, started_at timestamptz DEFAULT now(), applied_steps_count int DEFAULT 0); \
+             INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, started_at) VALUES \
+             ('a', 'x', now(), '20240101_init', now() - interval '1 hour')",
+        ),
+        (
+            "rails",
+            "CREATE TABLE schema_migrations (version varchar PRIMARY KEY); \
+             INSERT INTO schema_migrations VALUES ('20231231000000'), ('20240101120000')",
+        ),
+    ];
+    let migdir = home.join("db-migration");
+    std::fs::create_dir_all(&migdir).unwrap();
+    for f in [
+        "V1__init.sql",
+        "V1_1__users.sql",
+        "V1_2__orders.sql",
+        "V2__more.sql",
+    ] {
+        std::fs::write(migdir.join(f), "-- x\n").unwrap();
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut results = std::collections::HashMap::new();
+    for (tool, setup) in tools {
+        let db = format!("pgman_it_{tool}_{pid}");
+        let _ = batch_with_home(&home, &["--yes", "--sql", &format!("CREATE DATABASE {db}")]);
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        let out = batch_with_home_dsn(&home, &dsn, &["--yes", "--sql", setup]);
+        assert!(
+            out.status.success(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report = pgman::inventory::EnvReport {
+            name: tool.into(),
+            source: "test".into(),
+            targets: vec![pgman::inventory::Target {
+                database: db.clone(),
+                server: "local".into(),
+                role: pgman::mcp::connections::Role::Direct,
+                replica_of: None,
+                host: None,
+                port: None,
+                engine: None,
+                status: None,
+                class: None,
+                multi_az: None,
+                connect: Ok(pgman::inventory::ConnectSpec {
+                    dsn: pgman::conn::Dsn::parse(&dsn).unwrap(),
+                    secret: None,
+                    password_env: None,
+                }),
+            }],
+            error: None,
+            probe: Some(pgman::inventory::ProbeSettings {
+                version_table: None,
+                migrations_dir: Some(migdir.display().to_string()),
+            }),
+        };
+        let p = rt
+            .block_on(pgman::inventory::probe::run(
+                report.clone(),
+                std::sync::Arc::new(|_| unreachable!()),
+            ))
+            .remove(0)
+            .unwrap()
+            .unwrap();
+        results.insert(tool, p);
+        if tool == "flyway" {
+            // An environment that names its own version table, for other
+            // databases only: no guessing here.
+            let mut explicit = report;
+            explicit.probe = Some(pgman::inventory::ProbeSettings {
+                version_table: Some(pgman::inventory::VersionTable {
+                    table: "t_version".into(),
+                    column: "id".into(),
+                    patches: None,
+                    databases: vec!["elsewhere".into()],
+                }),
+                migrations_dir: None,
+            });
+            let p = rt
+                .block_on(pgman::inventory::probe::run(
+                    explicit,
+                    std::sync::Arc::new(|_| unreachable!()),
+                ))
+                .remove(0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(p.migration_tool, None, "configured, so not detected");
+        }
+    }
+    let f = &results["flyway"];
+    assert_eq!(
+        (f.migration_tool.as_deref(), f.schema_label.as_deref()),
+        (Some("flyway"), Some("1.1"))
+    );
+    assert_eq!(f.pending, Some(2), "1.2 failed and 2 never ran");
+    assert_eq!(
+        f.schema_error.as_deref(),
+        Some("flyway migration 1.2 failed")
+    );
+    assert_eq!(
+        results["django"].schema_label.as_deref(),
+        Some("shop.0007_orders")
+    );
+    assert_eq!(
+        results["prisma"].schema_label.as_deref(),
+        Some("20240101_init")
+    );
+    let r = &results["rails"];
+    assert_eq!(
+        (r.migration_tool.as_deref(), r.schema_label.as_deref()),
+        (Some("migrations"), Some("20240101120000"))
+    );
 }

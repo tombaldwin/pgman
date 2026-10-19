@@ -738,6 +738,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
             error: None,
             probe: Some(crate::inventory::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         },
         EnvReport {
@@ -788,6 +789,8 @@ pub fn environment_probes(
                 schema_error: None,
                 sessions: Some(12),
                 size: Some("812 MB".into()),
+                migration_tool: None,
+                schema_label: None,
             })),
         })
         .collect()

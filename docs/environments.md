@@ -197,6 +197,27 @@ the MCP `environments` tool when called with `probe: true`):
 
 Version, recovery, lag, sessions and size come back in one round trip.
 
+**Without a `version_table`**, a probe recognises the common migration
+tools by the table each keeps, and `SCHEMA` shows that tool's version:
+
+| Tool | Table | `SCHEMA` shows |
+|---|---|---|
+| Flyway | `flyway_schema_history` | `flyway 2.3.1`: the newest successful version. A failed migration shows `✗` in red. With `migrations_dir` naming its `V<version>__*.sql` directory, pending ones show as `(+2)`. |
+| Liquibase | `databasechangelog` | the last changeset run |
+| Prisma | `_prisma_migrations` | the last finished migration; a failed one shows `✗` |
+| sqlx | `_sqlx_migrations` | the highest version; a failed one shows `✗` |
+| Django | `django_migrations` | the last `app.migration` applied |
+| Alembic | `alembic_version` | the current revision |
+| Rails, golang-migrate | `schema_migrations` | the highest version |
+
+```toml
+[[environments]]
+name = "staging"
+# … source and connection settings …
+probe = true
+migrations_dir = "~/src/app/src/main/resources/db/migration"   # Flyway only, optional
+```
+
 How a probe connects:
 
 - **A primary with a replica of the same database is not connected

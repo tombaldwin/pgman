@@ -734,6 +734,8 @@ pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
             "schema_error": p.schema_error,
             "sessions": p.sessions,
             "size": p.size,
+            "migration_tool": p.migration_tool,
+            "migration_version": p.schema_label,
         }),
     }
 }
