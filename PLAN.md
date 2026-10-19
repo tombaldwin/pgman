@@ -371,9 +371,17 @@ each based on the one before so each review stays small:
   the account checked first. A `primary` connection serves only
   `sessions_locks`.
 
-Not yet done: any connection to examplecorp Demo/Prod and any real secret
-read. Both wait on Tom's go in this tab; a Demo replica smoke test
-comes first.
+Demo smoke test, 2026-10-19, read-only, on Tom's go: the
+`connections.toml` entries `examplecorp-demo` (replica) and
+`examplecorp-demo-primary` go through the jumphost tunnel, which allows the
+port forward, with secrets read via the aws CLI and the account
+checked. The replica reported `pg_is_in_recovery` true and
+`default_transaction_read_only` on. `t_schema_version` is at 251 with
+nothing pending, and the same 16 ids are recorded while the file's
+version row is commented out. `sessions_locks` worked on both the
+replica and the primary; `query` on the primary was refused. Neither
+secret's password appears in the log or the tool output. Prod has not
+been touched.
 
 ## Release day
 
