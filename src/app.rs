@@ -4028,7 +4028,14 @@ impl App {
         let PatchStage::Plan(Ok(plan)) = &v.stage else {
             return;
         };
-        if plan.patches.is_empty() || (plan.protected && v.typed != plan.environment) {
+        if plan.patches.is_empty() {
+            return;
+        }
+        if plan.protected && v.typed != plan.environment {
+            self.last_status = Some(format!(
+                "that isn't {} — type the name exactly, or Esc to cancel",
+                plan.environment
+            ));
             return;
         }
         let plan = plan.clone();

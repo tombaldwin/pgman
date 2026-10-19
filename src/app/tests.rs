@@ -10248,6 +10248,13 @@ fn a_protected_environment_applies_only_on_its_typed_name() {
     assert!(a.environments.patch.is_some(), "q is typed, not a close");
     press(&mut a, KeyCode::Enter);
     assert!(applied.lock().unwrap().is_empty(), "yq isn't {env}");
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap()
+            .starts_with(&format!("that isn't {env}")),
+        "a wrong name says so"
+    );
     press(&mut a, KeyCode::Backspace);
     press(&mut a, KeyCode::Backspace);
     for c in env.chars() {

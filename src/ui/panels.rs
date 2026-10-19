@@ -1663,6 +1663,9 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         for p in plan.patches.iter().skip(ran) {
             out.push((format!("  · {} — not run", p.file.file), false));
         }
+        if let Some((file, why)) = &plan.stopped_at {
+            out.push((format!("  still pending: {file} — {why}"), true));
+        }
         return out;
     }
     if plan.patches.is_empty() {
@@ -3130,6 +3133,9 @@ mod tests {
             done[2],
             ("  ✗ 43-customer-tier.sql — lock timeout".into(), true)
         );
+        assert!(done[3]
+            .0
+            .starts_with("  still pending: 44-orders-created-idx.sql"));
         v.stage = PatchStage::Plan(Err("no version_table".into()));
         assert_eq!(patch_lines(&v)[1], ("  ✗ no version_table".into(), true));
     }
