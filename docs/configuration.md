@@ -13,6 +13,7 @@ URL-embedded password.
 | --- | --- |
 | `~/.config/pgman/safety.toml` | Personal safety guard rails: default profile + per-database overrides. |
 | `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd. |
+| `~/.config/pgman/connections.toml` | Personal named connections for `pgman mcp serve`, ssh tunnels included. See [MCP server](mcp.md). |
 | `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch. |
 | `~/.local/share/pgman/history.log` | Query history, newest kept up to the last 50 statements run. |
 | `~/.local/share/pgman/saved.toml` | Named saved queries. |
@@ -24,7 +25,7 @@ URL-embedded password.
 Every path above honours `XDG_CONFIG_HOME` / `XDG_DATA_HOME` /
 `XDG_CACHE_HOME` when set to an absolute path. Every file pgman writes
 is `0600` and every directory it creates is `0700`, regardless of your
-umask. `safety.toml` and `pgman.toml` are yours, not pgman's — it
+umask. `safety.toml`, `connections.toml` and `pgman.toml` are yours, not pgman's — it
 never writes them, so their permissions are whatever you gave them.
 
 ## `~/.config/pgman/safety.toml`

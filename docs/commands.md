@@ -129,6 +129,9 @@ surface.
 | `--upgrade` | Upgrade this install in place, then exit: `git pull` + `cargo install --path .` for a git checkout, `cargo install` for a crates.io install, or the Homebrew formula; prints the GitHub releases page for anything else. |
 | `--no-update-check` | Skip the startup check for a newer release on crates.io (same effect as the `PGMAN_NO_UPDATE_CHECK` env var). Without either, pgman makes at most one crates.io request every six hours, sending only the running version and a user-agent string. |
 
+`pgman mcp serve [--read-only] [--project-connections]` runs the read-only
+stdio MCP server instead of the TUI; see [MCP server](mcp.md).
+
 A `--batch --dsn` connect failure prints the driver/server message, then a
 `hint: …` line when pgman recognises the cause (wrong password, nothing
 listening, unknown host, …) — the same hint the TUI shows on a failed
