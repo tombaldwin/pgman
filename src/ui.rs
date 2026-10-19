@@ -896,6 +896,42 @@ fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
 /// string is never wider than `width` — if even the first item plus the
 /// marker can't fit, the marker alone is returned; if that doesn't fit
 /// either, an empty string is returned.
+/// The key of a `key action` hint: its first word, plus any `/ alt`
+/// alternatives (`esc / q close`). `None` for a hint that is all prose
+/// (`connecting…`). Pure.
+pub(crate) fn hint_key(hint: &str) -> Option<(&str, &str)> {
+    let mut end = hint.find(' ')?;
+    while let Some(rest) = hint[end..].strip_prefix(" / ") {
+        end += 3 + rest.find(' ').unwrap_or(rest.len());
+    }
+    let (key, action) = hint.split_at(end);
+    (!action.trim().is_empty()).then_some((key, action))
+}
+
+/// A fitted ` · `-joined hint string as ebman shows its key strip: each
+/// key bold in the accent colour, its action muted. Same text, so the
+/// width `fit_hints` measured still holds.
+pub(crate) fn hint_spans(fitted: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let key_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(theme.muted);
+    let mut spans = Vec::new();
+    for (i, hint) in fitted.split(" · ").enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.border_idle)));
+        }
+        match hint_key(hint) {
+            Some((key, action)) => {
+                spans.push(Span::styled(key.to_string(), key_style));
+                spans.push(Span::styled(action.to_string(), muted));
+            }
+            None => spans.push(Span::styled(hint.to_string(), muted)),
+        }
+    }
+    spans
+}
+
 pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
     const SEP: &str = " · ";
     if hints.is_empty() || display_width(hints) <= width {
@@ -1437,10 +1473,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .saturating_sub(badge_width)
             .saturating_sub(LEADING_SPACE) as usize;
         let fitted = fit_hints(hints, available);
-        Line::from(Span::styled(
-            format!(" {fitted}"),
-            Style::default().fg(theme.muted),
-        ))
+        let mut spans = vec![Span::raw(" ")];
+        spans.extend(hint_spans(&fitted, theme));
+        Line::from(spans)
     };
     // Prepend persistent state badges: `[RO]` when read-only is in
     // effect (per safety profile), `[TX]` when an auto-tx is open.
