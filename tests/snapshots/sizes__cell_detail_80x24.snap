@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││          PostgreSQL   row │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> S╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]──────────────────────────╮   │
 │  F│                                                                      │   │
 │  W│ ▼ { 3 }                                                              │   │
 │  O│   "id": 1                                                            │   │
-│   │   ▼ "meta": { 1 }                                                    │   │
-╰───│     "k": "v"                                                         │───╯
-╭[ ◆│   ▼ "tags": [ 2 ]                                                    │───╮
-│dat│     [0]: "a"                                                         │   │
-│{"i│     [1]: "b"                                                         │   │
-│   │                                                                      │   │
-│   │                                                                      │   │
-│   │                                                                      │   │
+╰───│   ▼ "meta": { 1 }                                                    │───╯
+╭[ ◆│     "k": "v"                                                         │───╮
+│dat│   ▼ "tags": [ 2 ]                                                    │   │
+│{"i│     [0]: "a"                                                         │   │
+│   │     [1]: "b"                                                         │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   │                                                                      │   │
 │   ╰──────────────────────────────────────────────────────────────────────╯   │
-│                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   tip · JSON cells… tree · y yanks the value (or jq path)

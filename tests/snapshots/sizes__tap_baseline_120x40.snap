@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                   PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  OR╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear ·╮    │
-│    │baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                         │    │
-╰────│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                    │────╯
-╭[ ◆ │                                                                                                            │────╮
-│id  │no changes since baseline — nothing new, no regressions, no disappearances.                                 │    │
+│  WH╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear ·╮    │
+│  OR│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                         │    │
+│    │current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                    │    │
+╰────│                                                                                                            │────╯
+╭[ ◆ │no changes since baseline — nothing new, no regressions, no disappearances.                                 │────╮
+│id  │                                                                                                            │    │
 │1   │                                                                                                            │    │
 │2   │                                                                                                            │    │
 │3   │                                                                                                            │    │
 │4   │                                                                                                            │    │
 │5   │                                                                                                            │    │
 │6   │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

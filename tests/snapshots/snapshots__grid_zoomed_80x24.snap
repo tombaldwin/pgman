@@ -1,18 +1,18 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 866
+assertion_line: 868
 expression: text
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: test       ││      PostgreSQL   results │
+│ Status: connected · pg 16.0                     ││     <?> help  <:> command │
+│ Via: —                                          ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, name F…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ result · 2 row(s) ◆ ] · zoomed (z) ───────────────────────────────────────╮
 │id  name                                                                      │
 │1   alice                                                                     │
 │2   bob                                                                       │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

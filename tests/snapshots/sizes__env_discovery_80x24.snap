@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   environments │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  ╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ─────────────╮   │
 │  │  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2  │   │
 │  │                                                                       │   │
-│  │  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note  │   │
-╰──│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note  │───╯
-╭[ │      staging    already in environment staging                        │───╮
-│id│                                                                       │   │
-│1 │  s appends for analytics:                                             │   │
-│2 │  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/…│   │
-│3 │  [[environments]]                                                     │   │
-│4 │  name = "analytics"                                                   │   │
-│5 │  source = { kind = "rds", instances = ["analytics"], region = "eu-wes…│   │
-│6 │  ssh_tunnel = "bastion.eu-west-2.compute.amazonaws.com"               │   │
-│  │  sslmode = "require"                                                  │   │
-│  │                                                                       │   │
+╰──│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note  │───╯
+╭[ │  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note  │───╮
+│id│      staging    already in environment staging                        │   │
+│1 │                                                                       │   │
+│2 │  s appends for analytics:                                             │   │
+│3 │  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/…│   │
+│4 │  [[environments]]                                                     │   │
+│5 │  name = "analytics"                                                   │   │
+│6 │  source = { kind = "rds", instances = ["analytics"], region = "eu-wes…│   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
-│                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · F1 +3 more

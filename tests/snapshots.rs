@@ -858,9 +858,11 @@ fn grid_zoomed_80x24() {
         .filter(|(_, l)| l.starts_with('╭') || l.starts_with('╰'))
         .map(|(y, _)| y)
         .collect();
+    // The boxed header (rows 0-4), then one block from under the tab
+    // bar to the footer.
     assert_eq!(
         corners,
-        vec![2, 22],
+        vec![0, 4, 6, 22],
         "one block, tab bar to footer:\n{text}"
     );
     insta::assert_snapshot!(text);

@@ -3,7 +3,11 @@ source: tests/snapshots.rs
 assertion_line: 244
 expression: dump(&buf)
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: test  •  User: test     ││                PostgreSQL   help │
+│ Status: connected · pg 16.0  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: —                                                       ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 empty                                                     ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                      │
@@ -14,7 +18,6 @@ expression: dump(&buf)
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ result ◆ ]────────────────────────────────────────────────────────────────────────────────────╮
 │(no rows)                                                                                         │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
@@ -90,12 +93,9 @@ expression: dump(&buf)
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
 │              │                   script                                           │              │
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
-│              │     .             auto-trigger qualified completion (users.|)      │              │
-│              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
-│              │ ↓ 221 more below                                                   │              │
+│              │ ↓ 223 more below                                                   │              │
 │              │                                                                    │              │
 │              ╰────────────────────────────────────────────────────────────────────╯              │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

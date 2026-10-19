@@ -3,15 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                             PostgreSQL   schema lint │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
-╰───────│no findings — schema looks clean                                                                                                                                                      │───────╯
+│  ORDER╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+│       │no findings — schema looks clean                                                                                                                                                      │       │
+╰───────│                                                                                                                                                                                      │───────╯
 ╭[ ◆ res│                                                                                                                                                                                      │───────╮
 │id  ema│                                                                                                                                                                                      │       │
 │1   ada│                                                                                                                                                                                      │       │
@@ -20,10 +24,6 @@ expression: dump(&buf)
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

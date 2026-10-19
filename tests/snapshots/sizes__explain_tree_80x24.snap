@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││      PostgreSQL   explain │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FR╭[ ◆ EXPLAIN plan ◆ ] q / esc close ─────────────────────────────────╮    │
 │  WH│▼ Hash Join · 50.00ms · 4500 rows                                   │    │
 │  OR│    Hash Cond: (o.user_id = u.id)                                   │    │
-│    │  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │    │
-╰────│  ▼ Hash · 5.00ms                                                   │────╯
-╭[ ◆ │    · Seq Scan on users u · 4.00ms                                  │────╮
-│id  │                                                                    │    │
+╰────│  · Seq Scan on orders o · 30.00ms · ~10000 rows                    │────╯
+╭[ ◆ │  ▼ Hash · 5.00ms                                                   │────╮
+│id  │    · Seq Scan on users u · 4.00ms                                  │    │
 │1   │                                                                    │    │
 │2   │                                                                    │    │
 │3   │                                                                    │    │
 │4   │                                                                    │    │
 │5   │                                                                    │    │
 │6   │                                                                    │    │
-│    │                                                                    │    │
-│    │                                                                    │    │
 │    ╰────────────────────────────────────────────────────────────────────╯    │
-│                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · F1 +3 more

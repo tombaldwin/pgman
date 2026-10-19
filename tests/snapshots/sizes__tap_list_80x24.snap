@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││     PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: list · v cycle · … ──╮   │
-│  │    duration       rows  app                   sql / kind              │   │
+│  │    DURATION       ROWS  APP                   SQL / KIND              │   │
 │  │       1.8ms          1  shop-api              SELECT id, user_id, sta…│   │
-│  │       420µs          1  shop-api              SELECT * FROM order_ite…│   │
-╰──│       435µs          1  shop-api              SELECT * FROM order_ite…│───╯
-╭[ │       450µs          1  shop-api              SELECT * FROM order_ite…│───╮
-│id│       465µs          1  shop-api              SELECT * FROM order_ite…│   │
-│1 │       480µs          1  shop-api              SELECT * FROM order_ite…│   │
-│2 │       495µs          1  shop-api              SELECT * FROM order_ite…│   │
-│3 │       310µs          1  shop-api              SELECT id, email, plan …│   │
-│4 │                                                                       │   │
+╰──│       420µs          1  shop-api              SELECT * FROM order_ite…│───╯
+╭[ │       435µs          1  shop-api              SELECT * FROM order_ite…│───╮
+│id│       450µs          1  shop-api              SELECT * FROM order_ite…│   │
+│1 │       465µs          1  shop-api              SELECT * FROM order_ite…│   │
+│2 │       480µs          1  shop-api              SELECT * FROM order_ite…│   │
+│3 │       495µs          1  shop-api              SELECT * FROM order_ite…│   │
+│4 │       310µs          1  shop-api              SELECT id, email, plan …│   │
 │5 │                                                                       │   │
 │6 │                                                                       │   │
-│  │                                                                       │   │
-│  │                                                                       │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
-│                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · F1 +4 more

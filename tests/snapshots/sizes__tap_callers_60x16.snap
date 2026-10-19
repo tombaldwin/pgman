@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
-│ │   calls    err        p50        p95   fps  caller ·│  │
+│ │   CALLS    ERR        P50        P95   FPS  CALLER ·│  │
 │ │       6      0      450µs      495µs     1  Ord… · s│  │
 ╰─│       1      0      1.8ms      1.8ms     1  Ord… · s│──╯
 ╭[│       1      0      310µs      310µs     1  Use… · s│──╮

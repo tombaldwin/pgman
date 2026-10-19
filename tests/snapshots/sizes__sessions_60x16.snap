@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ active sessions ◆ ] pg_stat_activity — r refresh ╮  │
-│ │     pid  user/app              state         age(s) │  │
+│ │     PID  USER/APP              STATE         AGE(S) │  │
 │ │    1234  alice/psql            active          12.5 │  │
 ╰─│    5678  bob/pgman             idle in tx     300.0 │──╯
 ╭[│                                                     │──╮

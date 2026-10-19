@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
-│ │    duration       rows  app                   sql / │  │
+│ │    DURATION       ROWS  APP                   SQL / │  │
 │ │       1.8ms          1  shop-api              SELEC…│  │
 ╰─│       420µs          1  shop-api              SELEC…│──╯
 ╭[│       435µs          1  shop-api              SELEC…│──╮

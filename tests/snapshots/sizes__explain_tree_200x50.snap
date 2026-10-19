@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                 PostgreSQL   explain │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│           ╭[ ◆ EXPLAIN plan ◆ ] q / esc close ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-╰───────────│▼ Hash Join · 50.00ms · 4500 rows                                                                                                                                             │───────────╯
-╭[ ◆ result │    Hash Cond: (o.user_id = u.id)                                                                                                                                             │───────────╮
-│id  email  │  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                                                                                              │           │
-│1   ada@exa│  ▼ Hash · 5.00ms                                                                                                                                                             │           │
-│2   linus@e│    · Seq Scan on users u · 4.00ms                                                                                                                                            │           │
+│  ORDER BY ╭[ ◆ EXPLAIN plan ◆ ] q / esc close ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
+│           │▼ Hash Join · 50.00ms · 4500 rows                                                                                                                                             │           │
+╰───────────│    Hash Cond: (o.user_id = u.id)                                                                                                                                             │───────────╯
+╭[ ◆ result │  · Seq Scan on orders o · 30.00ms · ~10000 rows                                                                                                                              │───────────╮
+│id  email  │  ▼ Hash · 5.00ms                                                                                                                                                             │           │
+│1   ada@exa│    · Seq Scan on users u · 4.00ms                                                                                                                                            │           │
+│2   linus@e│                                                                                                                                                                              │           │
 │3   grace@e│                                                                                                                                                                              │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │

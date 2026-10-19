@@ -8,12 +8,12 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ environments ◆ ] enter connect · d discover · q c╮  │
 │ │  staging · RDS 123456789012 eu-west-2               │  │
-│ │    database  role     server             status    …│  │
+│ │    DATABASE  ROLE     SERVER             STATUS    …│  │
 ╰─│    shop      primary  staging            available …│──╯
 ╭[│    shop      replica  └ staging-replica  available …│──╮
 │i│                                                     │  │
 │1│  qa · RDS 123456789012 eu-west-2                    │  │
-│2│    database  role     server             status    …│  │
+│2│    DATABASE  ROLE     SERVER             STATUS    …│  │
 │3│    shop      direct   qa                 stopped   …│  │
 │4╰─────────────────────────────────────────────────────╯  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │

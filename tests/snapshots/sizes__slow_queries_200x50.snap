@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                            PostgreSQL   slow queries │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
-╰───────│    total ms    mean ms     calls      rows  query                                                                                                                                    │───────╯
-╭[ ◆ res│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                                                                                                  │───────╮
-│id  ema│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                                                                                              │       │
+│  ORDER╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+│       │    TOTAL MS    MEAN MS     CALLS      ROWS  QUERY                                                                                                                                    │       │
+╰───────│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                                                                                                  │───────╯
+╭[ ◆ res│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                                                                                              │───────╮
+│id  ema│                                                                                                                                                                                      │       │
 │1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

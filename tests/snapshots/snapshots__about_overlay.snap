@@ -3,19 +3,21 @@ source: tests/snapshots.rs
 assertion_line: 266
 expression: dump(&buf)
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: test  •  User: test     ││               PostgreSQL   about │
+│ Status: connected · pg 16.0  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: —                                                       ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 empty                                                     ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                      │
 │                                                                                                  │
 │                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-╰─────────────────────────╭[ ◆ about ◆ ]─────────────────────────────────╮─────────────────────────╯
-╭[ ◆ result ◆ ]───────────│                                              │─────────────────────────╮
-│(no rows)                │                                              │                         │
-│                         │              pgman X.X.X · beta              │                         │
-│                         │       installed via a standalone binary      │                         │
+│                         ╭[ ◆ about ◆ ]─────────────────────────────────╮                         │
+│                         │                                              │                         │
+╰─────────────────────────│                                              │─────────────────────────╯
+╭[ ◆ result ◆ ]───────────│              pgman X.X.X · beta              │─────────────────────────╮
+│(no rows)                │       installed via a standalone binary      │                         │
 │                         │   k9s-style Postgres TUI for Java/AWS shops  │                         │
 │                         │                server: pg 16.0               │                         │
 │                         │                                              │                         │
@@ -25,8 +27,6 @@ expression: dump(&buf)
 │                         │           esc / enter / A to close           │                         │
 │                         │                                              │                         │
 │                         ╰──────────────────────────────────────────────╯                         │
-│                                                                                                  │
-│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

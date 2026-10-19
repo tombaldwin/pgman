@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
-│ │  state        stmts    fps        span     db-time  │  │
+│ │  STATE        STMTS    FPS        SPAN     DB-TIME  │  │
 │ │  open             6      1     125.0ms       2.7ms  │  │
 ╰─│  open             1      1         0µs       1.8ms  │──╯
 ╭[│  open             1      1         0µs       310µs  │──╮

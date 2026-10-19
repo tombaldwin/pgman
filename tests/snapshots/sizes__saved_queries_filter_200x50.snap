@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                           PostgreSQL   saved queries │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│           ╭[ ◆ saved queries ◆ ] /d  (3/3 shown) · enter load · esc clear ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-╰───────────│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │───────────╯
-╭[ ◆ result │  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │───────────╮
-│id  email  │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │           │
+│  ORDER BY ╭[ ◆ saved queries ◆ ] /d  (3/3 shown) · enter load · esc clear ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
+│           │  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │           │
+╰───────────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │───────────╯
+╭[ ◆ result │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │───────────╮
+│id  email  │                                                                                                                                                                              │           │
 │1   ada@exa│                                                                                                                                                                              │           │
 │2   linus@e│                                                                                                                                                                              │           │
 │3   grace@e│                                                                                                                                                                              │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │

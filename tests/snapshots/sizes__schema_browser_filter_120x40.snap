@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                     PostgreSQL   schema │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  ORDE╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
-│      │▼ public  (4)                            schema: public                                                │       │
-╰──────│  ▼ orders  (5 col, 1 cons)                                                                            │───────╯
-╭[ ◆ re│      · user_id : bigint NOT NULL        4 table(s)                                                    │───────╮
-│id  em│      · status : varchar(20) NOT NULL                                                                  │       │
-│1   ad│  ▼ users  (4 col, 1 cons)               enter to expand — then arrow / j/k into the tables            │       │
-│2   li│      ◆ users_pkey                                                                                     │       │
+│  WHER╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
+│  ORDE│▼ public  (4)                            schema: public                                                │       │
+│      │  ▼ orders  (5 col, 1 cons)                                                                            │       │
+╰──────│      · user_id : bigint NOT NULL        4 table(s)                                                    │───────╯
+╭[ ◆ re│      · status : varchar(20) NOT NULL                                                                  │───────╮
+│id  em│  ▼ users  (4 col, 1 cons)               enter to expand — then arrow / j/k into the tables            │       │
+│1   ad│      ◆ users_pkey                                                                                     │       │
+│2   li│                                                                                                       │       │
 │3   gr│                                                                                                       │       │
 │4   al│                                                                                                       │       │
 │5   ed│                                                                                                       │       │
 │6   ka│                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │

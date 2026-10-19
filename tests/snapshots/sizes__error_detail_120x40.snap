@@ -3,24 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                      PostgreSQL   error │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                           │
-│                                                                                                                      │
-╰────────╭[ ◆ error detail ◆ ] F2 / esc / q close ────────────────────────────────────────────────────────────╮────────╯
-╭[ ◆ resu│ ERROR · SQLSTATE 23505                                                                             │────────╮
-│id  emai│                                                                                                    │        │
-│1   ada@│    message: duplicate key value violates unique constraint "users_email_key"                       │        │
-│2   linu│     detail: Key (email)=(ada@example.com) already exists.                                          │        │
-│3   grac│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                        │        │
-│4   alan│                                                                                                    │        │
-│5   edsg│affected object:                                                                                    │        │
-│6   kath│     schema: public                                                                                 │        │
-│        │      table: users                                                                                  │        │
+│        ╭[ ◆ error detail ◆ ] F2 / esc / q close ────────────────────────────────────────────────────────────╮        │
+╰────────│ ERROR · SQLSTATE 23505                                                                             │────────╯
+╭[ ◆ resu│                                                                                                    │────────╮
+│id  emai│    message: duplicate key value violates unique constraint "users_email_key"                       │        │
+│1   ada@│     detail: Key (email)=(ada@example.com) already exists.                                          │        │
+│2   linu│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"                        │        │
+│3   grac│                                                                                                    │        │
+│4   alan│affected object:                                                                                    │        │
+│5   edsg│     schema: public                                                                                 │        │
+│6   kath│      table: users                                                                                  │        │
 │        │ constraint: users_email_key                                                                        │        │
 │        │                                                                                                    │        │
 │        │                                                                                                    │        │
@@ -33,10 +36,7 @@ expression: dump(&buf)
 │        │                                                                                                    │        │
 │        │                                                                                                    │        │
 │        │                                                                                                    │        │
-│        │                                                                                                    │        │
-│        │                                                                                                    │        │
 │        ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯        │
-│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

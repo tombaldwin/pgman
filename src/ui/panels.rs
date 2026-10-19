@@ -1039,7 +1039,8 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
         format!(
             "  {:>10}  {:>9}  {:>8}  {:>8}  {}",
             "total ms", "mean ms", "calls", "rows", "query"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -1651,7 +1652,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
                 Line::from(spans)
             }
             EnvLine::Columns(text) => Line::from(Span::styled(
-                fit(text),
+                fit(&text.to_uppercase()),
                 Style::default()
                     .fg(theme.muted)
                     .add_modifier(Modifier::BOLD),
@@ -1741,7 +1742,8 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             "blocked",
             "query",
             state_w = state_w
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -2096,7 +2098,7 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     let scroll = scroll_offset(app.notifications.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        format!("  {:<20}  {:>6}  {}", "channel", "pid", "payload"),
+        format!("  {:<20}  {:>6}  {}", "channel", "pid", "payload").to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),

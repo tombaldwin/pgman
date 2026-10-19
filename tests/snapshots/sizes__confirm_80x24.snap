@@ -3,26 +3,26 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││      PostgreSQL   confirm │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
-│  ORDER BY created_at DESC;                                                   │
-│                                                                              │
-╰───────────╭[ ◆ confirm ◆ ]───────────────────────────────────────╮───────────╯
-╭[ ◆ result │run (DELETE without WHERE) · will be refused — this   │───────────╮
-│id  email  │session is read-only                                  │           │
-│1   ada@exa│                                                      │           │
-│2   linus@e│DELETE FROM orders                                    │           │
-│3   grace@e│                                                      │           │
-│4   alan@ex│y = run · n / esc = cancel                            │           │
-│5   edsger@╰──────────────────────────────────────────────────────╯           │
+│  ORDER BY ╭[ ◆ confirm ◆ ]───────────────────────────────────────╮           │
+╰───────────│run (DELETE without WHERE) · will be refused — this   │───────────╯
+╭[ ◆ result │session is read-only                                  │───────────╮
+│id  email  │                                                      │           │
+│1   ada@exa│DELETE FROM orders                                    │           │
+│2   linus@e│                                                      │           │
+│3   grace@e│y = run · n / esc = cancel                            │           │
+│4   alan@ex╰──────────────────────────────────────────────────────╯           │
+│5   edsger@example.com     free  2026-03-03 11:22:00+00                       │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
-│                                                                              │
-│                                                                              │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

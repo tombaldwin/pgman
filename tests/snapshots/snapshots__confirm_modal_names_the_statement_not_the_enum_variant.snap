@@ -3,24 +3,24 @@ source: tests/snapshots.rs
 assertion_line: 309
 expression: dump(&buf)
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: test       ││      PostgreSQL   confirm │
+│ Status: connected · pg 16.0                     ││     <?> help  <:> command │
+│ Via: —                                          ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 empty                                 ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                  │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰───────────╭[ ◆ confirm ◆ ]───────────────────────────────────────╮───────────╯
-╭[ ◆ result │run (DELETE without WHERE) · will be refused — this   │───────────╮
-│(no rows)  │session is read-only                                  │           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭[ ◆ result ◆ ]────────────────────────────────────────────────────────────────╮
+│(no rows)  ╭[ ◆ confirm ◆ ]───────────────────────────────────────╮           │
+│           │run (DELETE without WHERE) · will be refused — this   │           │
+│           │session is read-only                                  │           │
 │           │                                                      │           │
 │           │DELETE FROM orders                                    │           │
 │           │                                                      │           │
 │           │y = run · n / esc = cancel                            │           │
 │           ╰──────────────────────────────────────────────────────╯           │
-│                                                                              │
-│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

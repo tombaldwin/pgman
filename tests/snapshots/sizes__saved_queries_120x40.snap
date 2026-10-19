@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││              PostgreSQL   saved queries │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  ORDE╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · q close ───────────────────────────╮       │
-│      │  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY cre│       │
-╰──────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                             │───────╯
-╭[ ◆ re│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / │───────╮
+│  WHER╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · q close ───────────────────────────╮       │
+│  ORDE│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY cre│       │
+│      │  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                             │       │
+╰──────│  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / │───────╯
+╭[ ◆ re│                                                                                                       │───────╮
 │id  em│                                                                                                       │       │
 │1   ad│                                                                                                       │       │
 │2   li│                                                                                                       │       │
@@ -20,10 +24,6 @@ expression: dump(&buf)
 │4   al│                                                                                                       │       │
 │5   ed│                                                                                                       │       │
 │6   ka│                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │
 │      │                                                                                                       │       │

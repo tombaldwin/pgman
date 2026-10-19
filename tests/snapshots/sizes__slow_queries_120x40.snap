@@ -3,16 +3,20 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││               PostgreSQL   slow queries │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  OR╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ─────────────────────────────────╮    │
-│    │    total ms    mean ms     calls      rows  query                                                          │    │
-╰────│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                        │────╯
-╭[ ◆ │      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                    │────╮
+│  WH╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ─────────────────────────────────╮    │
+│  OR│    TOTAL MS    MEAN MS     CALLS      ROWS  QUERY                                                          │    │
+│    │    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true                        │    │
+╰────│      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2                    │────╯
+╭[ ◆ │                                                                                                            │────╮
 │id  │                                                                                                            │    │
 │1   │                                                                                                            │    │
 │2   │                                                                                                            │    │
@@ -20,10 +24,6 @@ expression: dump(&buf)
 │4   │                                                                                                            │    │
 │5   │                                                                                                            │    │
 │6   │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

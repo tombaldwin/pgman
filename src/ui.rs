@@ -15,6 +15,7 @@ use unicode_width::UnicodeWidthChar;
 
 mod chrome;
 mod editor;
+mod header;
 mod landing;
 mod panels;
 mod results;
@@ -49,7 +50,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // line) the row is worth more to the panes — unless a second tab
     // exists, when the operator needs to see which one they are on.
     let connected = matches!(app.conn_state, ConnState::Connected { .. });
-    let cramped = area.height.saturating_sub(2) < CRAMPED_BODY;
+    let header_h = header::header_rows(area.height);
+    let cramped = area.height.saturating_sub(header_h + 1) < CRAMPED_BODY;
     let tabbar_height: u16 = if app.tabs.len() > 1 || (connected && !cramped) {
         1
     } else {
@@ -57,7 +59,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     };
     // Everything between the header row (and tab bar) and the footer
     // row is the editor's and the grid's to share — see `pane_split`.
-    let body_height = area.height.saturating_sub(2 + tabbar_height);
+    let body_height = area.height.saturating_sub(header_h + 1 + tabbar_height);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let zoom = app.zoomed.then(|| zoomed_pane(app));
     let (editor_height, results_height) =
@@ -65,14 +67,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // `Alt-=` / `Alt--` clamp against the body they were pressed over.
     app.body_rows = body_height;
     let chunks = Layout::vertical([
-        Constraint::Length(1),              // header
+        Constraint::Length(header_h),       // header
         Constraint::Length(tabbar_height),  // optional tab bar
         Constraint::Length(editor_height),  // editor pane (border + lines + border)
         Constraint::Length(results_height), // results grid
         Constraint::Length(1),              // footer
     ])
     .split(area);
-    draw_header(f, chunks[0], app);
+    if header_h > 1 {
+        header::draw_tall_header(f, chunks[0], app);
+    } else {
+        draw_header(f, chunks[0], app);
+    }
     if tabbar_height > 0 {
         draw_tab_bar(f, chunks[1], app);
     }
@@ -107,7 +113,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // computed once, so no overlay can drift back out of it. The tab
     // bar is chrome like the header: an overlay centred over it
     // painted `┌ about ┐` across the tab labels on a short terminal.
-    let area = body_area(area, tabbar_height);
+    let area = body_area(area, header_h, tabbar_height);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -2628,8 +2634,8 @@ pub(crate) fn short_server_version(v: &str) -> &str {
 /// terminal, so a popup can never paint over the connection state or
 /// the tab labels above, or the close hint below. Degrades to the
 /// input rect when there aren't enough rows to give up.
-fn body_area(area: Rect, tabbar: u16) -> Rect {
-    let above = 1 + tabbar;
+fn body_area(area: Rect, header: u16, tabbar: u16) -> Rect {
+    let above = header + tabbar;
     if area.height < above + 2 {
         return area;
     }

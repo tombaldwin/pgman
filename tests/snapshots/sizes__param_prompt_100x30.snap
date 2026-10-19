@@ -3,7 +3,11 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││          PostgreSQL   parameters │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
@@ -13,17 +17,13 @@ expression: dump(&buf)
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
-│id  email                  plan  created_at                                                       │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
-│2   linus@exam╭[ ◆ load 'order-by-id' · param 1/1 · enter next · esc cancel ◆ ]────╮              │
-│3   grace@exam│value for :order_id                                                 │              │
+│id  email     ╭[ ◆ load 'order-by-id' · param 1/1 · enter next · esc cancel ◆ ]────╮              │
+│1   ada@exampl│value for :order_id                                                 │              │
+│2   linus@exam│                                                                    │              │
+│3   grace@exam│                                                                    │              │
 │4   alan@examp│                                                                    │              │
-│5   edsger@exa│                                                                    │              │
-│6   katherine@│                                                                    │              │
-│              ╰────────────────────────────────────────────────────────────────────╯              │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
+│5   edsger@exa╰────────────────────────────────────────────────────────────────────╯              │
+│6   katherine@example.com  pro   2026-03-21 16:40:00+00                                           │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

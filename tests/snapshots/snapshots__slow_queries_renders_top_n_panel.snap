@@ -3,17 +3,18 @@ source: tests/snapshots.rs
 assertion_line: 420
 expression: dump(&buf)
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ───────────────────────────────────────────────────────╮╭──────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: test  •  User: test           ││            PostgreSQL   slow queries │
+│ Status: connected · pg 16.0  •  Session:  read-only   •  Tabs: 1   ││                <?> help  <:> command │
+│ Via: —                                                             ││               <E> envs  <ctrl-t> tab │
+╰────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
  1 empty                                                               ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]─────────────────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                                │
-│   ╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ────────────────────────╮    │
-│   │    total ms    mean ms     calls      rows  query                                                 │    │
-│   │    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true               │    │
+╰───╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh · enter copy · q close ────────────────────────╮────╯
+╭[ ◆│    TOTAL MS    MEAN MS     CALLS      ROWS  QUERY                                                 │────╮
+│(no│    12345.60      12.34   1000000   1000000  SELECT * FROM users WHERE active = true               │    │
 │   │      800.00       3.20       250       250  UPDATE orders SET status = $1 WHERE id = $2           │    │
-╰───│                                                                                                   │────╯
-╭[ ◆│                                                                                                   │────╮
-│(no│                                                                                                   │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   ├───────────────────────────────────────────────────────────────────────────────────────────────────┤    │
@@ -25,7 +26,6 @@ expression: dump(&buf)
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
-│                                                                                                            │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close · F1 help

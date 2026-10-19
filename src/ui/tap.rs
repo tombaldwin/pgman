@@ -99,7 +99,8 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:>10}  {:>9}  {:<20}  {}",
             "duration", "rows", "app", "sql / kind"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -181,7 +182,8 @@ fn draw_tap_monitor_hotspots(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:>6}  {:>5}  {:>9}  {:>9}  {:>9}  {}",
             "calls", "err", "p50", "p95", "p99", "fingerprint · last caller"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -260,7 +262,8 @@ fn draw_tap_monitor_callers(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:>6}  {:>5}  {:>9}  {:>9}  {:>4}  {}",
             "calls", "err", "p50", "p95", "fps", "caller · last fingerprint"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -403,7 +406,8 @@ fn draw_tap_monitor_baseline(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:<11}  {:>6}  {:>6}  {:>9}  {:>9}  {}",
             "change", "Δcalls", "calls", "Δp95", "p95", "fingerprint"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -523,7 +527,8 @@ fn draw_tap_monitor_txns(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:<10}  {:>6}  {:>5}  {:>10}  {:>10}  {:<12}  {}",
             "state", "stmts", "fps", "span", "db-time", "pool", "txn / conn · last sql"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -620,7 +625,8 @@ fn draw_tap_monitor_pools(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:>5}  {:>5}  {:>6}  {:>5}  {:>10}  {:>9}  {}",
             "conns", "peak", "calls", "err", "busy", "p95", "pool · app"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),
@@ -692,7 +698,8 @@ fn draw_tap_monitor_nplus1(f: &mut Frame, inner: Rect, app: &App) {
         format!(
             "  {:>6}  {:>10}  {:<18}  {}",
             "calls", "span", "txn / conn", "caller · fingerprint"
-        ),
+        )
+        .to_uppercase(),
         Style::default()
             .fg(theme.muted)
             .add_modifier(Modifier::BOLD),

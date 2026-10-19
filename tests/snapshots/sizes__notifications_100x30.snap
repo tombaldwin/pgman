@@ -3,15 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo     ││       PostgreSQL   notifications │
+│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WH╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ───────────────────────────────╮    │
-│  OR│  channel                  pid  payload                                                 │    │
-│    │  orders_channel          4321  order:9001 shipped                                      │    │
-╰────│  cache_invalidate        4322  users                                                   │────╯
+│  FR╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ───────────────────────────────╮    │
+│  WH│  CHANNEL                  PID  PAYLOAD                                                 │    │
+│  OR│  orders_channel          4321  order:9001 shipped                                      │    │
+│    │  cache_invalidate        4322  users                                                   │    │
+╰────│                                                                                        │────╯
 ╭[ ◆ │                                                                                        │────╮
 │id  │                                                                                        │    │
 │1   │                                                                                        │    │
@@ -20,10 +24,6 @@ expression: dump(&buf)
 │4   │                                                                                        │    │
 │5   │                                                                                        │    │
 │6   │                                                                                        │    │
-│    │                                                                                        │    │
-│    │                                                                                        │    │
-│    │                                                                                        │    │
-│    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │
 │    │                                                                                        │    │

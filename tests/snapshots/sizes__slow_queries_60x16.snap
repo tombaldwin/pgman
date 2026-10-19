@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh ·╮  │
-│ │    total ms    mean ms     calls      rows  query   │  │
+│ │    TOTAL MS    MEAN MS     CALLS      ROWS  QUERY   │  │
 │ │    12345.60      12.34   1000000   1000000  SELECT *│  │
 ╰─│      800.00       3.20       250       250  UPDATE o│──╯
 ╭[│                                                     │──╮

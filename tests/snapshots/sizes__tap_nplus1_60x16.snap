@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: N+1╮  │
-│ │   calls        span  txn / conn          caller · fi│  │
+│ │   CALLS        SPAN  TXN / CONN          CALLER · FI│  │
 │ │       6     125.0ms  conn-7#42           OrderServic│  │
 ╰─│                                                     │──╯
 ╭[│                                                     │──╮

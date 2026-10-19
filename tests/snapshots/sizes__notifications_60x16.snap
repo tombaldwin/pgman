@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  ╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q c╮  │
-│  │  channel                  pid  payload             │  │
+│  │  CHANNEL                  PID  PAYLOAD             │  │
 │  │  orders_channel          4321  order:9001 shipped  │  │
 ╰──│  cache_invalidate        4322  users               │──╯
 ╭[ │                                                    │──╮

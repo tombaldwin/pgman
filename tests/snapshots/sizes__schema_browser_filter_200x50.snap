@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                  PostgreSQL   schema │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│           ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-╰───────────│▼ public  (4)                                                        schema: public                                                                                           │───────────╯
-╭[ ◆ result │  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │───────────╮
-│id  email  │      · user_id : bigint NOT NULL                                    4 table(s)                                                                                               │           │
-│1   ada@exa│      · status : varchar(20) NOT NULL                                                                                                                                         │           │
-│2   linus@e│  ▼ users  (4 col, 1 cons)                                           enter to expand — then arrow / j/k into the tables                                                       │           │
-│3   grace@e│      ◆ users_pkey                                                                                                                                                            │           │
+│  ORDER BY ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
+│           │▼ public  (4)                                                        schema: public                                                                                           │           │
+╰───────────│  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │───────────╯
+╭[ ◆ result │      · user_id : bigint NOT NULL                                    4 table(s)                                                                                               │───────────╮
+│id  email  │      · status : varchar(20) NOT NULL                                                                                                                                         │           │
+│1   ada@exa│  ▼ users  (4 col, 1 cons)                                           enter to expand — then arrow / j/k into the tables                                                       │           │
+│2   linus@e│      ◆ users_pkey                                                                                                                                                            │           │
+│3   grace@e│                                                                                                                                                                              │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │

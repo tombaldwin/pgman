@@ -3,27 +3,27 @@ source: tests/snapshots.rs
 assertion_line: 683
 expression: dump(&buf)
 ---
- pgman X.X.X │ test  connected · pg 16.0
+╭ pgman X.X.X ───────────────────────────────────────────────────────╮╭──────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: test  •  User: test           ││             PostgreSQL   schema lint │
+│ Status: connected · pg 16.0  •  Session:  read-only   •  Tabs: 1   ││                <?> help  <:> command │
+│ Via: —                                                             ││               <E> envs  <ctrl-t> tab │
+╰────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────╯
  1 empty                                                               ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]─────────────────────────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                                                │
-│   ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────────────────────────────────╮    │
-│   │  SEV    CODE     object                                            title                          │    │
-│   │  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or U…│    │
+╰───╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────────────────────────────────╮────╯
+╭[ ◆│  SEV    CODE     object                                            title                          │────╮
+│(no│  HIGH   LINT001  public.OrderItems                                 table without PRIMARY KEY or U…│    │
 │   │  HIGH   LINT001  public.events                                     table without PRIMARY KEY or U…│    │
-╰───│  HIGH   LINT001  public.user                                       table without PRIMARY KEY or U…│────╯
-╭[ ◆│  MED    LINT002  public.OrderItems                                 mixed-case table identifier ne…│────╮
-│(no│  MED    LINT003  public.user                                       table named after a SQL reserv…│    │
-│   │                                                                                                   │    │
+│   │  HIGH   LINT001  public.user                                       table without PRIMARY KEY or U…│    │
+│   │  MED    LINT002  public.OrderItems                                 mixed-case table identifier ne…│    │
 │   │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                         │    │
 │   │  object: public.OrderItems                                                                        │    │
 │   │  no UNIQUE / PRIMARY KEY constraint found for public.OrderItems                                   │    │
 │   │  suggest: ALTER TABLE public.OrderItems ADD PRIMARY KEY (...);                                    │    │
 │   │                                                                                                   │    │
 │   │                                                                                                   │    │
-│   │                                                                                                   │    │
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
-│                                                                                                            │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help

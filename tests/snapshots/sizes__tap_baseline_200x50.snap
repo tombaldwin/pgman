@@ -3,27 +3,27 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
+│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────╮       │
-╰───────│baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                                                                                                   │───────╯
-╭[ ◆ res│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                                                                                              │───────╮
-│id  ema│                                                                                                                                                                                      │       │
-│1   ada│no changes since baseline — nothing new, no regressions, no disappearances.                                                                                                           │       │
+│  ORDER╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: baseline · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────╮       │
+│       │baseline captured 0s ago · 3 fingerprint(s) · 8 event(s) at capture                                                                                                                   │       │
+╰───────│current ring: 8 event(s) · 0 changed fingerprint(s) (Shift-B recaptures)                                                                                                              │───────╯
+╭[ ◆ res│                                                                                                                                                                                      │───────╮
+│id  ema│no changes since baseline — nothing new, no regressions, no disappearances.                                                                                                           │       │
+│1   ada│                                                                                                                                                                                      │       │
 │2   lin│                                                                                                                                                                                      │       │
 │3   gra│                                                                                                                                                                                      │       │
 │4   ala│                                                                                                                                                                                      │       │
 │5   eds│                                                                                                                                                                                      │       │
 │6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
