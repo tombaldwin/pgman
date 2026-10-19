@@ -1624,17 +1624,11 @@ fn load_project_safety(start: &std::path::Path) -> Option<project::ProjectSafety
 /// Load `~/.config/pgman/safety.toml`, falling back to defaults if it's absent
 /// or malformed.
 fn load_safety_config() -> safety::SafetyConfig {
-    let path = util::config_file("safety.toml");
-    match std::fs::read_to_string(&path) {
-        Ok(text) => match toml::from_str(&text) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                tracing::warn!("safety.toml parse error ({e}); using defaults");
-                safety::SafetyConfig::default()
-            }
-        },
-        Err(_) => safety::SafetyConfig::default(),
+    let (cfg, warning) = safety::SafetyConfig::load_personal();
+    if let Some(w) = warning {
+        tracing::warn!("{w}");
     }
+    cfg
 }
 
 #[cfg(test)]

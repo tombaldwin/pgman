@@ -163,6 +163,30 @@ impl SafetyConfig {
     pub fn profile_for(&self, db: &str) -> &SafetyProfile {
         self.databases.get(db).unwrap_or(&self.default)
     }
+
+    /// The operator's personal `safety.toml` under `util::config_dir()`.
+    /// A missing file is the built-in defaults with no complaint; a file
+    /// that doesn't parse is ALSO the defaults — which are read-only, so
+    /// this fails closed — and the parse error comes back alongside so a
+    /// caller can say why the operator's settings aren't in force.
+    pub fn load_personal() -> (SafetyConfig, Option<String>) {
+        let path = crate::util::config_file("safety.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Self::parse_personal(&text),
+            Err(_) => (SafetyConfig::default(), None),
+        }
+    }
+
+    /// The pure half of [`SafetyConfig::load_personal`].
+    pub fn parse_personal(text: &str) -> (SafetyConfig, Option<String>) {
+        match toml::from_str(text) {
+            Ok(cfg) => (cfg, None),
+            Err(e) => (
+                SafetyConfig::default(),
+                Some(format!("safety.toml parse error ({e}); using defaults")),
+            ),
+        }
+    }
 }
 
 /// The file `--init-config` writes to `~/.config/pgman/safety.toml`
@@ -1500,6 +1524,18 @@ fn strip_explain_prefix(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_personal_safety_toml_that_does_not_parse_falls_back_to_read_only_and_says_why() {
+        let (cfg, warning) = SafetyConfig::parse_personal("[default]\nread_only = \"nope\"\n");
+        assert!(cfg.default.read_only, "a broken file must fail closed");
+        let warning = warning.expect("a parse failure is reported, not swallowed");
+        assert!(warning.contains("safety.toml"), "{warning}");
+
+        let (cfg, warning) = SafetyConfig::parse_personal("[default]\nread_only = false\n");
+        assert!(!cfg.default.read_only);
+        assert_eq!(warning, None);
+    }
 
     #[test]
     fn classifies_basic_statements() {
