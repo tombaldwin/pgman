@@ -121,6 +121,21 @@ pub fn tool_table() -> Value {
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
         },
         {
+            "name": "apply_patches",
+            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (a read-only profile, a blocked statement, its own BEGIN/COMMIT, CONCURRENTLY). Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica, and on a database safety.toml keeps read-only (the default); only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "environment": {"type": "string"},
+                    "server": {"type": "string"},
+                    "database": {"type": "string"}
+                },
+                "required": ["environment", "server", "database"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": true}
+        },
+        {
             "name": "environments_discover",
             "description": "Propose environments from an AWS account, for environments.toml: one per RDS Postgres primary with its read replicas, the Secrets Manager secret matching each database by NAME, the bastion (public EC2 host) in the instance's VPC, sslmode=require, the account and region pinned. Each proposal has `toml` (exactly what environments_save would append), `notes` to check first (ambiguous secrets are listed, not guessed), and `covered_by` when an existing environment already lists that primary. CAVEATS: reads names and endpoints only — it never reads a secret's value or connects to a database, so a proposed secret is a match by name, not a tested login. Without permission to list secrets or EC2 hosts, proposals come without them and `warnings` says why. Uses the aws CLI's ambient profile and region unless given.",
             "inputSchema": {
@@ -179,6 +194,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         "schema_lint" => 120,
         // A listing, then one download per log file.
         "environment_logs" => 180,
+        // The operator's answer (`ELICIT_TIMEOUT`), then the patches.
+        "apply_patches" => 1800,
         // sts, configure, then three listings, each bounded by the CLI.
         "environments_discover" | "environments_save" => 120,
         _ => 10,
@@ -196,10 +213,46 @@ impl Server {
             "environments" => tool_environments(args).await,
             "schema_lint" => self.tool_schema_lint(args).await,
             "environment_logs" => tool_environment_logs(args).await,
+            "apply_patches" => self.tool_apply_patches(args).await,
             "environments_discover" => tool_environments_discover(args, self.cwd.clone()).await,
             "environments_save" => self.tool_environments_save(args).await,
             other => Err(format!("unknown tool '{other}'")),
         }
+    }
+
+    /// `apply_patches`: plan, ask the operator, apply.
+    async fn tool_apply_patches(&self, args: &Value) -> Result<String, String> {
+        if self.opts.read_only {
+            return Err(
+                "apply_patches is refused: the server was started with --read-only".to_string(),
+            );
+        }
+        if !self.client_info().1 {
+            return Err("apply_patches needs a client that supports elicitation, so the operator confirms each run; this one declared none".to_string());
+        }
+        let environment = arg_str(args, "environment")?.to_string();
+        let server = arg_str(args, "server")?.to_string();
+        let database = arg_str(args, "database")?.to_string();
+        let plan = crate::inventory::patching::plan_for(
+            environment.clone(),
+            server.clone(),
+            database.clone(),
+        )
+        .await?;
+        if plan.patches.is_empty() {
+            return Ok(render_apply(&plan, None, "nothing to apply"));
+        }
+        let (message, schema) = confirm_request(&plan);
+        let answer = self.elicit(&message, schema).await?;
+        if let Err(why) = confirmed(&plan, &answer) {
+            tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, "apply_patches not confirmed: {why}");
+            return Err(format!(
+                "nothing applied: {why}. That answer is final: don't call apply_patches again unless the operator asks"
+            ));
+        }
+        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), "apply_patches confirmed");
+        let report = crate::inventory::patching::apply_for(plan.clone()).await;
+        Ok(render_apply(&plan, Some(&report), &report.summary()))
     }
 
     /// `environments_save`: discover again and append the named
@@ -279,12 +332,12 @@ impl Server {
             "client": {
                 "name": client.0,
                 "declared_elicitation": client.1,
-                "note": "elicitation is recorded, not used: this build has no tool that asks the operator anything",
+                "note": "apply_patches asks the operator through elicitation, and is refused without it",
             },
             "write_surface": if self.opts.read_only {
-                "none — --read-only: environments_save is refused, and no tool writes to a database"
+                "none — --read-only: environments_save and apply_patches are refused"
             } else {
-                "environments_save appends discovered environments to environments.toml; no tool writes to a database, and --allow-writes is refused at startup"
+                "environments_save appends discovered environments to environments.toml; apply_patches runs an environment's pending patches once the operator confirms through elicitation, on a database safety.toml lets write; `query` never writes, and --allow-writes is refused at startup"
             },
             "read_only_floor": [
                 "every `query` connection opens with default_transaction_read_only=on, whatever safety.toml says",
@@ -721,6 +774,103 @@ async fn tool_environment_logs(args: &Value) -> Result<String, String> {
     .await
     .map_err(|e| format!("logs task failed: {e}"))??;
     Ok(render_log_errors(&environment, &server, files, &errors))
+}
+
+/// The question `apply_patches` puts to the operator, and the answer's
+/// schema: a typed name for a protected environment, a yes otherwise.
+/// Pure.
+pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String, Value) {
+    let files: Vec<&str> = plan.patches.iter().map(|p| p.file.file.as_str()).collect();
+    let mut message = format!(
+        "Apply {} patch(es) to {} {}/{} (recorded up to {}): {}. Each runs in its own transaction; it stops at the first failure.",
+        files.len(),
+        plan.environment,
+        plan.server,
+        plan.database,
+        plan.applied_max.map_or("none".to_string(), |m| m.to_string()),
+        files.join(", ")
+    );
+    if let Some((file, why)) = &plan.stopped_at {
+        message.push_str(&format!(" Not included: {file} ({why})."));
+    }
+    let schema = if plan.protected {
+        message.push_str(&format!(
+            " {} is protected: type its name to confirm.",
+            plan.environment
+        ));
+        json!({
+            "type": "object",
+            "properties": {"environment": {"type": "string", "title": "Environment name", "description": format!("Type {} to apply", plan.environment)}},
+            "required": ["environment"]
+        })
+    } else {
+        json!({
+            "type": "object",
+            "properties": {"apply": {"type": "boolean", "title": "Apply these patches"}},
+            "required": ["apply"]
+        })
+    };
+    (message, schema)
+}
+
+/// Whether the operator's answer confirms `plan`. Pure.
+pub fn confirmed(
+    plan: &crate::inventory::patching::PatchPlan,
+    answer: &Value,
+) -> Result<(), String> {
+    match answer.get("action").and_then(Value::as_str) {
+        Some("accept") => {}
+        Some(other) => return Err(format!("the operator chose {other}")),
+        None => return Err("the answer has no action".to_string()),
+    }
+    let content = answer.get("content");
+    if plan.protected {
+        let typed = content
+            .and_then(|c| c.get("environment"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if typed != plan.environment {
+            return Err(format!("the name typed doesn't match {}", plan.environment));
+        }
+    } else if content
+        .and_then(|c| c.get("apply"))
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err("the operator didn't tick apply".to_string());
+    }
+    Ok(())
+}
+
+/// `apply_patches`' result. Pure.
+pub fn render_apply(
+    plan: &crate::inventory::patching::PatchPlan,
+    report: Option<&crate::inventory::patching::ApplyReport>,
+    summary: &str,
+) -> String {
+    let results: Vec<Value> = report
+        .map(|r| {
+            r.results
+                .iter()
+                .map(|p| match &p.outcome {
+                    Ok(n) => json!({"file": p.file, "applied": true, "statements": n}),
+                    Err(e) => json!({"file": p.file, "applied": false, "error": e}),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "environment": plan.environment,
+        "server": plan.server,
+        "database": plan.database,
+        "recorded_up_to": plan.applied_max,
+        "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
+        "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
+        "results": results,
+        "error": report.and_then(|r| r.error.clone()),
+        "summary": summary,
+    })
+    .to_string()
 }
 
 /// `environment_logs`' result. Pure.
@@ -1249,8 +1399,8 @@ mod tests {
         for d in tool_table().as_array().unwrap() {
             let desc = d["description"].as_str().unwrap();
             assert!(desc.contains("CAVEATS:"), "{} has no CAVEATS", d["name"]);
-            // One tool writes anything, and it writes a config file.
-            let writes = d["name"] == "environments_save";
+            // Two tools write: a config file, and an environment's patches.
+            let writes = d["name"] == "environments_save" || d["name"] == "apply_patches";
             assert_eq!(d["annotations"]["readOnlyHint"], !writes, "{}", d["name"]);
         }
         assert_eq!(
@@ -1264,6 +1414,7 @@ mod tests {
                 "environments",
                 "schema_lint",
                 "environment_logs",
+                "apply_patches",
                 "environments_discover",
                 "environments_save"
             ]

@@ -2923,3 +2923,267 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
             .contains(&4));
     });
 }
+
+/// An environment database's pending patches: planned read-only with
+/// their checks, then applied one transaction each, stopping at the first
+/// failure, and refusing a plan the database has moved past.
+#[test]
+fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
+    let home = scratch_home("env-patch", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_pv_{pid}");
+    let tbl = format!("pgman_it_pt_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    for (name, body) in [
+        ("001-old.sql", row(1)),
+        (
+            "002-col.sql",
+            format!("{}ALTER TABLE {tbl} ADD COLUMN c int;\n", row(2)),
+        ),
+        (
+            "003-bad.sql",
+            format!("{}SELECT * FROM pgman_it_no_such_table;\n", row(3)),
+        ),
+        (
+            "004-col.sql",
+            format!("{}ALTER TABLE {tbl} ADD COLUMN d int;\n", row(4)),
+        ),
+        (
+            "005-idx.sql",
+            format!(
+                "{}CREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\n",
+                row(5)
+            ),
+        ),
+    ] {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+    let mut env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"it-prod\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let p = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert!(p.protected, "named prod");
+        assert_eq!(p.applied_max, Some(1));
+        let files: Vec<&str> = p.patches.iter().map(|x| x.file.file.as_str()).collect();
+        assert_eq!(files, ["002-col.sql", "003-bad.sql", "004-col.sql"]);
+        let (at, why) = p.stopped_at.clone().unwrap();
+        assert_eq!(at, "005-idx.sql");
+        assert!(why.contains("CONCURRENTLY"), "{why}");
+
+        // A read-only profile plans nothing.
+        let ro = plan(
+            &env,
+            &target,
+            &pgman::safety::SafetyConfig::default(),
+            &no_secrets,
+        )
+        .await
+        .unwrap();
+        assert!(ro.patches.is_empty() && ro.stopped_at.unwrap().1.contains("read-only"));
+
+        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        assert_eq!(r.error, None);
+        assert_eq!(r.results.len(), 2, "stops at 003: {r:?}");
+        assert_eq!(r.results[0].outcome, Ok(2));
+        assert!(r.results[1]
+            .outcome
+            .as_ref()
+            .unwrap_err()
+            .contains("nothing applied"));
+        assert!(
+            r.summary()
+                .starts_with("applied 1, then 003-bad.sql failed"),
+            "{}",
+            r.summary()
+        );
+
+        // Fix 003 on disk; the old plan still carries the text that failed.
+        std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();
+        let p2 = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert_eq!(p2.applied_max, Some(2));
+        assert_eq!(p2.patches.len(), 2);
+
+        // Someone else applies 004 meanwhile: the plan is refused before 003 runs.
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("INSERT INTO {vt} VALUES (4)")],
+        );
+        assert!(out.status.success());
+        let r = apply(&env, &target, &writable, &no_secrets, &p2).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("004-col.sql was applied by someone else"),
+            "{err}"
+        );
+
+        // A replica is refused outright.
+        let mut replica = target.clone();
+        replica.role = pgman::mcp::connections::Role::Replica;
+        assert!(plan(&env, &replica, &writable, &no_secrets)
+            .await
+            .unwrap_err()
+            .contains("replica"));
+        env.protected = Some(false);
+        assert!(
+            !plan(&env, &target, &writable, &no_secrets)
+                .await
+                .unwrap()
+                .protected
+        );
+    });
+}
+
+/// `apply_patches` end to end over stdio: the operator is asked, a wrong
+/// name applies nothing, the right one applies the pending patch.
+#[test]
+fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_mv_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-prod\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let mut child = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args =
+        serde_json::json!({"environment": "it-prod", "server": "local", "database": "pgman_test"});
+    let mut call = |id: u64, answer: serde_json::Value| -> (String, bool, String) {
+        writeln!(stdin, "{}", tool_call(id, "apply_patches", args.clone())).unwrap();
+        let ask = next();
+        assert_eq!(ask["method"], "elicitation/create", "{ask}");
+        let message = ask["params"]["message"].as_str().unwrap().to_string();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": answer})
+        )
+        .unwrap();
+        let (text, is_error) = reply(&[next()], id);
+        (text, is_error, message)
+    };
+    let (text, is_error, message) = call(
+        2,
+        serde_json::json!({"action": "accept", "content": {"environment": "it-pro"}}),
+    );
+    assert!(
+        message.contains("002-x.sql") && message.contains("type its name"),
+        "{message}"
+    );
+    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
+    assert!(!table_has_id(&home, &vt, 2), "a wrong name applies nothing");
+
+    let (text, is_error, _) = call(
+        3,
+        serde_json::json!({"action": "accept", "content": {"environment": "it-prod"}}),
+    );
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["results"][0]["applied"], true, "{text}");
+    assert!(table_has_id(&home, &vt, 2));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+fn table_has_id(home: &std::path::Path, table: &str, id: i64) -> bool {
+    let out = batch_with_home(
+        home,
+        &[
+            "--sql",
+            &format!("SELECT count(*) AS n FROM {table} WHERE id = {id}"),
+        ],
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim() == "1")
+}

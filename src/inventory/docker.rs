@@ -192,6 +192,7 @@ mod tests {
             probe: false,
             version_table: None,
             migrations_dir: None,
+            protected: None,
         }
     }
 

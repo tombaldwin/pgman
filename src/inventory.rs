@@ -21,6 +21,7 @@
 
 pub mod discover;
 pub mod docker;
+pub mod patching;
 pub mod probe;
 pub mod rds;
 pub mod rds_logs;
@@ -81,6 +82,10 @@ pub struct Environment {
     /// pending count; `~/` is your home.
     #[serde(default)]
     pub migrations_dir: Option<String>,
+    /// Applying patches asks for the environment's name to be typed.
+    /// Unset, an environment whose name contains "prod" is protected.
+    #[serde(default)]
+    pub protected: Option<bool>,
 }
 
 /// `version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }`
@@ -802,6 +807,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             probe: false,
             version_table: None,
             migrations_dir: None,
+            protected: None,
         };
         let t = rds_targets(&env, &all());
         assert_eq!(t[0].role, Role::Direct);

@@ -476,6 +476,7 @@ pub fn propose(
                 probe: false,
                 version_table: None,
                 migrations_dir: None,
+            protected: None,
             };
             Proposal {
                 covered_by: covering(&name, existing),
