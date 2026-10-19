@@ -39,12 +39,12 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 - **Surfaces.** A TUI screen in ebman's style that refreshes in the
   background on the shared frame clock (house rule: no independent
   tickers), and an `environments` MCP tool returning the same rows.
-- **Order.** (1) The model, the `static` and `rds` sources, and a
-  version-less screen showing role, endpoint and engine version, with no
-  database connections; this is a small PR. (2) Tunnel reuse (the
-  connection-pool item below becomes a prerequisite: ten databases must
-  not mean ten ssh handshakes) and then the schema/pending/lag probes.
-  (3) `docker` and the other sources as needed.
+- **Order.** (1) is done (PLAN.md): the model, the `static` and `rds`
+  sources, the `E` screen and the `environments` MCP tool, with no
+  database connections. Next is (2): tunnel reuse (the connection-pool
+  item below becomes a prerequisite: ten databases must not mean ten ssh
+  handshakes), then the schema/pending/lag probes. After that, (3):
+  `docker` and the other sources as needed.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
