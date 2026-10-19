@@ -3696,8 +3696,9 @@ impl App {
 
     /// `E` from Normal: open the environments overview and gather. Needs
     /// no connection — the sources are the config and the aws CLI.
-    fn start_environments(&mut self) {
+    pub(super) fn start_environments(&mut self) {
         self.environments.cursor = 0;
+        self.environments.opened_from = (self.mode == Mode::ConnPick).then_some(Mode::ConnPick);
         self.mode = Mode::Environments;
         self.refresh_environments();
     }

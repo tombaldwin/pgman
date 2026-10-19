@@ -1346,7 +1346,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "type to search · ctrl-r next-older · ctrl-d delete · enter accept · esc cancel"
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel",
-                Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit",
+                Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit · E envs",
             Mode::RowDetail => "J / K next / prev row · j / k field · y yank · esc close",
             Mode::CellDetail => {
                 if app.cell_detail.json_rows.is_empty() {
