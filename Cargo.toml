@@ -71,7 +71,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # flow between both. Local copies of these used to live under
 # src/util.rs and src/font_probe.rs; see `// tui-common: …` notes
 # inline where the migration replaced them.
-tui-common = { package = "tb-tui-common", version = "0.2.1" }
+tui-common = { package = "tb-tui-common", version = "0.2.2" }
 
 # Deferred — added as the milestones that need them land (see BACKLOG.md):
 #   M2  deadpool-postgres                      — connection pool for interactive queries

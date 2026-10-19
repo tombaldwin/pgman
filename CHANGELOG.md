@@ -71,7 +71,7 @@ and breaking changes.
   Over MCP, `environments_discover` and `environments_save` do it for an
   agent (save refused under `--read-only`).
 - **ebman's look** — rounded panels with `[ ◆ name ◆ ]` titles
-  (Powerline caps or plain brackets, per your font), ebman's two-box
+  (a plain ` name ` under Powerline fonts, as in ebman), ebman's two-box
   header on terminals 24 rows or taller (server, database, user,
   session, and where the connection came from, beside the current view
   and the global keys), coloured key hints in the footer, and uppercase

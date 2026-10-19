@@ -44,13 +44,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   ssh per bastion, and (3) began with `docker`. Cloud SQL, Azure
   Database and the others follow as they're needed.
 
-### Shared chrome — follow-ups (2026-10-19)
-- **ebman onto `tui_common::chrome`.** ebman still carries its own copy
-  of the helpers that moved to `tb-tui-common` 0.2.1 (`rounded_block`,
-  `titled_block`, `pill_chain`, `sep`, `kv`, `join_fields_to_fit`,
-  `hints_to_fit`). Switching it over makes the two apps one vocabulary
-  for real.
-
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:
