@@ -7,8 +7,9 @@ use crate::grid::Grid;
 use std::fmt;
 use std::sync::Arc;
 
-/// A parsed `postgres://` connection string.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A parsed `postgres://` connection string. Its `Debug` leaves the
+/// password out, so a `{:?}` in a log line can't leak it.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Dsn {
     pub host: String,
     pub port: u16,
@@ -22,6 +23,32 @@ pub struct Dsn {
     /// opens the tunnel first and rewrites the wire connect to
     /// `127.0.0.1:<local-port>`.
     pub ssh_tunnel: Option<crate::tunnel::SshTunnelSpec>,
+}
+
+impl fmt::Debug for Dsn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let params: Vec<(&str, &str)> = self
+            .params
+            .iter()
+            .map(|(k, v)| {
+                let v = if k.eq_ignore_ascii_case("password") {
+                    "<redacted>"
+                } else {
+                    v.as_str()
+                };
+                (k.as_str(), v)
+            })
+            .collect();
+        f.debug_struct("Dsn")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("dbname", &self.dbname)
+            .field("params", &params)
+            .field("ssh_tunnel", &self.ssh_tunnel)
+            .finish()
+    }
 }
 
 /// A server-side notice (the unified shape we surface for any
@@ -1694,6 +1721,22 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_dsns_debug_never_shows_its_password() {
+        let mut d = Dsn::parse("postgres://app:hunter2@db:5432/shop").unwrap();
+        d.params.push(("password".into(), "hunter3".into()));
+        let shown = format!("{d:?} {d:#?}");
+        assert!(
+            !shown.contains("hunter2") && !shown.contains("hunter3"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("<redacted>") && shown.contains("app"),
+            "{shown}"
+        );
+    }
+
     use super::*;
 
     #[test]
