@@ -925,7 +925,8 @@ pub enum ProbeState {
     Probing,
     /// A primary read through its replica instead.
     ViaReplica,
-    Done(Result<crate::query::probe::Probe, String>),
+    /// Boxed: a probe is far bigger than the other states.
+    Done(Result<Box<crate::query::probe::Probe>, String>),
 }
 
 /// Probes an environment's databases. Injected like
@@ -949,6 +950,13 @@ pub type ProbeAsyncFn = std::sync::Arc<
 pub type ProbeNowFn = std::sync::Arc<
     dyn Fn(&crate::inventory::EnvReport) -> Vec<crate::inventory::probe::Outcome> + Send + Sync,
 >;
+
+impl ProbeState {
+    /// A finished probe's state.
+    pub fn done(result: Result<crate::query::probe::Probe, String>) -> Self {
+        ProbeState::Done(result.map(Box::new))
+    }
+}
 
 impl std::fmt::Debug for EnvProber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

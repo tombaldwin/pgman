@@ -2642,3 +2642,59 @@ fn probes_recognise_common_migration_tools() {
         (Some("migrations"), Some("20240101120000"))
     );
 }
+
+/// A session waiting on another's lock counts as blocked in a probe.
+#[test]
+fn a_probe_counts_a_blocked_session() {
+    let home = scratch_home("blocked", WRITABLE_PROFILE);
+    let table = format!("pgman_it_lock_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {table} (x int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let connect = || async {
+            let (c, conn) = tokio_postgres::connect(DSN, tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(conn);
+            c
+        };
+        let holder = connect().await;
+        let waiter = connect().await;
+        holder
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+            ))
+            .await
+            .unwrap();
+        let blocked_query = format!("SELECT count(*) FROM {table}");
+        let waiting = tokio::spawn(async move { waiter.simple_query(&blocked_query).await });
+        // Let the waiter reach the lock.
+        let probe_client =
+            pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+                .await
+                .unwrap();
+        let mut blocked = 0;
+        for _ in 0..50 {
+            let p =
+                pgman::query::probe::run(&probe_client, pgman::query::probe::SchemaSource::None)
+                    .await
+                    .unwrap();
+            blocked = p.blocked.unwrap_or(0);
+            if blocked > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(blocked >= 1, "the waiting session counts as blocked");
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        waiting.await.unwrap().unwrap();
+    });
+}

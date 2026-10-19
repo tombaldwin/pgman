@@ -1270,10 +1270,24 @@ pub(crate) fn probe_cells(
     } else {
         String::new()
     };
+    let mut trouble = Vec::new();
+    if let Some(n) = p.blocked.filter(|n| *n > 0) {
+        trouble.push(format!("{n} blocked"));
+        alert = Some(ProbeAlert::Bad);
+    }
+    if let Some(n) = p.long_tx.filter(|n| *n > 0) {
+        trouble.push(format!("{n} long tx"));
+        alert = alert.or(Some(ProbeAlert::Warn));
+    }
+    let sessions = match (p.sessions, trouble.is_empty()) {
+        (Some(n), true) => n.to_string(),
+        (Some(n), false) => format!("{n} ({})", trouble.join(" · ")),
+        (None, _) => String::new(),
+    };
     ProbeCells {
         schema,
         lag,
-        sessions: p.sessions.map(|n| n.to_string()).unwrap_or_default(),
+        sessions,
         size: p.size.clone().unwrap_or_default(),
         alert,
     }
@@ -2777,7 +2791,7 @@ mod tests {
         use crate::app::ProbeState;
         use crate::mcp::connections::Role;
         use crate::query::probe::Probe;
-        let done = |p: Probe| ProbeState::Done(Ok(p));
+        let done = |p: Probe| ProbeState::done(Ok(p));
         let replica = Probe {
             in_recovery: Some(true),
             lag_secs: Some(0.42),
@@ -2839,7 +2853,7 @@ mod tests {
             ("version ✗", Some(ProbeAlert::Warn))
         );
         let failed = probe_cells(
-            &ProbeState::Done(Err("password authentication failed\nmore".into())),
+            &ProbeState::done(Err("password authentication failed\nmore".into())),
             Role::Primary,
         );
         assert_eq!(failed.schema, "✗ password authentication failed");
@@ -2857,13 +2871,43 @@ mod tests {
     }
 
     #[test]
+    fn blocked_sessions_and_long_transactions_show_in_sessions() {
+        use crate::app::ProbeState;
+        use crate::mcp::connections::Role;
+        use crate::query::probe::Probe;
+        let cells = |blocked, long_tx| {
+            probe_cells(
+                &ProbeState::done(Ok(Probe {
+                    sessions: Some(21),
+                    blocked: Some(blocked),
+                    long_tx: Some(long_tx),
+                    ..Probe::default()
+                })),
+                Role::Direct,
+            )
+        };
+        assert_eq!(
+            (cells(0, 0).sessions.as_str(), cells(0, 0).alert),
+            ("21", None)
+        );
+        assert_eq!(
+            (cells(2, 1).sessions.as_str(), cells(2, 1).alert),
+            ("21 (2 blocked · 1 long tx)", Some(ProbeAlert::Bad))
+        );
+        assert_eq!(
+            (cells(0, 1).sessions.as_str(), cells(0, 1).alert),
+            ("21 (1 long tx)", Some(ProbeAlert::Warn))
+        );
+    }
+
+    #[test]
     fn drift_shows_each_databases_version_by_environment_and_flags_the_behind() {
         use crate::app::ProbeState;
         use crate::query::probe::Probe;
         let mut demo = crate::demo::environments();
         demo.truncate(2); // staging (primary + replica), qa
         let probe = |v: i64, pending: usize| {
-            ProbeState::Done(Ok(Probe {
+            ProbeState::done(Ok(Probe {
                 schema_version: Some(v),
                 pending: Some(pending),
                 ..Probe::default()
@@ -2955,7 +2999,7 @@ mod tests {
             .map(|r| match r.probe {
                 Some(_) => crate::demo::environment_probes(r)
                     .into_iter()
-                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .map(|o| o.map(ProbeState::done).unwrap_or(ProbeState::ViaReplica))
                     .collect(),
                 None => vec![ProbeState::Off; r.targets.len()],
             })
@@ -3003,7 +3047,7 @@ mod tests {
             .map(|r| match r.probe {
                 Some(_) => crate::demo::environment_probes(r)
                     .into_iter()
-                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .map(|o| o.map(ProbeState::done).unwrap_or(ProbeState::ViaReplica))
                     .collect(),
                 None => vec![ProbeState::Off; r.targets.len()],
             })
@@ -3060,7 +3104,7 @@ mod tests {
         let probes = vec![
             vec![ProbeState::Off; 2],
             vec![ProbeState::Off; 1],
-            vec![ProbeState::Done(Ok(crate::query::probe::Probe {
+            vec![ProbeState::done(Ok(crate::query::probe::Probe {
                 server_version: Some("17.2".into()),
                 ..Default::default()
             }))],
@@ -3077,7 +3121,7 @@ mod tests {
 
         let t = &envs[2].targets[0];
         assert_eq!(
-            environment_detail_probed(t, &ProbeState::Done(Err("no route\nto host".into()))),
+            environment_detail_probed(t, &ProbeState::done(Err("no route\nto host".into()))),
             "  shop-local/shop · ✗ no route to host"
         );
         assert_eq!(

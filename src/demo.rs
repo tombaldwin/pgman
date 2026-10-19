@@ -789,8 +789,7 @@ pub fn environment_probes(
                 schema_error: None,
                 sessions: Some(12),
                 size: Some("812 MB".into()),
-                migration_tool: None,
-                schema_label: None,
+                ..Default::default()
             })),
         })
         .collect()

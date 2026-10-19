@@ -192,7 +192,9 @@ the MCP `environments` tool when called with `probe: true`):
   shows `NOT IN RECOVERY` in red, because it's a primary posing as a
   replica.
 - **`SESSIONS`**: backends connected to the database (the probe's own
-  included).
+  included), with trouble after it: `21 (2 blocked · 1 long tx)`. A
+  session waiting on another's lock turns the row red; a transaction
+  open over five minutes (idle in transaction included) turns it yellow.
 - **`SIZE`**: the database's size.
 
 Version, recovery, lag, sessions and size come back in one round trip.

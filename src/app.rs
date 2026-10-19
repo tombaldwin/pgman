@@ -4106,7 +4106,7 @@ impl App {
         };
         for (state, outcome) in states.iter_mut().zip(outcomes) {
             if let Some(result) = outcome {
-                *state = ProbeState::Done(result);
+                *state = ProbeState::done(result);
             }
         }
     }

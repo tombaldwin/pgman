@@ -890,7 +890,7 @@ fn scr_environments() -> App {
             Some(_) => pgman::demo::environment_probes(r)
                 .into_iter()
                 .map(|o| {
-                    o.map(pgman::app::ProbeState::Done)
+                    o.map(pgman::app::ProbeState::done)
                         .unwrap_or(pgman::app::ProbeState::ViaReplica)
                 })
                 .collect(),
