@@ -1352,3 +1352,70 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
     );
     assert!(table_exists(&home, "pgman_mcp_locked"));
 }
+
+/// `pending_patches` end to end: a version table holding 1 and 2, and a
+/// patch directory with 1–3 plus a file that forgot its version row.
+#[test]
+fn mcp_pending_patches_reports_what_the_database_has_not_recorded() {
+    let home = mcp_home("mcp-patches");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_dbversion (scriptId int, description text); \
+             DELETE FROM pgman_dbversion WHERE TRUE; \
+             INSERT INTO pgman_dbversion VALUES (1, 'one'), (2, 'two')",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let checkout = home.join("checkout");
+    let dir = checkout.join("schema_updates");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(checkout.join(".pgman")).unwrap();
+    std::fs::write(
+        checkout.join(".pgman/pgman.toml"),
+        "[patches]\ndir = \"schema_updates\"\ntable = \"pgman_dbversion\"\ncolumn = \"scriptId\"\n",
+    )
+    .unwrap();
+    for (file, body) in [
+        ("001-a.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (1, 'a');"),
+        ("002-b.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (2, 'b');"),
+        ("003-c.sql", "-- pending\nINSERT INTO pgman_dbversion (scriptId, description)\n  VALUES (3, 'c, with a comma');"),
+        ("004-d.sql", "ALTER TABLE x ADD COLUMN y int;"),
+    ] {
+        std::fs::write(dir.join(file), body).unwrap();
+    }
+    let frames = mcp_session(
+        &home,
+        &checkout,
+        &[],
+        &[
+            tool_call(
+                1,
+                "pending_patches",
+                serde_json::json!({"connection": "test"}),
+            ),
+            tool_call(
+                2,
+                "pending_patches",
+                serde_json::json!({"connection": "test", "dir": ".."}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["applied_max"], 2);
+    assert_eq!(
+        v["pending"],
+        serde_json::json!([{"file": "003-c.sql", "id": 3, "filename_number": 3}])
+    );
+    assert_eq!(v["unversioned_recent"][0]["file"], "004-d.sql");
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("outside"), "{text}");
+}

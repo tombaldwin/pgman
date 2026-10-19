@@ -111,6 +111,12 @@ statement_timeout_ms = 5000
 [editor]
 indent = 2          # spaces per level, 1–16; also what Enter auto-indents by
 keywords = "upper"  # "upper" | "lower" | "preserve"
+
+# Where schema patches live, for the MCP pending_patches tool (see below).
+[patches]
+dir = "src/main/pgsql/schema_updates"   # relative to the project root
+table = "t_schema_version"             # the version table
+column = "schema_version_id"     # the id each patch records
 ```
 
 Each field takes the stricter of the personal and project value:
@@ -119,6 +125,12 @@ smaller non-zero value, guards take the stricter of allow < confirm <
 block. A `[safety]` block is a *complete* profile — any field it omits
 reverts to pgman's own strict default, not your personal one. `--batch`
 applies the same merge.
+
+`[patches]` is read only by the MCP server's `pending_patches` tool
+([MCP server](mcp.md)). A patch's id is the value its own version-row
+`INSERT INTO <table> (<column>, …) VALUES (<id>, …)` records, not the
+number in its filename; the two are reported side by side and a
+mismatch is flagged. `table` and `column` must be plain identifiers.
 
 `[editor]` has exactly those two knobs. Formatting happens only when
 you press `Ctrl-F` — never on run, never on paste — and uses `pg_format`

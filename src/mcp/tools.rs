@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use super::connections::{self, Entry};
 use super::Server;
 use crate::conn;
-use crate::query::preflight;
+use crate::query::{patches, preflight};
 
 /// Rows `query` returns when the client doesn't say.
 pub const DEFAULT_MAX_ROWS: usize = 200;
@@ -63,6 +63,22 @@ pub fn tool_table() -> Value {
                 "additionalProperties": false
             },
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
+            "name": "pending_patches",
+            "description": "Which schema patch files the database has not recorded as applied. Reads every *.sql file in the patch directory, takes each file's id from its own version-row INSERT (INSERT INTO <table> (<column>, ...) VALUES (<id>, ...)), and compares that with the ids in <table>.<column>. Also reports recent files with no version row, files whose filename number and recorded id disagree, ids carried by two files, ids recorded whose file has no live version row (e.g. it is commented out), and ids recorded with no file at all. dir, table and column come from the [patches] block in .pgman/pgman.toml, and any of them can be passed to override it. CAVEATS: a file counts as applied when its id is in the table, NOT when its statements ran; a patch that failed partway but committed its version row looks applied. Only the first matching INSERT with an integer literal id counts. Files are read up to 1 MB each, the directory is not searched recursively, and it must resolve inside the server's working tree. Run it against the database the patches will be applied to: a replica can lag its primary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": {"type": "string", "description": "A name from `connections`."},
+                    "dir": {"type": "string", "description": "Patch directory, relative to the project root."},
+                    "table": {"type": "string", "description": "Version table, name or schema.name."},
+                    "column": {"type": "string", "description": "Id column in the version table."}
+                },
+                "required": ["connection"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
         }
     ])
 }
@@ -83,7 +99,7 @@ pub fn tool_names() -> Vec<String> {
 /// `query` allows for a tunnel coming up plus the statement timeout.
 pub fn call_timeout_secs(tool: &str) -> u64 {
     match tool {
-        "query" | "sessions_locks" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 30,
+        "query" | "sessions_locks" | "pending_patches" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 30,
         _ => 10,
     }
 }
@@ -95,6 +111,7 @@ impl Server {
             "connections" => Ok(self.tool_connections()),
             "query" => self.tool_query(args).await,
             "sessions_locks" => self.tool_sessions_locks(args).await,
+            "pending_patches" => self.tool_pending_patches(args).await,
             other => Err(format!("unknown tool '{other}'")),
         }
     }
@@ -133,7 +150,6 @@ impl Server {
                 "discovered connections are refused unless the server runs with --project-connections",
                 "a discovered connection that opens an ssh tunnel is always refused; tunnels belong in connections.toml",
                 "${…} placeholders in connections.toml are not resolved; use password_env",
-                "no pending-patches tool yet (planned)",
             ],
             "config": {
                 "working_directory": self.cwd.display().to_string(),
@@ -204,6 +220,30 @@ impl Server {
         ))
     }
 
+    async fn tool_pending_patches(&self, args: &Value) -> Result<String, String> {
+        let name = arg_str(args, "connection")?;
+        let project = crate::project::load_from(&self.cwd);
+        let root = project
+            .as_ref()
+            .map(|(r, _)| r.clone())
+            .unwrap_or_else(|| self.cwd.clone());
+        let cfg = patches_config(project.and_then(|(_, c)| c.patches), args)?;
+        let dir = patch_dir_within(&root, &cfg.dir)?;
+        let files = read_patch_files(&dir, &cfg)?;
+        let sql = patches::applied_ids_sql(&cfg)?;
+        let target = self.prepare(name)?;
+        let statement = single_checked_statement(&target.safety, &target.dsn.dbname, &sql)?;
+        tracing::info!(target: "pgman::mcp", connection = name, dir = %dir.display(), "pending_patches");
+        let (client, _tunnel) = connect(name, target).await?;
+        let (typed, truncated) =
+            conn::run_statement_typed_capped(&client, &statement, Some(MAX_APPLIED_IDS))
+                .await
+                .map_err(|e| e.msg)?;
+        let applied = applied_ids(&typed, truncated, &cfg)?;
+        let report = patches::reconcile(files, &applied);
+        Ok(render_pending_patches(name, &cfg, &dir, &report))
+    }
+
     /// Everything about a connection that can be decided before
     /// touching the network: which DSN, under which (read-only) safety
     /// profile, with which statement timeout.
@@ -263,6 +303,145 @@ async fn connect(
         }
         msg
     })
+}
+
+/// Most version rows `pending_patches` will read. A version table is
+/// one row per patch; past this something is not what it seems.
+pub const MAX_APPLIED_IDS: usize = 100_000;
+
+/// Largest patch file read. The version row sits at the top; a data
+/// load can be huge, and only its head is needed.
+pub const MAX_PATCH_BYTES: u64 = 1024 * 1024;
+
+/// The recorded ids from the version-table query. A list cut at the row
+/// cap is refused rather than reported on: a missing id would read as a
+/// pending patch, which is the one wrong answer this tool must not give.
+pub fn applied_ids(
+    typed: &conn::TypedRows,
+    truncated: bool,
+    cfg: &patches::PatchesConfig,
+) -> Result<Vec<i64>, String> {
+    if truncated {
+        return Err(format!(
+            "{} holds more than {MAX_APPLIED_IDS} rows; refusing to report on a partial list",
+            cfg.table
+        ));
+    }
+    let mut out = Vec::new();
+    for row in &typed.rows {
+        // A NULL id records nothing.
+        if let Some(text) = row.first().and_then(|c| c.as_deref()) {
+            let id = text
+                .parse::<i64>()
+                .map_err(|_| format!("{}.{} holds a non-integer id", cfg.table, cfg.column))?;
+            out.push(id);
+        }
+    }
+    Ok(out)
+}
+
+/// The `[patches]` block, with any of `dir` / `table` / `column` the
+/// client passed taking its place. All three must end up set.
+pub fn patches_config(
+    project: Option<patches::PatchesConfig>,
+    args: &Value,
+) -> Result<patches::PatchesConfig, String> {
+    let pick = |key: &str, from_project: Option<&String>| -> Result<String, String> {
+        args.get(key)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| from_project.cloned())
+            .ok_or_else(|| {
+                format!(
+                    "no patch {key}: pass `{key}`, or add a [patches] block (dir, table, column) \
+                     to .pgman/pgman.toml"
+                )
+            })
+    };
+    Ok(patches::PatchesConfig {
+        dir: pick("dir", project.as_ref().map(|p| &p.dir))?,
+        table: pick("table", project.as_ref().map(|p| &p.table))?,
+        column: pick("column", project.as_ref().map(|p| &p.column))?,
+    })
+}
+
+/// `dir` resolved against `root`, refused unless it is a directory that
+/// stays inside `root` once symlinks and `..` are resolved — a client
+/// names the directory, and this tool must not become a way to list
+/// arbitrary paths.
+pub fn patch_dir_within(root: &std::path::Path, dir: &str) -> Result<std::path::PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve {}: {e}", root.display()))?;
+    let joined = root.join(dir);
+    let resolved = joined
+        .canonicalize()
+        .map_err(|e| format!("patch dir {dir:?}: {e}"))?;
+    if !resolved.starts_with(&root) {
+        return Err(format!(
+            "patch dir {dir:?} resolves outside {}",
+            root.display()
+        ));
+    }
+    if !resolved.is_dir() {
+        return Err(format!("patch dir {dir:?} is not a directory"));
+    }
+    Ok(resolved)
+}
+
+/// Every `*.sql` file in `dir` (not recursive), parsed for its id.
+fn read_patch_files(
+    dir: &std::path::Path,
+    cfg: &patches::PatchesConfig,
+) -> Result<Vec<patches::PatchFile>, String> {
+    use std::io::Read;
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(file) = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        if !file.to_ascii_lowercase().ends_with(".sql") || !path.is_file() {
+            continue;
+        }
+        let mut text = String::new();
+        std::fs::File::open(&path)
+            .and_then(|f| f.take(MAX_PATCH_BYTES).read_to_string(&mut text))
+            .map_err(|e| format!("cannot read {file}: {e}"))?;
+        out.push(patches::patch_file(&file, &text, cfg));
+    }
+    Ok(out)
+}
+
+pub fn render_pending_patches(
+    name: &str,
+    cfg: &patches::PatchesConfig,
+    dir: &std::path::Path,
+    r: &patches::Report,
+) -> String {
+    let file = |p: &patches::PatchFile| json!({"file": p.file, "id": p.version_id, "filename_number": p.filename_number});
+    json!({
+        "connection": name,
+        "dir": dir.display().to_string(),
+        "table": cfg.table,
+        "column": cfg.column,
+        "applied_max": r.applied_max,
+        "pending": r.pending.iter().map(file).collect::<Vec<_>>(),
+        "pending_count": r.pending.len(),
+        "unversioned_recent": r.unversioned_recent.iter().map(file).collect::<Vec<_>>(),
+        "unversioned_total": r.unversioned_total,
+        "mismatched_filename_and_id": r.mismatched.iter().map(file).collect::<Vec<_>>(),
+        "duplicate_ids": r.duplicate_ids.iter().map(|(id, files)| json!({"id": id, "files": files})).collect::<Vec<_>>(),
+        "recorded_without_file": r.recorded_without_file,
+        "recorded_by_unversioned_file": r.recorded_by_unversioned_file.iter().map(|(id, f)| json!({"id": id, "file": f})).collect::<Vec<_>>(),
+    })
+    .to_string()
 }
 
 /// A required string argument.
@@ -491,7 +670,13 @@ mod tests {
         }
         assert_eq!(
             tool_names(),
-            ["doctor", "connections", "query", "sessions_locks"]
+            [
+                "doctor",
+                "connections",
+                "query",
+                "sessions_locks",
+                "pending_patches"
+            ]
         );
     }
 
@@ -655,6 +840,76 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v["note"], Value::Null);
+    }
+
+    #[test]
+    fn patch_args_override_the_project_block_and_all_three_are_needed() {
+        let project = patches::PatchesConfig {
+            dir: "schema_updates".into(),
+            table: "t_v".into(),
+            column: "c".into(),
+        };
+        let got = patches_config(Some(project.clone()), &json!({"table": "t_other"})).unwrap();
+        assert_eq!(got.dir, "schema_updates");
+        assert_eq!(got.table, "t_other");
+        assert_eq!(got.column, "c");
+        let err = patches_config(None, &json!({"dir": "d", "table": "t"})).unwrap_err();
+        assert!(err.contains("column") && err.contains("[patches]"), "{err}");
+    }
+
+    #[test]
+    fn a_cut_or_malformed_version_list_is_refused() {
+        let cfg = patches::PatchesConfig {
+            dir: "d".into(),
+            table: "t_v".into(),
+            column: "c".into(),
+        };
+        let typed = |cells: &[Option<&str>]| conn::TypedRows {
+            columns: vec![("id".to_string(), Type::TEXT)],
+            rows: cells.iter().map(|c| vec![c.map(str::to_string)]).collect(),
+            affected: None,
+        };
+        assert_eq!(
+            applied_ids(&typed(&[Some("1"), None, Some("3")]), false, &cfg),
+            Ok(vec![1, 3])
+        );
+        assert!(applied_ids(&typed(&[Some("1")]), true, &cfg)
+            .unwrap_err()
+            .contains("partial"));
+        assert!(applied_ids(&typed(&[Some("x")]), false, &cfg)
+            .unwrap_err()
+            .contains("non-integer"));
+    }
+
+    #[test]
+    fn the_patch_dir_must_stay_inside_the_root() {
+        let base = std::env::temp_dir().join(format!("pgman-patchdir-{}", std::process::id()));
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("schema_updates")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(root.join("file.sql"), "").unwrap();
+        assert!(patch_dir_within(&root, "schema_updates").is_ok());
+        assert!(patch_dir_within(&root, ".").is_ok());
+        assert!(patch_dir_within(&root, "../outside")
+            .unwrap_err()
+            .contains("outside"));
+        assert!(patch_dir_within(&root, "/")
+            .unwrap_err()
+            .contains("outside"));
+        assert!(patch_dir_within(&root, "file.sql")
+            .unwrap_err()
+            .contains("not a directory"));
+        assert!(patch_dir_within(&root, "missing").is_err());
+        #[cfg(unix)]
+        {
+            let link = root.join("sneaky");
+            let _ = std::fs::remove_file(&link);
+            std::os::unix::fs::symlink(base.join("outside"), &link).unwrap();
+            assert!(patch_dir_within(&root, "sneaky")
+                .unwrap_err()
+                .contains("outside"));
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

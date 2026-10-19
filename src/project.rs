@@ -30,6 +30,9 @@ pub struct ProjectConfig {
     pub connections: Vec<Connection>,
     pub safety: Option<ProjectSafety>,
     pub editor: Option<ProjectEditor>,
+    /// The `[patches]` block: where schema patches live and which table
+    /// records the applied ones. Read by the MCP `pending_patches` tool.
+    pub patches: Option<crate::query::patches::PatchesConfig>,
 }
 
 /// The `[editor]` block: how Ctrl-F lays a statement out, and the
