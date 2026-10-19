@@ -60,6 +60,9 @@ and breaking changes.
 - **Environments overview** — `E` lists every database in each
   environment, replicas under their primary, from RDS (via the `aws`
   CLI) or hand-listed connections, without connecting to any of them.
+  `Enter` connects to a row: replicas read-only, the password read from
+  AWS Secrets Manager at that moment, through the environment's ssh
+  tunnel.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

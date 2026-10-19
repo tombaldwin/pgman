@@ -913,13 +913,48 @@ pub struct EnvironmentsUi {
     /// Where closing the panel returns to: `Some(ConnPick)` when it was
     /// opened from the connection picker, `None` for the grid.
     pub opened_from: Option<Mode>,
+    /// A connect waiting on its secret. Closing the panel drops it, and
+    /// a secret that arrives after that connects nothing.
+    pub connecting: Option<PendingEnvConnect>,
+    /// Numbers each connect, so a late secret matches only its own.
+    pub connect_token: u64,
 }
 
 impl EnvironmentsUi {
     pub fn target_count(&self) -> usize {
         self.reports.iter().map(|r| r.targets.len()).sum()
     }
+
+    /// The environment and database under the cursor.
+    pub fn selected(&self) -> Option<(&crate::inventory::EnvReport, &crate::inventory::Target)> {
+        self.reports
+            .iter()
+            .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+            .nth(self.cursor)
+    }
 }
+
+/// An environment connect whose password is being read from Secrets
+/// Manager. The DSN has no password yet.
+#[derive(Debug, Clone)]
+pub struct PendingEnvConnect {
+    pub token: u64,
+    pub dsn: Dsn,
+    pub origin: String,
+    /// A replica: the session opens read-only whatever safety.toml says.
+    pub read_only: bool,
+}
+
+/// Reads a secret for an environment connect. Injected like
+/// [`EnvironmentsLoader`]: `None` (the default, and every test that
+/// doesn't install one) means no secret is ever read.
+pub type SecretFetcher = std::sync::Arc<
+    dyn Fn(
+            &crate::creds::aws_secrets::SecretRef,
+        ) -> Result<crate::creds::aws_secrets::SecretCreds, String>
+        + Send
+        + Sync,
+>;
 
 impl ListCursorNav for EnvironmentsUi {
     fn nav_len(&self) -> usize {

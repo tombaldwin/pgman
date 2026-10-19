@@ -8,7 +8,10 @@ impl App {
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
         if !matches!(
             msg,
-            AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_) | AppMsg::EnvironmentsLoaded(_)
+            AppMsg::TapEvent { .. }
+                | AppMsg::UpdateCheck(_)
+                | AppMsg::EnvironmentsLoaded(_)
+                | AppMsg::EnvSecretResolved { .. }
         ) && msg.generation() != self.generation
         {
             tracing::debug!(
@@ -293,6 +296,7 @@ impl App {
                     }
                 }
             }
+            AppMsg::EnvSecretResolved { token, result } => self.on_env_secret(token, result),
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
                     self.last_error = None;

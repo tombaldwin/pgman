@@ -372,15 +372,7 @@ pub fn mcp_connect_hint(err: &str, dsn: &conn::Dsn) -> Option<String> {
     conn::connect_hint(err, dsn)
 }
 
-/// Put a secret's credentials on the DSN: the password always, the user
-/// when the secret has one — the secret's password belongs to the
-/// secret's user, so a different user in the url would only fail to log in.
-pub fn apply_secret(dsn: &mut conn::Dsn, creds: crate::creds::aws_secrets::SecretCreds) {
-    if let Some(u) = creds.username {
-        dsn.user = Some(u);
-    }
-    dsn.password = Some(creds.password);
-}
+pub use crate::creds::aws_secrets::apply as apply_secret;
 
 /// Most version rows `pending_patches` will read. A version table is
 /// one row per patch; past this something is not what it seems.

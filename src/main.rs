@@ -290,6 +290,7 @@ async fn main() -> anyhow::Result<()> {
     application.environments_loader = Some(app::EnvironmentsLoader::Blocking(std::sync::Arc::new(
         pgman::inventory::load_and_gather,
     )));
+    application.secret_fetcher = Some(std::sync::Arc::new(pgman::creds::aws_secrets::fetch));
     application.dsn_origin = dsn_origin;
     // Update check: opt-out via --no-update-check or the env var.
     // (--demo and --batch never reach here — --demo builds its own

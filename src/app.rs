@@ -1221,6 +1221,9 @@ pub struct App {
     /// What fills the environments panel; `None` until `main.rs` (or
     /// `--demo`) installs one.
     pub environments_loader: Option<EnvironmentsLoader>,
+    /// Reads an environment database's secret at connect; `None` until
+    /// `main.rs` installs the aws CLI one.
+    pub secret_fetcher: Option<SecretFetcher>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1425,6 +1428,7 @@ impl App {
             sessions: SessionsUi::default(),
             environments: EnvironmentsUi::default(),
             environments_loader: None,
+            secret_fetcher: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3714,6 +3718,79 @@ impl App {
             self.environments.error =
                 Some("environments are not available in this session".to_string());
             self.last_status = None;
+        }
+    }
+
+    /// Enter in the environments overview: connect to the database under
+    /// the cursor. A replica opens read-only; anything else gets its
+    /// database's safety profile, as any connection does. With a
+    /// secret, the password is read first and the connect waits for it.
+    fn connect_to_environment_target(&mut self) {
+        if self.environments.connecting.is_some() {
+            self.last_status = Some("already connecting — wait, or q to cancel".into());
+            return;
+        }
+        let Some((env, target)) = self.environments.selected() else {
+            return;
+        };
+        let what = format!("{} {}/{}", env.name, target.server, target.database);
+        let spec = match &target.connect {
+            Ok(spec) => spec.clone(),
+            Err(why) => {
+                self.last_error = Some(format!("can't connect to {what}: {why}"));
+                return;
+            }
+        };
+        let read_only = target.role == crate::mcp::connections::Role::Replica;
+        let mut origin = format!(
+            "environment {what} ({}{})",
+            target.role.label(),
+            if read_only { ", read-only" } else { "" }
+        );
+        let Some(secret) = spec.secret else {
+            self.environments.opened_from = None;
+            self.connect_to_target(spec.dsn, origin, read_only);
+            return;
+        };
+        origin.push_str(&format!(" · creds from {}", secret.provenance()));
+        let token = self.environments.connect_token.wrapping_add(1);
+        self.environments.connect_token = token;
+        self.environments.connecting = Some(PendingEnvConnect {
+            token,
+            dsn: spec.dsn,
+            origin,
+            read_only,
+        });
+        if self.spawn_secret_fetch(token, secret.clone()) {
+            self.last_status = Some(format!("{what}: reading secret {}…", secret.id));
+        } else {
+            self.environments.connecting = None;
+            self.last_error = Some(format!(
+                "can't connect to {what}: secrets are not available in this session"
+            ));
+        }
+    }
+
+    /// The secret for a pending environment connect arrived.
+    fn on_env_secret(
+        &mut self,
+        token: u64,
+        result: Result<crate::creds::aws_secrets::SecretCreds, String>,
+    ) {
+        let Some(pending) = self.environments.connecting.take_if(|p| p.token == token) else {
+            return;
+        };
+        match result {
+            Ok(creds) => {
+                let mut dsn = pending.dsn;
+                crate::creds::aws_secrets::apply(&mut dsn, creds);
+                self.environments.opened_from = None;
+                self.connect_to_target(dsn, pending.origin, pending.read_only);
+            }
+            Err(e) => {
+                self.last_status = None;
+                self.last_error = Some(format!("secret not read: {e}"));
+            }
         }
     }
 

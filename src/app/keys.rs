@@ -1318,8 +1318,10 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.mode = self.environments.opened_from.take().unwrap_or(Mode::Normal);
+                self.environments.connecting = None;
                 self.last_status = None;
             }
+            KeyCode::Enter => self.connect_to_environment_target(),
             KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.environments.select_prev(),
             KeyCode::Char('g') | KeyCode::Home => self.environments.select_first(),

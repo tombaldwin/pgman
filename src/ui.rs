@@ -1367,7 +1367,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
-                Mode::Environments => "j/k navigate · g/G top/bottom · r refresh · q / esc close",
+                Mode::Environments => "j/k navigate · enter connect · r refresh · q / esc close",
                 Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
                 Mode::ErrorDetail => "esc / q / F2 close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
@@ -2114,6 +2114,10 @@ pub(crate) fn help_body(
     heading("environments", &mut lines, &mut anchors);
     push(
         row("    j / k  ↑ ↓    navigate databases (replicas sit under their primary, marked └)"),
+        &mut lines,
+    );
+    push(
+        row("    enter         connect: replicas read-only, secret read first"),
         &mut lines,
     );
     push(

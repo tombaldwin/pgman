@@ -9232,3 +9232,182 @@ fn environments_open_from_the_connection_picker_and_close_back_to_it() {
     press(&mut a, KeyCode::Esc);
     assert_eq!(a.mode, Mode::Normal);
 }
+
+/// One environment with a replica (secret-less) and a primary (with a
+/// secret), both on a closed local port.
+fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
+    use crate::creds::aws_secrets::SecretRef;
+    use crate::inventory::{ConnectSpec, EnvReport, Target};
+    use crate::mcp::connections::Role;
+    let row = |server: &str, role: Role, secret: Option<&str>| Target {
+        database: "ledger".into(),
+        server: server.into(),
+        role,
+        replica_of: None,
+        host: Some("127.0.0.1".into()),
+        port: Some(1),
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(ConnectSpec {
+            dsn: crate::conn::Dsn::parse("postgres://127.0.0.1:1/ledger").unwrap(),
+            secret: secret.map(|id| SecretRef {
+                id: id.into(),
+                region: Some("us-west-1".into()),
+                profile: None,
+                account: None,
+            }),
+        }),
+    };
+    let mut broken = row("stopped-one", Role::Direct, None);
+    broken.connect = Err("stopped-one has no endpoint yet".into());
+    vec![EnvReport {
+        name: "demo".into(),
+        source: "RDS".into(),
+        targets: vec![
+            row("demo-replica", Role::Replica, None),
+            row(
+                "demo",
+                Role::Primary,
+                Some("demo/database/ledger/credentials"),
+            ),
+            broken,
+        ],
+        error: None,
+    }]
+}
+
+fn writable_app() -> App {
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    a.mode = Mode::ConnPick;
+    press(&mut a, KeyCode::Char('E'));
+    a
+}
+
+#[tokio::test]
+async fn enter_on_a_replica_connects_read_only_whatever_the_profile_says() {
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal, "{:?}", a.last_error);
+    assert_eq!(a.dsn.as_ref().map(|d| d.port), Some(1));
+    assert!(a.read_only, "a replica opens read-only");
+    assert_eq!(
+        a.dsn_origin.as_deref(),
+        Some("environment demo demo-replica/ledger (replica, read-only)")
+    );
+    // Closing nothing: the overview is gone, and q no longer returns to
+    // the picker it was opened from.
+    assert_eq!(a.environments.opened_from, None);
+}
+
+#[tokio::test]
+async fn a_primary_reads_its_secret_first_then_gets_the_normal_profile() {
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Environments, "waits for the secret");
+    assert_eq!(a.dsn, None);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .contains("reading secret demo/database/ledger/credentials"));
+
+    // A stale answer connects nothing.
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token: token + 1,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: Some("old".into()),
+            password: "stale".into(),
+        }),
+    });
+    assert_eq!(a.dsn, None);
+
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: Some("ledger_app".into()),
+            password: "s3cret-value".into(),
+        }),
+    });
+    let dsn = a.dsn.as_ref().expect("connected");
+    assert_eq!(
+        (dsn.user.as_deref(), dsn.password.as_deref()),
+        (Some("ledger_app"), Some("s3cret-value"))
+    );
+    assert!(!a.read_only, "a primary follows its safety profile");
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(origin.contains("(primary)"), "{origin}");
+    assert!(
+        origin.contains("creds from AWS Secrets Manager secret demo/database/ledger/credentials"),
+        "{origin}"
+    );
+    for shown in [origin, a.last_status.clone().unwrap_or_default()] {
+        assert!(!shown.contains("s3cret-value"), "never shown: {shown}");
+    }
+    assert!(a.environments.connecting.is_none());
+}
+
+#[tokio::test]
+async fn a_secret_that_arrives_after_the_overview_closed_connects_nothing() {
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    press(&mut a, KeyCode::Char('q'));
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "late".into(),
+        }),
+    });
+    assert_eq!(a.dsn, None, "cancelled by closing");
+    assert_eq!(a.mode, Mode::ConnPick);
+}
+
+#[tokio::test]
+async fn environment_connect_failures_say_why() {
+    // No fetcher installed: the secret is never read.
+    let mut a = writable_app();
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.environments.connecting.is_none());
+    assert!(a
+        .last_error
+        .as_deref()
+        .unwrap()
+        .contains("secrets are not available"));
+
+    // A row the source can't connect to.
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("can't connect to demo stopped-one/ledger: stopped-one has no endpoint yet")
+    );
+    assert_eq!(a.mode, Mode::Environments);
+
+    // The secret lookup itself failing.
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Err("aws sts failed: expired".into()),
+    });
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("secret not read: aws sts failed: expired")
+    );
+    assert_eq!(a.dsn, None);
+}
