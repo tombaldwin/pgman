@@ -351,6 +351,30 @@ linked; `t_schema_version` read back (latest scriptId 248);
 write relayed batch's "re-run with --yes", which an MCP client cannot
 do (fixed, with a guard). Remaining: review and merge of `mcp-part-a`.
 
+## MCP server, Part B — 2026-10-19 · behaviour · **in review**
+
+Tom, relayed by the examplecorp Lead: "do pgman part B". Three stacked PRs,
+each based on the one before so each review stays small:
+
+- **B1 `sessions_locks`** (branch `mcp-b1-sessions-locks`): long
+  transactions, blockers and blocking sessions, and locks on named
+  tables, plus `server_is_replica` from `pg_is_in_recovery()`. Table
+  names must be plain identifiers.
+- **B2 `pending_patches`** (branch `mcp-b2-pending-patches`): a
+  `[patches]` block (dir, table, column). Each id is read from the
+  file's own version-row INSERT. Against examplecorp local it found 249–251
+  pending, plus 16 ids (225–232, 235–242) recorded while the file's
+  version row is commented out.
+- **B3 secrets and roles** (branch `mcp-b3-secrets-replica`): `secret`,
+  `aws_region`, `aws_profile`, `aws_account` and `role` in
+  `connections.toml`. The secret is read through the `aws` CLI, with
+  the account checked first. A `primary` connection serves only
+  `sessions_locks`.
+
+Not yet done: any connection to examplecorp Demo/Prod and any real secret
+read. Both wait on Tom's go in this tab; a Demo replica smoke test
+comes first.
+
 ## Release day
 
 ```
