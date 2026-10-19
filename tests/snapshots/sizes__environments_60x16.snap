@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
 │  staging · RDS 123456789012 eu-west-2                    │
-│    DATABASE  ROLE     SERVER             STATUS     PROB…│
+│    DATABASE  ROLE     SERVER             STATUS     SCHE…│
 │    shop      primary  staging            available  via …│
 │    shop      replica  └ staging-replica  available  v251…│
 │                                                          │

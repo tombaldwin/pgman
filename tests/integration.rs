@@ -2195,6 +2195,8 @@ fn mcp_environments_probe_reads_opted_in_environments_only() {
     let probe = &v["environments"][0]["databases"][0]["probe"];
     assert!(probe["server_version"].is_string(), "{text}");
     assert_eq!(probe["in_recovery"], false, "{text}");
+    assert!(probe["sessions"].as_i64().unwrap() >= 1, "the probe's own session counts: {text}");
+    assert!(probe["size"].is_string(), "{text}");
     assert!(v["environments"][1]["probe"]
         .as_str()
         .unwrap()

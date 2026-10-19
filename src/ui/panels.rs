@@ -1163,60 +1163,79 @@ fn lag_text(secs: f64) -> String {
     }
 }
 
-/// The probe column for one row, and whether it wants attention. Pure.
-pub(crate) fn probe_cell(
+/// A probed row's columns, and whether the row wants attention.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ProbeCells {
+    /// Patch level: `v251`, `v251 (+2)` with pending patches, `via
+    /// replica`, `probing…`, or `✗` and why.
+    pub schema: String,
+    /// Replicas only: `lag 0.4s`, or `NOT IN RECOVERY`.
+    pub lag: String,
+    pub sessions: String,
+    pub size: String,
+    pub alert: Option<ProbeAlert>,
+}
+
+/// One row's probe as the overview's columns. Pure.
+pub(crate) fn probe_cells(
     state: &crate::app::ProbeState,
     role: crate::mcp::connections::Role,
-) -> (String, Option<ProbeAlert>) {
+) -> ProbeCells {
     use crate::app::ProbeState;
+    let only = |schema: String, alert| ProbeCells {
+        schema,
+        alert,
+        ..ProbeCells::default()
+    };
     let p = match state {
-        ProbeState::Off => return (String::new(), None),
-        ProbeState::Probing => return ("probing…".into(), None),
-        ProbeState::ViaReplica => return ("via replica".into(), None),
+        ProbeState::Off => return ProbeCells::default(),
+        ProbeState::Probing => return only("probing…".into(), None),
+        ProbeState::ViaReplica => return only("via replica".into(), None),
         ProbeState::Done(Err(e)) => {
-            return (
+            return only(
                 format!("✗ {}", e.lines().next().unwrap_or_default()),
                 Some(ProbeAlert::Bad),
             )
         }
         ProbeState::Done(Ok(p)) => p,
     };
-    let mut parts = Vec::new();
     let mut alert = None;
-    if let Some(v) = p.schema_version {
-        parts.push(format!("v{v}"));
-    }
-    match p.pending {
-        Some(0) => parts.push("up to date".into()),
-        Some(n) => {
-            parts.push(format!("{n} pending"));
+    let schema = match (p.schema_version, p.pending, &p.schema_error) {
+        (_, _, Some(_)) => {
             alert = Some(ProbeAlert::Warn);
+            "version ✗".to_string()
         }
-        None => {}
-    }
-    if p.schema_error.is_some() {
-        parts.push("version ✗".into());
-        alert = Some(ProbeAlert::Warn);
-    }
-    if role == crate::mcp::connections::Role::Replica {
+        (Some(v), Some(n), None) if n > 0 => {
+            alert = Some(ProbeAlert::Warn);
+            format!("v{v} (+{n})")
+        }
+        (Some(v), _, None) => format!("v{v}"),
+        (None, _, None) => "—".to_string(),
+    };
+    let lag = if role == crate::mcp::connections::Role::Replica {
         match (p.in_recovery, p.lag_secs) {
             (Some(false), _) => {
-                parts.push("NOT IN RECOVERY".into());
                 alert = Some(ProbeAlert::Bad);
+                "NOT IN RECOVERY".to_string()
             }
             (_, Some(secs)) => {
-                parts.push(lag_text(secs));
                 if secs > crate::mcp::tools::REPLICA_LAG_NOTE_SECS {
                     alert = alert.or(Some(ProbeAlert::Warn));
                 }
+                lag_text(secs)
             }
-            (_, None) => parts.push("lag ?".into()),
+            (_, None) => "lag ?".to_string(),
         }
+    } else {
+        String::new()
+    };
+    ProbeCells {
+        schema,
+        lag,
+        sessions: p.sessions.map(|n| n.to_string()).unwrap_or_default(),
+        size: p.size.clone().unwrap_or_default(),
+        alert,
     }
-    if parts.is_empty() {
-        parts.push("ok".into());
-    }
-    (parts.join(" · "), alert)
 }
 
 /// The environments panel's lines without probes. Pure.
@@ -1274,17 +1293,21 @@ pub(crate) fn environment_lines_probed(
             .map(|t| t.status.clone().unwrap_or_default())
             .collect(),
     );
-    // The probe column, before engine: what a probe found matters more
+    // The probe columns, before engine: what a probe found matters more
     // than a version, and a narrow terminal cuts from the right.
-    let pr_w = w(
-        "probe",
-        reports
-            .iter()
-            .enumerate()
-            .flat_map(|(ri, r)| r.targets.iter().enumerate().map(move |(ti, t)| (ri, ti, t)))
-            .map(|(ri, ti, t)| probe_cell(state(ri, ti), t.role).0)
-            .collect(),
+    let probed: Vec<ProbeCells> = reports
+        .iter()
+        .enumerate()
+        .flat_map(|(ri, r)| r.targets.iter().enumerate().map(move |(ti, t)| (ri, ti, t)))
+        .map(|(ri, ti, t)| probe_cells(state(ri, ti), t.role))
+        .collect();
+    let sch_w = w("schema", probed.iter().map(|c| c.schema.clone()).collect());
+    let lag_w = w("lag", probed.iter().map(|c| c.lag.clone()).collect());
+    let ses_w = w(
+        "sessions",
+        probed.iter().map(|c| c.sessions.clone()).collect(),
     );
+    let size_w = w("size", probed.iter().map(|c| c.size.clone()).collect());
     let pad = |c: &str, width: usize| {
         let n = width.saturating_sub(crate::ui::display_width(c));
         format!("{c}{}", " ".repeat(n))
@@ -1311,12 +1334,19 @@ pub(crate) fn environment_lines_probed(
         );
         let probes_here = r.probe.is_some();
         out.push(EnvLine::Columns(if probes_here {
-            format!("{head}{}  engine", pad("probe", pr_w))
+            format!(
+                "{head}{}  {}  {}  {}  engine",
+                pad("schema", sch_w),
+                pad("lag", lag_w),
+                pad("sessions", ses_w),
+                pad("size", size_w),
+            )
         } else {
             format!("{head}engine")
         }));
         for (ti, t) in r.targets.iter().enumerate() {
-            let (cell, alert) = probe_cell(state(i, ti), t.role);
+            let cells = probe_cells(state(i, ti), t.role);
+            let alert = cells.alert;
             let mut text = format!(
                 "    {}  {}  {}  {}  ",
                 pad(&t.database, db_w),
@@ -1325,7 +1355,15 @@ pub(crate) fn environment_lines_probed(
                 pad(t.status.as_deref().unwrap_or("—"), st_w),
             );
             if probes_here {
-                text.push_str(&format!("{}  ", pad(&cell, pr_w)));
+                // Sessions read best right-aligned; the rest left.
+                let ses = format!("{:>width$}", cells.sessions, width = ses_w);
+                text.push_str(&format!(
+                    "{}  {}  {}  {}  ",
+                    pad(&cells.schema, sch_w),
+                    pad(&cells.lag, lag_w),
+                    ses,
+                    pad(&cells.size, size_w),
+                ));
             }
             text.push_str(&engine(i, ti, t));
             out.push(EnvLine::Row {
@@ -2550,60 +2588,75 @@ mod tests {
             lag_secs: Some(0.42),
             schema_version: Some(251),
             pending: Some(0),
+            sessions: Some(7),
+            size: Some("1203 MB".into()),
             ..Probe::default()
         };
         assert_eq!(
-            probe_cell(&done(replica.clone()), Role::Replica),
-            ("v251 · up to date · lag 0.4s".to_string(), None)
+            probe_cells(&done(replica.clone()), Role::Replica),
+            ProbeCells {
+                schema: "v251".into(),
+                lag: "lag 0.4s".into(),
+                sessions: "7".into(),
+                size: "1203 MB".into(),
+                alert: None
+            }
+        );
+        let behind = probe_cells(
+            &done(Probe {
+                lag_secs: Some(400.0),
+                pending: Some(2),
+                ..replica.clone()
+            }),
+            Role::Replica,
         );
         assert_eq!(
-            probe_cell(
-                &done(Probe {
-                    lag_secs: Some(400.0),
-                    pending: Some(2),
-                    ..replica.clone()
-                }),
-                Role::Replica
-            ),
-            (
-                "v251 · 2 pending · lag 7m".to_string(),
-                Some(ProbeAlert::Warn)
-            )
+            (behind.schema.as_str(), behind.lag.as_str()),
+            ("v251 (+2)", "lag 7m")
+        );
+        assert_eq!(behind.alert, Some(ProbeAlert::Warn));
+        let posing = probe_cells(
+            &done(Probe {
+                in_recovery: Some(false),
+                ..replica.clone()
+            }),
+            Role::Replica,
+        );
+        assert_eq!(posing.lag, "NOT IN RECOVERY");
+        assert_eq!(
+            posing.alert,
+            Some(ProbeAlert::Bad),
+            "the loudest thing on the screen"
+        );
+        let primary = probe_cells(&done(replica.clone()), Role::Direct);
+        assert_eq!(primary.lag, "", "lag is a replica's");
+        let no_table = probe_cells(&done(Probe::default()), Role::Direct);
+        assert_eq!((no_table.schema.as_str(), no_table.alert), ("—", None));
+        let bad_table = probe_cells(
+            &done(Probe {
+                schema_error: Some("relation does not exist".into()),
+                ..Probe::default()
+            }),
+            Role::Direct,
         );
         assert_eq!(
-            probe_cell(
-                &done(Probe {
-                    in_recovery: Some(false),
-                    ..replica.clone()
-                }),
-                Role::Replica
-            ),
-            (
-                "v251 · up to date · NOT IN RECOVERY".to_string(),
-                Some(ProbeAlert::Bad)
-            ),
-            "a replica that is a primary is the loudest thing on the screen"
+            (bad_table.schema.as_str(), bad_table.alert),
+            ("version ✗", Some(ProbeAlert::Warn))
         );
-        assert_eq!(
-            probe_cell(&done(Probe::default()), Role::Direct),
-            ("ok".to_string(), None),
-            "nothing configured to show, but it answered"
+        let failed = probe_cells(
+            &ProbeState::Done(Err("password authentication failed\nmore".into())),
+            Role::Primary,
         );
+        assert_eq!(failed.schema, "✗ password authentication failed");
+        assert_eq!(failed.alert, Some(ProbeAlert::Bad));
         assert_eq!(
-            probe_cell(
-                &ProbeState::Done(Err("password authentication failed\nmore".into())),
-                Role::Primary
-            ),
-            (
-                "✗ password authentication failed".to_string(),
-                Some(ProbeAlert::Bad)
-            )
-        );
-        assert_eq!(
-            probe_cell(&ProbeState::ViaReplica, Role::Primary).0,
+            probe_cells(&ProbeState::ViaReplica, Role::Primary).schema,
             "via replica"
         );
-        assert_eq!(probe_cell(&ProbeState::Off, Role::Direct).0, "");
+        assert_eq!(
+            probe_cells(&ProbeState::Off, Role::Direct),
+            ProbeCells::default()
+        );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
     }
@@ -2631,16 +2684,24 @@ mod tests {
             })
             .collect();
         let at = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
-        assert_eq!(at(&texts[1], "via replica"), at(&texts[0], "probe"));
-        assert_eq!(at(&texts[2], "v251"), at(&texts[0], "probe"));
-        assert!(texts[2].contains("1 pending"), "{}", texts[2]);
+        assert_eq!(at(&texts[1], "via replica"), at(&texts[0], "schema"));
+        assert_eq!(at(&texts[2], "v251 (+1)"), at(&texts[0], "schema"));
+        assert_eq!(at(&texts[2], "lag 0.4s"), at(&texts[0], "lag"));
+        assert_eq!(at(&texts[2], "812 MB"), at(&texts[0], "size"));
+        let end = |t: &str, n: &str| at(t, n) + crate::ui::display_width(n);
+        assert_eq!(
+            end(&texts[2], "12"),
+            end(&texts[0], "sessions"),
+            "sessions right-aligned: {}",
+            texts[2]
+        );
         assert!(
-            texts[0].find("probe").unwrap() < texts[0].find("engine").unwrap(),
-            "probe before engine: {}",
+            texts[0].find("size").unwrap() < texts[0].find("engine").unwrap(),
+            "probe columns before engine: {}",
             texts[0]
         );
         assert!(
-            !texts[3].contains("probe"),
+            !texts[3].contains("schema"),
             "qa doesn't probe: {}",
             texts[3]
         );
@@ -2652,7 +2713,7 @@ mod tests {
         let plain = environment_lines_probed(&envs, &[]);
         assert!(plain
             .iter()
-            .all(|l| !matches!(l, EnvLine::Columns(t) if t.contains("probe"))));
+            .all(|l| !matches!(l, EnvLine::Columns(t) if t.contains("schema"))));
     }
 
     #[test]

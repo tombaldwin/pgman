@@ -82,6 +82,10 @@ and breaking changes.
 - **MCP tunnels stay open between calls** to the same database (5
   minutes idle), so a run of `query` calls pays the ssh handshake once;
   each call still gets a fresh read-only session.
+- **Environments are home.** pgman starts on the overview (with
+  environments configured and no `--dsn`), full screen, on the row you
+  used last. Replicas sit under each database. Probing environments
+  show `SCHEMA`, `LAG`, `SESSIONS` and `SIZE` columns.
 - **Connecting to RDS works for ordinary users.** The start card sized
   every database on the server, and RDS's `rdsadmin` refuses that to
   anyone but RDS, so the whole connection failed. Only databases you
