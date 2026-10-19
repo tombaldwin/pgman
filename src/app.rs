@@ -4104,10 +4104,25 @@ impl App {
         let Some(states) = self.environments.probes.get_mut(report) else {
             return;
         };
-        for (state, outcome) in states.iter_mut().zip(outcomes) {
-            if let Some(result) = outcome {
-                *state = ProbeState::done(result);
+        let Some(r) = self.environments.reports.get(report) else {
+            return;
+        };
+        for ((state, outcome), t) in states.iter_mut().zip(outcomes).zip(&r.targets) {
+            let Some(result) = outcome else { continue };
+            if let (Ok(p), crate::mcp::connections::Role::Replica) = (&result, t.role) {
+                if let Some(lag) = p.lag_secs {
+                    let h = self
+                        .environments
+                        .lag_history
+                        .entry((r.name.clone(), t.server.clone(), t.database.clone()))
+                        .or_default();
+                    h.push(lag);
+                    if h.len() > LAG_HISTORY {
+                        h.remove(0);
+                    }
+                }
             }
+            *state = ProbeState::done(result);
         }
     }
 

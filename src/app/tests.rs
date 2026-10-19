@@ -10076,3 +10076,50 @@ fn v_toggles_the_drift_view_in_the_overview() {
     press(&mut a, KeyCode::Char('v'));
     assert!(!a.environments.drift);
 }
+
+#[test]
+fn replica_lag_readings_accumulate_capped_and_stale_ones_are_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    press(&mut a, KeyCode::Char('E'));
+    let key = (
+        "staging".to_string(),
+        "staging-replica".to_string(),
+        "shop".to_string(),
+    );
+    let answer = |lag: f64| {
+        vec![
+            None,
+            Some(Ok(crate::query::probe::Probe {
+                lag_secs: Some(lag),
+                ..Default::default()
+            })),
+        ]
+    };
+    for i in 0..(LAG_HISTORY + 5) {
+        let seq = a.environments.probe_seq;
+        a.on_msg(AppMsg::EnvProbed {
+            seq,
+            report: 0,
+            outcomes: answer(i as f64),
+        });
+    }
+    let h = &a.environments.lag_history[&key];
+    assert_eq!(h.len(), LAG_HISTORY, "capped");
+    assert_eq!(h[0], 5.0, "the oldest dropped first");
+    let seq = a.environments.probe_seq;
+    a.on_msg(AppMsg::EnvProbed {
+        seq: seq.wrapping_sub(1),
+        report: 0,
+        outcomes: answer(999.0),
+    });
+    assert!(
+        !a.environments.lag_history[&key].contains(&999.0),
+        "stale: not recorded"
+    );
+    // The primary row (via replica) records nothing.
+    assert_eq!(a.environments.lag_history.len(), 1);
+}

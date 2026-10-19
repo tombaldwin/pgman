@@ -999,7 +999,13 @@ pub struct EnvironmentsUi {
     pub restore: Option<EnvSelection>,
     /// `v`: the schema-drift matrix in place of the list.
     pub drift: bool,
+    /// Each replica row's recent lag readings, oldest first, keyed by
+    /// (environment, server, database). Grows with each probe.
+    pub lag_history: std::collections::HashMap<(String, String, String), Vec<f64>>,
 }
+
+/// Lag readings kept per replica row.
+pub const LAG_HISTORY: usize = 30;
 
 /// A row of the overview by what it is, not where it sits: listings
 /// reorder, names don't.
@@ -1135,6 +1141,17 @@ impl EnvironmentsUi {
             .position(|(r, t)| {
                 r.name == sel.environment && t.server == sel.server && t.database == sel.database
             })
+    }
+
+    /// The lag readings of the row under the cursor.
+    pub fn selected_lag_history(&self) -> &[f64] {
+        self.selected()
+            .and_then(|(r, t)| {
+                self.lag_history
+                    .get(&(r.name.clone(), t.server.clone(), t.database.clone()))
+            })
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// The probe of the row under the cursor.

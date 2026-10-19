@@ -1467,6 +1467,29 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
     format!("  {}", parts.join(" · "))
 }
 
+/// A replica's lag readings as the detail line shows them:
+/// `▁▂▂▃▅▇ · 2s–30s over 12 probes`, or `None` with fewer than two. Pure.
+pub(crate) fn lag_trend(samples: &[f64]) -> Option<String> {
+    if samples.len() < 2 {
+        return None;
+    }
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let lo = samples.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let span = (hi - lo).max(f64::EPSILON);
+    let bars: String = samples
+        .iter()
+        .map(|v| BARS[(((v - lo) / span) * 7.0).round().clamp(0.0, 7.0) as usize])
+        .collect();
+    let secs = |v: f64| lag_text(v).trim_start_matches("lag ").to_string();
+    Some(format!(
+        "{bars} · {}–{} over {} probes",
+        secs(lo),
+        secs(hi),
+        samples.len()
+    ))
+}
+
 /// [`environment_detail`], led by what a probe couldn't do: the column
 /// shows only the first line of an error. Pure.
 pub(crate) fn environment_detail_probed(
@@ -1857,7 +1880,18 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 crate::grid::truncate_cell(
-                    &environment_detail_probed(t, ui.selected_probe()),
+                    &match lag_trend(ui.selected_lag_history()) {
+                        // The trend near the front, where a narrow panel
+                        // keeps it.
+                        Some(trend) => {
+                            let d = environment_detail_probed(t, ui.selected_probe());
+                            match d.split_once(" · ") {
+                                Some((head, rest)) => format!("{head} · lag {trend} · {rest}"),
+                                None => format!("{d} · lag {trend}"),
+                            }
+                        }
+                        None => environment_detail_probed(t, ui.selected_probe()),
+                    },
                     at.width as usize,
                 ),
                 Style::default().fg(theme.muted),
@@ -2868,6 +2902,21 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_lag_trend_sketches_the_readings_and_their_range() {
+        assert_eq!(lag_trend(&[]), None);
+        assert_eq!(lag_trend(&[3.0]), None, "one reading is no trend");
+        assert_eq!(
+            lag_trend(&[2.0, 2.0, 16.0, 30.0]).as_deref(),
+            Some("▁▁▅█ · 2.0s–30s over 4 probes")
+        );
+        // Flat: no division by zero, all at the floor.
+        assert_eq!(
+            lag_trend(&[5.0, 5.0]).as_deref(),
+            Some("▁▁ · 5.0s–5.0s over 2 probes")
+        );
     }
 
     #[test]
