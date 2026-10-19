@@ -104,8 +104,9 @@ source = { kind = "static", connections = ["ledger-local", "ledgerlog-local"] }
 - **Credentials**: with a secret configured, the password (and user) is
   read from AWS Secrets Manager when you press `Enter`, never before,
   and never stored. The status line names the secret, never its
-  value. Without one, the usual sources apply: `user`, `~/.pgpass`,
-  `PGPASSWORD`.
+  value. Without one, `password_env = "VAR"` reads the password from
+  that environment variable when you connect. pgman reads neither
+  `~/.pgpass` nor `PGPASSWORD` for environment databases.
 - A `static` environment's row connects with its `connections.toml`
   entry: that entry's tunnel, secret and role.
 
@@ -118,6 +119,7 @@ source = { kind = "rds", instances = ["demo"], region = "us-west-1", account = "
 ssh_tunnel = "ec2-user@bastion.example.com"   # optional: [user@]host[:port]
 sslmode = "require"                           # optional
 user = "readonly"                             # optional; a secret's username wins
+password_env = "DEMO_PW"                      # optional; for databases without a secret
 
 # Secrets Manager secret per server, or per server/database.
 # Read with the source's region, profile and account.
@@ -139,13 +141,25 @@ can't silently widen what an environment covers.
 | --- | --- | --- |
 | `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases`. | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
 | `static` | One row per named connection in `connections.toml`, with its role. There's no engine version or status yet. | Nothing. |
+| `docker` | Local containers that expose 5432 or run a `postgres` image, whose names match one of `containers` (globs; default all). One row per entry in `databases` (default `postgres`), reached on the port 5432 is published to. A stopped container, or one that doesn't publish 5432, is listed with the reason it can't connect. | The `docker` CLI on `PATH`. `user`, `password_env` and `sslmode` apply; `ssh_tunnel` and `secrets` don't. |
 
 Environments that share an `rds` scope (region, profile, account) share
 one listing per refresh. A source that fails puts its error on that
 environment's heading; the other environments still show.
 
-Docker, Cloud SQL, Azure Database and others are planned as further
-sources behind the same model (BACKLOG.md).
+Cloud SQL, Azure Database and others are planned as further sources
+behind the same model (BACKLOG.md).
+
+```toml
+# Local containers: the app's database in ledger-db.
+[[environments]]
+name = "local"
+source = { kind = "docker", containers = ["ledger-*"] }
+databases = ["ledger"]
+user = "ledger"
+password_env = "LEDGER_DB_PASSWORD"
+sslmode = "disable"
+```
 
 ## Probes
 

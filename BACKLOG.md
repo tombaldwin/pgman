@@ -41,8 +41,8 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   tickers), and an `environments` MCP tool returning the same rows.
 - **Order.** (1) and (2) are done (PLAN.md): the model, the sources,
   the `E` screen, connecting, AWS discovery, and opt-in probes with one
-  ssh per bastion. Next is (3): `docker` and the other sources as
-  needed.
+  ssh per bastion, and (3) began with `docker`. Cloud SQL, Azure
+  Database and the others follow as they're needed.
 
 ### Shared chrome — follow-ups (2026-10-19)
 - **ebman onto `tui_common::chrome`.** ebman still carries its own copy

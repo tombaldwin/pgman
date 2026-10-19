@@ -2118,6 +2118,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
             connect: Ok(pgman::inventory::ConnectSpec {
                 dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
                 secret: None,
+                password_env: None,
             }),
         }],
         error: None,

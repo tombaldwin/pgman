@@ -420,7 +420,7 @@ pub fn propose(
                             chosen.insert(key, secret.to_string());
                         }
                         Err(tied) if tied.is_empty() => notes.push(format!(
-                            "no secret names {db} for {}; connecting will use ~/.pgpass or PGPASSWORD",
+                            "no secret names {db} for {}; add one under secrets, or set password_env",
                             server.id
                         )),
                         Err(tied) => notes.push(format!(
@@ -471,6 +471,7 @@ pub fn propose(
                 ssh_tunnel,
                 sslmode: Some("require".to_string()),
                 user: None,
+                password_env: None,
                 secrets: chosen,
                 probe: false,
                 version_table: None,

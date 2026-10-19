@@ -12,12 +12,15 @@
 //!   databases and any hand-listed group of remote ones.
 //! - `rds`: `aws rds describe-db-instances`, filtered by identifier glob;
 //!   replicas of a matched instance come along.
+//! - `docker`: local Postgres containers from `docker ps`, reached on
+//!   their published port.
 //!
 //! Environments live in `environments.toml` under `util::config_dir()`,
 //! never a project file: like `connections.toml`, they name hosts and
 //! accounts the operator chose.
 
 pub mod discover;
+pub mod docker;
 pub mod probe;
 pub mod rds;
 
@@ -54,6 +57,10 @@ pub struct Environment {
     /// User name when no secret supplies one.
     #[serde(default)]
     pub user: Option<String>,
+    /// Environment variable holding the password, for databases without
+    /// a secret. Read at connect, never stored.
+    #[serde(default)]
+    pub password_env: Option<String>,
     /// AWS Secrets Manager secret holding the credentials, keyed by
     /// server (`"demo"`) or, more specifically, server and database
     /// (`"demo/ledger"`). Read with the source's region, profile and
@@ -145,12 +152,23 @@ pub enum Source {
         #[serde(default)]
         account: Option<String>,
     },
+    /// Local containers running Postgres, from `docker ps`, whose names
+    /// match any `containers` glob (default: all of them).
+    Docker {
+        #[serde(default = "every_container")]
+        containers: Vec<String>,
+    },
+}
+
+fn every_container() -> Vec<String> {
+    vec!["*".to_string()]
 }
 
 impl Source {
     pub fn label(&self) -> String {
         match self {
             Source::Static { .. } => "connections.toml".to_string(),
+            Source::Docker { .. } => "docker".to_string(),
             Source::Rds {
                 region, account, ..
             } => {
@@ -178,7 +196,7 @@ impl Source {
                 profile: profile.clone(),
                 account: account.clone(),
             }),
-            Source::Static { .. } => None,
+            Source::Static { .. } | Source::Docker { .. } => None,
         }
     }
 }
@@ -191,6 +209,7 @@ impl Environment {
             && (self.ssh_tunnel.is_some()
                 || self.sslmode.is_some()
                 || self.user.is_some()
+                || self.password_env.is_some()
                 || !self.secrets.is_empty())
         {
             return Err(
@@ -198,6 +217,23 @@ impl Environment {
                  connections.toml for a static environment"
                     .to_string(),
             );
+        }
+        if matches!(self.source, Source::Docker { .. })
+            && (self.ssh_tunnel.is_some() || !self.secrets.is_empty())
+        {
+            return Err("a docker environment is local: ssh_tunnel and secrets don't apply".into());
+        }
+        if let Some(v) = &self.password_env {
+            let ok = v
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !ok {
+                return Err(format!(
+                    "password_env {v:?} is not an environment variable name"
+                ));
+            }
         }
         if let Some(t) = &self.ssh_tunnel {
             crate::tunnel::SshTunnelSpec::parse(t).map_err(|e| format!("ssh_tunnel {t:?}: {e}"))?;
@@ -273,6 +309,7 @@ impl Environment {
                 ssh_tunnel,
             },
             secret: self.secret_for(server, database),
+            password_env: self.password_env.clone(),
         })
     }
 }
@@ -347,6 +384,27 @@ pub struct Target {
 pub struct ConnectSpec {
     pub dsn: Dsn,
     pub secret: Option<SecretRef>,
+    /// The environment variable the password is read from at connect,
+    /// when there is no secret.
+    pub password_env: Option<String>,
+}
+
+impl ConnectSpec {
+    /// Put the `password_env` variable's value on `dsn` — read now, at
+    /// connect, never stored. Nothing to do without one; an unset
+    /// variable is an error rather than a password-less attempt.
+    pub fn apply_password_env(&self, dsn: &mut Dsn) -> Result<(), String> {
+        let Some(var) = &self.password_env else {
+            return Ok(());
+        };
+        match std::env::var(var).ok().filter(|v| !v.is_empty()) {
+            Some(pw) => {
+                dsn.password = Some(pw);
+                Ok(())
+            }
+            None => Err(format!("password_env names ${var}, which is not set")),
+        }
+    }
 }
 
 /// An environment's rows, or why there are none.
@@ -428,6 +486,9 @@ pub fn static_targets(names: &[String], entries: &[Entry]) -> Result<Vec<Target>
                 connect: Ok(ConnectSpec {
                     dsn: dsn.clone(),
                     secret: e.secret.clone(),
+                    // connections.toml's own password_env was applied
+                    // when the entry was built.
+                    password_env: None,
                 }),
             })
         })
@@ -441,8 +502,11 @@ pub fn gather(
     envs: &[Environment],
     personal: &[Entry],
     mut fetch_rds: impl FnMut(&AwsScope) -> Result<Vec<rds::RdsInstance>, String>,
+    mut fetch_docker: impl FnMut() -> Result<Vec<docker::Container>, String>,
 ) -> Vec<EnvReport> {
     let mut cache: HashMap<AwsScope, Result<Vec<rds::RdsInstance>, String>> = HashMap::new();
+    // One `docker ps` however many docker environments there are.
+    let mut containers: Option<Result<Vec<docker::Container>, String>> = None;
     envs.iter()
         .map(|env| {
             let result = match &env.source {
@@ -457,6 +521,10 @@ pub fn gather(
                         Err(e) => Err(e.clone()),
                     }
                 }
+                Source::Docker { .. } => match containers.get_or_insert_with(&mut fetch_docker) {
+                    Ok(all) => Ok(docker::docker_targets(env, all)),
+                    Err(e) => Err(e.clone()),
+                },
             };
             let (targets, error) = match result {
                 Ok(t) if t.is_empty() => (t, Some("matched nothing".to_string())),
@@ -515,7 +583,7 @@ pub fn load_and_gather() -> Result<Vec<EnvReport>, String> {
         }
     };
     let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
-    Ok(gather(&envs, &entries, fetch_rds))
+    Ok(gather(&envs, &entries, fetch_rds, docker::fetch))
 }
 
 #[cfg(test)]
@@ -620,6 +688,7 @@ source = { kind = "static", connections = ["ledger-local"] }
             ssh_tunnel: None,
             sslmode: None,
             user: None,
+            password_env: None,
             secrets: Default::default(),
             probe: false,
             version_table: None,
@@ -633,18 +702,26 @@ source = { kind = "static", connections = ["ledger-local"] }
     fn gather_lists_once_per_scope_and_reports_errors_per_environment() {
         let envs = parse_config(CONFIG).unwrap();
         let mut calls = 0;
-        let reports = gather(&envs, &[], |_| {
-            calls += 1;
-            Ok(all())
-        });
+        let reports = gather(
+            &envs,
+            &[],
+            |_| {
+                calls += 1;
+                Ok(all())
+            },
+            || Ok(Vec::new()),
+        );
         assert_eq!(calls, 1, "demo and prod share a scope");
         assert_eq!(reports[0].targets.len(), 4);
         assert_eq!(reports[1].targets.len(), 2);
         assert!(reports[2].error.as_deref().unwrap().contains("ledger-local"));
 
-        let reports = gather(&envs[..1], &[], |_| {
-            Err("aws sts failed: expired".to_string())
-        });
+        let reports = gather(
+            &envs[..1],
+            &[],
+            |_| Err("aws sts failed: expired".to_string()),
+            || Ok(Vec::new()),
+        );
         assert_eq!(reports[0].error.as_deref(), Some("aws sts failed: expired"));
         assert!(reports[0].targets.is_empty());
     }
@@ -817,9 +894,97 @@ sslmode = "require"
         }
         // The report carries the settings only when the environment opts in.
         let envs = parse_config(&format!("{base}probe = true\n")).unwrap();
-        let reports = gather(&envs, &[], |_| Ok(all()));
+        let reports = gather(&envs, &[], |_| Ok(all()), || Ok(Vec::new()));
         assert!(reports[0].probe.is_some());
-        let reports = gather(&parse_config(base).unwrap(), &[], |_| Ok(all()));
+        let reports = gather(
+            &parse_config(base).unwrap(),
+            &[],
+            |_| Ok(all()),
+            || Ok(Vec::new()),
+        );
         assert!(reports[0].probe.is_none());
+    }
+
+    #[test]
+    fn docker_environments_parse_list_once_and_stay_local() {
+        let envs = parse_config(
+            "[[environments]]\nname = \"a\"\nsource = { kind = \"docker\" }\ndatabases = [\"ledger\"]\n\
+             [[environments]]\nname = \"b\"\nsource = { kind = \"docker\", containers = [\"pg-*\"] }\nprobe = true\n",
+        )
+        .unwrap();
+        assert!(matches!(&envs[0].source, Source::Docker { containers } if containers == &["*"]));
+        assert_eq!(envs[0].source.label(), "docker");
+        let mut listings = 0;
+        let reports = gather(
+            &envs,
+            &[],
+            |_| panic!("no aws for docker"),
+            || {
+                listings += 1;
+                docker::parse_ps(
+                    "{\"Names\":\"pg-1\",\"Image\":\"postgres:16\",\"Ports\":\"0.0.0.0:5433->5432/tcp\",\"State\":\"running\"}",
+                )
+            },
+        );
+        assert_eq!(listings, 1, "one docker ps for both environments");
+        assert_eq!(reports[0].targets[0].database, "ledger");
+        assert_eq!(reports[1].targets[0].port, Some(5433));
+        assert!(reports[1].probe.is_some(), "docker environments can probe");
+        let failed = gather(
+            &envs[..1],
+            &[],
+            |_| unreachable!(),
+            || Err("docker ps failed: daemon down".into()),
+        );
+        assert_eq!(
+            failed[0].error.as_deref(),
+            Some("docker ps failed: daemon down")
+        );
+
+        for bad in [
+            "[[environments]]\nname = \"a\"\nsource = { kind = \"docker\" }\nssh_tunnel = \"h\"\n",
+            "[[environments]]\nname = \"a\"\nsource = { kind = \"docker\" }\n[environments.secrets]\nx = \"s\"\n",
+            "[[environments]]\nname = \"a\"\nsource = { kind = \"docker\", container = [\"x\"] }\n",
+        ] {
+            assert!(parse_config(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn password_env_is_read_at_connect_and_never_stored() {
+        let base =
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"demo\"] }\n";
+        let envs =
+            parse_config(&format!("{base}password_env = \"PGMAN_TEST_ENV_PW_A\"\n")).unwrap();
+        let t = rds_targets(&envs[0], &all());
+        let spec = t[0].connect.as_ref().unwrap();
+        assert_eq!(spec.password_env.as_deref(), Some("PGMAN_TEST_ENV_PW_A"));
+        assert_eq!(spec.dsn.password, None, "not read at listing");
+
+        let mut dsn = spec.dsn.clone();
+        let err = spec.apply_password_env(&mut dsn).unwrap_err();
+        assert_eq!(
+            err,
+            "password_env names $PGMAN_TEST_ENV_PW_A, which is not set"
+        );
+        // SAFETY: a variable only this test touches.
+        unsafe { std::env::set_var("PGMAN_TEST_ENV_PW_A", "") };
+        assert!(
+            spec.apply_password_env(&mut dsn).is_err(),
+            "empty is unset, not a blank password"
+        );
+        unsafe { std::env::set_var("PGMAN_TEST_ENV_PW_A", "s3cret") };
+        spec.apply_password_env(&mut dsn).unwrap();
+        assert_eq!(dsn.password.as_deref(), Some("s3cret"));
+        unsafe { std::env::remove_var("PGMAN_TEST_ENV_PW_A") };
+
+        for bad in [
+            format!("{base}password_env = \"1BAD\"\n"),
+            format!("{base}password_env = \"A-B\"\n"),
+            format!("{base}password_env = \"$PW\"\n"),
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"static\", connections = [\"a\"] }\npassword_env = \"PW\"\n".to_string(),
+        ] {
+            assert!(parse_config(&bad).is_err(), "{bad}");
+        }
     }
 }

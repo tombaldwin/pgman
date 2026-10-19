@@ -9258,6 +9258,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
                 profile: None,
                 account: None,
             }),
+            password_env: None,
         }),
     };
     let mut broken = row("stopped-one", Role::Direct, None);
@@ -9791,4 +9792,33 @@ fn auto_probe_needs_an_environment_that_probes() {
         .as_deref()
         .unwrap()
         .starts_with("no environment probes"));
+}
+
+#[tokio::test]
+async fn an_environment_password_comes_from_its_variable_at_connect() {
+    let mut a = writable_app();
+    // The replica row has no secret: give it a password_env.
+    if let Ok(spec) = a.environments.reports[0].targets[0].connect.as_mut() {
+        spec.password_env = Some("PGMAN_TEST_APP_ENV_PW".into());
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("can't connect to demo demo-replica/ledger: password_env names $PGMAN_TEST_APP_ENV_PW, which is not set")
+    );
+    assert_eq!(a.dsn, None);
+    // SAFETY: a variable only this test touches.
+    unsafe { std::env::set_var("PGMAN_TEST_APP_ENV_PW", "hunter2") };
+    press(&mut a, KeyCode::Enter);
+    unsafe { std::env::remove_var("PGMAN_TEST_APP_ENV_PW") };
+    assert_eq!(
+        a.dsn.as_ref().and_then(|d| d.password.as_deref()),
+        Some("hunter2")
+    );
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(
+        origin.ends_with("password from $PGMAN_TEST_APP_ENV_PW"),
+        "{origin}"
+    );
+    assert!(!origin.contains("hunter2"));
 }

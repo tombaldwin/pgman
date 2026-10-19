@@ -3807,9 +3807,17 @@ impl App {
             target.role.label(),
             if read_only { ", read-only" } else { "" }
         );
-        let Some(secret) = spec.secret else {
+        let Some(secret) = spec.secret.clone() else {
+            let mut dsn = spec.dsn.clone();
+            if let Err(e) = spec.apply_password_env(&mut dsn) {
+                self.last_error = Some(format!("can't connect to {what}: {e}"));
+                return;
+            }
+            if let Some(var) = &spec.password_env {
+                origin.push_str(&format!(" · password from ${var}"));
+            }
             self.environments.opened_from = None;
-            self.connect_to_target(spec.dsn, origin, read_only);
+            self.connect_to_target(dsn, origin, read_only);
             return;
         };
         origin.push_str(&format!(" · creds from {}", secret.provenance()));
