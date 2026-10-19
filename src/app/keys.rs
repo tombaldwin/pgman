@@ -1346,6 +1346,14 @@ impl App {
             KeyCode::Enter => self.connect_to_environment_target(),
             KeyCode::Char('d') => self.start_env_discovery(Default::default()),
             KeyCode::Char('R') => self.toggle_env_auto_probe(),
+            KeyCode::Char('v') => {
+                self.environments.drift = !self.environments.drift;
+                self.last_status = Some(if self.environments.drift {
+                    "schema drift: each database's version across environments · v back".into()
+                } else {
+                    "environments".into()
+                });
+            }
             KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.environments.select_prev(),
             KeyCode::Char('g') | KeyCode::Home => self.environments.select_first(),

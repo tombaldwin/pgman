@@ -1483,6 +1483,137 @@ pub(crate) fn environment_detail_probed(
     }
 }
 
+/// One cell of the drift matrix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DriftCell {
+    pub text: String,
+    /// Behind the newest version seen, or with patches pending.
+    pub behind: bool,
+}
+
+/// The schema-drift matrix: database names (rows) by environments
+/// (columns), each cell the database's schema version there, read from
+/// whichever of its rows the probe answered (a primary shows its
+/// replica's). `—` where nothing was read. Pure.
+pub(crate) fn drift_matrix(
+    reports: &[crate::inventory::EnvReport],
+    probes: &[Vec<crate::app::ProbeState>],
+) -> (Vec<String>, Vec<String>, Vec<Vec<DriftCell>>) {
+    use crate::app::ProbeState;
+    let envs: Vec<String> = reports.iter().map(|r| r.name.clone()).collect();
+    let mut dbs: Vec<String> = Vec::new();
+    for r in reports {
+        for t in &r.targets {
+            if !dbs.contains(&t.database) {
+                dbs.push(t.database.clone());
+            }
+        }
+    }
+    // The version a database shows in an environment: the first row of
+    // that database with a probed version, and its ordering key.
+    let read = |ri: usize, db: &str| -> Option<(String, Vec<u64>, bool)> {
+        reports[ri].targets.iter().enumerate().find_map(|(ti, t)| {
+            if t.database != db {
+                return None;
+            }
+            let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
+                return None;
+            };
+            let (text, _) = schema_cell(p);
+            let key: Vec<u64> = match (p.schema_version, &p.schema_label) {
+                (Some(v), _) => vec![v.max(0) as u64],
+                (None, Some(l)) => l
+                    .split(['.', '_'])
+                    .map(|x| x.parse().unwrap_or(0))
+                    .collect(),
+                (None, None) => return None,
+            };
+            Some((text, key, p.pending.unwrap_or(0) > 0))
+        })
+    };
+    let cells: Vec<Vec<DriftCell>> = dbs
+        .iter()
+        .map(|db| {
+            let row: Vec<Option<(String, Vec<u64>, bool)>> =
+                (0..reports.len()).map(|ri| read(ri, db)).collect();
+            let newest = row.iter().flatten().map(|(_, k, _)| k.clone()).max();
+            row.into_iter()
+                .map(|c| match c {
+                    Some((text, key, pending)) => DriftCell {
+                        behind: pending || newest.as_ref().is_some_and(|n| &key < n),
+                        text,
+                    },
+                    None => DriftCell {
+                        text: "—".into(),
+                        behind: false,
+                    },
+                })
+                .collect()
+        })
+        .collect();
+    (dbs, envs, cells)
+}
+
+fn draw_drift(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let (dbs, envs, cells) = drift_matrix(&app.environments.reports, &app.environments.probes);
+    let width = |i: usize| {
+        cells
+            .iter()
+            .map(|r| crate::ui::display_width(&r[i].text))
+            .chain(std::iter::once(crate::ui::display_width(&envs[i])))
+            .max()
+            .unwrap_or(0)
+    };
+    let db_w = dbs
+        .iter()
+        .map(|d| crate::ui::display_width(d))
+        .chain(std::iter::once("database".len()))
+        .max()
+        .unwrap_or(0);
+    let pad = |c: &str, w: usize| {
+        format!(
+            "{c}{}",
+            " ".repeat(w.saturating_sub(crate::ui::display_width(c)))
+        )
+    };
+    let mut lines = vec![Line::from(Span::styled(
+        "  schema version of each database, by environment — yellow is behind the newest or has patches pending",
+        Style::default().fg(theme.muted),
+    ))];
+    lines.push(Line::from(""));
+    let mut head = format!("    {}", pad("DATABASE", db_w));
+    for (i, e) in envs.iter().enumerate() {
+        head.push_str(&format!("  {}", pad(&e.to_uppercase(), width(i))));
+    }
+    lines.push(Line::from(Span::styled(
+        head,
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (di, db) in dbs.iter().enumerate() {
+        let mut spans = vec![Span::styled(
+            format!("    {}", pad(db, db_w)),
+            Style::default().fg(theme.text),
+        )];
+        for (ei, c) in cells[di].iter().enumerate() {
+            spans.push(Span::styled(
+                format!("  {}", pad(&c.text, width(ei))),
+                Style::default().fg(if c.behind {
+                    theme.health_yellow
+                } else if c.text == "—" {
+                    theme.muted
+                } else {
+                    theme.text
+                }),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 /// The panel height below which the detail line is left out.
 const DETAIL_MIN_HEIGHT: u16 = 12;
 
@@ -1678,6 +1809,11 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
                 .style(Style::default().fg(colour)),
             inner,
         );
+        return;
+    }
+
+    if ui.drift {
+        draw_drift(f, inner, app);
         return;
     }
 
@@ -2718,6 +2854,62 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn drift_shows_each_databases_version_by_environment_and_flags_the_behind() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let probe = |v: i64, pending: usize| {
+            ProbeState::Done(Ok(Probe {
+                schema_version: Some(v),
+                pending: Some(pending),
+                ..Probe::default()
+            }))
+        };
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 0)],
+            vec![probe(248, 3)],
+        ];
+        let (dbs, envs, cells) = drift_matrix(&demo, &probes);
+        assert_eq!(dbs, ["shop"]);
+        assert_eq!(envs, ["staging", "qa"]);
+        assert_eq!(
+            cells[0],
+            [
+                DriftCell {
+                    text: "v251".into(),
+                    behind: false
+                },
+                DriftCell {
+                    text: "v248 (+3)".into(),
+                    behind: true
+                },
+            ],
+            "the primary's ViaReplica row is skipped for its replica's answer"
+        );
+        // Nothing probed in an environment: a dash, never "behind".
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 0)],
+            vec![ProbeState::Off],
+        ];
+        let (_, _, cells) = drift_matrix(&demo, &probes);
+        assert_eq!(
+            cells[0][1],
+            DriftCell {
+                text: "—".into(),
+                behind: false
+            }
+        );
+        // Pending patches flag a cell even when it's the newest.
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 1)],
+            vec![probe(250, 0)],
+        ];
+        let (_, _, cells) = drift_matrix(&demo, &probes);
+        assert!(cells[0][0].behind && cells[0][1].behind);
     }
 
     #[test]

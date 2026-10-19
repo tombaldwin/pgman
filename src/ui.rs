@@ -2175,6 +2175,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    v             schema drift: each database's version across environments"),
+        &mut lines,
+    );
+    push(
         row("    r             list again: environments.toml, RDS via the aws CLI, connections.toml"),
         &mut lines,
     );

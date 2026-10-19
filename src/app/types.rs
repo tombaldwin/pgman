@@ -989,6 +989,8 @@ pub struct EnvironmentsUi {
     /// The row to put the cursor on when the next listing lands — the
     /// one used last time pgman ran.
     pub restore: Option<EnvSelection>,
+    /// `v`: the schema-drift matrix in place of the list.
+    pub drift: bool,
 }
 
 /// A row of the overview by what it is, not where it sits: listings

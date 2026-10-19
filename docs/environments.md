@@ -242,6 +242,7 @@ How a probe connects:
 | `E` | Open from the grid or the connection picker. No connection is needed. |
 | `j` / `k`, `g` / `G` | Move between databases. |
 | `Enter` | Connect to the database under the cursor. |
+| `v` | Schema drift: each database's version by environment, behind or pending in yellow. `v` again for the list. |
 | `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |
 | `d` | Discover environments from AWS (`space` choose, `s` save, `p` next profile/scope, `q` back). |
 | `r` | List again. |

@@ -906,6 +906,17 @@ fn environments() {
     run_sizes("environments", scr_environments);
 }
 
+fn scr_env_drift() -> App {
+    let mut a = scr_environments();
+    a.environments.drift = true;
+    a
+}
+
+#[test]
+fn env_drift() {
+    run_sizes("env_drift", scr_env_drift);
+}
+
 fn scr_env_discovery() -> App {
     let mut a = scr_environments();
     let found = pgman::demo::discovery();

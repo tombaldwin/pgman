@@ -10065,3 +10065,14 @@ fn the_filter_finds_a_partition_inside_its_folded_group() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn v_toggles_the_drift_view_in_the_overview() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('v'));
+    assert!(a.environments.drift);
+    press(&mut a, KeyCode::Char('v'));
+    assert!(!a.environments.drift);
+}

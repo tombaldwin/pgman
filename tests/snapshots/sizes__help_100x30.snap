@@ -25,7 +25,7 @@ expression: dump(&buf)
 │5   edsger@exa│     :             command bar — see the ': commands' section       │              │
 │6   katherine@│     A             about pgman (version, credits)                   │              │
 │              │     e / i / tab   focus editor                                     │              │
-│              │ ↓ 281 more below                                                   │              │
+│              │ ↓ 283 more below                                                   │              │
 │              │                                                                    │              │
 │              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │
