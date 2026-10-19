@@ -1041,6 +1041,23 @@ pub async fn run_statement_typed(
     client: &tokio_postgres::Client,
     sql: &str,
 ) -> Result<TypedRows, QueryErr> {
+    run_statement_typed_capped(client, sql, None)
+        .await
+        .map(|(typed, _)| typed)
+}
+
+/// [`run_statement_typed`] with an optional row cap. The second value is
+/// `true` iff at least one row existed past `cap` — the rows are
+/// streamed (`simple_query_raw`) and the stream is dropped at `cap + 1`,
+/// so a cap bounds what pgman holds, not just what it returns. The
+/// server may still finish sending the rest of the result to a socket
+/// nobody reads; `statement_timeout` is what bounds that.
+pub async fn run_statement_typed_capped(
+    client: &tokio_postgres::Client,
+    sql: &str,
+    cap: Option<usize>,
+) -> Result<(TypedRows, bool), QueryErr> {
+    use futures::StreamExt;
     let stmt = client.prepare(sql).await.map_err(QueryErr::from)?;
     let columns: Vec<(String, tokio_postgres::types::Type)> = stmt
         .columns()
@@ -1049,16 +1066,23 @@ pub async fn run_statement_typed(
         .collect();
     if columns.is_empty() {
         let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
-        return Ok(TypedRows {
+        let typed = TypedRows {
             columns: Vec::new(),
             rows: Vec::new(),
             affected: Some(affected),
-        });
+        };
+        return Ok((typed, false));
     }
-    let messages = client.simple_query(sql).await.map_err(QueryErr::from)?;
+    let stream = client.simple_query_raw(sql).await.map_err(QueryErr::from)?;
+    let mut stream = Box::pin(stream);
     let mut rows = Vec::new();
-    for msg in &messages {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+    let mut truncated = false;
+    while let Some(msg) = stream.next().await {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg.map_err(QueryErr::from)? {
+            if cap.is_some_and(|cap| rows.len() >= cap) {
+                truncated = true;
+                break;
+            }
             // `columns` came from Parse+Describe; these cells come from
             // a second round trip. A view redefined in between narrows
             // the row, and `SimpleQueryRow::get` *panics* out of range
@@ -1071,11 +1095,12 @@ pub async fn run_statement_typed(
             rows.push(project_cells(cells, columns.len()));
         }
     }
-    Ok(TypedRows {
+    let typed = TypedRows {
         columns,
         rows,
         affected: None,
-    })
+    };
+    Ok((typed, truncated))
 }
 
 /// Stream rows from a prepared statement (no params) into string-rendered

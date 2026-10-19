@@ -1025,3 +1025,42 @@ fn batch_csv_non_row_statement_still_reports_the_affected_count() {
         "expected the status grid: {stdout}"
     );
 }
+
+/// Connect through the library (not the binary), read-only, with the
+/// notice/notification channels left to drain into nothing.
+async fn lib_client() -> (
+    std::sync::Arc<tokio_postgres::Client>,
+    Option<pgman::tunnel::SshTunnel>,
+) {
+    let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notification_rx) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    pgman::conn::connect_only(dsn, true, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect to the compose postgres")
+}
+
+/// The cap is honoured and `truncated` says whether anything was past it
+/// — including the boundary, where exactly `cap` rows is NOT truncated.
+#[tokio::test]
+async fn typed_capped_runner_stops_at_the_cap_and_says_so() {
+    let (client, _tunnel) = lib_client().await;
+    let sql = "SELECT g FROM generate_series(1, 10) g";
+    for (cap, want_rows, want_truncated) in [
+        (Some(3), 3, true),
+        (Some(10), 10, false),
+        (Some(11), 10, false),
+        (None, 10, false),
+    ] {
+        let (typed, truncated) = pgman::conn::run_statement_typed_capped(&client, sql, cap)
+            .await
+            .expect("query runs");
+        assert_eq!(typed.rows.len(), want_rows, "cap {cap:?}");
+        assert_eq!(truncated, want_truncated, "cap {cap:?}");
+    }
+    // The connection is still usable after a stream was dropped mid-result.
+    let (typed, _) = pgman::conn::run_statement_typed_capped(&client, "SELECT 1", Some(1))
+        .await
+        .expect("the connection survives a dropped stream");
+    assert_eq!(typed.rows, vec![vec![Some("1".to_string())]]);
+}
