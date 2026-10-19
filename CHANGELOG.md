@@ -107,6 +107,28 @@ and breaking changes.
   patch level, pending patches and replica lag to the overview. It reads
   through replicas (a primary with a replica isn't touched), uses one
   ssh per bastion, and every connection is read-only.
+- **More at a glance in the overview.** RDS rows show the minor and
+  major upgrades available (`↑16.15 · 18.6`). Without a `version_table`,
+  a probe recognises Flyway, Liquibase, Prisma, sqlx, Django, Alembic,
+  Rails and golang-migrate by their own tables (and counts pending Flyway files
+  from `migrations_dir`). `SESSIONS` adds blocked sessions and
+  transactions open over 5 minutes. A replica's detail line sketches its
+  recent lag. `v` shows schema drift: each database's version by
+  environment.
+- **Recent errors from RDS logs** — `l` on a server in the overview,
+  `environment_logs` over MCP: ERROR, FATAL and PANIC lines from the
+  newest log files, grouped with a count. `STATEMENT` and `DETAIL` lines
+  are left out, since they can carry row data.
+- **Applying patches** — `P` in the overview, `apply_patches` over MCP.
+  A read-only plan lists the pending patches, each checked against
+  `safety.toml`; after you confirm (a protected environment — `prod` in
+  its name, or `protected = true` — by typing its name; over MCP through
+  elicitation), each runs in its own transaction with a 5 s
+  `lock_timeout`, stopping at the first failure. Never on a replica, and
+  only on a database `safety.toml` lets write.
+- **`schema_lint` over MCP** — the schema wizard's findings (missing
+  primary keys, unindexed foreign keys, unused indexes, bloat, …) for an
+  agent to work through.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

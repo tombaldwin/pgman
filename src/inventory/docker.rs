@@ -191,6 +191,8 @@ mod tests {
             secrets: Default::default(),
             probe: false,
             version_table: None,
+            migrations_dir: None,
+            protected: None,
         }
     }
 

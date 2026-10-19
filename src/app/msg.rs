@@ -86,6 +86,24 @@ pub enum AppMsg {
         report: usize,
         outcomes: Vec<crate::inventory::probe::Outcome>,
     },
+    /// A server's log errors arrived (or didn't).
+    EnvLogs {
+        environment: String,
+        server: String,
+        result: Result<Vec<crate::inventory::rds_logs::LogError>, String>,
+    },
+    /// A patch plan arrived (or didn't).
+    EnvPatchPlanned {
+        environment: String,
+        server: String,
+        database: String,
+        result: Result<crate::inventory::patching::PatchPlan, String>,
+    },
+    /// The confirmed patches ran.
+    EnvPatched {
+        plan: crate::inventory::patching::PatchPlan,
+        report: crate::inventory::patching::ApplyReport,
+    },
     /// Environment discovery finished. Not tied to a connection.
     EnvDiscovered(Result<crate::inventory::discover::Found, String>),
     /// An environment connect's secret was read (or not). Matched to its
@@ -168,7 +186,10 @@ impl AppMsg {
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }
             | AppMsg::EnvDiscovered(_)
-            | AppMsg::EnvProbed { .. } => 0,
+            | AppMsg::EnvProbed { .. }
+            | AppMsg::EnvLogs { .. }
+            | AppMsg::EnvPatchPlanned { .. }
+            | AppMsg::EnvPatched { .. } => 0,
         }
     }
 }

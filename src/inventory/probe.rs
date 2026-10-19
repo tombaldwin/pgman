@@ -17,7 +17,7 @@
 use super::{EnvReport, Target};
 use crate::creds::aws_secrets::{SecretCreds, SecretRef};
 use crate::mcp::connections::Role;
-use crate::query::probe::Probe;
+use crate::query::probe::{Probe, SchemaSource};
 use std::collections::HashMap;
 
 /// Statement timeout on a probe connection.
@@ -91,6 +91,7 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
     let steps = plan(&report.targets);
     let settings = report.probe.clone().unwrap_or(super::ProbeSettings {
         version_table: None,
+        ..Default::default()
     });
     let cfg = settings.version_table.as_ref().map(|v| v.config());
 
@@ -200,6 +201,23 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
     let files_ref = files.as_ref().and_then(|f| f.as_ref().ok());
     let files_err = files.as_ref().and_then(|f| f.as_ref().err()).cloned();
     let vt = settings.version_table.clone();
+    let vt_configured = vt.is_some();
+    // Flyway migration files, read once, for a pending count.
+    let flyway_files: Option<Vec<String>> = match settings.migrations_dir() {
+        Some(Ok(dir)) => tokio::task::spawn_blocking(move || {
+            std::fs::read_dir(&dir).ok().map(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .await
+        .ok()
+        .flatten(),
+        _ => None,
+    };
+    let flyway_files = flyway_files.as_ref();
     let probes = ready.into_iter().enumerate().map(|(i, r)| {
         let cfg = cfg.clone();
         let vt = vt.clone();
@@ -218,11 +236,12 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
             let probe = async {
                 let client =
                     crate::conn::connect_via(dsn, port, PROBE_STATEMENT_TIMEOUT_MS).await?;
-                crate::query::probe::run(
-                    &client,
-                    cfg.as_ref().map(|c| (c, files_ref.map(Vec::as_slice))),
-                )
-                .await
+                let source = match (&cfg, vt_configured) {
+                    (Some(c), _) => SchemaSource::Patches(c, files_ref.map(Vec::as_slice)),
+                    (None, true) => SchemaSource::None,
+                    (None, false) => SchemaSource::Detect(flyway_files.map(Vec::as_slice)),
+                };
+                crate::query::probe::run(&client, source).await
             };
             let result = match tokio::time::timeout(PROBE_DEADLINE, probe).await {
                 Ok(r) => r,
@@ -295,6 +314,7 @@ mod tests {
             error: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         };
         let out = run(
@@ -332,6 +352,7 @@ mod tests {
             error: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         };
         let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -373,6 +394,7 @@ mod tests {
             error: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         };
         let out = run(report, std::sync::Arc::new(|_| panic!("no secret"))).await;
@@ -425,6 +447,7 @@ mod tests {
             error: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         };
         let out = run(

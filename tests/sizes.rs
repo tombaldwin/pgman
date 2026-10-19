@@ -890,7 +890,7 @@ fn scr_environments() -> App {
             Some(_) => pgman::demo::environment_probes(r)
                 .into_iter()
                 .map(|o| {
-                    o.map(pgman::app::ProbeState::Done)
+                    o.map(pgman::app::ProbeState::done)
                         .unwrap_or(pgman::app::ProbeState::ViaReplica)
                 })
                 .collect(),
@@ -904,6 +904,56 @@ fn scr_environments() -> App {
 #[test]
 fn environments() {
     run_sizes("environments", scr_environments);
+}
+
+fn scr_env_logs() -> App {
+    let mut a = scr_environments();
+    a.environments.logs = Some(pgman::app::LogsView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        loading: false,
+        result: Some(Ok(pgman::demo::log_errors())),
+        scroll: 0,
+    });
+    a
+}
+
+#[test]
+fn env_logs() {
+    run_sizes("env_logs", scr_env_logs);
+}
+
+fn scr_env_patch() -> App {
+    let mut a = scr_environments();
+    a.environments.patch = Some(pgman::app::PatchView {
+        environment: "production".into(),
+        server: "production".into(),
+        database: "shop".into(),
+        stage: pgman::app::PatchStage::Plan(Ok(pgman::demo::patch_plan(
+            "production",
+            "production",
+            "shop",
+        ))),
+        typed: "produc".into(),
+        scroll: 0,
+    });
+    a
+}
+
+#[test]
+fn env_patch() {
+    run_sizes("env_patch", scr_env_patch);
+}
+
+fn scr_env_drift() -> App {
+    let mut a = scr_environments();
+    a.environments.drift = true;
+    a
+}
+
+#[test]
+fn env_drift() {
+    run_sizes("env_drift", scr_env_drift);
 }
 
 fn scr_env_discovery() -> App {

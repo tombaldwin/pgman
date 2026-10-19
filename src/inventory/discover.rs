@@ -475,6 +475,8 @@ pub fn propose(
                 secrets: chosen,
                 probe: false,
                 version_table: None,
+                migrations_dir: None,
+            protected: None,
             };
             Proposal {
                 covered_by: covering(&name, existing),
@@ -536,6 +538,9 @@ pub fn render(p: &Proposal) -> String {
     }
     if e.probe {
         out.push_str("probe = true\n");
+    }
+    if let Some(d) = &e.migrations_dir {
+        out.push_str(&format!("migrations_dir = {}\n", q(d)));
     }
     if let Some(v) = &e.version_table {
         let mut t = format!("table = {}, column = {}", q(&v.table), q(&v.column));

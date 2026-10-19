@@ -38,6 +38,31 @@ pub fn app(theme: Theme) -> App {
     a.env_prober = Some(crate::app::EnvProber::Immediate(std::sync::Arc::new(
         environment_probes,
     )));
+    a.env_log_fetcher = Some(crate::app::EnvLogFetcher {
+        fetch: std::sync::Arc::new(|_, _| Ok(log_errors())),
+        immediate: true,
+    });
+    a.env_patcher = Some(crate::app::EnvPatcher {
+        plan: std::sync::Arc::new(|e, s, d| {
+            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d))))
+        }),
+        apply: std::sync::Arc::new(|p| {
+            Box::pin(std::future::ready(
+                crate::inventory::patching::ApplyReport {
+                    results: p
+                        .patches
+                        .iter()
+                        .map(|x| crate::inventory::patching::PatchResult {
+                            file: x.file.file.clone(),
+                            outcome: Ok(x.statements.len()),
+                        })
+                        .collect(),
+                    error: None,
+                },
+            ))
+        }),
+        immediate: true,
+    });
     a.env_discoverer = Some(crate::app::EnvDiscoverer {
         discover: std::sync::Arc::new(|_| Ok(discovery())),
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
@@ -738,6 +763,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
             error: None,
             probe: Some(crate::inventory::ProbeSettings {
                 version_table: None,
+                ..Default::default()
             }),
         },
         EnvReport {
@@ -788,9 +814,69 @@ pub fn environment_probes(
                 schema_error: None,
                 sessions: Some(12),
                 size: Some("812 MB".into()),
+                ..Default::default()
             })),
         })
         .collect()
+}
+
+/// A patch plan in `--demo`: two pending patches and one left for a
+/// human; protected when the environment's name says production.
+pub fn patch_plan(
+    environment: &str,
+    server: &str,
+    database: &str,
+) -> crate::inventory::patching::PatchPlan {
+    let patch =
+        |id: i64, name: &str, statements: &[&str]| crate::inventory::patching::PlannedPatch {
+            file: crate::query::patches::PatchFile {
+                file: format!("{id}-{name}.sql"),
+                filename_number: Some(id),
+                version_id: Some(id),
+            },
+            text: statements.join("\n"),
+            statements: statements.iter().map(|s| s.to_string()).collect(),
+        };
+    crate::inventory::patching::PatchPlan {
+        environment: environment.into(),
+        server: server.into(),
+        database: database.into(),
+        protected: environment.to_ascii_lowercase().contains("prod"),
+        applied_max: Some(41),
+        patches: vec![
+            patch(
+                42,
+                "order-notes",
+                &[
+                    "INSERT INTO db_version (id) VALUES (42)",
+                    "ALTER TABLE orders ADD COLUMN notes text",
+                ],
+            ),
+            patch(
+                43,
+                "customer-tier",
+                &[
+                    "INSERT INTO db_version (id) VALUES (43)",
+                    "ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0",
+                ],
+            ),
+        ],
+        dir: "~/src/shop/db/patches".into(),
+        recorded: (1..=41).collect(),
+        stopped_at: Some((
+            "44-orders-created-idx.sql".into(),
+            "the patch builds or drops an index CONCURRENTLY, which can't run in a transaction; apply it by hand".into(),
+        )),
+    }
+}
+
+/// Log errors in `--demo`: synthetic, in RDS's shape.
+pub fn log_errors() -> Vec<crate::inventory::rds_logs::LogError> {
+    crate::inventory::rds_logs::parse_errors(
+        "2026-03-02 09:14:02 UTC:10.0.4.7(51022):shop@shop:[4411]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
+         2026-03-02 09:20:40 UTC:10.0.4.7(51040):shop@shop:[4419]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
+         2026-03-02 09:31:12 UTC:10.0.4.9(40110):[unknown]@[unknown]:[4501]:FATAL:  password authentication failed for user \"report\"\n",
+    )
 }
 
 /// The discovery view in `--demo`: proposals from a synthetic account,
@@ -811,6 +897,7 @@ pub fn discovery() -> crate::inventory::discover::Found {
         replicas: replicas.iter().map(|r| r.to_string()).collect(),
         db_name: Some(db.into()),
         vpc_id: Some("vpc-demo".into()),
+        upgrades: None,
     };
     let instances = vec![
         inst("staging", None, &["staging-replica"], "shop"),

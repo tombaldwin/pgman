@@ -14,7 +14,11 @@ pub const STATUS_SQL: &str = "SELECT current_setting('server_version') AS server
   pg_is_in_recovery() AS in_recovery, \
   EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())::float8 AS lag_secs, \
   (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \
-  pg_size_pretty(pg_database_size(current_database())) AS size";
+  pg_size_pretty(pg_database_size(current_database())) AS size, \
+  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+     AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked, \
+  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+     AND pid <> pg_backend_pid() AND xact_start < now() - interval '5 minutes') AS long_tx";
 
 /// A probe's findings. `None` is "not known", never "zero".
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -35,6 +39,30 @@ pub struct Probe {
     pub sessions: Option<i64>,
     /// The database's size, as `pg_size_pretty` puts it.
     pub size: Option<String>,
+    /// Sessions waiting on another session's lock.
+    pub blocked: Option<i64>,
+    /// Transactions open more than five minutes (idle in transaction
+    /// included): what holds locks and blocks vacuum and migrations.
+    pub long_tx: Option<i64>,
+    /// The migration tool found keeping this database's history, when
+    /// the version isn't read from a configured version table.
+    pub migration_tool: Option<String>,
+    /// That tool's current version, as it names it.
+    pub schema_label: Option<String>,
+}
+
+/// Where a probe reads the schema version from.
+#[derive(Debug, Clone, Copy)]
+pub enum SchemaSource<'a> {
+    /// Nothing: the environment named a version table that this database
+    /// doesn't keep.
+    None,
+    /// pgman's own version table, with the patch files when they were
+    /// read.
+    Patches(&'a PatchesConfig, Option<&'a [PatchFile]>),
+    /// Whichever migration tool's table is there (`query::migrations`),
+    /// with Flyway's migration file names when a directory was given.
+    Detect(Option<&'a [String]>),
 }
 
 /// [`STATUS_SQL`]'s one row. Pure.
@@ -51,6 +79,8 @@ pub fn parse_status(rows: &TypedRows) -> Probe {
         lag_secs: cell(2).and_then(|v| v.parse().ok()),
         sessions: cell(3).and_then(|v| v.parse().ok()),
         size: cell(4),
+        blocked: cell(5).and_then(|v| v.parse().ok()),
+        long_tx: cell(6).and_then(|v| v.parse().ok()),
         ..Probe::default()
     }
 }
@@ -59,14 +89,29 @@ pub fn parse_status(rows: &TypedRows) -> Probe {
 /// patch files were read, the files to reconcile against it.
 pub async fn run(
     client: &tokio_postgres::Client,
-    patches: Option<(&PatchesConfig, Option<&[PatchFile]>)>,
+    source: SchemaSource<'_>,
 ) -> Result<Probe, String> {
     let (rows, _) = conn::run_statement_typed_capped(client, STATUS_SQL, Some(1))
         .await
         .map_err(|e| e.msg)?;
     let mut probe = parse_status(&rows);
-    let Some((cfg, files)) = patches else {
-        return Ok(probe);
+    let (cfg, files) = match source {
+        SchemaSource::None => return Ok(probe),
+        SchemaSource::Detect(flyway_files) => {
+            match super::migrations::read(client, flyway_files).await {
+                Ok(Some(m)) => {
+                    probe.migration_tool = Some(m.tool.to_string());
+                    probe.schema_label = m.version;
+                    probe.pending = m.pending;
+                    probe.schema_error =
+                        m.failed.map(|f| format!("{} migration {f} failed", m.tool));
+                }
+                Ok(None) => {}
+                Err(e) => probe.schema_error = Some(e),
+            }
+            return Ok(probe);
+        }
+        SchemaSource::Patches(cfg, files) => (cfg, files),
     };
     let read = async {
         let sql = patches::applied_ids_sql(cfg)?;
@@ -108,7 +153,10 @@ mod tests {
             Some("0.42"),
             Some("7"),
             Some("1203 MB"),
+            Some("2"),
+            Some("1"),
         ]));
+        assert_eq!((p.blocked, p.long_tx), (Some(2), Some(1)));
         assert_eq!(p.server_version.as_deref(), Some("16.10"));
         assert_eq!((p.sessions, p.size.as_deref()), (Some(7), Some("1203 MB")));
         assert_eq!(p.in_recovery, Some(true));

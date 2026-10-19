@@ -23,6 +23,74 @@ pub struct RdsInstance {
     pub db_name: Option<String>,
     /// The VPC the instance sits in, for finding a bastion beside it.
     pub vpc_id: Option<String>,
+    /// Versions this engine version can be upgraded to, when known.
+    pub upgrades: Option<Upgrades>,
+}
+
+/// The newest versions an engine version can move to.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Upgrades {
+    /// Newest minor version: same major, a patch-and-restart away.
+    pub minor: Option<String>,
+    /// Newest major version.
+    pub major: Option<String>,
+}
+
+impl Upgrades {
+    /// `↑16.15 · 18.6`, or `None` when it's already the newest. Pure.
+    pub fn label(&self) -> Option<String> {
+        let parts: Vec<&str> = [self.minor.as_deref(), self.major.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        (!parts.is_empty()).then(|| format!("↑{}", parts.join(" · ")))
+    }
+}
+
+/// `16.10` as numbers, for ordering; anything that isn't a number sorts
+/// as zero. Pure.
+fn version_key(v: &str) -> Vec<u64> {
+    v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+/// `aws rds describe-db-engine-versions` for one engine version.
+pub fn engine_versions_args(scope: &AwsScope, engine: &str, version: &str) -> Vec<String> {
+    let mut args = vec![
+        "rds".to_string(),
+        "describe-db-engine-versions".to_string(),
+        "--engine".to_string(),
+        engine.to_string(),
+        "--engine-version".to_string(),
+        version.to_string(),
+    ];
+    args.extend(scope.common_args("json"));
+    args
+}
+
+/// The newest minor and major targets from the CLI's JSON. Pure.
+pub fn parse_upgrades(json: &str) -> Result<Upgrades, String> {
+    let v: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| format!("describe-db-engine-versions returned unreadable JSON: {e}"))?;
+    let targets = v
+        .get("DBEngineVersions")
+        .and_then(|l| l.as_array())
+        .and_then(|l| l.first())
+        .and_then(|e| e.get("ValidUpgradeTarget"))
+        .and_then(|t| t.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let newest = |major: bool| {
+        targets
+            .iter()
+            .filter(|t| t.get("IsMajorVersionUpgrade").and_then(|m| m.as_bool()) == Some(major))
+            .filter_map(|t| t.get("EngineVersion").and_then(|e| e.as_str()))
+            .max_by_key(|v| version_key(v))
+            .map(str::to_string)
+    };
+    Ok(Upgrades {
+        minor: newest(false),
+        major: newest(true),
+    })
 }
 
 impl RdsInstance {
@@ -85,6 +153,7 @@ pub fn parse_describe(json: &str) -> Result<Vec<RdsInstance>, String> {
                     .and_then(|g| g.get("VpcId"))
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                upgrades: None,
             })
         })
         .collect())
@@ -253,5 +322,44 @@ pub(crate) mod tests {
             "{a}"
         );
         assert!(a.contains("--region us-west-1"), "{a}");
+    }
+
+    /// What the CLI returned for 16.10 on 2026-10-19, trimmed.
+    const UPGRADES: &str = r#"{"DBEngineVersions": [{"Engine": "postgres", "EngineVersion": "16.10",
+      "ValidUpgradeTarget": [
+        {"EngineVersion": "16.11", "IsMajorVersionUpgrade": false},
+        {"EngineVersion": "16.15", "IsMajorVersionUpgrade": false},
+        {"EngineVersion": "16.9", "IsMajorVersionUpgrade": false},
+        {"EngineVersion": "17.10", "IsMajorVersionUpgrade": true},
+        {"EngineVersion": "17.9", "IsMajorVersionUpgrade": true},
+        {"EngineVersion": "18.6", "IsMajorVersionUpgrade": true},
+        {"EngineVersion": "18.10", "IsMajorVersionUpgrade": true}
+      ]}]}"#;
+
+    #[test]
+    fn the_newest_minor_and_major_are_picked_by_number_not_text() {
+        let u = parse_upgrades(UPGRADES).unwrap();
+        assert_eq!(u.minor.as_deref(), Some("16.15"));
+        assert_eq!(
+            u.major.as_deref(),
+            Some("18.10"),
+            "18.10 is newer than 18.6"
+        );
+        assert_eq!(u.label().as_deref(), Some("↑16.15 · 18.10"));
+        let none = parse_upgrades(r#"{"DBEngineVersions": [{"ValidUpgradeTarget": []}]}"#).unwrap();
+        assert_eq!(none.label(), None, "already the newest");
+        let major_only = Upgrades {
+            minor: None,
+            major: Some("18.6".into()),
+        };
+        assert_eq!(major_only.label().as_deref(), Some("↑18.6"));
+        assert!(parse_upgrades("nope").is_err());
+        let a = engine_versions_args(&AwsScope::default(), "postgres", "16.10").join(" ");
+        assert!(
+            a.starts_with(
+                "rds describe-db-engine-versions --engine postgres --engine-version 16.10"
+            ),
+            "{a}"
+        );
     }
 }

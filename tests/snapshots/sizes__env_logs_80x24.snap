@@ -1,0 +1,29 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   environments │
+│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
+ 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────╮
+│  staging · staging — recent errors from its RDS log                          │
+│                                                                              │
+│  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]               │
+│      password authentication failed for user "report"                        │
+│  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop                         │
+│      duplicate key value violates unique constraint "orders_pkey"            │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · F1 +3 more

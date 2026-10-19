@@ -1188,6 +1188,21 @@ pub(crate) struct ProbeCells {
 /// The patch level as the `SCHEMA` column shows it, and whether it wants
 /// attention (patches pending, or the table unreadable). Pure.
 pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<ProbeAlert>) {
+    // A migration tool's own version, found without configuration.
+    if let Some(tool) = &p.migration_tool {
+        let label = p
+            .schema_label
+            .as_deref()
+            .map(|v| crate::grid::truncate_cell(v, 24))
+            .unwrap_or_else(|| "—".into());
+        let base = format!("{tool} {label}");
+        return match (&p.schema_error, p.pending) {
+            // A failed migration is the loudest thing a version can say.
+            (Some(_), _) => (format!("{base} ✗"), Some(ProbeAlert::Bad)),
+            (None, Some(n)) if n > 0 => (format!("{base} (+{n})"), Some(ProbeAlert::Warn)),
+            _ => (base, None),
+        };
+    }
     match (p.schema_version, p.pending, &p.schema_error) {
         (_, _, Some(_)) => ("version ✗".to_string(), Some(ProbeAlert::Warn)),
         (Some(v), Some(n), None) if n > 0 => (format!("v{v} (+{n})"), Some(ProbeAlert::Warn)),
@@ -1255,10 +1270,24 @@ pub(crate) fn probe_cells(
     } else {
         String::new()
     };
+    let mut trouble = Vec::new();
+    if let Some(n) = p.blocked.filter(|n| *n > 0) {
+        trouble.push(format!("{n} blocked"));
+        alert = Some(ProbeAlert::Bad);
+    }
+    if let Some(n) = p.long_tx.filter(|n| *n > 0) {
+        trouble.push(format!("{n} long tx"));
+        alert = alert.or(Some(ProbeAlert::Warn));
+    }
+    let sessions = match (p.sessions, trouble.is_empty()) {
+        (Some(n), true) => n.to_string(),
+        (Some(n), false) => format!("{n} ({})", trouble.join(" · ")),
+        (None, _) => String::new(),
+    };
     ProbeCells {
         schema,
         lag,
-        sessions: p.sessions.map(|n| n.to_string()).unwrap_or_default(),
+        sessions,
         size: p.size.clone().unwrap_or_default(),
         alert,
     }
@@ -1438,6 +1467,29 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
     format!("  {}", parts.join(" · "))
 }
 
+/// A replica's lag readings as the detail line shows them:
+/// `▁▂▂▃▅▇ · 2s–30s over 12 probes`, or `None` with fewer than two. Pure.
+pub(crate) fn lag_trend(samples: &[f64]) -> Option<String> {
+    if samples.len() < 2 {
+        return None;
+    }
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let lo = samples.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = samples.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let span = (hi - lo).max(f64::EPSILON);
+    let bars: String = samples
+        .iter()
+        .map(|v| BARS[(((v - lo) / span) * 7.0).round().clamp(0.0, 7.0) as usize])
+        .collect();
+    let secs = |v: f64| lag_text(v).trim_start_matches("lag ").to_string();
+    Some(format!(
+        "{bars} · {}–{} over {} probes",
+        secs(lo),
+        secs(hi),
+        samples.len()
+    ))
+}
+
 /// [`environment_detail`], led by what a probe couldn't do: the column
 /// shows only the first line of an error. Pure.
 pub(crate) fn environment_detail_probed(
@@ -1466,6 +1518,306 @@ pub(crate) fn environment_detail_probed(
         Some(w) => format!("  {}/{} · {w}", t.server, t.database),
         None => environment_detail(t),
     }
+}
+
+/// One cell of the drift matrix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DriftCell {
+    pub text: String,
+    /// Behind the newest version seen, or with patches pending.
+    pub behind: bool,
+}
+
+/// The schema-drift matrix: database names (rows) by environments
+/// (columns), each cell the database's schema version there, read from
+/// whichever of its rows the probe answered (a primary shows its
+/// replica's). `—` where nothing was read. Pure.
+pub(crate) fn drift_matrix(
+    reports: &[crate::inventory::EnvReport],
+    probes: &[Vec<crate::app::ProbeState>],
+) -> (Vec<String>, Vec<String>, Vec<Vec<DriftCell>>) {
+    use crate::app::ProbeState;
+    let envs: Vec<String> = reports.iter().map(|r| r.name.clone()).collect();
+    let mut dbs: Vec<String> = Vec::new();
+    for r in reports {
+        for t in &r.targets {
+            if !dbs.contains(&t.database) {
+                dbs.push(t.database.clone());
+            }
+        }
+    }
+    // The version a database shows in an environment: the first row of
+    // that database with a probed version, and its ordering key.
+    let read = |ri: usize, db: &str| -> Option<(String, Vec<u64>, bool)> {
+        reports[ri].targets.iter().enumerate().find_map(|(ti, t)| {
+            if t.database != db {
+                return None;
+            }
+            let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
+                return None;
+            };
+            let (text, _) = schema_cell(p);
+            let key: Vec<u64> = match (p.schema_version, &p.schema_label) {
+                (Some(v), _) => vec![v.max(0) as u64],
+                (None, Some(l)) => l
+                    .split(['.', '_'])
+                    .map(|x| x.parse().unwrap_or(0))
+                    .collect(),
+                (None, None) => return None,
+            };
+            Some((text, key, p.pending.unwrap_or(0) > 0))
+        })
+    };
+    let cells: Vec<Vec<DriftCell>> = dbs
+        .iter()
+        .map(|db| {
+            let row: Vec<Option<(String, Vec<u64>, bool)>> =
+                (0..reports.len()).map(|ri| read(ri, db)).collect();
+            let newest = row.iter().flatten().map(|(_, k, _)| k.clone()).max();
+            row.into_iter()
+                .map(|c| match c {
+                    Some((text, key, pending)) => DriftCell {
+                        behind: pending || newest.as_ref().is_some_and(|n| &key < n),
+                        text,
+                    },
+                    None => DriftCell {
+                        text: "—".into(),
+                        behind: false,
+                    },
+                })
+                .collect()
+        })
+        .collect();
+    (dbs, envs, cells)
+}
+
+/// The log view's lines: one heading, then each distinct error. Pure.
+pub(crate) fn log_lines(v: &crate::app::LogsView) -> Vec<(String, bool)> {
+    let mut out = vec![(
+        format!(
+            "  {} · {} — recent errors from its RDS log",
+            v.environment, v.server
+        ),
+        false,
+    )];
+    match &v.result {
+        None => out.push(("  reading…".into(), false)),
+        Some(Err(e)) => out.push((format!("  ✗ {e}"), true)),
+        Some(Ok(errors)) if errors.is_empty() => out.push((
+            "  no ERROR, FATAL or PANIC lines in the recent log files".into(),
+            false,
+        )),
+        Some(Ok(errors)) => {
+            for e in errors {
+                let who = if e.who.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", e.who)
+                };
+                out.push((
+                    format!("  {} ×{} · last {}{who}", e.level, e.count, e.last_seen),
+                    e.level != "ERROR",
+                ));
+                out.push((format!("      {}", e.message), false));
+            }
+        }
+    }
+    out
+}
+
+/// The patch view's lines: a heading, then the plan or what ran. Pure.
+pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
+    use crate::app::PatchStage;
+    let mut out = vec![(
+        format!(
+            "  {} · {}/{} — pending patches",
+            v.environment, v.server, v.database
+        ),
+        false,
+    )];
+    let plan = match &v.stage {
+        PatchStage::Planning => {
+            out.push(("  planning…".into(), false));
+            return out;
+        }
+        PatchStage::Plan(Err(e)) => {
+            out.push((format!("  ✗ {e}"), true));
+            return out;
+        }
+        PatchStage::Plan(Ok(p)) | PatchStage::Applying(p) | PatchStage::Done(p, _) => p,
+    };
+    let recorded = plan
+        .applied_max
+        .map_or("nothing".to_string(), |m| m.to_string());
+    if let PatchStage::Done(_, report) = &v.stage {
+        if let Some(e) = &report.error {
+            out.push((format!("  ✗ nothing applied: {e}"), true));
+        }
+        for r in &report.results {
+            match &r.outcome {
+                Ok(n) => out.push((format!("  ✓ {} — {n} statement(s)", r.file), false)),
+                Err(e) => out.push((format!("  ✗ {} — {e}", r.file), true)),
+            }
+        }
+        let ran = report.results.len();
+        for p in plan.patches.iter().skip(ran) {
+            out.push((format!("  · {} — not run", p.file.file), false));
+        }
+        if let Some((file, why)) = &plan.stopped_at {
+            out.push((format!("  still pending: {file} — {why}"), true));
+        }
+        return out;
+    }
+    if plan.patches.is_empty() {
+        out.push((
+            format!("  nothing to apply · recorded up to {recorded}"),
+            false,
+        ));
+    } else {
+        out.push((
+            format!(
+                "  {} to apply, in order, each in its own transaction · recorded up to {recorded}",
+                plan.patches.len()
+            ),
+            false,
+        ));
+    }
+    for p in &plan.patches {
+        out.push((format!("  {}", p.file.file), false));
+        // Every line that will run: a confirmation covers what it saw.
+        for s in &p.statements {
+            for line in s.lines().filter(|l| !l.trim().is_empty()) {
+                out.push((format!("      {}", line.trim_end()), false));
+            }
+        }
+    }
+    if let Some((file, why)) = &plan.stopped_at {
+        out.push((format!("  not included: {file} — {why}"), true));
+    }
+    out
+}
+
+/// The line pinned under the plan: what to do next, or `None`. Pure.
+pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> {
+    use crate::app::PatchStage;
+    match &v.stage {
+        PatchStage::Applying(_) => Some(("  applying…".into(), false)),
+        PatchStage::Plan(Ok(p)) if p.patches.is_empty() => None,
+        PatchStage::Plan(Ok(p)) if p.protected => Some((
+            format!("  type {} to apply: {}▏", p.environment, v.typed),
+            true,
+        )),
+        PatchStage::Plan(Ok(_)) => Some(("  y apply · q cancel".into(), false)),
+        _ => None,
+    }
+}
+
+fn draw_env_lines(
+    f: &mut Frame,
+    inner: Rect,
+    app: &App,
+    all: &[(String, bool)],
+    scroll: usize,
+    footer: Option<(String, bool)>,
+) {
+    let theme = &app.theme;
+    let width = inner.width as usize;
+    let (head, body) = all.split_first().expect("a heading");
+    let mut lines = vec![
+        Line::from(Span::styled(
+            crate::grid::truncate_cell(&head.0, width),
+            Style::default()
+                .fg(theme.title)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let room = (inner.height as usize).saturating_sub(2 + usize::from(footer.is_some()));
+    let scroll = scroll.min(body.len().saturating_sub(room));
+    for (text, loud) in body.iter().skip(scroll).take(room) {
+        let colour = if *loud {
+            theme.health_red
+        } else if text.starts_with("      ") {
+            theme.text
+        } else {
+            theme.health_yellow
+        };
+        lines.push(Line::from(Span::styled(
+            crate::grid::truncate_cell(text, width),
+            Style::default().fg(colour),
+        )));
+    }
+    if let Some((text, loud)) = footer {
+        while lines.len() < (inner.height as usize).saturating_sub(1) {
+            lines.push(Line::from(""));
+        }
+        let colour = if loud { theme.health_red } else { theme.title };
+        lines.push(Line::from(Span::styled(
+            crate::grid::truncate_cell(&text, width),
+            Style::default().fg(colour).add_modifier(Modifier::BOLD),
+        )));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn draw_drift(f: &mut Frame, inner: Rect, app: &App) {
+    let theme = &app.theme;
+    let (dbs, envs, cells) = drift_matrix(&app.environments.reports, &app.environments.probes);
+    let width = |i: usize| {
+        cells
+            .iter()
+            .map(|r| crate::ui::display_width(&r[i].text))
+            .chain(std::iter::once(crate::ui::display_width(&envs[i])))
+            .max()
+            .unwrap_or(0)
+    };
+    let db_w = dbs
+        .iter()
+        .map(|d| crate::ui::display_width(d))
+        .chain(std::iter::once("database".len()))
+        .max()
+        .unwrap_or(0);
+    let pad = |c: &str, w: usize| {
+        format!(
+            "{c}{}",
+            " ".repeat(w.saturating_sub(crate::ui::display_width(c)))
+        )
+    };
+    let mut lines = vec![Line::from(Span::styled(
+        "  schema version of each database, by environment — yellow is behind the newest or has patches pending",
+        Style::default().fg(theme.muted),
+    ))];
+    lines.push(Line::from(""));
+    let mut head = format!("    {}", pad("DATABASE", db_w));
+    for (i, e) in envs.iter().enumerate() {
+        head.push_str(&format!("  {}", pad(&e.to_uppercase(), width(i))));
+    }
+    lines.push(Line::from(Span::styled(
+        head,
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (di, db) in dbs.iter().enumerate() {
+        let mut spans = vec![Span::styled(
+            format!("    {}", pad(db, db_w)),
+            Style::default().fg(theme.text),
+        )];
+        for (ei, c) in cells[di].iter().enumerate() {
+            spans.push(Span::styled(
+                format!("  {}", pad(&c.text, width(ei))),
+                Style::default().fg(if c.behind {
+                    theme.health_yellow
+                } else if c.text == "—" {
+                    theme.muted
+                } else {
+                    theme.text
+                }),
+            ));
+        }
+        lines.push(Line::from(spans));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 /// The panel height below which the detail line is left out.
@@ -1666,6 +2018,19 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    if let Some(v) = &ui.patch {
+        draw_env_lines(f, inner, app, &patch_lines(v), v.scroll, patch_prompt(v));
+        return;
+    }
+    if let Some(v) = &ui.logs {
+        draw_env_lines(f, inner, app, &log_lines(v), v.scroll, None);
+        return;
+    }
+    if ui.drift {
+        draw_drift(f, inner, app);
+        return;
+    }
+
     // The last line shows the focused database's detail when the panel
     // is tall enough that the line doesn't push rows out of view; on a
     // short terminal the rows are worth more.
@@ -1692,7 +2057,18 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 crate::grid::truncate_cell(
-                    &environment_detail_probed(t, ui.selected_probe()),
+                    &match lag_trend(ui.selected_lag_history()) {
+                        // The trend near the front, where a narrow panel
+                        // keeps it.
+                        Some(trend) => {
+                            let d = environment_detail_probed(t, ui.selected_probe());
+                            match d.split_once(" · ") {
+                                Some((head, rest)) => format!("{head} · lag {trend} · {rest}"),
+                                None => format!("{d} · lag {trend}"),
+                            }
+                        }
+                        None => environment_detail_probed(t, ui.selected_probe()),
+                    },
                     at.width as usize,
                 ),
                 Style::default().fg(theme.muted),
@@ -2626,7 +3002,7 @@ mod tests {
         use crate::app::ProbeState;
         use crate::mcp::connections::Role;
         use crate::query::probe::Probe;
-        let done = |p: Probe| ProbeState::Done(Ok(p));
+        let done = |p: Probe| ProbeState::done(Ok(p));
         let replica = Probe {
             in_recovery: Some(true),
             lag_secs: Some(0.42),
@@ -2688,7 +3064,7 @@ mod tests {
             ("version ✗", Some(ProbeAlert::Warn))
         );
         let failed = probe_cells(
-            &ProbeState::Done(Err("password authentication failed\nmore".into())),
+            &ProbeState::done(Err("password authentication failed\nmore".into())),
             Role::Primary,
         );
         assert_eq!(failed.schema, "✗ password authentication failed");
@@ -2706,6 +3082,246 @@ mod tests {
     }
 
     #[test]
+    fn the_patch_view_shows_the_plan_then_what_ran() {
+        use crate::app::{PatchStage, PatchView};
+        let plan = crate::demo::patch_plan("production", "production", "shop");
+        let mut v = PatchView {
+            environment: "production".into(),
+            server: "production".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan.clone())),
+            typed: "prod".into(),
+            scroll: 0,
+        };
+        let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            text[1],
+            "  2 to apply, in order, each in its own transaction · recorded up to 41"
+        );
+        assert_eq!(text[2], "  42-order-notes.sql");
+        assert_eq!(text[4], "      ALTER TABLE orders ADD COLUMN notes text");
+        assert!(text[8].starts_with("  not included: 44-orders-created-idx.sql"));
+        assert_eq!(text.len(), 9, "the prompt is pinned, not in the list");
+        assert_eq!(
+            patch_prompt(&v),
+            Some(("  type production to apply: prod▏".into(), true))
+        );
+        v.stage = PatchStage::Done(
+            plan,
+            crate::inventory::patching::ApplyReport {
+                results: vec![
+                    crate::inventory::patching::PatchResult {
+                        file: "42-order-notes.sql".into(),
+                        outcome: Ok(2),
+                    },
+                    crate::inventory::patching::PatchResult {
+                        file: "43-customer-tier.sql".into(),
+                        outcome: Err("lock timeout".into()),
+                    },
+                ],
+                error: None,
+            },
+        );
+        let done = patch_lines(&v);
+        assert_eq!(
+            done[1],
+            ("  ✓ 42-order-notes.sql — 2 statement(s)".into(), false)
+        );
+        assert_eq!(
+            done[2],
+            ("  ✗ 43-customer-tier.sql — lock timeout".into(), true)
+        );
+        assert!(done[3]
+            .0
+            .starts_with("  still pending: 44-orders-created-idx.sql"));
+        let mut long = crate::demo::patch_plan("staging", "staging", "shop");
+        long.patches[0].statements = vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()];
+        v.stage = PatchStage::Plan(Ok(long));
+        assert!(
+            patch_lines(&v)
+                .iter()
+                .any(|l| l.0 == "        DROP COLUMN notes"),
+            "every line of a statement is shown"
+        );
+        v.stage = PatchStage::Plan(Err("no version_table".into()));
+        assert_eq!(patch_lines(&v)[1], ("  ✗ no version_table".into(), true));
+    }
+
+    #[test]
+    fn the_log_view_lists_each_error_with_its_count_and_message() {
+        let v = crate::app::LogsView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            loading: false,
+            result: Some(Ok(crate::demo::log_errors())),
+            scroll: 0,
+        };
+        let lines = log_lines(&v);
+        assert_eq!(
+            lines[0].0,
+            "  staging · staging — recent errors from its RDS log"
+        );
+        assert_eq!(
+            lines[1],
+            (
+                "  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]".into(),
+                true
+            ),
+            "newest first; FATAL is loud"
+        );
+        assert_eq!(
+            lines[3].0,
+            "  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop"
+        );
+        assert!(lines[4].0.contains("orders_pkey"));
+        let empty = crate::app::LogsView {
+            result: Some(Ok(Vec::new())),
+            ..v.clone()
+        };
+        assert!(log_lines(&empty)[1].0.contains("no ERROR"));
+        let failed = crate::app::LogsView {
+            result: Some(Err("AccessDenied".into())),
+            ..v
+        };
+        assert_eq!(log_lines(&failed)[1], ("  ✗ AccessDenied".into(), true));
+    }
+
+    #[test]
+    fn the_lag_trend_sketches_the_readings_and_their_range() {
+        assert_eq!(lag_trend(&[]), None);
+        assert_eq!(lag_trend(&[3.0]), None, "one reading is no trend");
+        assert_eq!(
+            lag_trend(&[2.0, 2.0, 16.0, 30.0]).as_deref(),
+            Some("▁▁▅█ · 2.0s–30s over 4 probes")
+        );
+        // Flat: no division by zero, all at the floor.
+        assert_eq!(
+            lag_trend(&[5.0, 5.0]).as_deref(),
+            Some("▁▁ · 5.0s–5.0s over 2 probes")
+        );
+    }
+
+    #[test]
+    fn blocked_sessions_and_long_transactions_show_in_sessions() {
+        use crate::app::ProbeState;
+        use crate::mcp::connections::Role;
+        use crate::query::probe::Probe;
+        let cells = |blocked, long_tx| {
+            probe_cells(
+                &ProbeState::done(Ok(Probe {
+                    sessions: Some(21),
+                    blocked: Some(blocked),
+                    long_tx: Some(long_tx),
+                    ..Probe::default()
+                })),
+                Role::Direct,
+            )
+        };
+        assert_eq!(
+            (cells(0, 0).sessions.as_str(), cells(0, 0).alert),
+            ("21", None)
+        );
+        assert_eq!(
+            (cells(2, 1).sessions.as_str(), cells(2, 1).alert),
+            ("21 (2 blocked · 1 long tx)", Some(ProbeAlert::Bad))
+        );
+        assert_eq!(
+            (cells(0, 1).sessions.as_str(), cells(0, 1).alert),
+            ("21 (1 long tx)", Some(ProbeAlert::Warn))
+        );
+    }
+
+    #[test]
+    fn drift_shows_each_databases_version_by_environment_and_flags_the_behind() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let probe = |v: i64, pending: usize| {
+            ProbeState::done(Ok(Probe {
+                schema_version: Some(v),
+                pending: Some(pending),
+                ..Probe::default()
+            }))
+        };
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 0)],
+            vec![probe(248, 3)],
+        ];
+        let (dbs, envs, cells) = drift_matrix(&demo, &probes);
+        assert_eq!(dbs, ["shop"]);
+        assert_eq!(envs, ["staging", "qa"]);
+        assert_eq!(
+            cells[0],
+            [
+                DriftCell {
+                    text: "v251".into(),
+                    behind: false
+                },
+                DriftCell {
+                    text: "v248 (+3)".into(),
+                    behind: true
+                },
+            ],
+            "the primary's ViaReplica row is skipped for its replica's answer"
+        );
+        // Nothing probed in an environment: a dash, never "behind".
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 0)],
+            vec![ProbeState::Off],
+        ];
+        let (_, _, cells) = drift_matrix(&demo, &probes);
+        assert_eq!(
+            cells[0][1],
+            DriftCell {
+                text: "—".into(),
+                behind: false
+            }
+        );
+        // Pending patches flag a cell even when it's the newest.
+        let probes = vec![
+            vec![ProbeState::ViaReplica, probe(251, 1)],
+            vec![probe(250, 0)],
+        ];
+        let (_, _, cells) = drift_matrix(&demo, &probes);
+        assert!(cells[0][0].behind && cells[0][1].behind);
+    }
+
+    #[test]
+    fn a_detected_migration_tool_shows_its_own_version() {
+        use crate::query::probe::Probe;
+        let p = |label: &str, pending, error: Option<&str>| Probe {
+            migration_tool: Some("flyway".into()),
+            schema_label: Some(label.into()),
+            pending,
+            schema_error: error.map(str::to_string),
+            ..Probe::default()
+        };
+        assert_eq!(
+            schema_cell(&p("2.3.1", Some(0), None)),
+            ("flyway 2.3.1".into(), None)
+        );
+        assert_eq!(
+            schema_cell(&p("2.3.1", Some(2), None)),
+            ("flyway 2.3.1 (+2)".into(), Some(ProbeAlert::Warn))
+        );
+        assert_eq!(
+            schema_cell(&p("2.3.1", None, Some("flyway migration 2.4 failed"))),
+            ("flyway 2.3.1 ✗".into(), Some(ProbeAlert::Bad))
+        );
+        let long = schema_cell(&p(
+            "20240101120000_add_a_very_long_migration_name",
+            None,
+            None,
+        ))
+        .0;
+        assert!(
+            crate::ui::display_width(&long) <= "flyway ".len() + 24,
+            "{long}"
+        );
+    }
+
+    #[test]
     fn a_primary_read_through_its_replica_shows_the_replicas_schema() {
         use crate::app::ProbeState;
         let envs = crate::demo::environments();
@@ -2714,7 +3330,7 @@ mod tests {
             .map(|r| match r.probe {
                 Some(_) => crate::demo::environment_probes(r)
                     .into_iter()
-                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .map(|o| o.map(ProbeState::done).unwrap_or(ProbeState::ViaReplica))
                     .collect(),
                 None => vec![ProbeState::Off; r.targets.len()],
             })
@@ -2762,7 +3378,7 @@ mod tests {
             .map(|r| match r.probe {
                 Some(_) => crate::demo::environment_probes(r)
                     .into_iter()
-                    .map(|o| o.map(ProbeState::Done).unwrap_or(ProbeState::ViaReplica))
+                    .map(|o| o.map(ProbeState::done).unwrap_or(ProbeState::ViaReplica))
                     .collect(),
                 None => vec![ProbeState::Off; r.targets.len()],
             })
@@ -2814,11 +3430,12 @@ mod tests {
         let mut envs = crate::demo::environments();
         envs[2].probe = Some(crate::inventory::ProbeSettings {
             version_table: None,
+            ..Default::default()
         });
         let probes = vec![
             vec![ProbeState::Off; 2],
             vec![ProbeState::Off; 1],
-            vec![ProbeState::Done(Ok(crate::query::probe::Probe {
+            vec![ProbeState::done(Ok(crate::query::probe::Probe {
                 server_version: Some("17.2".into()),
                 ..Default::default()
             }))],
@@ -2835,7 +3452,7 @@ mod tests {
 
         let t = &envs[2].targets[0];
         assert_eq!(
-            environment_detail_probed(t, &ProbeState::Done(Err("no route\nto host".into()))),
+            environment_detail_probed(t, &ProbeState::done(Err("no route\nto host".into()))),
             "  shop-local/shop · ✗ no route to host"
         );
         assert_eq!(

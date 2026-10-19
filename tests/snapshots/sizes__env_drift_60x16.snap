@@ -1,0 +1,21 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+ pgman X.X.X │ shop  connected · pg 16.2
+ 1 SELECT id, email,…               ] [ switch · ctrl-t new
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+│  schema version of each database, by environment — yellow│
+│                                                          │
+│    DATABASE  STAGING    QA  LOCAL                        │
+│    shop      v251 (+1)  —   —                            │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   j/k navigate · F1 +5 more

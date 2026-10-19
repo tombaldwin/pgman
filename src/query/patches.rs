@@ -179,11 +179,25 @@ fn fold_ident(s: &str) -> String {
 }
 
 /// The id the file's first `INSERT INTO <table> (…) VALUES (…)` records
+/// `sql` with each `$tag$ … $tag$` body replaced by a space. Pure.
+fn blank_dollar_quotes(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    for span in crate::safety::scan(sql) {
+        match span.kind {
+            crate::safety::SpanKind::DollarQuoted => out.push(' '),
+            _ => out.push_str(&sql[span.start..span.end]),
+        }
+    }
+    out
+}
+
 /// in `column`, when that value is an integer literal.
 pub fn version_id_in(sql: &str, table: &str, column: &str) -> Option<i64> {
     let (want_schema, want_table) = plain_ident_path(table).ok()?;
     let want_col = column.to_ascii_lowercase();
-    let text = strip_comments(sql);
+    // A dollar-quoted body is text (a function's source, say): an
+    // `INSERT` in it isn't this file's version row.
+    let text = strip_comments(&blank_dollar_quotes(sql));
     let lower = text.to_ascii_lowercase();
     let chars: Vec<char> = text.chars().collect();
     // Byte and char offsets agree only for ASCII; patch files are SQL
@@ -446,6 +460,19 @@ pub fn read_patch_files(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_insert_inside_a_dollar_quoted_body_is_not_the_version_row() {
+        let sql = "SELECT $$INSERT INTO v (id) VALUES (999)$$;\n\
+                   CREATE FUNCTION f() RETURNS void AS $fn$ INSERT INTO v (id) VALUES (998) $fn$ LANGUAGE sql;\n\
+                   INSERT INTO v (id) VALUES (300);";
+        assert_eq!(version_id_in(sql, "v", "id"), Some(300));
+        assert_eq!(
+            version_id_in("SELECT $$INSERT INTO v (id) VALUES (1)$$;", "v", "id"),
+            None
+        );
+    }
+
     use super::*;
 
     fn cfg() -> PatchesConfig {

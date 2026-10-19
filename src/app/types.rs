@@ -925,7 +925,8 @@ pub enum ProbeState {
     Probing,
     /// A primary read through its replica instead.
     ViaReplica,
-    Done(Result<crate::query::probe::Probe, String>),
+    /// Boxed: a probe is far bigger than the other states.
+    Done(Result<Box<crate::query::probe::Probe>, String>),
 }
 
 /// Probes an environment's databases. Injected like
@@ -949,6 +950,13 @@ pub type ProbeAsyncFn = std::sync::Arc<
 pub type ProbeNowFn = std::sync::Arc<
     dyn Fn(&crate::inventory::EnvReport) -> Vec<crate::inventory::probe::Outcome> + Send + Sync,
 >;
+
+impl ProbeState {
+    /// A finished probe's state.
+    pub fn done(result: Result<crate::query::probe::Probe, String>) -> Self {
+        ProbeState::Done(result.map(Box::new))
+    }
+}
 
 impl std::fmt::Debug for EnvProber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -989,7 +997,110 @@ pub struct EnvironmentsUi {
     /// The row to put the cursor on when the next listing lands — the
     /// one used last time pgman ran.
     pub restore: Option<EnvSelection>,
+    /// `v`: the schema-drift matrix in place of the list.
+    pub drift: bool,
+    /// Each replica row's recent lag readings, oldest first, keyed by
+    /// (environment, server, database). Grows with each probe.
+    pub lag_history: std::collections::HashMap<(String, String, String), Vec<f64>>,
+    /// `l`: recent errors from the focused server's RDS log.
+    pub logs: Option<LogsView>,
+    /// `P`: applying the focused database's pending patches.
+    pub patch: Option<PatchView>,
 }
+
+/// The patch view over the overview: a plan to confirm, then what ran.
+#[derive(Debug, Clone)]
+pub struct PatchView {
+    pub environment: String,
+    pub server: String,
+    pub database: String,
+    pub stage: PatchStage,
+    /// What has been typed toward a protected environment's name.
+    pub typed: String,
+    pub scroll: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatchStage {
+    Planning,
+    Plan(Result<crate::inventory::patching::PatchPlan, String>),
+    Applying(crate::inventory::patching::PatchPlan),
+    Done(
+        crate::inventory::patching::PatchPlan,
+        crate::inventory::patching::ApplyReport,
+    ),
+}
+
+/// Plans and applies an environment database's patches. Injected like
+/// [`EnvLogFetcher`]; `None` applies nothing.
+#[derive(Clone)]
+pub struct EnvPatcher {
+    /// (environment, server, database) → the plan.
+    pub plan: PatchPlanFn,
+    pub apply: PatchApplyFn,
+    /// Run at once on this thread (`--demo`, tests): the futures must
+    /// be ready when first polled.
+    pub immediate: bool,
+}
+
+pub type PatchPlanFn = std::sync::Arc<
+    dyn Fn(
+            String,
+            String,
+            String,
+        ) -> futures::future::BoxFuture<
+            'static,
+            Result<crate::inventory::patching::PatchPlan, String>,
+        > + Send
+        + Sync,
+>;
+
+pub type PatchApplyFn = std::sync::Arc<
+    dyn Fn(
+            crate::inventory::patching::PatchPlan,
+        ) -> futures::future::BoxFuture<'static, crate::inventory::patching::ApplyReport>
+        + Send
+        + Sync,
+>;
+
+impl std::fmt::Debug for EnvPatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvPatcher")
+    }
+}
+
+/// The log view over the overview.
+#[derive(Debug, Clone, Default)]
+pub struct LogsView {
+    pub environment: String,
+    pub server: String,
+    pub loading: bool,
+    pub result: Option<Result<Vec<crate::inventory::rds_logs::LogError>, String>>,
+    pub scroll: usize,
+}
+
+/// Reads a server's recent log errors. Injected like
+/// [`EnvironmentsLoader`]; `None` reads nothing.
+#[derive(Clone)]
+pub struct EnvLogFetcher {
+    /// Blocking: the aws CLI. (environment, server).
+    pub fetch: LogFetchFn,
+    /// Run at once on this thread (`--demo`, tests).
+    pub immediate: bool,
+}
+
+pub type LogFetchFn = std::sync::Arc<
+    dyn Fn(&str, &str) -> Result<Vec<crate::inventory::rds_logs::LogError>, String> + Send + Sync,
+>;
+
+impl std::fmt::Debug for EnvLogFetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvLogFetcher")
+    }
+}
+
+/// Lag readings kept per replica row.
+pub const LAG_HISTORY: usize = 30;
 
 /// A row of the overview by what it is, not where it sits: listings
 /// reorder, names don't.
@@ -1125,6 +1236,17 @@ impl EnvironmentsUi {
             .position(|(r, t)| {
                 r.name == sel.environment && t.server == sel.server && t.database == sel.database
             })
+    }
+
+    /// The lag readings of the row under the cursor.
+    pub fn selected_lag_history(&self) -> &[f64] {
+        self.selected()
+            .and_then(|(r, t)| {
+                self.lag_history
+                    .get(&(r.name.clone(), t.server.clone(), t.database.clone()))
+            })
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// The probe of the row under the cursor.

@@ -425,6 +425,19 @@ fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Outpu
         .expect("spawn pgman")
 }
 
+/// `batch_with_home`, against `dsn` instead of the default database.
+fn batch_with_home_dsn(home: &std::path::Path, dsn: &str, args: &[&str]) -> std::process::Output {
+    Command::new(pgman_binary())
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["--batch", "--dsn", dsn])
+        .args(args)
+        .output()
+        .expect("spawn pgman")
+}
+
 /// `read_only = false`, everything else default — the exact profile the
 /// security report used. `drop` is still `block` by default.
 const WRITABLE_PROFILE: &str = "[default]\nread_only = false\n";
@@ -1496,7 +1509,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"rds describe-db-log-files\") echo '{{\"DescribeDBLogFiles\":[{{\"LogFileName\":\"error/postgresql.log.1\",\"LastWritten\":1}}]}}' ;;\n  \"rds download-db-log-file-portion\") printf '%s' '{{\"LogFileData\":\"2026-10-19 20:54:06 UTC:10.0.0.1(1):ledger@ledger:[14]:ERROR:  permission denied for database rdsadmin\\n2026-10-19 20:54:06 UTC:10.0.0.1(1):ledger@ledger:[14]:STATEMENT:  select secret\"}}' ;;\n  \"rds describe-db-engine-versions\") echo '{{\"DBEngineVersions\":[{{\"ValidUpgradeTarget\":[{{\"EngineVersion\":\"16.15\",\"IsMajorVersionUpgrade\":false}},{{\"EngineVersion\":\"18.6\",\"IsMajorVersionUpgrade\":true}}]}}]}}' ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -1678,7 +1691,16 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
             ),
         ]
     );
+    assert_eq!(
+        v["environments"][0]["databases"][0]["engine"], "postgres 16.10 (↑16.15 · 18.6)",
+        "{text}"
+    );
     let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        calls.matches("describe-db-engine-versions").count(),
+        1,
+        "one lookup per engine version, not per instance: {calls}"
+    );
     let sts = calls
         .find("sts get-caller-identity")
         .expect("account checked");
@@ -2129,6 +2151,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
                 patches: Some(dir.display().to_string()),
                 databases: databases.iter().map(|d| d.to_string()).collect(),
             }),
+            ..Default::default()
         }),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2434,4 +2457,857 @@ fn schema_fetch_reads_partition_parents() {
         cache.partition_root("public", &format!("{root}_2024_01")),
         Some(("public".to_string(), root.clone()))
     );
+}
+
+/// `schema_lint` over MCP finds what the wizard finds.
+#[test]
+fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
+    let home = scratch_home("mcp-lint", WRITABLE_PROFILE);
+    let table = format!("pgman_it_nopk_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {table} (x int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[tool_call(
+            1,
+            "schema_lint",
+            serde_json::json!({"connection": "local"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["server_is_replica"], false);
+    let hit = v["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["code"] == "LINT001" && f["object"].as_str().unwrap().ends_with(&table));
+    assert!(hit, "{text}");
+}
+
+/// With no version table configured, a probe recognises the migration
+/// tool from its own table: one database per tool, real table shapes.
+#[test]
+fn probes_recognise_common_migration_tools() {
+    let home = scratch_home("migtools", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let tools: [(&str, &str); 4] = [
+        (
+            "flyway",
+            "CREATE TABLE flyway_schema_history (installed_rank int PRIMARY KEY, version varchar(50), \
+             description varchar(200), type varchar(20), script varchar(1000), checksum int, \
+             installed_by varchar(100), installed_on timestamp DEFAULT now(), execution_time int, success boolean); \
+             INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, installed_by, execution_time, success) VALUES \
+             (1, '1', 'init', 'SQL', 'V1__init.sql', 'me', 1, true), \
+             (2, '1.1', 'users', 'SQL', 'V1_1__users.sql', 'me', 1, true), \
+             (3, '1.2', 'orders', 'SQL', 'V1_2__orders.sql', 'me', 1, false)",
+        ),
+        (
+            "django",
+            "CREATE TABLE django_migrations (id serial PRIMARY KEY, app varchar(255), name varchar(255), applied timestamptz); \
+             INSERT INTO django_migrations (app, name, applied) VALUES \
+             ('auth', '0001_initial', now() - interval '1 day'), ('shop', '0007_orders', now())",
+        ),
+        (
+            "prisma",
+            "CREATE TABLE _prisma_migrations (id varchar(36) PRIMARY KEY, checksum varchar(64), finished_at timestamptz, \
+             migration_name varchar(255), logs text, rolled_back_at timestamptz, started_at timestamptz DEFAULT now(), applied_steps_count int DEFAULT 0); \
+             INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, started_at) VALUES \
+             ('a', 'x', now(), '20240101_init', now() - interval '1 hour')",
+        ),
+        (
+            "rails",
+            "CREATE TABLE schema_migrations (version varchar PRIMARY KEY); \
+             INSERT INTO schema_migrations VALUES ('20231231000000'), ('20240101120000')",
+        ),
+    ];
+    let migdir = home.join("db-migration");
+    std::fs::create_dir_all(&migdir).unwrap();
+    for f in [
+        "V1__init.sql",
+        "V1_1__users.sql",
+        "V1_2__orders.sql",
+        "V2__more.sql",
+    ] {
+        std::fs::write(migdir.join(f), "-- x\n").unwrap();
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut results = std::collections::HashMap::new();
+    for (tool, setup) in tools {
+        let db = format!("pgman_it_{tool}_{pid}");
+        let _ = batch_with_home(&home, &["--yes", "--sql", &format!("CREATE DATABASE {db}")]);
+        let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+        let out = batch_with_home_dsn(&home, &dsn, &["--yes", "--sql", setup]);
+        assert!(
+            out.status.success(),
+            "{tool}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report = pgman::inventory::EnvReport {
+            name: tool.into(),
+            source: "test".into(),
+            targets: vec![pgman::inventory::Target {
+                database: db.clone(),
+                server: "local".into(),
+                role: pgman::mcp::connections::Role::Direct,
+                replica_of: None,
+                host: None,
+                port: None,
+                engine: None,
+                status: None,
+                class: None,
+                multi_az: None,
+                connect: Ok(pgman::inventory::ConnectSpec {
+                    dsn: pgman::conn::Dsn::parse(&dsn).unwrap(),
+                    secret: None,
+                    password_env: None,
+                }),
+            }],
+            error: None,
+            probe: Some(pgman::inventory::ProbeSettings {
+                version_table: None,
+                migrations_dir: Some(migdir.display().to_string()),
+            }),
+        };
+        let p = rt
+            .block_on(pgman::inventory::probe::run(
+                report.clone(),
+                std::sync::Arc::new(|_| unreachable!()),
+            ))
+            .remove(0)
+            .unwrap()
+            .unwrap();
+        results.insert(tool, p);
+        if tool == "flyway" {
+            // An environment that names its own version table, for other
+            // databases only: no guessing here.
+            let mut explicit = report;
+            explicit.probe = Some(pgman::inventory::ProbeSettings {
+                version_table: Some(pgman::inventory::VersionTable {
+                    table: "t_version".into(),
+                    column: "id".into(),
+                    patches: None,
+                    databases: vec!["elsewhere".into()],
+                }),
+                migrations_dir: None,
+            });
+            let p = rt
+                .block_on(pgman::inventory::probe::run(
+                    explicit,
+                    std::sync::Arc::new(|_| unreachable!()),
+                ))
+                .remove(0)
+                .unwrap()
+                .unwrap();
+            assert_eq!(p.migration_tool, None, "configured, so not detected");
+        }
+    }
+    let f = &results["flyway"];
+    assert_eq!(
+        (f.migration_tool.as_deref(), f.schema_label.as_deref()),
+        (Some("flyway"), Some("1.1"))
+    );
+    assert_eq!(f.pending, Some(2), "1.2 failed and 2 never ran");
+    assert_eq!(
+        f.schema_error.as_deref(),
+        Some("flyway migration 1.2 failed")
+    );
+    assert_eq!(
+        results["django"].schema_label.as_deref(),
+        Some("shop.0007_orders")
+    );
+    assert_eq!(
+        results["prisma"].schema_label.as_deref(),
+        Some("20240101_init")
+    );
+    let r = &results["rails"];
+    assert_eq!(
+        (r.migration_tool.as_deref(), r.schema_label.as_deref()),
+        (Some("migrations"), Some("20240101120000"))
+    );
+}
+
+/// A session waiting on another's lock counts as blocked in a probe.
+#[test]
+fn a_probe_counts_a_blocked_session() {
+    let home = scratch_home("blocked", WRITABLE_PROFILE);
+    let table = format!("pgman_it_lock_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {table} (x int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let connect = || async {
+            let (c, conn) = tokio_postgres::connect(DSN, tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(conn);
+            c
+        };
+        let holder = connect().await;
+        let waiter = connect().await;
+        holder
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+            ))
+            .await
+            .unwrap();
+        let blocked_query = format!("SELECT count(*) FROM {table}");
+        let waiting = tokio::spawn(async move { waiter.simple_query(&blocked_query).await });
+        // Let the waiter reach the lock.
+        let probe_client =
+            pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+                .await
+                .unwrap();
+        let mut blocked = 0;
+        for _ in 0..50 {
+            let p =
+                pgman::query::probe::run(&probe_client, pgman::query::probe::SchemaSource::None)
+                    .await
+                    .unwrap();
+            blocked = p.blocked.unwrap_or(0);
+            if blocked > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(blocked >= 1, "the waiting session counts as blocked");
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        waiting.await.unwrap().unwrap();
+    });
+}
+
+/// The unused-index and bloat checks find a real index nothing scans and
+/// a table whose dead rows passed the threshold.
+#[test]
+fn schema_lint_finds_an_unused_index_and_a_bloated_table() {
+    let home = scratch_home("lint-stats", WRITABLE_PROFILE);
+    let t = format!("pgman_it_bloat_{}", std::process::id());
+    let setup = format!(
+        "CREATE TABLE {t} (id int PRIMARY KEY, tag text) WITH (autovacuum_enabled = false); \
+         CREATE INDEX {t}_tag ON {t} (tag); \
+         INSERT INTO {t} SELECT g, 'x' || g FROM generate_series(1, 3000) g; \
+         DELETE FROM {t} WHERE id <= 1000"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    // Statistics reach pg_stat_* shortly after the writing session ends.
+    let mut last = String::new();
+    for _ in 0..30 {
+        let frames = mcp_session_env(
+            &home,
+            &home,
+            &[],
+            &[],
+            &[tool_call(
+                1,
+                "schema_lint",
+                serde_json::json!({"connection": "local"}),
+            )],
+        );
+        let (text, is_error) = reply(&frames, 1);
+        assert!(!is_error, "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let has =
+            |code: &str, needle: &str| {
+                v["findings"].as_array().unwrap().iter().any(|f| {
+                    f["code"] == code && f["object"].as_str().unwrap_or("").contains(needle)
+                })
+            };
+        if has("LINT102", &format!("{t}_tag")) && has("LINT104", &t) {
+            return;
+        }
+        last = text;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    panic!("LINT102 on {t}_tag and LINT104 on {t} expected: {last}");
+}
+
+/// `environment_logs` reads a listed server's log errors and refuses a
+/// server the environment doesn't list.
+#[cfg(unix)]
+#[test]
+fn mcp_environment_logs_reads_only_listed_servers() {
+    let home = scratch_home("mcp-logs", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"demo\"\nsource = { kind = \"rds\", instances = [\"demo\"], region = \"us-west-1\", account = \"210987654321\" }\n",
+    )
+    .unwrap();
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10",
+          "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+          "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432}, "DBName": "ledger"}]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[
+            ("PATH", path),
+            ("FAKE_AWS_ACCOUNT", "210987654321".into()),
+            ("FAKE_RDS_JSON", rds.clone().into()),
+        ],
+        &[
+            tool_call(
+                1,
+                "environment_logs",
+                serde_json::json!({"environment": "demo", "server": "demo"}),
+            ),
+            tool_call(
+                2,
+                "environment_logs",
+                serde_json::json!({"environment": "demo", "server": "production"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["errors"][0]["message"],
+        "permission denied for database rdsadmin"
+    );
+    assert!(
+        !text.contains("select secret"),
+        "STATEMENT lines never surface: {text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(
+        is_error && text.contains("isn't one of demo's servers"),
+        "{text}"
+    );
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("--db-instance-identifier production"),
+        "an unlisted server's logs are never asked for: {calls}"
+    );
+}
+
+/// Applying a patch: it runs and records itself; a failing statement
+/// rolls the whole patch back; a locked table fails fast.
+#[test]
+fn applying_a_patch_runs_records_rolls_back_and_times_out() {
+    let home = scratch_home("apply", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_dbv_{pid}");
+    let tbl = format!("pgman_it_target_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (scriptid int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "scriptid".into(),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let patch = |id: i64, body: &str| {
+        let text = format!("INSERT INTO {vt} (scriptid) VALUES ({id});\n{body}");
+        (
+            pgman::query::patches::patch_file(&format!("{id:03}-x.sql"), &text, &cfg),
+            text,
+        )
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let connect = || async {
+            let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+            let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+            pgman::conn::connect_only(
+                pgman::conn::Dsn::parse(DSN).unwrap(),
+                false,
+                30_000,
+                notice_tx,
+                notification_tx,
+            )
+            .await
+            .unwrap()
+            .0
+        };
+        let client = connect().await;
+
+        // 2: applies and records itself.
+        let (p2, sql2) = patch(2, &format!("ALTER TABLE {tbl} ADD COLUMN c int;"));
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2).unwrap();
+        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts)
+            .await
+            .unwrap();
+        assert!(done.recorded, "{done:?}");
+        let applied = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert!(applied.contains(&2));
+        let next =
+            pgman::query::apply::next_patch(&[p2.clone(), patch(3, "SELECT 1;").0], &applied);
+        assert_eq!(next.map(|p| p.file), Some("003-x.sql".to_string()));
+
+        // 3: the second statement fails, so its version row is rolled back too.
+        let (p3, sql3) = patch(3, "SELECT * FROM pgman_it_no_such_table;");
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3).unwrap();
+        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts)
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("statement 2 of 2 failed, nothing applied"),
+            "{err}"
+        );
+        let applied = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert!(!applied.contains(&3), "rolled back");
+
+        // 4: a table someone else holds: fails on the lock timeout, not a hang.
+        let holder = connect().await;
+        holder
+            .batch_execute(&format!("BEGIN; LOCK TABLE {tbl} IN ACCESS EXCLUSIVE MODE"))
+            .await
+            .unwrap();
+        let (p4, sql4) = patch(4, &format!("ALTER TABLE {tbl} ADD COLUMN d int;"));
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql4).unwrap();
+        let started = std::time::Instant::now();
+        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts)
+            .await
+            .unwrap_err();
+        assert!(err.contains("lock timeout"), "{err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(15));
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        assert!(!pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap()
+            .contains(&4));
+    });
+}
+
+/// An environment database's pending patches: planned read-only with
+/// their checks, then applied one transaction each, stopping at the first
+/// failure, and refusing a plan the database has moved past.
+#[test]
+fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
+    let home = scratch_home("env-patch", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_pv_{pid}");
+    let tbl = format!("pgman_it_pt_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    for (name, body) in [
+        ("001-old.sql", row(1)),
+        (
+            "002-col.sql",
+            format!("{}ALTER TABLE {tbl} ADD COLUMN c int;\n", row(2)),
+        ),
+        (
+            "003-bad.sql",
+            format!("{}SELECT * FROM pgman_it_no_such_table;\n", row(3)),
+        ),
+        (
+            "004-col.sql",
+            format!("{}ALTER TABLE {tbl} ADD COLUMN d int;\n", row(4)),
+        ),
+        (
+            "005-idx.sql",
+            format!(
+                "{}CREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\n",
+                row(5)
+            ),
+        ),
+    ] {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+    let mut env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"it-prod\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let p = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert!(p.protected, "named prod");
+        assert_eq!(p.applied_max, Some(1));
+        let files: Vec<&str> = p.patches.iter().map(|x| x.file.file.as_str()).collect();
+        assert_eq!(files, ["002-col.sql", "003-bad.sql", "004-col.sql"]);
+        let (at, why) = p.stopped_at.clone().unwrap();
+        assert_eq!(at, "005-idx.sql");
+        assert!(why.contains("CONCURRENTLY"), "{why}");
+
+        // A read-only profile plans nothing.
+        let ro = plan(
+            &env,
+            &target,
+            &pgman::safety::SafetyConfig::default(),
+            &no_secrets,
+        )
+        .await
+        .unwrap();
+        assert!(ro.patches.is_empty() && ro.stopped_at.unwrap().1.contains("read-only"));
+
+        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        assert_eq!(r.error, None);
+        assert_eq!(r.results.len(), 2, "stops at 003: {r:?}");
+        assert_eq!(r.results[0].outcome, Ok(2));
+        assert!(r.results[1]
+            .outcome
+            .as_ref()
+            .unwrap_err()
+            .contains("nothing applied"));
+        assert!(
+            r.summary()
+                .starts_with("applied 1, then 003-bad.sql failed"),
+            "{}",
+            r.summary()
+        );
+
+        // Fix 003 on disk and plan again.
+        std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();
+        let p2 = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert_eq!(p2.applied_max, Some(2));
+        assert_eq!(p2.patches.len(), 2);
+
+        // Someone else applies 004 meanwhile: the plan is refused before 003 runs.
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("INSERT INTO {vt} VALUES (4)")],
+        );
+        assert!(out.status.success());
+        let r = apply(&env, &target, &writable, &no_secrets, &p2).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("004-col.sql was applied by someone else"),
+            "{err}"
+        );
+
+        // A replica is refused outright.
+        let mut replica = target.clone();
+        replica.role = pgman::mcp::connections::Role::Replica;
+        assert!(plan(&env, &replica, &writable, &no_secrets)
+            .await
+            .unwrap_err()
+            .contains("replica"));
+        env.protected = Some(false);
+        assert!(
+            !plan(&env, &target, &writable, &no_secrets)
+                .await
+                .unwrap()
+                .protected
+        );
+
+        // A plan whose statements aren't its text's is refused.
+        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert_eq!(fresh.patches[0].file.file, "003-bad.sql");
+        fresh.patches[0].statements.push("SELECT 1".into());
+        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("differ from the plan"), "{err}");
+
+        // A patch that runs but doesn't record its own id stops the run.
+        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let wrong = format!("INSERT INTO {vt} (id) VALUES (33);");
+        fresh.patches[0].text = wrong.clone();
+        fresh.patches[0].statements = vec![wrong.trim_end_matches(';').to_string()];
+        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("recorded no version row 3"), "{err}");
+        assert_eq!(r.results.len(), 1, "and nothing after it runs");
+
+        // Two files with one id, or a name that disagrees with its id: fix the files first.
+        std::fs::write(dir.join("003-dup.sql"), row(3)).unwrap();
+        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+            .await
+            .unwrap()
+            .stopped_at
+            .unwrap();
+        assert!(
+            at.starts_with("003-") && why.contains("records version 3 too"),
+            "{why}"
+        );
+        std::fs::remove_file(dir.join("003-dup.sql")).unwrap();
+        // (Without 005, which would sort first and stop on CONCURRENTLY.)
+        std::fs::remove_file(dir.join("005-idx.sql")).unwrap();
+        std::fs::write(dir.join("003-bad.sql"), row(7)).unwrap();
+        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+            .await
+            .unwrap()
+            .stopped_at
+            .unwrap();
+        assert_eq!(at, "003-bad.sql");
+        assert!(
+            why.contains("its name says 3 but it records version 7"),
+            "{why}"
+        );
+    });
+}
+
+/// `apply_patches` end to end over stdio: the operator is asked, a wrong
+/// name applies nothing, the right one applies the pending patch.
+#[test]
+fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_mv_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-prod\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    let mut child = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args =
+        serde_json::json!({"environment": "it-prod", "server": "local", "database": "pgman_test"});
+    let mut call = |id: u64, answer: serde_json::Value| -> (String, bool, String) {
+        writeln!(stdin, "{}", tool_call(id, "apply_patches", args.clone())).unwrap();
+        let ask = next();
+        assert_eq!(ask["method"], "elicitation/create", "{ask}");
+        let message = ask["params"]["message"].as_str().unwrap().to_string();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc": "2.0", "id": ask["id"], "result": answer})
+        )
+        .unwrap();
+        let (text, is_error) = reply(&[next()], id);
+        (text, is_error, message)
+    };
+    let (text, is_error, message) = call(
+        2,
+        serde_json::json!({"action": "accept", "content": {"environment": "it-pro"}}),
+    );
+    assert!(
+        message.contains("002-x.sql") && message.contains("type its name"),
+        "{message}"
+    );
+    assert!(is_error && text.contains("doesn't match it-prod"), "{text}");
+    assert!(!table_has_id(&home, &vt, 2), "a wrong name applies nothing");
+
+    let (text, is_error, _) = call(
+        3,
+        serde_json::json!({"action": "accept", "content": {"environment": "it-prod"}}),
+    );
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["results"][0]["applied"], true, "{text}");
+    assert!(table_has_id(&home, &vt, 2));
+
+    // A decline is final: the next call is refused without asking.
+    std::fs::write(
+        dir.join("003-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (3);\n"),
+    )
+    .unwrap();
+    let (text, is_error, _) = call(4, serde_json::json!({"action": "decline"}));
+    assert!(is_error && text.contains("That answer is final"), "{text}");
+    writeln!(stdin, "{}", tool_call(5, "apply_patches", args.clone())).unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 5, "a reply, not another question: {frame}");
+    let (text, is_error) = reply(&[frame], 5);
+    assert!(
+        is_error && text.contains("declined patches for it-prod"),
+        "{text}"
+    );
+    assert!(!table_has_id(&home, &vt, 3));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+fn table_has_id(home: &std::path::Path, table: &str, id: i64) -> bool {
+    let out = batch_with_home(
+        home,
+        &[
+            "--sql",
+            &format!("SELECT count(*) AS n FROM {table} WHERE id = {id}"),
+        ],
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim() == "1")
+}
+
+/// A statement the scanner reads as one can be several to a server whose
+/// lexer a patch has changed (`standard_conforming_strings = off`): each
+/// planned statement goes to the server alone, so the hidden `COMMIT` and
+/// `DROP` never run. Found by the 2026-10-20 safety review.
+#[test]
+fn a_patch_cannot_smuggle_statements_past_the_scanner() {
+    let home = scratch_home("apply-smuggle", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_sv_{pid}");
+    let victim = format!("pgman_it_victim_{pid}");
+    let out = batch_with_home(
+        &home,
+        &["--yes", "--sql", &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {victim} (id int)")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let text = format!(
+        "INSERT INTO {vt} (id) VALUES (2);\nSET standard_conforming_strings = off;\nSELECT '\\''; COMMIT; DROP TABLE {victim} --';\n"
+    );
+    let patch = pgman::query::patches::patch_file("002-x.sql", &text, &cfg);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    // The check refuses it outright now…
+    let refused = pgman::query::apply::check_patch(&writable, "pgman_test", &text).unwrap_err();
+    assert!(refused.contains("SET"), "{refused}");
+    // …and were a statement like it to get through, the server runs it alone.
+    let statements: Vec<String> = vec![
+        format!("INSERT INTO {vt} (id) VALUES (2)"),
+        "SELECT set_config('standard_conforming_strings', 'off', true)".into(),
+        format!("SELECT '\\''; COMMIT; DROP TABLE {victim} --'"),
+    ];
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        let client = pgman::conn::connect_only(
+            pgman::conn::Dsn::parse(DSN).unwrap(),
+            false,
+            30_000,
+            notice_tx,
+            notification_tx,
+        )
+        .await
+        .unwrap()
+        .0;
+        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements)
+            .await
+            .unwrap_err();
+        assert!(err.contains("statement 3 of 3 failed"), "{err}");
+    });
+    assert!(table_exists(&home, &victim), "the hidden DROP never ran");
+    assert!(!table_has_id(&home, &vt, 2), "and the patch rolled back");
 }

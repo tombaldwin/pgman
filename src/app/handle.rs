@@ -14,6 +14,9 @@ impl App {
                 | AppMsg::EnvSecretResolved { .. }
                 | AppMsg::EnvDiscovered(_)
                 | AppMsg::EnvProbed { .. }
+                | AppMsg::EnvLogs { .. }
+                | AppMsg::EnvPatchPlanned { .. }
+                | AppMsg::EnvPatched { .. }
         ) && msg.generation() != self.generation
         {
             tracing::debug!(
@@ -308,6 +311,18 @@ impl App {
             }
             AppMsg::EnvSecretResolved { token, result } => self.on_env_secret(token, result),
             AppMsg::EnvDiscovered(result) => self.on_env_discovered(result),
+            AppMsg::EnvPatchPlanned {
+                environment,
+                server,
+                database,
+                result,
+            } => self.on_env_patch_planned(&environment, &server, &database, result),
+            AppMsg::EnvPatched { plan, report } => self.on_env_patched(plan, report),
+            AppMsg::EnvLogs {
+                environment,
+                server,
+                result,
+            } => self.on_env_logs(&environment, &server, result),
             AppMsg::EnvProbed {
                 seq,
                 report,

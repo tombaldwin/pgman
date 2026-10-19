@@ -10065,3 +10065,242 @@ fn the_filter_finds_a_partition_inside_its_folded_group() {
         "{rows:?}"
     );
 }
+
+#[test]
+fn v_toggles_the_drift_view_in_the_overview() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('v'));
+    assert!(a.environments.drift);
+    press(&mut a, KeyCode::Char('v'));
+    assert!(!a.environments.drift);
+}
+
+#[test]
+fn replica_lag_readings_accumulate_capped_and_stale_ones_are_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    press(&mut a, KeyCode::Char('E'));
+    let key = (
+        "staging".to_string(),
+        "staging-replica".to_string(),
+        "shop".to_string(),
+    );
+    let answer = |lag: f64| {
+        vec![
+            None,
+            Some(Ok(crate::query::probe::Probe {
+                lag_secs: Some(lag),
+                ..Default::default()
+            })),
+        ]
+    };
+    for i in 0..(LAG_HISTORY + 5) {
+        let seq = a.environments.probe_seq;
+        a.on_msg(AppMsg::EnvProbed {
+            seq,
+            report: 0,
+            outcomes: answer(i as f64),
+        });
+    }
+    let h = &a.environments.lag_history[&key];
+    assert_eq!(h.len(), LAG_HISTORY, "capped");
+    assert_eq!(h[0], 5.0, "the oldest dropped first");
+    let seq = a.environments.probe_seq;
+    a.on_msg(AppMsg::EnvProbed {
+        seq: seq.wrapping_sub(1),
+        report: 0,
+        outcomes: answer(999.0),
+    });
+    assert!(
+        !a.environments.lag_history[&key].contains(&999.0),
+        "stale: not recorded"
+    );
+    // The primary row (via replica) records nothing.
+    assert_eq!(a.environments.lag_history.len(), 1);
+}
+
+#[test]
+fn l_reads_an_rds_servers_log_errors_into_a_view() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = asked.clone();
+    a.env_log_fetcher = Some(EnvLogFetcher {
+        fetch: std::sync::Arc::new(move |env, server| {
+            log.lock().unwrap().push(format!("{env}/{server}"));
+            Ok(crate::demo::log_errors())
+        }),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('l'));
+    let v = a.environments.logs.as_ref().expect("view open");
+    assert_eq!(v.result.as_ref().unwrap().as_ref().unwrap().len(), 2);
+    assert_eq!(*asked.lock().unwrap(), ["staging/staging"]);
+    // Enter here is not a connect; q closes the view, not the overview.
+    press(&mut a, KeyCode::Char('q'));
+    assert!(a.environments.logs.is_none());
+    assert_eq!(a.mode, Mode::Environments);
+
+    // A connections.toml environment has no RDS log.
+    press(&mut a, KeyCode::Char('G'));
+    press(&mut a, KeyCode::Char('l'));
+    assert!(a.environments.logs.is_none());
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("logs come from RDS"));
+
+    // A late answer for another server is dropped.
+    a.environments.logs = Some(LogsView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        loading: true,
+        ..LogsView::default()
+    });
+    a.on_msg(AppMsg::EnvLogs {
+        environment: "staging".into(),
+        server: "staging-replica".into(),
+        result: Ok(Vec::new()),
+    });
+    assert!(a.environments.logs.as_ref().unwrap().loading, "not ours");
+}
+
+/// An app over the demo environments with a patcher that records what it
+/// was asked to apply.
+fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_patcher = Some(EnvPatcher {
+        plan: std::sync::Arc::new(|e, s, d| {
+            Box::pin(std::future::ready(Ok(crate::demo::patch_plan(&e, &s, &d))))
+        }),
+        apply: std::sync::Arc::new(move |p| {
+            applied
+                .lock()
+                .unwrap()
+                .push(format!("{}/{}/{}", p.environment, p.server, p.database));
+            Box::pin(std::future::ready(
+                crate::inventory::patching::ApplyReport {
+                    results: vec![crate::inventory::patching::PatchResult {
+                        file: p.patches[0].file.file.clone(),
+                        outcome: Ok(2),
+                    }],
+                    error: None,
+                },
+            ))
+        }),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    a
+}
+
+#[test]
+fn p_plans_patches_and_y_applies_them() {
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    press(&mut a, KeyCode::Char('P'));
+    let v = a.environments.patch.as_ref().expect("view open");
+    assert!(matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.patches.len() == 2 && !p.protected));
+    assert_eq!(a.last_status.as_deref(), Some("y apply · q cancel"));
+    // Keys don't fall through to the overview while it's open.
+    press(&mut a, KeyCode::Char('r'));
+    press(&mut a, KeyCode::Enter);
+    assert!(applied.lock().unwrap().is_empty(), "Enter isn't y");
+    assert!(a.environments.patch.is_some());
+    press(&mut a, KeyCode::Char('y'));
+    assert_eq!(*applied.lock().unwrap(), ["staging/staging/shop"]);
+    let v = a.environments.patch.as_ref().unwrap();
+    assert!(matches!(&v.stage, PatchStage::Done(_, r) if r.applied() == 1));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("staging/shop: applied 1 patch(es)")
+    );
+    // Done: y does nothing more; q closes the view, not the overview.
+    press(&mut a, KeyCode::Char('y'));
+    assert_eq!(applied.lock().unwrap().len(), 1);
+    press(&mut a, KeyCode::Char('q'));
+    assert!(a.environments.patch.is_none());
+    assert_eq!(a.mode, Mode::Environments);
+}
+
+#[test]
+fn a_protected_environment_applies_only_on_its_typed_name() {
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d);
+        p.protected = true;
+        Box::pin(std::future::ready(Ok(p)))
+    });
+    press(&mut a, KeyCode::Char('P'));
+    let env = a.environments.patch.as_ref().unwrap().environment.clone();
+    // y and q are letters of a name here, not commands.
+    press(&mut a, KeyCode::Char('y'));
+    press(&mut a, KeyCode::Char('q'));
+    assert!(a.environments.patch.is_some(), "q is typed, not a close");
+    press(&mut a, KeyCode::Enter);
+    assert!(applied.lock().unwrap().is_empty(), "yq isn't {env}");
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap()
+            .starts_with(&format!("that isn't {env}")),
+        "a wrong name says so"
+    );
+    press(&mut a, KeyCode::Backspace);
+    press(&mut a, KeyCode::Backspace);
+    for c in env.chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(applied.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_late_plan_for_another_database_is_dropped() {
+    let mut a = patching_app(Default::default());
+    a.environments.patch = Some(PatchView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        database: "shop".into(),
+        stage: PatchStage::Planning,
+        typed: String::new(),
+        scroll: 0,
+    });
+    a.on_msg(AppMsg::EnvPatchPlanned {
+        environment: "staging".into(),
+        server: "staging-replica".into(),
+        database: "shop".into(),
+        result: Err("x".into()),
+    });
+    assert!(matches!(
+        a.environments.patch.as_ref().unwrap().stage,
+        PatchStage::Planning
+    ));
+    // Applying can't be closed out from under.
+    a.environments.patch.as_mut().unwrap().stage =
+        PatchStage::Applying(crate::demo::patch_plan("staging", "staging", "shop"));
+    press(&mut a, KeyCode::Esc);
+    assert!(a.environments.patch.is_some());
+    // A second plan for the same database (Esc while planning, then P
+    // again) landing mid-apply doesn't turn the view back into a plan
+    // that y would run a second time.
+    a.on_msg(AppMsg::EnvPatchPlanned {
+        environment: "staging".into(),
+        server: "staging".into(),
+        database: "shop".into(),
+        result: Ok(crate::demo::patch_plan("staging", "staging", "shop")),
+    });
+    assert!(matches!(
+        a.environments.patch.as_ref().unwrap().stage,
+        PatchStage::Applying(_)
+    ));
+}
