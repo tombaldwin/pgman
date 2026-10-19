@@ -153,6 +153,15 @@ pub async fn apply(
     })
 }
 
+/// Whether `client`'s server is a standby.
+pub async fn in_recovery(client: &tokio_postgres::Client) -> Result<bool, String> {
+    client
+        .query_one("SELECT pg_is_in_recovery()", &[])
+        .await
+        .map(|r| r.get(0))
+        .map_err(|e| format!("could not ask whether it's a standby: {e}"))
+}
+
 /// The ids already recorded, read on `client`.
 pub async fn applied_ids(
     client: &tokio_postgres::Client,

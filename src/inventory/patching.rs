@@ -326,6 +326,14 @@ pub async fn apply(
         }
         let dsn = dsn_for(target, fetch_secret).await?;
         let (client, tunnel) = connect(dsn, false, APPLY_STATEMENT_TIMEOUT_MS).await?;
+        // The inventory's role can be wrong (a static connection to a hot
+        // standby reads as direct): ask the server.
+        if crate::query::apply::in_recovery(&client).await? {
+            return Err(format!(
+                "{} is a standby (in recovery); patches go to its primary",
+                target.server
+            ));
+        }
         Ok((cfg, client, tunnel))
     };
     let (cfg, client, _tunnel) = match start.await {
