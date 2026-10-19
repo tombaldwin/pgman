@@ -87,9 +87,18 @@ pub struct VersionTable {
     /// your home. Absolute otherwise.
     #[serde(default)]
     pub patches: Option<String>,
+    /// The databases that have the table; empty means every one. A
+    /// database left out shows no patch level rather than an error.
+    #[serde(default)]
+    pub databases: Vec<String>,
 }
 
 impl VersionTable {
+    /// Whether `database` keeps this version table.
+    pub fn applies_to(&self, database: &str) -> bool {
+        self.databases.is_empty() || self.databases.iter().any(|d| d == database)
+    }
+
     pub fn config(&self) -> crate::query::patches::PatchesConfig {
         crate::query::patches::PatchesConfig {
             dir: self.patches.clone().unwrap_or_default(),
@@ -453,7 +462,40 @@ pub fn rds_targets(env: &Environment, all: &[rds::RdsInstance]) -> Vec<Target> {
             });
         }
     }
+    group_replicas_under_primaries(&mut out);
     out
+}
+
+/// Order rows so each database's replicas sit directly under it on its
+/// primary: `ledger` on the primary, then `ledger` on each replica, then
+/// `ledgerlog`, and so on. Primaries keep the order they came in. Pure.
+pub fn group_replicas_under_primaries(rows: &mut [Target]) {
+    let mut roots: Vec<String> = Vec::new();
+    // A replica groups under its primary's name, listed or not: replicas
+    // of an unlisted primary still sit together.
+    let root_of =
+        |t: &Target| -> String { t.replica_of.clone().unwrap_or_else(|| t.server.clone()) };
+    for t in rows.iter() {
+        let r = root_of(t);
+        if !roots.contains(&r) {
+            roots.push(r);
+        }
+    }
+    let mut dbs: Vec<String> = Vec::new();
+    for t in rows.iter() {
+        if !dbs.contains(&t.database) {
+            dbs.push(t.database.clone());
+        }
+    }
+    let pos = |v: &[String], s: &str| v.iter().position(|x| x == s).unwrap_or(usize::MAX);
+    rows.sort_by_cached_key(|t| {
+        (
+            pos(&roots, &root_of(t)),
+            pos(&dbs, &t.database),
+            t.replica_of.is_some(),
+            t.server.clone(),
+        )
+    });
 }
 
 /// Static rows from the personal connection entries, by name. An unknown
@@ -651,20 +693,21 @@ source = { kind = "static", connections = ["ledger-local"] }
             rows,
             [
                 ("demo".into(), "ledger".into(), Role::Primary),
-                ("demo".into(), "ledgerlog".into(), Role::Primary),
                 (
                     "demo-read-only-replica".into(),
                     "ledger".into(),
                     Role::Replica
                 ),
+                ("demo".into(), "ledgerlog".into(), Role::Primary),
                 (
                     "demo-read-only-replica".into(),
                     "ledgerlog".into(),
                     Role::Replica
                 ),
-            ]
+            ],
+            "each database's replica sits directly under it"
         );
-        assert_eq!(t[2].replica_of.as_deref(), Some("demo"));
+        assert_eq!(t[1].replica_of.as_deref(), Some("demo"));
         assert_eq!(t[0].engine.as_deref(), Some("postgres 16.10"));
         // No `databases`: the instance's own DBName.
         let prod = rds_targets(&envs[1], &all());
@@ -797,11 +840,11 @@ sslmode = "require"
         );
         let secret_of = |i: usize| t[i].connect.as_ref().unwrap().secret.clone().unwrap().id;
         assert_eq!(
-            secret_of(1),
+            secret_of(2),
             "demo/database/ledgerlog/credentials",
             "server/database beats server"
         );
-        assert_eq!(secret_of(2), "demo/database/ledger_replica/credentials");
+        assert_eq!(secret_of(1), "demo/database/ledger_replica/credentials");
         assert_eq!(
             secret_of(3),
             "demo/database/ledger_replica/credentials",
@@ -986,5 +1029,69 @@ sslmode = "require"
         ] {
             assert!(parse_config(&bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn replicas_sit_under_their_primary_per_database_and_orphans_stand_alone() {
+        let t = |server: &str, db: &str, of: Option<&str>| Target {
+            database: db.into(),
+            server: server.into(),
+            role: if of.is_some() {
+                Role::Replica
+            } else {
+                Role::Primary
+            },
+            replica_of: of.map(str::to_string),
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Err("x".into()),
+        };
+        let mut rows = vec![
+            t("b", "app", None),
+            t("b", "log", None),
+            t("b-r2", "app", Some("b")),
+            t("b-r1", "app", Some("b")),
+            t("b-r1", "log", Some("b")),
+            t("orphan-r", "app", Some("gone")),
+            t("a", "app", None),
+        ];
+        group_replicas_under_primaries(&mut rows);
+        let got: Vec<String> = rows
+            .iter()
+            .map(|r| format!("{}/{}", r.server, r.database))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                "b/app",
+                "b-r1/app",
+                "b-r2/app",
+                "b/log",
+                "b-r1/log",
+                "orphan-r/app",
+                "a/app"
+            ],
+            "primaries keep their order; replicas under each database, by name"
+        );
+    }
+
+    #[test]
+    fn a_version_table_can_name_the_databases_that_have_it() {
+        let envs = parse_config(
+            "[[environments]]\nname = \"x\"\nsource = { kind = \"rds\", instances = [\"d\"] }\n\
+             version_table = { table = \"t_schema_version\", column = \"schema_version_id\", databases = [\"ledger\"] }\n",
+        )
+        .unwrap();
+        let v = envs[0].version_table.as_ref().unwrap();
+        assert!(v.applies_to("ledger") && !v.applies_to("ledgerlog"));
+        let every = VersionTable {
+            databases: Vec::new(),
+            ..v.clone()
+        };
+        assert!(every.applies_to("anything"), "empty means every database");
     }
 }

@@ -9822,3 +9822,80 @@ async fn an_environment_password_comes_from_its_variable_at_connect() {
     );
     assert!(!origin.contains("hunter2"));
 }
+
+#[test]
+fn databases_the_user_cannot_connect_to_stay_off_the_start_card() {
+    let grid = Grid {
+        columns: vec!["database".into(), "size".into()],
+        rows: vec![
+            vec!["ledger".into(), "1203 MB".into()],
+            vec!["rdsadmin".into(), String::new()],
+        ],
+        truncated: false,
+    };
+    let dbs = parse_bootstrap_databases(&grid);
+    assert_eq!(dbs.len(), 1);
+    assert_eq!(dbs[0].name, "ledger");
+}
+
+#[test]
+fn the_overview_selection_round_trips_through_its_line() {
+    let sel = EnvSelection {
+        environment: "demo".into(),
+        server: "demo-read-only-replica".into(),
+        database: "ledger".into(),
+    };
+    assert_eq!(EnvSelection::parse(&sel.to_line()), Some(sel));
+    for bad in ["", "demo\tdemo", "a\tb\tc\td", "\tb\tc"] {
+        assert_eq!(EnvSelection::parse(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
+fn the_overview_opens_on_the_row_used_last_time_and_remembers_the_next() {
+    let dir = std::env::temp_dir().join(format!("pgman-envlast-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join("environments-last");
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.environments_state_file = Some(file.clone());
+    a.open_environments_at_start(Some(EnvSelection {
+        environment: "qa".into(),
+        server: "qa".into(),
+        database: "shop".into(),
+    }));
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(a.environments.cursor, 2, "qa/shop, by name");
+    assert!(a.environments.restore.is_none(), "applied once");
+
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('q'));
+    let saved = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(saved, "local\tshop-local\tshop\n");
+
+    // Reopened within the session: the cursor is where it was left.
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(a.environments.cursor, 3);
+
+    // A remembered row that no longer exists leaves the cursor in range.
+    a.environments.restore = Some(EnvSelection {
+        environment: "gone".into(),
+        server: "x".into(),
+        database: "y".into(),
+    });
+    press(&mut a, KeyCode::Char('r'));
+    assert!(a.environments.cursor < a.environments.target_count());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn without_a_state_file_nothing_is_written() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    assert!(
+        a.environments_state_file.is_none(),
+        "tests never touch real dirs"
+    );
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('q'));
+}

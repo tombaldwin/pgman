@@ -12,7 +12,9 @@ use crate::conn::{self, TypedRows};
 /// One round trip for everything that needs no configuration.
 pub const STATUS_SQL: &str = "SELECT current_setting('server_version') AS server_version, \
   pg_is_in_recovery() AS in_recovery, \
-  EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())::float8 AS lag_secs";
+  EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())::float8 AS lag_secs, \
+  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \
+  pg_size_pretty(pg_database_size(current_database())) AS size";
 
 /// A probe's findings. `None` is "not known", never "zero".
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -29,6 +31,10 @@ pub struct Probe {
     pub pending: Option<usize>,
     /// Why the version table couldn't be read; the rest still stands.
     pub schema_error: Option<String>,
+    /// Backends connected to this database, the probe's own included.
+    pub sessions: Option<i64>,
+    /// The database's size, as `pg_size_pretty` puts it.
+    pub size: Option<String>,
 }
 
 /// [`STATUS_SQL`]'s one row. Pure.
@@ -43,6 +49,8 @@ pub fn parse_status(rows: &TypedRows) -> Probe {
         server_version: cell(0),
         in_recovery: cell(1).map(|v| v == "t" || v == "true"),
         lag_secs: cell(2).and_then(|v| v.parse().ok()),
+        sessions: cell(3).and_then(|v| v.parse().ok()),
+        size: cell(4),
         ..Probe::default()
     }
 }
@@ -94,8 +102,15 @@ mod tests {
 
     #[test]
     fn status_reads_version_recovery_and_lag_and_null_stays_unknown() {
-        let p = parse_status(&rows(&[Some("16.10"), Some("t"), Some("0.42")]));
+        let p = parse_status(&rows(&[
+            Some("16.10"),
+            Some("t"),
+            Some("0.42"),
+            Some("7"),
+            Some("1203 MB"),
+        ]));
         assert_eq!(p.server_version.as_deref(), Some("16.10"));
+        assert_eq!((p.sessions, p.size.as_deref()), (Some(7), Some("1203 MB")));
         assert_eq!(p.in_recovery, Some(true));
         assert_eq!(p.lag_secs, Some(0.42));
 

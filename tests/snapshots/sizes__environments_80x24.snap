@@ -9,21 +9,21 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  ╭[ ◆ environments ◆ ] enter connect · d discover · q close ─────────────╮   │
-│  │  staging · RDS 123456789012 eu-west-2                                 │   │
-│  │    DATABASE  ROLE     SERVER             STATUS     PROBE            …│   │
-╰──│    shop      primary  staging            available  via replica      …│───╯
-╭[ │    shop      replica  └ staging-replica  available  v251 · 1 pending …│───╮
-│id│                                                                       │   │
-│1 │  qa · RDS 123456789012 eu-west-2                                      │   │
-│2 │    DATABASE  ROLE     SERVER             STATUS     ENGINE            │   │
-│3 │    shop      direct   qa                 stopped    postgres 16.4     │   │
-│4 │                                                                       │   │
-│5 │  local · connections.toml                                             │   │
-│6 │    DATABASE  ROLE     SERVER             STATUS     ENGINE            │   │
-│  ╰───────────────────────────────────────────────────────────────────────╯   │
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────╮
+│  staging · RDS 123456789012 eu-west-2                                        │
+│    DATABASE  ROLE     SERVER             STATUS     SCHEMA       LAG       S…│
+│    shop      primary  staging            available  via replica             …│
+│    shop      replica  └ staging-replica  available  v251 (+1)    lag 0.4s   …│
 │                                                                              │
+│  qa · RDS 123456789012 eu-west-2                                             │
+│    DATABASE  ROLE     SERVER             STATUS     ENGINE                   │
+│    shop      direct   qa                 stopped    postgres 16.4            │
+│                                                                              │
+│  local · connections.toml                                                    │
+│    DATABASE  ROLE     SERVER             STATUS     ENGINE                   │
+│    shop      direct   shop-local         —          —                        │
+│                                                                              │
+│                                                                              │
+│  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · sta…│
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · F1 +3 more

@@ -786,6 +786,8 @@ pub fn environment_probes(
                 schema_version: Some(251),
                 pending: Some(1),
                 schema_error: None,
+                sessions: Some(12),
+                size: Some("812 MB".into()),
             })),
         })
         .collect()

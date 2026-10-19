@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│ ╭[ ◆ environments ◆ ] enter connect · d discover · q c╮  │
-│ │  staging · RDS 123456789012 eu-west-2               │  │
-│ │    DATABASE  ROLE     SERVER             STATUS    …│  │
-╰─│    shop      primary  staging            available …│──╯
-╭[│    shop      replica  └ staging-replica  available …│──╮
-│i│                                                     │  │
-│1│  qa · RDS 123456789012 eu-west-2                    │  │
-│2│    DATABASE  ROLE     SERVER             STATUS    …│  │
-│3│    shop      direct   qa                 stopped   …│  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+│  staging · RDS 123456789012 eu-west-2                    │
+│    DATABASE  ROLE     SERVER             STATUS     SCHE…│
+│    shop      primary  staging            available  via …│
+│    shop      replica  └ staging-replica  available  v251…│
+│                                                          │
+│  qa · RDS 123456789012 eu-west-2                         │
+│    DATABASE  ROLE     SERVER             STATUS     ENGI…│
+│    shop      direct   qa                 stopped    post…│
+│                                                          │
+│  local · connections.toml                                │
+│    DATABASE  ROLE     SERVER             STATUS     ENGI…│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · F1 +5 more

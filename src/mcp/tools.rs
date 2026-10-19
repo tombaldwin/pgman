@@ -613,6 +613,8 @@ pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
             "schema_version": p.schema_version,
             "pending": p.pending,
             "schema_error": p.schema_error,
+            "sessions": p.sessions,
+            "size": p.size,
         }),
     }
 }
@@ -1110,6 +1112,8 @@ mod tests {
         assert_eq!(replica["schema_version"], 251);
         assert_eq!(replica["pending"], 1);
         assert_eq!(replica["in_recovery"], true);
+        assert_eq!(replica["sessions"], 12);
+        assert_eq!(replica["size"], "812 MB");
         assert!(v["environments"][1]["probe"]
             .as_str()
             .unwrap()

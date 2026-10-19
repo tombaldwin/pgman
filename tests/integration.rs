@@ -1665,12 +1665,12 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
         rows,
         [
             ("demo".into(), "ledger".into(), "primary".into()),
-            ("demo".into(), "ledgerlog".into(), "primary".into()),
             (
                 "demo-read-only-replica".into(),
                 "ledger".into(),
                 "replica".into()
             ),
+            ("demo".into(), "ledgerlog".into(), "primary".into()),
             (
                 "demo-read-only-replica".into(),
                 "ledgerlog".into(),
@@ -2101,7 +2101,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         )
         .unwrap();
     }
-    let target = |table: &str| pgman::inventory::EnvReport {
+    let target = |table: &str, databases: &[&str]| pgman::inventory::EnvReport {
         name: "local".into(),
         source: "test".into(),
         targets: vec![pgman::inventory::Target {
@@ -2127,13 +2127,14 @@ fn environment_probe_reads_version_patch_level_and_pending() {
                 table: table.into(),
                 column: "id".into(),
                 patches: Some(dir.display().to_string()),
+                databases: databases.iter().map(|d| d.to_string()).collect(),
             }),
         }),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let probe = |table: &str| {
+    let probe = |table: &str, databases: &[&str]| {
         rt.block_on(pgman::inventory::probe::run(
-            target(table),
+            target(table, databases),
             std::sync::Arc::new(|_| panic!("no secret configured")),
         ))
         .remove(0)
@@ -2141,7 +2142,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         .expect("probe answered")
     };
 
-    let p = probe(&table);
+    let p = probe(&table, &[]);
     assert!(p.server_version.is_some(), "{p:?}");
     assert_eq!(p.in_recovery, Some(false));
     assert_eq!(p.schema_version, Some(3));
@@ -2149,7 +2150,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
     assert_eq!(p.schema_error, None);
 
     // A missing version table spoils only the patch level.
-    let p = probe("pgman_it_no_such_table");
+    let p = probe("pgman_it_no_such_table", &[]);
     assert!(p.server_version.is_some());
     assert!(
         p.schema_error
@@ -2159,6 +2160,13 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         "{p:?}"
     );
     assert_eq!(p.schema_version, None);
+
+    // Named for other databases only: not read here, so no error.
+    let p = probe("pgman_it_no_such_table", &["some_other_db"]);
+    assert_eq!((p.schema_version, &p.schema_error), (None, &None), "{p:?}");
+    assert!(p.server_version.is_some());
+    let p = probe(&table, &["pgman_test"]);
+    assert_eq!(p.schema_version, Some(3), "named: read");
 }
 
 /// Over MCP, `probe: true` reads the databases of environments that
@@ -2195,6 +2203,11 @@ fn mcp_environments_probe_reads_opted_in_environments_only() {
     let probe = &v["environments"][0]["databases"][0]["probe"];
     assert!(probe["server_version"].is_string(), "{text}");
     assert_eq!(probe["in_recovery"], false, "{text}");
+    assert!(
+        probe["sessions"].as_i64().unwrap() >= 1,
+        "the probe's own session counts: {text}"
+    );
+    assert!(probe["size"].is_string(), "{text}");
     assert!(v["environments"][1]["probe"]
         .as_str()
         .unwrap()
@@ -2313,4 +2326,67 @@ fn mcp_reuses_one_tunnel_across_calls() {
         "one ssh for both calls"
     );
     assert_ne!(a, b, "a fresh backend (session) per call");
+}
+
+/// RDS has a database nobody may connect to (`rdsadmin`), and sizing it
+/// fails. Connecting as a user like that must still work: the start
+/// card's list was failing the whole connection.
+#[test]
+fn connecting_works_when_a_database_on_the_server_refuses_connect() {
+    let home = scratch_home("noconnect", WRITABLE_PROFILE);
+    for sql in [
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgman_lim') THEN \
+         CREATE ROLE pgman_lim LOGIN PASSWORD 'pgman_lim'; END IF; END $$",
+        "CREATE DATABASE pgman_noconnect",
+        "REVOKE CONNECT ON DATABASE pgman_noconnect FROM PUBLIC",
+    ] {
+        // CREATE DATABASE fails harmlessly once the database exists.
+        let _ = batch_with_home(&home, &["--yes", "--sql", sql]);
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dsn = pgman::conn::Dsn::parse(
+        "postgres://pgman_lim:pgman_lim@127.0.0.1:55432/pgman_test?sslmode=disable",
+    )
+    .unwrap();
+    let booted = rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        pgman::conn::connect_and_bootstrap(
+            dsn,
+            true,
+            5_000,
+            pgman::conn::BOOTSTRAP_SQL.to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+    });
+    let booted = booted.unwrap_or_else(|e| panic!("connect failed: {e}"));
+    let names: Vec<&str> = booted.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    assert!(names.contains(&"pgman_test"), "{names:?}");
+    assert!(
+        names.contains(&"pgman_noconnect"),
+        "listed, just not sized: {names:?}"
+    );
+
+    // And a list that fails outright still leaves a connection.
+    let dsn = pgman::conn::Dsn::parse(
+        "postgres://pgman_lim:pgman_lim@127.0.0.1:55432/pgman_test?sslmode=disable",
+    )
+    .unwrap();
+    let booted = rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        pgman::conn::connect_and_bootstrap(
+            dsn,
+            true,
+            5_000,
+            "select 1/0".to_string(),
+            notice_tx,
+            notification_tx,
+        )
+        .await
+    });
+    let booted = booted.unwrap_or_else(|e| panic!("a failed list failed the connection: {e}"));
+    assert!(booted.grid.rows.is_empty());
 }

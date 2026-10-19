@@ -5,11 +5,16 @@ environment, replicas included, side by side. It's like ebman's main
 screen, but for Postgres. The same rows are available to an MCP client
 through the `environments` tool ([MCP server](mcp.md)).
 
+It's pgman's home: with environments configured and no `--dsn`, pgman
+starts on it, on the row you used last, and it fills the screen. `q`
+goes to the editor and `E` comes back.
+
 By default the overview shows what the sources know without connecting
-to any database: role, server, status, engine version and endpoint. An
-environment with `probe = true` also gets a `probe` column: its patch
-level, pending patches and replica lag, read from each database (see
-[Probes](#probes)). Press `Enter` on a row to connect to that database.
+to any database: role, server, status, engine version and endpoint.
+Each database's replicas sit directly under it. An environment with
+`probe = true` also gets `SCHEMA`, `LAG`, `SESSIONS` and `SIZE`, read
+from each database (see [Probes](#probes)). Press `Enter` on a row to
+connect to that database.
 
 ```
 staging · RDS 123456789012 eu-west-2
@@ -172,18 +177,25 @@ name = "demo"
 # … source, ssh_tunnel, secrets as above …
 probe = true
 version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }
+# Only some databases have the table? Name them; the others show no
+# patch level rather than an error:
+#   version_table = { …, databases = ["ledger"] }
 ```
 
 Every refresh (`E`, `r`, and every 30 s after `R`) then reads, from each database (and so does
 the MCP `environments` tool when called with `probe: true`):
 
-- **Version, recovery and lag**, in one round trip. A replica shows
-  `lag 0.4s`; one that is not in recovery shows `NOT IN RECOVERY` in
-  red, because it's a primary posing as a replica.
-- **Patch level**, the highest id in `version_table`, as `v251`.
-- **Pending patches**: files in `patches` whose id the table hasn't
-  recorded, as `up to date` or `2 pending` (yellow). It's the same
-  matching as the MCP `pending_patches` tool.
+- **`SCHEMA`**: the patch level, the highest id in `version_table`,
+  as `v251`. Patch files the table hasn't recorded show as `v251 (+2)`
+  in yellow; it's the same matching as the MCP `pending_patches` tool.
+- **`LAG`**, on replicas: `lag 0.4s`. A replica that isn't in recovery
+  shows `NOT IN RECOVERY` in red, because it's a primary posing as a
+  replica.
+- **`SESSIONS`**: backends connected to the database (the probe's own
+  included).
+- **`SIZE`**: the database's size.
+
+Version, recovery, lag, sessions and size come back in one round trip.
 
 How a probe connects:
 

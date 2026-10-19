@@ -9,47 +9,47 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
-│       │  staging · RDS 123456789012 eu-west-2                                                                                                                                                │       │
-╰───────│    DATABASE  ROLE     SERVER             STATUS     PROBE                        ENGINE                                                                                              │───────╯
-╭[ ◆ res│    shop      primary  staging            available  via replica                  postgres 16.4                                                                                       │───────╮
-│id  ema│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgres 16.4                                                                                       │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│  qa · RDS 123456789012 eu-west-2                                                                                                                                                     │       │
-│3   gra│    DATABASE  ROLE     SERVER             STATUS     ENGINE                                                                                                                           │       │
-│4   ala│    shop      direct   qa                 stopped    postgres 16.4                                                                                                                    │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│  local · connections.toml                                                                                                                                                            │       │
-│       │    DATABASE  ROLE     SERVER             STATUS     ENGINE                                                                                                                           │       │
-│       │    shop      direct   shop-local         —          —                                                                                                                                │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica.c1x2y3.eu-west-2.rds.amazonaws.com:5432                                                     │       │
-│       ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
+╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  staging · RDS 123456789012 eu-west-2                                                                                                                                                                │
+│    DATABASE  ROLE     SERVER             STATUS     SCHEMA       LAG       SESSIONS  SIZE    ENGINE                                                                                                  │
+│    shop      primary  staging            available  via replica                              postgres 16.4                                                                                           │
+│    shop      replica  └ staging-replica  available  v251 (+1)    lag 0.4s        12  812 MB  postgres 16.4                                                                                           │
+│                                                                                                                                                                                                      │
+│  qa · RDS 123456789012 eu-west-2                                                                                                                                                                     │
+│    DATABASE  ROLE     SERVER             STATUS     ENGINE                                                                                                                                           │
+│    shop      direct   qa                 stopped    postgres 16.4                                                                                                                                    │
+│                                                                                                                                                                                                      │
+│  local · connections.toml                                                                                                                                                                            │
+│    DATABASE  ROLE     SERVER             STATUS     ENGINE                                                                                                                                           │
+│    shop      direct   shop-local         —          —                                                                                                                                                │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica.c1x2y3.eu-west-2.rds.amazonaws.com:5432                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

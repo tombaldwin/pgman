@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 2465,
-    "digest": "0a2b281d80a4a7b0"
+    "count": 2486,
+    "digest": "4a328223a056043e"
   },
   "resolves": [
     "fs",
@@ -17,7 +17,7 @@
   "functions": [
     {
       "fn": "<app::EditScratchDir as std::ops::Drop>::drop",
-      "loc": "src/app.rs:4443:5: 4443:23",
+      "loc": "src/app.rs:4473:5: 4473:23",
       "inferred": [
         "Fs"
       ],
@@ -29,7 +29,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e9de20289af3ceb3",
+      "hash": "86aead0716ab284f3668b129c6242599",
       "fs": [
         "write"
       ],
@@ -44,7 +44,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743b77a591d4ead778",
+      "hash": "86aead0716ab284fff3aebe28262def1",
       "invisible": [
         "tb_tui_common"
       ]
@@ -66,7 +66,7 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74353cda63e1da2045",
+      "hash": "86aead0716ab284fe3334ce449795432",
       "invisible": [
         "tokio",
         "tracing_core"
@@ -77,36 +77,36 @@
     },
     {
       "fn": "<conn::NoVerifier as rustls::client::danger::ServerCertVerifier>::verify_server_cert",
-      "loc": "src/conn.rs:1533:5: 1540:75",
+      "loc": "src/conn.rs:1546:5: 1553:75",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74851a6eeea25a3a61",
+      "hash": "86aead0716ab284f48c1235d5c6dde70",
       "invisible": [
         "rustls"
       ]
     },
     {
       "fn": "<conn::NoVerifier as rustls::client::danger::ServerCertVerifier>::verify_tls12_signature",
-      "loc": "src/conn.rs:1543:5: 1548:80",
+      "loc": "src/conn.rs:1556:5: 1561:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e39c909e0a4d9924",
+      "hash": "86aead0716ab284f6c3210250bd9a439",
       "invisible": [
         "rustls"
       ]
     },
     {
       "fn": "<conn::NoVerifier as rustls::client::danger::ServerCertVerifier>::verify_tls13_signature",
-      "loc": "src/conn.rs:1551:5: 1556:80",
+      "loc": "src/conn.rs:1564:5: 1569:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c00064fcfcee5398",
+      "hash": "86aead0716ab284f52778eac3a1dc885",
       "invisible": [
         "rustls"
       ]
@@ -127,7 +127,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7478d2ab6dae3d6887",
+      "hash": "86aead0716ab284f0c8e518bbd7f51f7",
       "fs": [
         "read"
       ],
@@ -149,7 +149,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7401957ce80c284fe5",
+      "hash": "86aead0716ab284fd3c82460ac2b7b0f",
       "invisible": [
         "serde_core"
       ]
@@ -161,7 +161,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7440aad108d7ccb792",
+      "hash": "86aead0716ab284f1f59e1ad39a73f6b",
       "invisible": [
         "serde_core"
       ]
@@ -173,7 +173,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7403c531e3a767e0ba",
+      "hash": "86aead0716ab284ff9083067ce6a5bf8",
       "invisible": [
         "serde_core"
       ]
@@ -185,7 +185,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7443269d8fd57d6506",
+      "hash": "86aead0716ab284f386db56ec9c8b69e",
       "invisible": [
         "serde_core"
       ]
@@ -197,7 +197,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746593807a1a966bb5",
+      "hash": "86aead0716ab284f61854e51666b6ecc",
       "invisible": [
         "serde"
       ]
@@ -209,7 +209,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743dba4543165130ee",
+      "hash": "86aead0716ab284f3ad8c1a8d38c3141",
       "invisible": [
         "serde_core"
       ]
@@ -221,127 +221,127 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74609c9b922ce0f511",
+      "hash": "86aead0716ab284fd293928fffd07d24",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746152cbdb07c93208",
+      "hash": "86aead0716ab284fa80b527bf0974829",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743f91dbb2e032c91e",
+      "hash": "86aead0716ab284f647b359d6c26c419",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74699488655f51a418",
+      "hash": "86aead0716ab284fdfcf7249f6579b1c",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744fd5ec03446504d0",
+      "hash": "86aead0716ab284f206908e74754606d",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7416e20e380b46ff3e",
+      "hash": "86aead0716ab284f2fede4f29d690e97",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7410734ebb794499f0",
+      "hash": "86aead0716ab284f9e39b5be42458080",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746c620100d19d3acf",
+      "hash": "86aead0716ab284fb26ae6986817cf11",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_u64",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a749ace3ba501436d07",
+      "hash": "86aead0716ab284fe64262c95dc47934",
       "invisible": [
         "serde_core"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744db5110ca18d9b48",
+      "hash": "86aead0716ab284ff2f5f39c8e359eaf",
       "invisible": [
         "serde"
       ]
     },
     {
       "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744a88220e4aab4135",
+      "hash": "86aead0716ab284f72c6e033b83dd74c",
       "invisible": [
         "serde"
       ]
@@ -353,7 +353,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7424d30e1cb8acc1d8",
+      "hash": "86aead0716ab284f36fa0f26db341d77",
       "invisible": [
         "serde_core"
       ]
@@ -365,7 +365,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ceea2eee029eb2a3",
+      "hash": "86aead0716ab284f1900b94c65e207b2",
       "invisible": [
         "serde_core"
       ]
@@ -377,7 +377,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f16f00553487f4b6",
+      "hash": "86aead0716ab284f1c9a1f4a3e487a48",
       "invisible": [
         "serde"
       ]
@@ -389,7 +389,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bc849c5926f85cb0",
+      "hash": "86aead0716ab284f70abcaa398b3a6ed",
       "invisible": [
         "serde_core"
       ]
@@ -401,7 +401,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7451ac87a1c1003ddc",
+      "hash": "86aead0716ab284fe573b243a90a4b04",
       "invisible": [
         "serde_core"
       ]
@@ -413,7 +413,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74643fc3591d41a918",
+      "hash": "86aead0716ab284f57f4f17d4d50365b",
       "invisible": [
         "serde_core"
       ]
@@ -425,7 +425,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a745dd00e0031becb73",
+      "hash": "86aead0716ab284f7e96c551cb6ce214",
       "invisible": [
         "serde_core"
       ]
@@ -437,7 +437,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746a24f51db4ee66c9",
+      "hash": "86aead0716ab284f6b672e697064ac83",
       "invisible": [
         "serde_core"
       ]
@@ -449,7 +449,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747daff62d6d4f99fc",
+      "hash": "86aead0716ab284f20443be6484fd4aa",
       "invisible": [
         "serde_core"
       ]
@@ -461,7 +461,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7484361f34d5a893db",
+      "hash": "86aead0716ab284f2a4d9e840fea47b6",
       "invisible": [
         "serde_core"
       ]
@@ -473,7 +473,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74daff24c5cd78dbdc",
+      "hash": "86aead0716ab284f999270775ffd91b2",
       "invisible": [
         "serde_core"
       ]
@@ -485,7 +485,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743f50bcb86de3cd97",
+      "hash": "86aead0716ab284f06742c3409c8da78",
       "invisible": [
         "serde_core"
       ]
@@ -497,7 +497,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c810c1f0e3f5deee",
+      "hash": "86aead0716ab284f530b01db0fd4a906",
       "invisible": [
         "serde_core"
       ]
@@ -509,7 +509,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747ea08fbd2e20a274",
+      "hash": "86aead0716ab284f9a888d212540dd0c",
       "invisible": [
         "serde_core"
       ]
@@ -521,7 +521,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744daebcaaf4107cbc",
+      "hash": "86aead0716ab284fba4c62745b9a844b",
       "invisible": [
         "serde_core"
       ]
@@ -533,7 +533,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a9a266cbd1182cfa",
+      "hash": "86aead0716ab284f31493b955b2543f3",
       "invisible": [
         "serde_core"
       ]
@@ -545,7 +545,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74054dc6dcb3311584",
+      "hash": "86aead0716ab284f84b5f52d7580aa28",
       "invisible": [
         "serde_core"
       ]
@@ -557,7 +557,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74875763fda0f7ef52",
+      "hash": "86aead0716ab284fd7efbd14bb1757f9",
       "invisible": [
         "serde_core"
       ]
@@ -569,7 +569,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f1bd6f9d84ddabc4",
+      "hash": "86aead0716ab284f29b742502318ccfb",
       "invisible": [
         "serde_core"
       ]
@@ -581,7 +581,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a745482dd4f4553585b",
+      "hash": "86aead0716ab284fb9b15d85c03ab76c",
       "invisible": [
         "serde"
       ]
@@ -593,7 +593,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e9e918817bbaca80",
+      "hash": "86aead0716ab284ffff8e0ab9c0423a0",
       "invisible": [
         "serde_core"
       ]
@@ -605,7 +605,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7452269256018fd3b0",
+      "hash": "86aead0716ab284fe6517a838974ec03",
       "invisible": [
         "serde_core"
       ]
@@ -617,7 +617,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ac594431cd8a10da",
+      "hash": "86aead0716ab284fecb9792f133df3ce",
       "invisible": [
         "serde"
       ]
@@ -629,7 +629,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746ce71c3271729ddb",
+      "hash": "86aead0716ab284feb2ef662f1828050",
       "invisible": [
         "serde_core"
       ]
@@ -641,7 +641,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74daabd48940a1f1e6",
+      "hash": "86aead0716ab284fbc4c7bbfbf96c7f1",
       "invisible": [
         "serde_core"
       ]
@@ -653,7 +653,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7409b1df961ccd8f2d",
+      "hash": "86aead0716ab284f2a07d0d6dd4d948d",
       "invisible": [
         "serde"
       ]
@@ -665,7 +665,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741ea6d6421a05a48b",
+      "hash": "86aead0716ab284febf2be864cf13732",
       "invisible": [
         "serde_core"
       ]
@@ -677,7 +677,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a68a3b21415fb6eb",
+      "hash": "86aead0716ab284fbf967acabfefcb41",
       "invisible": [
         "serde_core"
       ]
@@ -689,7 +689,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ae95e182c06804f1",
+      "hash": "86aead0716ab284ff2a93b13cccae42c",
       "invisible": [
         "serde"
       ]
@@ -701,7 +701,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c6bb5882d7c93acf",
+      "hash": "86aead0716ab284fafeed00bc76dedd4",
       "invisible": [
         "serde"
       ]
@@ -713,7 +713,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7497869deaa88f2ade",
+      "hash": "86aead0716ab284fc742a1db976b0d57",
       "invisible": [
         "serde_core"
       ]
@@ -725,7 +725,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ebde4d1a41add4d1",
+      "hash": "86aead0716ab284f6ac47e3f2797d78d",
       "invisible": [
         "serde_core"
       ]
@@ -737,7 +737,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c30fd6e472b3ffb8",
+      "hash": "86aead0716ab284faa65eef69ab1dc8b",
       "invisible": [
         "serde_core"
       ]
@@ -749,7 +749,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7456429517fc38ce84",
+      "hash": "86aead0716ab284f81e6824c6763ad8a",
       "invisible": [
         "serde_core"
       ]
@@ -761,7 +761,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bcd7f068e34b707c",
+      "hash": "86aead0716ab284f078f2f566fed0075",
       "invisible": [
         "ratatui_core"
       ]
@@ -777,7 +777,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ee629291e32c551b",
+      "hash": "86aead0716ab284ff510ba27f9d3fc04",
       "calls": [
         "tui::restore_terminal"
       ]
@@ -797,7 +797,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a747e0aecd949f5248e",
+      "hash": "86aead0716ab284f89a9a14899866cda",
       "fs": [
         "read"
       ],
@@ -825,7 +825,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c6e5030a3fc0c8d4",
+      "hash": "86aead0716ab284f4be7b9fb86846a0a",
       "calls": [
         "tui::Tui::resume"
       ],
@@ -845,7 +845,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746fafb7c4b8d5880d",
+      "hash": "86aead0716ab284f6a38a593dee817db",
       "calls": [
         "tui::Tui::suspend"
       ]
@@ -864,7 +864,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74921e58ccc7a08ae9"
+      "hash": "86aead0716ab284f822f2f85b52df5f8"
     },
     {
       "fn": "<tunnel::SshTunnel as tunnel::Forward>::alive",
@@ -880,7 +880,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74838b923614c59f5d"
+      "hash": "86aead0716ab284f676c2a4b513efdd6"
     },
     {
       "fn": "<update_check::_::<impl dbunit::_::_serde::Deserialize<'de> for update_check::CacheFile>::deserialize::__Visitor<'de> as dbunit::_::_serde::de::Visitor<'de>>::visit_map",
@@ -889,14 +889,14 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f36a7d96ec3261e8",
+      "hash": "86aead0716ab284f9dfce4b73a14f257",
       "invisible": [
         "serde"
       ]
     },
     {
       "fn": "app::App::cancel_running_query",
-      "loc": "src/app.rs:3010:5: 3010:39",
+      "loc": "src/app.rs:3017:5: 3017:39",
       "inferred": [
         "Log",
         "Net"
@@ -907,7 +907,7 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743fabaeec34ed59ca",
+      "hash": "86aead0716ab284fea053d85efe2cd40",
       "calls": [
         "<app::types::PgCancelDispatcher as app::CancelDispatcher>::dispatch"
       ],
@@ -921,7 +921,7 @@
     },
     {
       "fn": "app::App::capture_tap_baseline",
-      "loc": "src/app.rs:2170:5: 2170:39",
+      "loc": "src/app.rs:2177:5: 2177:39",
       "inferred": [
         "Clock"
       ],
@@ -933,11 +933,11 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a1f43681375fdf38"
+      "hash": "86aead0716ab284f264a362255f59bf1"
     },
     {
       "fn": "app::App::close_tx",
-      "loc": "src/app.rs:2643:5: 2643:41",
+      "loc": "src/app.rs:2650:5: 2650:41",
       "inferred": [
         "Db",
         "Exec"
@@ -948,7 +948,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7408516947b87c1a14",
+      "hash": "86aead0716ab284f79f5a94997cafe21",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
         "conn::tx_commit",
@@ -960,7 +960,7 @@
     },
     {
       "fn": "app::App::connect_to_environment_target",
-      "loc": "src/app.rs:3788:5: 3788:48",
+      "loc": "src/app.rs:3796:5: 3796:48",
       "inferred": [
         "Clock",
         "Db",
@@ -983,14 +983,16 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d75a57b3bb9a38e3",
+      "hash": "86aead0716ab284f50e72b0e171b652d",
       "fs": [
-        "read"
+        "read",
+        "write"
       ],
       "cmds": [
         "ssh"
       ],
       "calls": [
+        "app::App::remember_env_selection",
         "app::spawn::<impl app::App>::connect_to_target",
         "app::spawn::<impl app::App>::spawn_secret_fetch",
         "inventory::ConnectSpec::apply_password_env"
@@ -1015,19 +1017,19 @@
     },
     {
       "fn": "app::App::cycle_sort",
-      "loc": "src/app.rs:3327:5: 3327:29",
+      "loc": "src/app.rs:3334:5: 3334:29",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e03fdbbc8db77af2",
+      "hash": "86aead0716ab284fafd24e7644f83e7b",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::export_grid_to_clipboard",
-      "loc": "src/app.rs:3548:5: 3548:43",
+      "loc": "src/app.rs:3555:5: 3555:43",
       "inferred": [
         "Clipboard"
       ],
@@ -1039,47 +1041,47 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a747b283234b0c8ad13"
+      "hash": "86aead0716ab284f23435c0e86e86beb"
     },
     {
       "fn": "app::App::filter_step",
-      "loc": "src/app.rs:3598:5: 3598:45",
+      "loc": "src/app.rs:3605:5: 3605:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f1c13671b7dec497",
+      "hash": "86aead0716ab284fb952c9bbb894182f",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::focused_saved_index",
-      "loc": "src/app.rs:2346:5: 2346:51",
+      "loc": "src/app.rs:2353:5: 2353:51",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b91b4ba3c3caacdb",
+      "hash": "86aead0716ab284fdd2e2ac243f4f4cf",
       "invisible": [
         "tb_tui_common"
       ]
     },
     {
       "fn": "app::App::jump_to_bookmark",
-      "loc": "src/app.rs:4118:5: 4118:53",
+      "loc": "src/app.rs:4148:5: 4148:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c6d0c2a037ee74c3",
+      "hash": "86aead0716ab284ff5cc69f94cc2d303",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::load_dbunit_fixture",
-      "loc": "src/app.rs:3257:5: 3257:38",
+      "loc": "src/app.rs:3264:5: 3264:38",
       "inferred": [
         "Fs"
       ],
@@ -1091,7 +1093,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743267f9d777054bdb",
+      "hash": "86aead0716ab284f7178591755a17991",
       "fs": [
         "read"
       ],
@@ -1104,31 +1106,31 @@
     },
     {
       "fn": "app::App::load_saved_query",
-      "loc": "src/app.rs:2302:5: 2302:64",
+      "loc": "src/app.rs:2309:5: 2309:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7480af07e61789425f",
+      "hash": "86aead0716ab284f6bb26519687f7cdf",
       "invisible": [
         "tb_tui_common"
       ]
     },
     {
       "fn": "app::App::navigate_fk_from_focused_cell",
-      "loc": "src/app.rs:3386:5: 3386:48",
+      "loc": "src/app.rs:3393:5: 3393:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747d5a323832360893",
+      "hash": "86aead0716ab284fb222b89574d68179",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::new",
-      "loc": "src/app.rs:1317:5: 1322:14",
+      "loc": "src/app.rs:1320:5: 1325:14",
       "inferred": [
         "Clock",
         "Env",
@@ -1147,7 +1149,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746532fa8172af14f8",
+      "hash": "86aead0716ab284fcafe509effb5f837",
       "fs": [
         "read"
       ],
@@ -1168,7 +1170,7 @@
     },
     {
       "fn": "app::App::on_env_secret",
-      "loc": "src/app.rs:4047:5: 4051:6",
+      "loc": "src/app.rs:4056:5: 4060:6",
       "inferred": [
         "Clock",
         "Db",
@@ -1191,7 +1193,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a746077d93b9991777e",
+      "hash": "86aead0716ab284fc43625aa57f1bd15",
       "fs": [
         "read"
       ],
@@ -1221,7 +1223,7 @@
     },
     {
       "fn": "app::App::on_key",
-      "loc": "src/app.rs:1745:5: 1745:44",
+      "loc": "src/app.rs:1752:5: 1752:44",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1246,7 +1248,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a742cab5585cc128393",
+      "hash": "86aead0716ab284f00df3ba3b6b0d71f",
       "fs": [
         "read",
         "write"
@@ -1285,7 +1287,7 @@
     },
     {
       "fn": "app::App::on_key_inner",
-      "loc": "src/app.rs:1770:5: 1770:46",
+      "loc": "src/app.rs:1777:5: 1777:46",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1310,7 +1312,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a742b376730c39fac64",
+      "hash": "86aead0716ab284f65f8218398565d12",
       "fs": [
         "read",
         "write"
@@ -1367,140 +1369,20 @@
     },
     {
       "fn": "app::App::open_cell_detail",
-      "loc": "src/app.rs:2425:5: 2425:35",
+      "loc": "src/app.rs:2432:5: 2432:35",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a9ef9064d51ee79e",
+      "hash": "86aead0716ab284fce9a69c2ecb9ea52",
       "invisible": [
         "ratatui_widgets",
         "serde_json"
       ]
     },
     {
-      "fn": "app::App::open_row_detail",
-      "loc": "src/app.rs:2376:5: 2376:34",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "da50989121ee3a74d16f6d8b926366f5",
-      "invisible": [
-        "ratatui_widgets"
-      ]
-    },
-    {
-      "fn": "app::App::push_undo",
-      "loc": "src/app.rs:2609:5: 2609:83",
-      "inferred": [
-        "Clock"
-      ],
-      "direct": [
-        "Clock"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Clock"
-      ],
-      "overdeclared": [],
-      "hash": "da50989121ee3a7418ccb54a8ebe1734"
-    },
-    {
-      "fn": "app::App::rebuild_grid_find",
-      "loc": "src/app.rs:4174:5: 4174:36",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "da50989121ee3a74b6220f19b857746c",
-      "invisible": [
-        "ratatui_widgets"
-      ]
-    },
-    {
-      "fn": "app::App::rebuild_visible_rows",
-      "loc": "src/app.rs:3310:5: 3310:39",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "da50989121ee3a741e76f4ff688944ee",
-      "invisible": [
-        "ratatui_widgets"
-      ]
-    },
-    {
-      "fn": "app::App::reformat_buffer",
-      "loc": "src/app.rs:2808:5: 2808:34",
-      "inferred": [
-        "Env",
-        "Exec",
-        "Fs",
-        "Unknown"
-      ],
-      "direct": [
-        "Env"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Env",
-        "Exec",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": true,
-      "hash": "da50989121ee3a7445aa65bb08100779",
-      "fs": [
-        "read"
-      ],
-      "calls": [
-        "app::App::reformat_buffer_with_path"
-      ],
-      "invisible": [
-        "sqlformat"
-      ],
-      "incomplete": [
-        "Exec",
-        "Fs"
-      ]
-    },
-    {
-      "fn": "app::App::reformat_buffer_with_path",
-      "loc": "src/app.rs:2817:5: 2817:84",
-      "inferred": [
-        "Env",
-        "Exec",
-        "Fs",
-        "Unknown"
-      ],
-      "declared": [],
-      "undeclared": [
-        "Env",
-        "Exec",
-        "Fs"
-      ],
-      "overdeclared": [],
-      "unresolved": true,
-      "hash": "da50989121ee3a741bb692f7ffe3747c",
-      "fs": [
-        "read"
-      ],
-      "calls": [
-        "app::find_on_path_in",
-        "app::pg_format_via"
-      ],
-      "invisible": [
-        "sqlformat"
-      ],
-      "incomplete": [
-        "Exec",
-        "Fs"
-      ]
-    },
-    {
-      "fn": "app::App::refresh_environments",
-      "loc": "src/app.rs:3770:5: 3770:39",
+      "fn": "app::App::open_environments_at_start",
+      "loc": "src/app.rs:4081:5: 4081:77",
       "inferred": [
         "Clock",
         "Db",
@@ -1523,7 +1405,182 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74ae15ce3306c9c677",
+      "hash": "86aead0716ab284f44ed81baced7af0b",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "ssh"
+      ],
+      "calls": [
+        "app::App::start_environments"
+      ],
+      "invisible": [
+        "futures_util",
+        "postgres_types",
+        "ratatui_widgets",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "app::App::open_row_detail",
+      "loc": "src/app.rs:2383:5: 2383:34",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "86aead0716ab284f627f09517c1074ae",
+      "invisible": [
+        "ratatui_widgets"
+      ]
+    },
+    {
+      "fn": "app::App::push_undo",
+      "loc": "src/app.rs:2616:5: 2616:83",
+      "inferred": [
+        "Clock"
+      ],
+      "direct": [
+        "Clock"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock"
+      ],
+      "overdeclared": [],
+      "hash": "86aead0716ab284f62d6c0d9b57372a4"
+    },
+    {
+      "fn": "app::App::rebuild_grid_find",
+      "loc": "src/app.rs:4204:5: 4204:36",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "86aead0716ab284f978308f28fa27349",
+      "invisible": [
+        "ratatui_widgets"
+      ]
+    },
+    {
+      "fn": "app::App::rebuild_visible_rows",
+      "loc": "src/app.rs:3317:5: 3317:39",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "86aead0716ab284f2c61d93fb9cfb963",
+      "invisible": [
+        "ratatui_widgets"
+      ]
+    },
+    {
+      "fn": "app::App::reformat_buffer",
+      "loc": "src/app.rs:2815:5: 2815:34",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Unknown"
+      ],
+      "direct": [
+        "Env"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "86aead0716ab284f6f5baa49b1bb114e",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "app::App::reformat_buffer_with_path"
+      ],
+      "invisible": [
+        "sqlformat"
+      ],
+      "incomplete": [
+        "Exec",
+        "Fs"
+      ]
+    },
+    {
+      "fn": "app::App::reformat_buffer_with_path",
+      "loc": "src/app.rs:2824:5: 2824:84",
+      "inferred": [
+        "Env",
+        "Exec",
+        "Fs",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Exec",
+        "Fs"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "86aead0716ab284f5cf42d10e808a1a5",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "app::find_on_path_in",
+        "app::pg_format_via"
+      ],
+      "invisible": [
+        "sqlformat"
+      ],
+      "incomplete": [
+        "Exec",
+        "Fs"
+      ]
+    },
+    {
+      "fn": "app::App::refresh_environments",
+      "loc": "src/app.rs:3778:5: 3778:39",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "86aead0716ab284fe251359fd2526e00",
       "fs": [
         "read"
       ],
@@ -1555,7 +1612,7 @@
     },
     {
       "fn": "app::App::refresh_sessions",
-      "loc": "src/app.rs:4081:5: 4081:35",
+      "loc": "src/app.rs:4111:5: 4111:35",
       "inferred": [
         "Db",
         "Env",
@@ -1570,7 +1627,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749bbac9a3fa414aa0",
+      "hash": "86aead0716ab284f2e59309d21177869",
       "fs": [
         "read"
       ],
@@ -1589,7 +1646,7 @@
     },
     {
       "fn": "app::App::refresh_slow_queries",
-      "loc": "src/app.rs:3753:5: 3753:39",
+      "loc": "src/app.rs:3760:5: 3760:39",
       "inferred": [
         "Db",
         "Env",
@@ -1604,7 +1661,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740ae35d9992e40058",
+      "hash": "86aead0716ab284ffd63c77b46af3e1f",
       "fs": [
         "read"
       ],
@@ -1622,8 +1679,42 @@
       ]
     },
     {
+      "fn": "app::App::remember_env_selection",
+      "loc": "src/app.rs:4088:5: 4088:48",
+      "inferred": [
+        "Clock",
+        "Fs",
+        "Log",
+        "Unknown"
+      ],
+      "direct": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "86aead0716ab284f819a1407328a9ddb",
+      "fs": [
+        "write"
+      ],
+      "calls": [
+        "util::write_private"
+      ],
+      "invisible": [
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
       "fn": "app::App::report_snapshot",
-      "loc": "src/app.rs:3021:5: 3021:67",
+      "loc": "src/app.rs:3028:5: 3028:67",
       "inferred": [
         "Clock"
       ],
@@ -1632,14 +1723,14 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7414688efd2765eb30",
+      "hash": "86aead0716ab284fc5903116a19084d5",
       "calls": [
         "app::chrono_like_now_utc"
       ]
     },
     {
       "fn": "app::App::request_run",
-      "loc": "src/app.rs:3055:5: 3055:45",
+      "loc": "src/app.rs:3062:5: 3062:45",
       "inferred": [
         "Clock",
         "Db",
@@ -1665,7 +1756,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74413b117685dfee82",
+      "hash": "86aead0716ab284fe0b13722f144b7e8",
       "fs": [
         "read",
         "write"
@@ -1703,7 +1794,7 @@
     },
     {
       "fn": "app::App::request_run_batch",
-      "loc": "src/app.rs:3184:5: 3184:76",
+      "loc": "src/app.rs:3191:5: 3191:76",
       "inferred": [
         "Clock",
         "Db",
@@ -1725,7 +1816,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e837532a8bf2356d",
+      "hash": "86aead0716ab284f642270d8b155185e",
       "fs": [
         "read"
       ],
@@ -1746,7 +1837,7 @@
     },
     {
       "fn": "app::App::run",
-      "loc": "src/app.rs:1474:5: 1474:69",
+      "loc": "src/app.rs:1478:5: 1478:69",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1773,7 +1864,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743138cacb81463349",
+      "hash": "86aead0716ab284f2b1c67f9604c728f",
       "fs": [
         "read",
         "write"
@@ -1819,7 +1910,7 @@
     },
     {
       "fn": "app::App::run_external_editor",
-      "loc": "src/app.rs:1602:5: 1602:63",
+      "loc": "src/app.rs:1607:5: 1607:63",
       "inferred": [
         "Clock",
         "Env",
@@ -1841,7 +1932,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a741e39af93ea9f0390",
+      "hash": "86aead0716ab284f38e950445ad49a2b",
       "fs": [
         "read",
         "write"
@@ -1862,7 +1953,7 @@
     },
     {
       "fn": "app::App::run_with",
-      "loc": "src/app.rs:1494:5: 1498:28",
+      "loc": "src/app.rs:1498:5: 1502:28",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1893,7 +1984,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74ac9eec9fc42d7a2f",
+      "hash": "86aead0716ab284f7a36888ce5ad0b3d",
       "fs": [
         "read",
         "write"
@@ -1907,6 +1998,7 @@
       "calls": [
         "<tui::Tui as tui::TuiHost>::draw",
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "app::App::remember_env_selection",
         "app::App::run_external_editor",
         "app::App::tick_auto_refresh",
         "app::App::tick_splash",
@@ -1951,7 +2043,7 @@
     },
     {
       "fn": "app::App::save_env_proposals",
-      "loc": "src/app.rs:3936:5: 3936:37",
+      "loc": "src/app.rs:3945:5: 3945:37",
       "inferred": [
         "Clock",
         "Db",
@@ -1977,7 +2069,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7484b62c60130e61c3",
+      "hash": "86aead0716ab284f0b930e0e023ee561",
       "fs": [
         "read"
       ],
@@ -2012,31 +2104,31 @@
     },
     {
       "fn": "app::App::scroll",
-      "loc": "src/app.rs:4212:5: 4212:39",
+      "loc": "src/app.rs:4242:5: 4242:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fbfbc4b98ebe448f",
+      "hash": "86aead0716ab284f390bf83bbf8e2d13",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::select_row",
-      "loc": "src/app.rs:4222:5: 4222:41",
+      "loc": "src/app.rs:4252:5: 4252:41",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7430abe6eba903ec1c",
+      "hash": "86aead0716ab284fdd33c00829a70b71",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::start_env_discovery",
-      "loc": "src/app.rs:3844:5: 3844:71",
+      "loc": "src/app.rs:3853:5: 3853:71",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2050,7 +2142,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74aad8769701f242df",
+      "hash": "86aead0716ab284f501f989e58b0b59b",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop"
       ],
@@ -2063,7 +2155,7 @@
     },
     {
       "fn": "app::App::start_env_probes",
-      "loc": "src/app.rs:3968:5: 3968:35",
+      "loc": "src/app.rs:3977:5: 3977:35",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2077,7 +2169,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a747615f37ca6f3d68a",
+      "hash": "86aead0716ab284fa9e888afaaf7ad12",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop"
       ],
@@ -2090,7 +2182,7 @@
     },
     {
       "fn": "app::App::start_environments",
-      "loc": "src/app.rs:3763:5: 3763:48",
+      "loc": "src/app.rs:3770:5: 3770:48",
       "inferred": [
         "Clock",
         "Db",
@@ -2113,7 +2205,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cc6630b53be385b3",
+      "hash": "86aead0716ab284f62acb69a3b866663",
       "fs": [
         "read"
       ],
@@ -2145,43 +2237,43 @@
     },
     {
       "fn": "app::App::start_filter",
-      "loc": "src/app.rs:3582:5: 3582:31",
+      "loc": "src/app.rs:3589:5: 3589:31",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740df63011c2027f1f",
+      "hash": "86aead0716ab284f9d44fa857ebf457b",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::start_rename_query",
-      "loc": "src/app.rs:2359:5: 2359:37",
+      "loc": "src/app.rs:2366:5: 2366:37",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a745f965899aa1c4f36",
+      "hash": "86aead0716ab284f72178dabf3f14f4f",
       "invisible": [
         "tb_tui_common"
       ]
     },
     {
       "fn": "app::App::start_saved_queries_filter",
-      "loc": "src/app.rs:2352:5: 2352:45",
+      "loc": "src/app.rs:2359:5: 2359:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7434bd250ee52ed414",
+      "hash": "86aead0716ab284f7c862b7d955db2a1",
       "invisible": [
         "tb_tui_common"
       ]
     },
     {
       "fn": "app::App::start_schema_lint",
-      "loc": "src/app.rs:3693:5: 3693:36",
+      "loc": "src/app.rs:3700:5: 3700:36",
       "inferred": [
         "Db",
         "Exec",
@@ -2194,7 +2286,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749f73f994b75d7f7c",
+      "hash": "86aead0716ab284f4be8336cbcd26307",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
         "query::lint::fetch_live"
@@ -2210,7 +2302,7 @@
     },
     {
       "fn": "app::App::start_sessions",
-      "loc": "src/app.rs:4070:5: 4070:33",
+      "loc": "src/app.rs:4100:5: 4100:33",
       "inferred": [
         "Db",
         "Env",
@@ -2225,7 +2317,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743a15068db9cb4bee",
+      "hash": "86aead0716ab284f856a6841ae2275cb",
       "fs": [
         "read"
       ],
@@ -2244,7 +2336,7 @@
     },
     {
       "fn": "app::App::start_slow_queries",
-      "loc": "src/app.rs:3741:5: 3741:37",
+      "loc": "src/app.rs:3748:5: 3748:37",
       "inferred": [
         "Db",
         "Env",
@@ -2259,7 +2351,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74417af86ca15ea467",
+      "hash": "86aead0716ab284fa28434b0c57546f9",
       "fs": [
         "read"
       ],
@@ -2278,7 +2370,7 @@
     },
     {
       "fn": "app::App::start_watch",
-      "loc": "src/app.rs:2850:5: 2850:30",
+      "loc": "src/app.rs:2857:5: 2857:30",
       "inferred": [
         "Clock"
       ],
@@ -2290,35 +2382,35 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749a40dad2b2f97efc"
+      "hash": "86aead0716ab284fa10ba72b06eec2f0"
     },
     {
       "fn": "app::App::step_grid_find",
-      "loc": "src/app.rs:4187:5: 4187:48",
+      "loc": "src/app.rs:4217:5: 4217:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74208af8a09d034a64",
+      "hash": "86aead0716ab284fabfa3652f0958aa1",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::step_row_detail",
-      "loc": "src/app.rs:2395:5: 2395:48",
+      "loc": "src/app.rs:2402:5: 2402:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c8f72f1e5792bbc7",
+      "hash": "86aead0716ab284f96cac870d40e2620",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::App::tick_auto_refresh",
-      "loc": "src/app.rs:2911:5: 2911:36",
+      "loc": "src/app.rs:2918:5: 2918:36",
       "inferred": [
         "Clock",
         "Db",
@@ -2340,7 +2432,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744ca7cf0a74b71db2",
+      "hash": "86aead0716ab284f93811a0451ca36d4",
       "fs": [
         "read"
       ],
@@ -2361,7 +2453,7 @@
     },
     {
       "fn": "app::App::tick_env_auto_probe",
-      "loc": "src/app.rs:2951:5: 2951:38",
+      "loc": "src/app.rs:2958:5: 2958:38",
       "inferred": [
         "Clock",
         "Exec",
@@ -2377,7 +2469,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74bf548ce6f5d8e176",
+      "hash": "86aead0716ab284f87c8f0927471388a",
       "calls": [
         "app::App::start_env_probes"
       ],
@@ -2387,7 +2479,7 @@
     },
     {
       "fn": "app::App::tick_splash",
-      "loc": "src/app.rs:1647:5: 1647:30",
+      "loc": "src/app.rs:1652:5: 1652:30",
       "inferred": [
         "Clock"
       ],
@@ -2399,11 +2491,11 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7427ed84e17202ab59"
+      "hash": "86aead0716ab284f93b6f8b88e44e53b"
     },
     {
       "fn": "app::App::tick_watch",
-      "loc": "src/app.rs:2977:5: 2977:29",
+      "loc": "src/app.rs:2984:5: 2984:29",
       "inferred": [
         "Clock",
         "Db",
@@ -2429,7 +2521,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a742001a112890e7c83",
+      "hash": "86aead0716ab284f98a5ef7ef66d9550",
       "fs": [
         "read",
         "write"
@@ -2462,7 +2554,7 @@
     },
     {
       "fn": "app::App::toggle_auto_refresh",
-      "loc": "src/app.rs:2897:5: 2897:38",
+      "loc": "src/app.rs:2904:5: 2904:38",
       "inferred": [
         "Clock"
       ],
@@ -2474,11 +2566,11 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a748ec752315ac48463"
+      "hash": "86aead0716ab284fc80b451c17d2cd18"
     },
     {
       "fn": "app::App::toggle_env_auto_probe",
-      "loc": "src/app.rs:2935:5: 2935:40",
+      "loc": "src/app.rs:2942:5: 2942:40",
       "inferred": [
         "Clock"
       ],
@@ -2490,35 +2582,35 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74dd3b7acbe77118c3"
+      "hash": "86aead0716ab284f8dd8e03b9118adee"
     },
     {
       "fn": "app::App::toggle_json_cell_node",
-      "loc": "src/app.rs:2454:5: 2454:40",
+      "loc": "src/app.rs:2461:5: 2461:40",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bb6b37d32aa3788f",
+      "hash": "86aead0716ab284f092f5a6a171b3f32",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "app::App::visible_saved_indices",
-      "loc": "src/app.rs:2337:5: 2337:54",
+      "loc": "src/app.rs:2344:5: 2344:54",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74891c63aa3e25ea69",
+      "hash": "86aead0716ab284f5e299bf9e8aa5e72",
       "invisible": [
         "tb_tui_common"
       ]
     },
     {
       "fn": "app::blocked_by_safety_message",
-      "loc": "src/app.rs:48:1: 48:74",
+      "loc": "src/app.rs:46:1: 46:74",
       "inferred": [
         "Env",
         "Fs"
@@ -2529,7 +2621,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7451324ecfa1e9a79e",
+      "hash": "86aead0716ab284fca692d7e83443de8",
       "fs": [
         "read"
       ],
@@ -2542,7 +2634,7 @@
     },
     {
       "fn": "app::cache_stamped_path",
-      "loc": "src/app.rs:4542:1: 4542:67",
+      "loc": "src/app.rs:4572:1: 4572:67",
       "inferred": [
         "Clock",
         "Env"
@@ -2556,14 +2648,14 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749a678afa6ef21fb8",
+      "hash": "86aead0716ab284f29ba106b6a939a49",
       "calls": [
         "util::cache_dir"
       ]
     },
     {
       "fn": "app::chrono_like_now_utc",
-      "loc": "src/app.rs:4575:1: 4575:39",
+      "loc": "src/app.rs:4605:1: 4605:39",
       "inferred": [
         "Clock"
       ],
@@ -2575,7 +2667,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7482c527502e51ec82"
+      "hash": "86aead0716ab284fec9e7825f6198784"
     },
     {
       "fn": "app::cmd::<impl app::App>::apply_backslash",
@@ -2602,7 +2694,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7418cbe4ecd15afa88",
+      "hash": "86aead0716ab284f05113c954743db05",
       "fs": [
         "read",
         "write"
@@ -2660,7 +2752,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74394d7e345c95747f",
+      "hash": "86aead0716ab284f69cfa85fb8cdc03c",
       "fs": [
         "read",
         "write"
@@ -2715,7 +2807,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74221fd839220d0825",
+      "hash": "86aead0716ab284fc320d66a119fddfa",
       "fs": [
         "read",
         "write"
@@ -2772,7 +2864,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74b687bb2667a8bc0c",
+      "hash": "86aead0716ab284ff42c007f250408c3",
       "fs": [
         "read"
       ],
@@ -2819,7 +2911,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743485631698d427a4",
+      "hash": "86aead0716ab284facf8b761135631ce",
       "fs": [
         "write"
       ],
@@ -2845,7 +2937,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74850234c9908f50f9",
+      "hash": "86aead0716ab284f1cebea8c5ef1cc25",
       "fs": [
         "read"
       ],
@@ -2860,7 +2952,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743fe74d3b980c6532",
+      "hash": "86aead0716ab284f039887b94d214a31",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -2878,7 +2970,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746206e282ee8fc9aa",
+      "hash": "86aead0716ab284fa3c064099479db15",
       "fs": [
         "read"
       ],
@@ -2906,7 +2998,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cfb6fca4ccca8309",
+      "hash": "86aead0716ab284f8a0e084c7f20507b",
       "fs": [
         "write"
       ],
@@ -2926,7 +3018,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7464ed3223d9490e20",
+      "hash": "86aead0716ab284fdf8313e167ef404a",
       "invisible": [
         "tb_tui_common"
       ]
@@ -2944,7 +3036,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74099259a235212a5d",
+      "hash": "86aead0716ab284f421d99582d7e2fd0",
       "fs": [
         "read"
       ],
@@ -2970,7 +3062,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74fccba3fb4a1f4300",
+      "hash": "86aead0716ab284f0c929da3b3942f00",
       "fs": [
         "write"
       ],
@@ -2983,7 +3075,7 @@
     },
     {
       "fn": "app::default_fixture_path",
-      "loc": "src/app.rs:4556:1: 4556:63",
+      "loc": "src/app.rs:4586:1: 4586:63",
       "inferred": [
         "Clock",
         "Env"
@@ -2994,14 +3086,14 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74213584dd6e5efa59",
+      "hash": "86aead0716ab284fa450d0184f045210",
       "calls": [
         "app::cache_stamped_path"
       ]
     },
     {
       "fn": "app::default_report_path",
-      "loc": "src/app.rs:4534:1: 4534:51",
+      "loc": "src/app.rs:4564:1: 4564:51",
       "inferred": [
         "Clock",
         "Env"
@@ -3012,14 +3104,14 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743ef446ca5d0f734b",
+      "hash": "86aead0716ab284fa5116b0d54ee560f",
       "calls": [
         "app::cache_stamped_path"
       ]
     },
     {
       "fn": "app::draft_path",
-      "loc": "src/app.rs:4509:1: 4509:38",
+      "loc": "src/app.rs:4539:1: 4539:38",
       "inferred": [
         "Env"
       ],
@@ -3028,7 +3120,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7428e65d3eed69126f",
+      "hash": "86aead0716ab284f034871e642cbbff5",
       "calls": [
         "util::data_dir"
       ]
@@ -3047,7 +3139,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740237493bd2036a28"
+      "hash": "86aead0716ab284f35a59b31898ed583"
     },
     {
       "fn": "app::editor::<impl app::App>::editor_undo",
@@ -3063,7 +3155,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7465ba158a815cf7d7"
+      "hash": "86aead0716ab284f3bb1bea8a47e2925"
     },
     {
       "fn": "app::editor::<impl app::App>::on_editor_key_inner",
@@ -3090,7 +3182,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a747963b30ad28df363",
+      "hash": "86aead0716ab284fdebc426f8bc04d5c",
       "fs": [
         "read",
         "write"
@@ -3131,7 +3223,7 @@
     },
     {
       "fn": "app::execute",
-      "loc": "src/app.rs:4779:1: 4785:34",
+      "loc": "src/app.rs:4809:1: 4815:34",
       "inferred": [
         "Db",
         "Env",
@@ -3144,7 +3236,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a745fcac1d933516e71",
+      "hash": "86aead0716ab284f113793f5345c33c0",
       "fs": [
         "read"
       ],
@@ -3165,7 +3257,7 @@
     },
     {
       "fn": "app::external_edit_via",
-      "loc": "src/app.rs:4463:1: 4463:82",
+      "loc": "src/app.rs:4493:1: 4493:82",
       "inferred": [
         "Clock",
         "Env",
@@ -3188,7 +3280,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74f23ea234569a442f",
+      "hash": "86aead0716ab284ff40ec9200e58b0ac",
       "fs": [
         "read",
         "write"
@@ -3205,7 +3297,7 @@
     },
     {
       "fn": "app::find_on_path_in",
-      "loc": "src/app.rs:4408:1: 4408:93",
+      "loc": "src/app.rs:4438:1: 4438:93",
       "inferred": [
         "Env",
         "Fs"
@@ -3219,7 +3311,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74847edb5aa2e5af8f",
+      "hash": "86aead0716ab284f497284e2842cc868",
       "fs": [
         "read"
       ],
@@ -3232,19 +3324,19 @@
     },
     {
       "fn": "app::handle::<impl app::App>::apply_bootstrap_grid",
-      "loc": "src/app/handle.rs:505:5: 505:62",
+      "loc": "src/app/handle.rs:509:5: 509:62",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fc115f21561c5afd",
+      "hash": "86aead0716ab284fe6c5b699cfdd2f0a",
       "invisible": [
         "ratatui_widgets"
       ]
     },
     {
       "fn": "app::handle::<impl app::App>::on_event",
-      "loc": "src/app/handle.rs:512:5: 512:49",
+      "loc": "src/app/handle.rs:516:5: 516:49",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -3269,7 +3361,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7429015cf3bae75aab",
+      "hash": "86aead0716ab284ff1f98b398f8e9995",
       "fs": [
         "read",
         "write"
@@ -3334,7 +3426,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74e979e693527ec94a",
+      "hash": "86aead0716ab284f0ffc012cd832b187",
       "fs": [
         "read"
       ],
@@ -3372,7 +3464,7 @@
     },
     {
       "fn": "app::history_path",
-      "loc": "src/app.rs:4516:1: 4516:40",
+      "loc": "src/app.rs:4546:1: 4546:40",
       "inferred": [
         "Env"
       ],
@@ -3381,14 +3473,14 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e71312b4aa6d5b56",
+      "hash": "86aead0716ab284fa82f2d6d22d7ab8b",
       "calls": [
         "util::data_dir"
       ]
     },
     {
       "fn": "app::is_executable_file",
-      "loc": "src/app.rs:4415:1: 4415:54",
+      "loc": "src/app.rs:4445:1: 4445:54",
       "inferred": [
         "Fs"
       ],
@@ -3400,7 +3492,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74cc16371480d5de56",
+      "hash": "86aead0716ab284fcad7cc7404c97352",
       "fs": [
         "read"
       ],
@@ -3415,7 +3507,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a748d7ab50d6f640bdf",
+      "hash": "86aead0716ab284f154475cb716148fa",
       "invisible": [
         "tb_tui_common"
       ]
@@ -3431,7 +3523,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7453bcddf72eef2baf",
+      "hash": "86aead0716ab284f25b99a09a77e2c4b",
       "calls": [
         "app::yank::<impl app::App>::yank_json_cell_path"
       ],
@@ -3450,7 +3542,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7462db3c6b43339534",
+      "hash": "86aead0716ab284f25ee1811f9a03d0b",
       "calls": [
         "app::keys::<impl app::App>::on_cell_detail_json_key",
         "app::keys::<impl app::App>::on_cell_detail_text_key"
@@ -3471,7 +3563,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e3f68aeb54f7940d",
+      "hash": "86aead0716ab284f0a10d039bb19fb96",
       "calls": [
         "app::yank::<impl app::App>::yank_focused_field"
       ],
@@ -3504,7 +3596,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cbdaf4d9d9f0fe1e",
+      "hash": "86aead0716ab284f4609dbd5e68a82b7",
       "fs": [
         "read",
         "write"
@@ -3554,7 +3646,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fac4f62176e721cf",
+      "hash": "86aead0716ab284fff4e57e3cc64263b",
       "fs": [
         "read"
       ],
@@ -3588,7 +3680,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741833e654b285ceb1",
+      "hash": "86aead0716ab284f86e3d3c8a008c20b",
       "fs": [
         "read"
       ],
@@ -3630,7 +3722,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74f737794087edd1ea",
+      "hash": "86aead0716ab284fcd13de4843240394",
       "fs": [
         "read"
       ],
@@ -3687,7 +3779,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a740ee5cd4dc4a6f963",
+      "hash": "86aead0716ab284f326870c627bbaebb",
       "fs": [
         "read",
         "write"
@@ -3727,7 +3819,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_env_discovery_key",
-      "loc": "src/app/keys.rs:1340:5: 1340:54",
+      "loc": "src/app/keys.rs:1341:5: 1341:54",
       "inferred": [
         "Clock",
         "Db",
@@ -3750,7 +3842,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74a1eb59b79ac4d7b7",
+      "hash": "86aead0716ab284fc77724cb78b57678",
       "fs": [
         "read"
       ],
@@ -3806,9 +3898,10 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cdd2bd16aad4ce74",
+      "hash": "86aead0716ab284f66059edabb96d97d",
       "fs": [
-        "read"
+        "read",
+        "write"
       ],
       "cmds": [
         "ssh"
@@ -3816,6 +3909,7 @@
       "calls": [
         "app::App::connect_to_environment_target",
         "app::App::refresh_environments",
+        "app::App::remember_env_selection",
         "app::App::start_env_discovery",
         "app::App::toggle_env_auto_probe",
         "app::keys::<impl app::App>::on_env_discovery_key"
@@ -3842,12 +3936,12 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_grid_filter_key",
-      "loc": "src/app/keys.rs:1460:5: 1460:63",
+      "loc": "src/app/keys.rs:1461:5: 1461:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f39465c57a37ce1b",
+      "hash": "86aead0716ab284f97b693bcaa4e5022",
       "invisible": [
         "crossterm",
         "ratatui_widgets"
@@ -3855,12 +3949,12 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_grid_find_key",
-      "loc": "src/app/keys.rs:1414:5: 1414:61",
+      "loc": "src/app/keys.rs:1415:5: 1415:61",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a748b1142ba6b45669c",
+      "hash": "86aead0716ab284f88ccc3fa2b43f88b",
       "invisible": [
         "crossterm",
         "ratatui_widgets"
@@ -3873,7 +3967,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d04b2cf0f470533f",
+      "hash": "86aead0716ab284f46b5dfbfb1626f44",
       "invisible": [
         "crossterm"
       ]
@@ -3905,7 +3999,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cd07131026e76b84",
+      "hash": "86aead0716ab284fe630c2a784c6f44d",
       "fs": [
         "read"
       ],
@@ -3953,7 +4047,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7437472aa399023c00",
+      "hash": "86aead0716ab284f99cf814231d32b05",
       "calls": [
         "app::yank::<impl app::App>::yank_focused_notification"
       ]
@@ -3965,7 +4059,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74924433e5f8944d65",
+      "hash": "86aead0716ab284f00462df13ee58e5d",
       "invisible": [
         "tb_tui_common"
       ]
@@ -3985,7 +4079,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a748f594f28ef2f097c",
+      "hash": "86aead0716ab284fbea0e93bec569feb",
       "fs": [
         "write"
       ],
@@ -4011,7 +4105,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e6815fc3a437cafd",
+      "hash": "86aead0716ab284f2c5a8f1b5249c9cd",
       "calls": [
         "app::yank::<impl app::App>::yank_focused_field"
       ],
@@ -4035,7 +4129,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74a9c097b3ab70ebfa",
+      "hash": "86aead0716ab284fa43ca3332b134d9e",
       "fs": [
         "write"
       ],
@@ -4057,7 +4151,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d32511fbfafd58bb",
+      "hash": "86aead0716ab284f076ad22d71c7dd40",
       "invisible": [
         "tb_tui_common"
       ]
@@ -4077,7 +4171,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74f666f57f8b5e85f9",
+      "hash": "86aead0716ab284fd7a06feae1480d19",
       "fs": [
         "write"
       ],
@@ -4099,7 +4193,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741a5d0c48c2d51286",
+      "hash": "86aead0716ab284fd8748b9fd70dc2dc",
       "invisible": [
         "crossterm"
       ]
@@ -4115,7 +4209,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d00077d50280e399",
+      "hash": "86aead0716ab284fc7dacc4ac479b83a",
       "calls": [
         "app::yank::<impl app::App>::yank_schema_browser_insert",
         "app::yank::<impl app::App>::yank_schema_browser_select"
@@ -4138,7 +4232,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f2dc33a17d440a89",
+      "hash": "86aead0716ab284f7c8a49a32a538043",
       "calls": [
         "app::App::start_schema_lint",
         "app::yank::<impl app::App>::yank_schema_lint_suggestion"
@@ -4154,7 +4248,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_sessions_key",
-      "loc": "src/app/keys.rs:1367:5: 1367:60",
+      "loc": "src/app/keys.rs:1368:5: 1368:60",
       "inferred": [
         "Clock",
         "Db",
@@ -4171,7 +4265,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e67e99d81a7f4dd4",
+      "hash": "86aead0716ab284fe02c548fcc6b490a",
       "fs": [
         "read"
       ],
@@ -4208,7 +4302,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741f7dfb4e7c3be239",
+      "hash": "86aead0716ab284f160396170017feb6",
       "fs": [
         "read"
       ],
@@ -4237,7 +4331,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7417b07476c3e5f489",
+      "hash": "86aead0716ab284fd96c354567ea1ddd",
       "calls": [
         "app::App::capture_tap_baseline"
       ],
@@ -4258,7 +4352,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ef4b702472ddcee0",
+      "hash": "86aead0716ab284fa17cdace560440fd",
       "calls": [
         "app::App::close_tx"
       ],
@@ -4281,7 +4375,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7462b73c0c90681470",
+      "hash": "86aead0716ab284fd8986b17866bef3f",
       "fs": [
         "write"
       ],
@@ -4297,7 +4391,7 @@
     },
     {
       "fn": "app::load_draft",
-      "loc": "src/app.rs:4739:1: 4739:38",
+      "loc": "src/app.rs:4769:1: 4769:38",
       "inferred": [
         "Env",
         "Fs"
@@ -4308,7 +4402,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7457f46eb426fbce59",
+      "hash": "86aead0716ab284fb1c1e69cff8974a1",
       "fs": [
         "read"
       ],
@@ -4322,7 +4416,7 @@
     },
     {
       "fn": "app::load_draft_from",
-      "loc": "src/app.rs:4746:1: 4746:65",
+      "loc": "src/app.rs:4776:1: 4776:65",
       "inferred": [
         "Fs"
       ],
@@ -4334,7 +4428,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e39e22dc80b7b60a",
+      "hash": "86aead0716ab284f6e33afc93525c819",
       "fs": [
         "read"
       ],
@@ -4344,7 +4438,7 @@
     },
     {
       "fn": "app::load_history",
-      "loc": "src/app.rs:4696:1: 4696:37",
+      "loc": "src/app.rs:4726:1: 4726:37",
       "inferred": [
         "Env",
         "Fs"
@@ -4355,7 +4449,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7429a059ba7bbeb8fc",
+      "hash": "86aead0716ab284f69a08999f689b566",
       "fs": [
         "read"
       ],
@@ -4369,7 +4463,7 @@
     },
     {
       "fn": "app::load_history_from",
-      "loc": "src/app.rs:4701:1: 4701:64",
+      "loc": "src/app.rs:4731:1: 4731:64",
       "inferred": [
         "Fs"
       ],
@@ -4381,7 +4475,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740488ca97b3ba81d9",
+      "hash": "86aead0716ab284f4d2e319b1a9b26f2",
       "fs": [
         "read"
       ],
@@ -4391,7 +4485,7 @@
     },
     {
       "fn": "app::persist_draft_to",
-      "loc": "src/app.rs:4760:1: 4760:82",
+      "loc": "src/app.rs:4790:1: 4790:82",
       "inferred": [
         "Clock",
         "Fs",
@@ -4404,7 +4498,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74912641ec3807a4b2",
+      "hash": "86aead0716ab284fe39610e4df8ca52b",
       "fs": [
         "write"
       ],
@@ -4417,7 +4511,7 @@
     },
     {
       "fn": "app::persist_history_to",
-      "loc": "src/app.rs:4726:1: 4726:93",
+      "loc": "src/app.rs:4756:1: 4756:93",
       "inferred": [
         "Clock",
         "Fs",
@@ -4430,7 +4524,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d3d4f9ee25164407",
+      "hash": "86aead0716ab284f2d00f96236c53de1",
       "fs": [
         "write"
       ],
@@ -4443,7 +4537,7 @@
     },
     {
       "fn": "app::pg_format_via",
-      "loc": "src/app.rs:4369:1: 4369:74",
+      "loc": "src/app.rs:4399:1: 4399:74",
       "inferred": [
         "Exec",
         "Unknown"
@@ -4458,7 +4552,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74e672c77795dafe8b",
+      "hash": "86aead0716ab284f207d8e6ebc521095",
       "unknownWhy": [
         "dispatch:Write.write_all"
       ],
@@ -4468,7 +4562,7 @@
     },
     {
       "fn": "app::safety_toml_exists",
-      "loc": "src/app.rs:140:1: 140:32",
+      "loc": "src/app.rs:138:1: 138:32",
       "inferred": [
         "Env",
         "Fs"
@@ -4482,7 +4576,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74734e83268467435e",
+      "hash": "86aead0716ab284ffa01a8516d183ad7",
       "fs": [
         "read"
       ],
@@ -4495,7 +4589,7 @@
     },
     {
       "fn": "app::saved_queries_path",
-      "loc": "src/app.rs:4521:1: 4521:50",
+      "loc": "src/app.rs:4551:1: 4551:50",
       "inferred": [
         "Env"
       ],
@@ -4504,7 +4598,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a747221dad95c4f7008",
+      "hash": "86aead0716ab284fd286b84313052683",
       "calls": [
         "util::data_dir"
       ]
@@ -4534,7 +4628,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a741c7714a98349ff48",
+      "hash": "86aead0716ab284f8ae271847d9e9f1a",
       "fs": [
         "read"
       ],
@@ -4587,7 +4681,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74db04a1d9837df4c7",
+      "hash": "86aead0716ab284ffea666f9852d871b",
       "fs": [
         "read"
       ],
@@ -4640,7 +4734,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d995bcda1676c64a",
+      "hash": "86aead0716ab284fc07aa7b5f7618590",
       "fs": [
         "read"
       ],
@@ -4675,7 +4769,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746b7e3ec042cb7f95",
+      "hash": "86aead0716ab284f6bdf958223608a63",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -4687,7 +4781,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7445e32b8116d8e65e",
+      "hash": "86aead0716ab284f8f49c8674cc36b5b",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -4705,7 +4799,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ec0178f2627cd338",
+      "hash": "86aead0716ab284f2b23aaf84045e082",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
         "query::explain::run_cost_explain"
@@ -4747,7 +4841,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a740538ba2c2e0b3165",
+      "hash": "86aead0716ab284fc91354cef43a755a",
       "fs": [
         "read"
       ],
@@ -4803,7 +4897,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7455a61033b3122f84",
+      "hash": "86aead0716ab284fbb16a0504782c244",
       "fs": [
         "read"
       ],
@@ -4836,7 +4930,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a748920a47067737067",
+      "hash": "86aead0716ab284fac893873c0026fe1",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop"
       ],
@@ -4859,7 +4953,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7425d93ca43eaf48d0",
+      "hash": "86aead0716ab284fea7418e3566861b7",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
         "query::schema::fetch"
@@ -4889,7 +4983,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74402a09b66cb7b3cb",
+      "hash": "86aead0716ab284f78a5d37f9af00248",
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop"
       ],
@@ -4917,7 +5011,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d580f8047796f26f",
+      "hash": "86aead0716ab284f92c3f13b3cf5f7aa",
       "fs": [
         "read"
       ],
@@ -4952,7 +5046,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742a1b9dfc561b460a",
+      "hash": "86aead0716ab284f23c49a0219d04ed7",
       "fs": [
         "read"
       ],
@@ -4987,7 +5081,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74cd8d287349d365e5",
+      "hash": "86aead0716ab284fc47c43595fbe4359",
       "fs": [
         "read"
       ],
@@ -5032,7 +5126,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744e2a76b2aae11724",
+      "hash": "86aead0716ab284ff6c61bd46e71232b",
       "fs": [
         "read",
         "write"
@@ -5087,7 +5181,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a740c9b4e86c5da4fa4",
+      "hash": "86aead0716ab284f8e95b8dad48891ee",
       "fs": [
         "read"
       ],
@@ -5129,7 +5223,7 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742f01b04248cb5793",
+      "hash": "86aead0716ab284f1a282df51c32d3b1",
       "calls": [
         "app::App::cancel_running_query"
       ],
@@ -5148,7 +5242,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740e16343783c2b6dc",
+      "hash": "86aead0716ab284fa73364d04d956f76",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5160,7 +5254,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74359c3a53056fd6cc",
+      "hash": "86aead0716ab284f4c5e12000a942796",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5172,7 +5266,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a748f0649c92407569d",
+      "hash": "86aead0716ab284f39055b199c5ef5fa",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5184,7 +5278,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ec7068a4c23f6fe8",
+      "hash": "86aead0716ab284fb9d6b810192b29fd",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5196,7 +5290,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740c013b70c99c6141",
+      "hash": "86aead0716ab284f154a717302e19abb",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5208,7 +5302,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e9906f176825f09b",
+      "hash": "86aead0716ab284fed4ff64ff79a2ccf",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5220,7 +5314,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74aeadd62e97c85556",
+      "hash": "86aead0716ab284fc65e6fc05e0435c1",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5239,7 +5333,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d2d389e63bd15eec",
+      "hash": "86aead0716ab284f21d4ad31167c7f23",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5258,7 +5352,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749105bc544be121ea"
+      "hash": "86aead0716ab284fa5ee5434c48ae5d6"
     },
     {
       "fn": "app::yank::<impl app::App>::yank_json_cell_path",
@@ -5274,7 +5368,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74eda41b8f722908f1"
+      "hash": "86aead0716ab284f60473cb639150fac"
     },
     {
       "fn": "app::yank::<impl app::App>::yank_row_as_insert",
@@ -5290,7 +5384,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fed259eb444b629f",
+      "hash": "86aead0716ab284f2dbac8e217100fa9",
       "invisible": [
         "ratatui_widgets"
       ]
@@ -5309,7 +5403,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bc6c4b6cb60c20d9"
+      "hash": "86aead0716ab284f02540bc397b90aa9"
     },
     {
       "fn": "app::yank::<impl app::App>::yank_schema_browser_select",
@@ -5325,7 +5419,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a882c19ab7266ef7"
+      "hash": "86aead0716ab284ff9b63e47f6f78065"
     },
     {
       "fn": "app::yank::<impl app::App>::yank_schema_lint_suggestion",
@@ -5341,7 +5435,7 @@
         "Clipboard"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743f77dccefa1ea8d8"
+      "hash": "86aead0716ab284f898becf20325d3e7"
     },
     {
       "fn": "aws_cli::AwsScope::check_account",
@@ -5354,7 +5448,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ad8d5ec5646b11b0",
+      "hash": "86aead0716ab284f324d6202b072926c",
       "cmds": [
         "aws"
       ],
@@ -5376,7 +5470,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7417f22d88d73c3729",
+      "hash": "86aead0716ab284f8bb4ebb1095b597f",
       "cmds": [
         "aws"
       ]
@@ -5392,7 +5486,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c2f2caee9ff1c231",
+      "hash": "86aead0716ab284f6395e059bbc7c251",
       "calls": [
         "batch::check_statements"
       ],
@@ -5414,7 +5508,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741c5f0e1582d5d50a",
+      "hash": "86aead0716ab284fd712b9b629384964",
       "invisible": [
         "tracing_core"
       ]
@@ -5444,7 +5538,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74bed0bbfaeb1a5061",
+      "hash": "86aead0716ab284fc9d4c789934a087c",
       "fs": [
         "read"
       ],
@@ -5491,7 +5585,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74aa1835ef4c27fe88",
+      "hash": "86aead0716ab284f97c8209cbdfe3736",
       "fs": [
         "read"
       ],
@@ -5520,26 +5614,26 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f8d0c6fe55d26e52",
+      "hash": "86aead0716ab284fb172f3725c266eb8",
       "invisible": [
         "tracing_core"
       ]
     },
     {
       "fn": "conn::apply_ssl_mode",
-      "loc": "src/conn.rs:1439:1: 1439:71",
+      "loc": "src/conn.rs:1452:1: 1452:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7410f0c13d53467581",
+      "hash": "86aead0716ab284fd6e68cd96f99de37",
       "invisible": [
         "tokio_postgres"
       ]
     },
     {
       "fn": "conn::build_tls_connector",
-      "loc": "src/conn.rs:1477:1: 1477:97",
+      "loc": "src/conn.rs:1490:1: 1490:97",
       "inferred": [
         "Fs",
         "Log"
@@ -5554,7 +5648,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b1a84fd64244b16c",
+      "hash": "86aead0716ab284f8fc9a4f887e09627",
       "invisible": [
         "rustls",
         "tokio_postgres_rustls",
@@ -5563,12 +5657,12 @@
     },
     {
       "fn": "conn::cell_to_string",
-      "loc": "src/conn.rs:1345:1: 1345:65",
+      "loc": "src/conn.rs:1358:1: 1358:65",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74674bd0ced0df1afc",
+      "hash": "86aead0716ab284f98289ee33013214e",
       "invisible": [
         "postgres_types",
         "tokio_postgres"
@@ -5576,19 +5670,19 @@
     },
     {
       "fn": "conn::cell_to_string::show",
-      "loc": "src/conn.rs:1348:5: 1350:52",
+      "loc": "src/conn.rs:1361:5: 1363:52",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7443677b62d18798ca",
+      "hash": "86aead0716ab284ff43ff4ab01b2e0d6",
       "invisible": [
         "tokio_postgres"
       ]
     },
     {
       "fn": "conn::connect_and_bootstrap",
-      "loc": "src/conn.rs:757:1: 764:28",
+      "loc": "src/conn.rs:765:1: 772:28",
       "inferred": [
         "Clock",
         "Db",
@@ -5600,7 +5694,8 @@
         "Unknown"
       ],
       "direct": [
-        "Db"
+        "Db",
+        "Log"
       ],
       "declared": [],
       "undeclared": [
@@ -5614,7 +5709,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d9e4004df4b485b2",
+      "hash": "86aead0716ab284f6857bda708683c0f",
       "fs": [
         "read"
       ],
@@ -5647,7 +5742,7 @@
     },
     {
       "fn": "conn::connect_inner",
-      "loc": "src/conn.rs:804:1: 811:80",
+      "loc": "src/conn.rs:817:1: 824:80",
       "inferred": [
         "Clock",
         "Db",
@@ -5672,7 +5767,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7468a97b231976cc59",
+      "hash": "86aead0716ab284fd87ecd9b78a5d2d9",
       "cmds": [
         "ssh"
       ],
@@ -5700,7 +5795,7 @@
     },
     {
       "fn": "conn::connect_only",
-      "loc": "src/conn.rs:706:1: 718:2",
+      "loc": "src/conn.rs:714:1: 726:2",
       "inferred": [
         "Clock",
         "Db",
@@ -5721,7 +5816,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743d940b7f2de7b6b8",
+      "hash": "86aead0716ab284f3bc27db2c691ef26",
       "cmds": [
         "ssh"
       ],
@@ -5747,7 +5842,7 @@
     },
     {
       "fn": "conn::connect_via",
-      "loc": "src/conn.rs:735:1: 739:49",
+      "loc": "src/conn.rs:743:1: 747:49",
       "inferred": [
         "Clock",
         "Db",
@@ -5768,7 +5863,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74373b5fa655a7c311",
+      "hash": "86aead0716ab284f802f3874cd4cf4b0",
       "cmds": [
         "ssh"
       ],
@@ -5803,14 +5898,14 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7490458710f613fd9e",
+      "hash": "86aead0716ab284f497e6c4b65a7d83c",
       "calls": [
         "util::config_file"
       ]
     },
     {
       "fn": "conn::run_batch",
-      "loc": "src/conn.rs:1184:1: 1184:93",
+      "loc": "src/conn.rs:1197:1: 1197:93",
       "inferred": [
         "Db",
         "Env",
@@ -5826,7 +5921,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f127e97f4b88dae3",
+      "hash": "86aead0716ab284fc3f0b4f047d9f0ac",
       "fs": [
         "read"
       ],
@@ -5843,7 +5938,7 @@
     },
     {
       "fn": "conn::run_batch_in_tx",
-      "loc": "src/conn.rs:1206:1: 1206:99",
+      "loc": "src/conn.rs:1219:1: 1219:99",
       "inferred": [
         "Db",
         "Env",
@@ -5859,7 +5954,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a748980f060f4bb2975",
+      "hash": "86aead0716ab284f0ad3a9ecccea3841",
       "fs": [
         "read"
       ],
@@ -5876,7 +5971,7 @@
     },
     {
       "fn": "conn::run_batch_in_tx_open",
-      "loc": "src/conn.rs:1250:1: 1253:28",
+      "loc": "src/conn.rs:1263:1: 1266:28",
       "inferred": [
         "Db",
         "Env",
@@ -5892,7 +5987,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74aa288cec355fb3c0",
+      "hash": "86aead0716ab284f6c2c4386764c4f2c",
       "fs": [
         "read"
       ],
@@ -5909,7 +6004,7 @@
     },
     {
       "fn": "conn::run_in_tx_open",
-      "loc": "src/conn.rs:1167:1: 1167:98",
+      "loc": "src/conn.rs:1180:1: 1180:98",
       "inferred": [
         "Db",
         "Env",
@@ -5925,7 +6020,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741b54e5c352bc09fc",
+      "hash": "86aead0716ab284fa8e450999784661b",
       "fs": [
         "read"
       ],
@@ -5943,7 +6038,7 @@
     },
     {
       "fn": "conn::run_in_tx_rollback",
-      "loc": "src/conn.rs:1293:1: 1296:28",
+      "loc": "src/conn.rs:1306:1: 1309:28",
       "inferred": [
         "Db",
         "Env",
@@ -5959,7 +6054,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74389f9078bcb34a3a",
+      "hash": "86aead0716ab284fdec821075ea7c1d4",
       "fs": [
         "read"
       ],
@@ -5977,7 +6072,7 @@
     },
     {
       "fn": "conn::run_query",
-      "loc": "src/conn.rs:1316:1: 1316:93",
+      "loc": "src/conn.rs:1329:1: 1329:93",
       "inferred": [
         "Db",
         "Env",
@@ -5993,7 +6088,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74073de32870a010bb",
+      "hash": "86aead0716ab284f85f6725e3943ad24",
       "fs": [
         "read"
       ],
@@ -6012,7 +6107,7 @@
     },
     {
       "fn": "conn::run_statement",
-      "loc": "src/conn.rs:928:1: 928:97",
+      "loc": "src/conn.rs:941:1: 941:97",
       "inferred": [
         "Db",
         "Env",
@@ -6028,7 +6123,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749b6d05750a9ec2a4",
+      "hash": "86aead0716ab284f52dc363330b18b21",
       "fs": [
         "read"
       ],
@@ -6046,7 +6141,7 @@
     },
     {
       "fn": "conn::run_statement_typed",
-      "loc": "src/conn.rs:1069:1: 1072:33",
+      "loc": "src/conn.rs:1082:1: 1085:33",
       "inferred": [
         "Db",
         "Env",
@@ -6059,7 +6154,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b40f2ad9a2ec14aa",
+      "hash": "86aead0716ab284f978e69619b6fbe72",
       "fs": [
         "read"
       ],
@@ -6076,7 +6171,7 @@
     },
     {
       "fn": "conn::run_statement_typed_capped",
-      "loc": "src/conn.rs:1084:1: 1088:41",
+      "loc": "src/conn.rs:1097:1: 1101:41",
       "inferred": [
         "Db",
         "Env",
@@ -6092,7 +6187,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e1edeaadcbf05d89",
+      "hash": "86aead0716ab284f257704008e876cfa",
       "fs": [
         "read"
       ],
@@ -6109,7 +6204,7 @@
     },
     {
       "fn": "conn::spawn_connection_driver",
-      "loc": "src/conn.rs:649:1: 655:78",
+      "loc": "src/conn.rs:657:1: 663:78",
       "inferred": [
         "Log"
       ],
@@ -6121,7 +6216,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746c3ea0e63ef65a47",
+      "hash": "86aead0716ab284f90242f1a503b2383",
       "invisible": [
         "futures_util",
         "tokio",
@@ -6131,7 +6226,7 @@
     },
     {
       "fn": "conn::stream_rows",
-      "loc": "src/conn.rs:1138:1: 1141:48",
+      "loc": "src/conn.rs:1151:1: 1154:48",
       "inferred": [
         "Db",
         "Env",
@@ -6147,7 +6242,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74198658926734af89",
+      "hash": "86aead0716ab284fe4ca4a60ebddb7b9",
       "fs": [
         "read"
       ],
@@ -6165,7 +6260,7 @@
     },
     {
       "fn": "conn::stream_text_rows",
-      "loc": "src/conn.rs:967:1: 971:48",
+      "loc": "src/conn.rs:980:1: 984:48",
       "inferred": [
         "Env",
         "Fs"
@@ -6176,7 +6271,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ba39a4e389008f9b",
+      "hash": "86aead0716ab284f1541585e81ba2251",
       "fs": [
         "read"
       ],
@@ -6192,7 +6287,7 @@
     },
     {
       "fn": "conn::terminate_backend",
-      "loc": "src/conn.rs:1335:1: 1335:96",
+      "loc": "src/conn.rs:1348:1: 1348:96",
       "inferred": [
         "Db"
       ],
@@ -6204,11 +6299,11 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74da5fa2cbd3f4109e"
+      "hash": "86aead0716ab284f0d665d01b128c198"
     },
     {
       "fn": "conn::tx_commit",
-      "loc": "src/conn.rs:1276:1: 1276:78",
+      "loc": "src/conn.rs:1289:1: 1289:78",
       "inferred": [
         "Db"
       ],
@@ -6220,11 +6315,11 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749d16cfed336f2a72"
+      "hash": "86aead0716ab284fb9316a64b915f843"
     },
     {
       "fn": "conn::tx_rollback",
-      "loc": "src/conn.rs:1284:1: 1284:80",
+      "loc": "src/conn.rs:1297:1: 1297:80",
       "inferred": [
         "Db"
       ],
@@ -6236,7 +6331,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746f98a816243f38c9"
+      "hash": "86aead0716ab284fbccb91c9b881e3a2"
     },
     {
       "fn": "creds::aws_secrets::fetch",
@@ -6249,7 +6344,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749b81329fe77fdaad",
+      "hash": "86aead0716ab284f6f5ccdb8e5aeefb9",
       "cmds": [
         "aws"
       ],
@@ -6268,7 +6363,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b364d01d52ab5314",
+      "hash": "86aead0716ab284fb979a94749ea42d1",
       "invisible": [
         "serde_json"
       ]
@@ -6280,7 +6375,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74201295370b1addd1",
+      "hash": "86aead0716ab284f1301d5b722abf2bc",
       "invisible": [
         "quick_xml"
       ]
@@ -6299,7 +6394,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a745a5dcad25c7e47f9",
+      "hash": "86aead0716ab284fa99c8326256876b9",
       "incomplete": [
         "Fs"
       ]
@@ -6311,7 +6406,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7406e67ce78447dd19",
+      "hash": "86aead0716ab284ff8f042ec05b0342e",
       "invisible": [
         "quick_xml"
       ]
@@ -6327,7 +6422,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742af8a2f42300745d",
+      "hash": "86aead0716ab284f5b800f277095ebcf",
       "calls": [
         "conn::Dsn::parse"
       ],
@@ -6342,7 +6437,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d948121172899dbf",
+      "hash": "86aead0716ab284fe5a14d29580b836f",
       "invisible": [
         "quick_xml"
       ]
@@ -6354,7 +6449,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7438305fb1699bb71b",
+      "hash": "86aead0716ab284f75e23a2e64f5c8de",
       "invisible": [
         "quick_xml"
       ]
@@ -6370,7 +6465,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fc1c77bed82ecd21",
+      "hash": "86aead0716ab284f114c26f912a950c0",
       "calls": [
         "conn::Dsn::parse"
       ],
@@ -6389,7 +6484,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742fba3a41e2d286c6",
+      "hash": "86aead0716ab284fb8624cdc66df949a",
       "calls": [
         "creds::spring::parser_authority"
       ],
@@ -6411,7 +6506,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741d2e3b28ae440201",
+      "hash": "86aead0716ab284fda3dd6ae48d22974",
       "incomplete": [
         "Fs"
       ]
@@ -6427,7 +6522,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74144403d7466e2133",
+      "hash": "86aead0716ab284f204a2c8f139652c3",
       "calls": [
         "conn::Dsn::parse"
       ],
@@ -6448,7 +6543,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cc39e5f5732534a0",
+      "hash": "86aead0716ab284f315d075744f9f93c",
       "unknownWhy": [
         "callback:invoked param (opaque from the HOF's own standpoint)"
       ]
@@ -6469,7 +6564,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74c4ecf94f38de9925",
+      "hash": "86aead0716ab284f31428a39615fdb86",
       "calls": [
         "creds::spring::authority_agrees_with_parser",
         "creds::spring::resolve_placeholders"
@@ -6488,7 +6583,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74857c63c5ef1cae3e",
+      "hash": "86aead0716ab284f68c1cba7f5bb8c50",
       "invisible": [
         "quick_xml"
       ]
@@ -6500,7 +6595,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740b3b8428909e304e",
+      "hash": "86aead0716ab284fea55b18c2a92a487",
       "invisible": [
         "quick_xml"
       ]
@@ -6512,7 +6607,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b232417933defde7",
+      "hash": "86aead0716ab284fb601838663b62017",
       "invisible": [
         "quick_xml"
       ]
@@ -6536,7 +6631,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74715b270d9798ce24",
+      "hash": "86aead0716ab284f27103ec712fc7037",
       "fs": [
         "read"
       ],
@@ -6557,12 +6652,12 @@
     },
     {
       "fn": "demo::discovery",
-      "loc": "src/demo.rs:796:1: 796:56",
+      "loc": "src/demo.rs:798:1: 798:56",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741279d509685fb904",
+      "hash": "86aead0716ab284fb71deba1ee0b8d84",
       "invisible": [
         "toml"
       ]
@@ -6586,7 +6681,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74969bca82db340672",
+      "hash": "86aead0716ab284f76049701c9b10116",
       "fs": [
         "read"
       ],
@@ -6625,7 +6720,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7414ea6b0c505ff5ea",
+      "hash": "86aead0716ab284f262899b1f4bb8d50",
       "fs": [
         "read"
       ],
@@ -6663,7 +6758,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a746fd5a33881e0b37d",
+      "hash": "86aead0716ab284f5a9a701fce4df8e7",
       "fs": [
         "read"
       ],
@@ -6697,7 +6792,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a747e28017dd0cb1922",
+      "hash": "86aead0716ab284f11979e49fb2d4957",
       "calls": [
         "creds::spring::resolve_url_placeholders",
         "discover::resolve_spring_value",
@@ -6725,7 +6820,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7411c9991dc445b936",
+      "hash": "86aead0716ab284f40f2bca9ce44676f",
       "calls": [
         "creds::spring::resolve_url_placeholders",
         "discover::resolve_spring_value"
@@ -6751,7 +6846,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7469eb3b4f869489e6",
+      "hash": "86aead0716ab284f4f7d8d0a2fcae92f",
       "calls": [
         "creds::spring::resolve_placeholders"
       ],
@@ -6761,7 +6856,7 @@
     },
     {
       "fn": "inventory::ConnectSpec::apply_password_env",
-      "loc": "src/inventory.rs:396:5: 396:74",
+      "loc": "src/inventory.rs:405:5: 405:74",
       "inferred": [
         "Env"
       ],
@@ -6773,11 +6868,11 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74adaad7ba91bf330a"
+      "hash": "86aead0716ab284f8fa9092e87c86558"
     },
     {
       "fn": "inventory::VersionTable::patch_dir",
-      "loc": "src/inventory.rs:113:5: 113:74",
+      "loc": "src/inventory.rs:122:5: 122:74",
       "inferred": [
         "Env"
       ],
@@ -6789,35 +6884,35 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a96285810348e9e1"
+      "hash": "86aead0716ab284fa229ef6cf1b7d237"
     },
     {
       "fn": "inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize",
-      "loc": "src/inventory.rs:138:39: 138:57",
+      "loc": "src/inventory.rs:147:39: 147:57",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c3fc10b88311ecc3",
+      "hash": "86aead0716ab284fb45d1e4027947a78",
       "invisible": [
         "serde"
       ]
     },
     {
       "fn": "inventory::discover::append",
-      "loc": "src/inventory/discover.rs:558:1: 558:81",
+      "loc": "src/inventory/discover.rs:562:1: 562:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f91ecfad7c5afb41",
+      "hash": "86aead0716ab284f2093ba6ee61cdfca",
       "invisible": [
         "toml"
       ]
     },
     {
       "fn": "inventory::discover::discover",
-      "loc": "src/inventory/discover.rs:616:1: 616:63",
+      "loc": "src/inventory/discover.rs:620:1: 620:63",
       "inferred": [
         "Exec"
       ],
@@ -6826,7 +6921,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740a3c67ce626edc8a",
+      "hash": "86aead0716ab284f38c366b6800d7dc3",
       "cmds": [
         "aws"
       ],
@@ -6840,7 +6935,7 @@
     },
     {
       "fn": "inventory::discover::discover_for_overview",
-      "loc": "src/inventory/discover.rs:854:1: 854:72",
+      "loc": "src/inventory/discover.rs:859:1: 859:72",
       "inferred": [
         "Env",
         "Exec",
@@ -6858,7 +6953,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7405d19b38489204ce",
+      "hash": "86aead0716ab284fb2bb352fdd07a69a",
       "fs": [
         "read"
       ],
@@ -6891,7 +6986,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fef56e818db8f59e",
+      "hash": "86aead0716ab284f15b2dc15a37b1b82",
       "cmds": [
         "aws"
       ],
@@ -6901,7 +6996,7 @@
     },
     {
       "fn": "inventory::discover::lock_exclusive",
-      "loc": "src/inventory/discover.rs:673:1: 676:35",
+      "loc": "src/inventory/discover.rs:677:1: 680:35",
       "inferred": [
         "Clock",
         "Fs"
@@ -6916,7 +7011,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74eed50fbdefc5e9c8",
+      "hash": "86aead0716ab284fcde0a834e2d76942",
       "fs": [
         "write"
       ],
@@ -6934,7 +7029,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b1c47b833e1f88cf",
+      "hash": "86aead0716ab284fdaf088f8108a3fdb",
       "invisible": [
         "serde_json"
       ]
@@ -6946,14 +7041,14 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7489fca7fc93f82404",
+      "hash": "86aead0716ab284f3733f84544cd6f07",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "inventory::discover::project_version_table",
-      "loc": "src/inventory/discover.rs:814:1: 816:55",
+      "loc": "src/inventory/discover.rs:818:1: 820:55",
       "inferred": [
         "Fs",
         "Log"
@@ -6964,7 +7059,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7446e10f10a3b97b46",
+      "hash": "86aead0716ab284fe801ea74c799c3d0",
       "fs": [
         "read"
       ],
@@ -6986,7 +7081,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d12c2fa326bfc4ab",
+      "hash": "86aead0716ab284f838155539adad95e",
       "invisible": [
         "toml"
       ]
@@ -6998,26 +7093,26 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7494f78161459968ad",
+      "hash": "86aead0716ab284fa036ef056d42028d",
       "invisible": [
         "toml"
       ]
     },
     {
       "fn": "inventory::discover::report",
-      "loc": "src/inventory/discover.rs:790:1: 790:63",
+      "loc": "src/inventory/discover.rs:794:1: 794:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743ae0c9663a030e1c",
+      "hash": "86aead0716ab284fa762513f07dd98b7",
       "invisible": [
         "toml"
       ]
     },
     {
       "fn": "inventory::discover::run_cli",
-      "loc": "src/inventory/discover.rs:865:1: 865:57",
+      "loc": "src/inventory/discover.rs:870:1: 870:57",
       "inferred": [
         "Clock",
         "Env",
@@ -7039,7 +7134,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74382ea1cdfa03ced2",
+      "hash": "86aead0716ab284f502b476e3ffdf151",
       "fs": [
         "read",
         "write"
@@ -7064,7 +7159,7 @@
     },
     {
       "fn": "inventory::discover::save",
-      "loc": "src/inventory/discover.rs:713:1: 713:72",
+      "loc": "src/inventory/discover.rs:717:1: 717:72",
       "inferred": [
         "Clock",
         "Env",
@@ -7082,7 +7177,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7448466a3a13242ea2",
+      "hash": "86aead0716ab284faa4bccf372b884c0",
       "fs": [
         "read",
         "write"
@@ -7113,7 +7208,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b41c23049d9d1d09",
+      "hash": "86aead0716ab284f4b4b3503e9fd84fc",
       "cmds": [
         "docker"
       ],
@@ -7128,14 +7223,14 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7421e7a3e846322650",
+      "hash": "86aead0716ab284f10169f3811a13977",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "inventory::fetch_rds",
-      "loc": "src/inventory.rs:549:1: 549:76",
+      "loc": "src/inventory.rs:591:1: 591:76",
       "inferred": [
         "Exec"
       ],
@@ -7144,7 +7239,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749d3e5cb7df7e5916",
+      "hash": "86aead0716ab284f2b05398766fdb341",
       "cmds": [
         "aws"
       ],
@@ -7158,7 +7253,7 @@
     },
     {
       "fn": "inventory::gather",
-      "loc": "src/inventory.rs:501:1: 506:20",
+      "loc": "src/inventory.rs:543:1: 548:20",
       "inferred": [
         "Unknown"
       ],
@@ -7169,7 +7264,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744e4e1a873c44c9b9",
+      "hash": "86aead0716ab284f1e6c5efccae35132",
       "unknownWhy": [
         "callback:generic iterable driven by collect",
         "callback:invoked param (opaque from the HOF's own standpoint)"
@@ -7177,7 +7272,7 @@
     },
     {
       "fn": "inventory::load",
-      "loc": "src/inventory.rs:564:1: 564:24",
+      "loc": "src/inventory.rs:606:1: 606:24",
       "inferred": [
         "Env",
         "Fs"
@@ -7191,7 +7286,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7402dc63ec9d9228d1",
+      "hash": "86aead0716ab284fe507cd26bb34deb2",
       "fs": [
         "read"
       ],
@@ -7207,7 +7302,7 @@
     },
     {
       "fn": "inventory::load_and_gather",
-      "loc": "src/inventory.rs:575:1: 575:59",
+      "loc": "src/inventory.rs:617:1: 617:59",
       "inferred": [
         "Env",
         "Exec",
@@ -7225,7 +7320,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74dc9dfaee321e060d",
+      "hash": "86aead0716ab284f4c84c7a23e0c7ac0",
       "fs": [
         "read"
       ],
@@ -7252,12 +7347,12 @@
     },
     {
       "fn": "inventory::parse_config",
-      "loc": "src/inventory.rs:320:1: 320:68",
+      "loc": "src/inventory.rs:329:1: 329:68",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74171ac2e9da96acfa",
+      "hash": "86aead0716ab284fe1fe65fa39c138ad",
       "invisible": [
         "toml"
       ]
@@ -7290,7 +7385,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7447e7f63356be3089",
+      "hash": "86aead0716ab284fac95a6ae440f7a56",
       "fs": [
         "read"
       ],
@@ -7333,7 +7428,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d0c0999ad37e6666",
+      "hash": "86aead0716ab284fdb037610e36a8950",
       "invisible": [
         "serde_json"
       ]
@@ -7366,7 +7461,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74b14ff4edf234bc26",
+      "hash": "86aead0716ab284f840574b6bfccefdf",
       "fs": [
         "read",
         "write"
@@ -7414,7 +7509,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74513c00ae7d9aaf41",
+      "hash": "86aead0716ab284fbd44dc9417d46d40",
       "calls": [
         "mcp::connections::personal_entry"
       ],
@@ -7442,7 +7537,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7486fe8d7d9cc801c4",
+      "hash": "86aead0716ab284fb7c7f27a14a251f7",
       "fs": [
         "read"
       ],
@@ -7472,7 +7567,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c8c61e44ed01ad72",
+      "hash": "86aead0716ab284f944436c50e201e95",
       "invisible": [
         "toml"
       ]
@@ -7493,7 +7588,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742bb34cd65f512918",
+      "hash": "86aead0716ab284f0ceb1caf93133ed7",
       "calls": [
         "project::connection_to_dsn"
       ],
@@ -7508,7 +7603,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747ad8a6393720696d",
+      "hash": "86aead0716ab284f18c4de96ae240ee0",
       "invisible": [
         "serde_json"
       ]
@@ -7542,7 +7637,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74a6b56b5364590567",
+      "hash": "86aead0716ab284fd57dfc7f0ec36fde",
       "fs": [
         "read",
         "write"
@@ -7607,7 +7702,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744a7a575fcd5d65ee",
+      "hash": "86aead0716ab284f09252ca973c0fea9",
       "fs": [
         "read",
         "write"
@@ -7670,7 +7765,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d2e271708e51bfe4",
+      "hash": "86aead0716ab284fcd5524c093d01c3a",
       "fs": [
         "read",
         "write"
@@ -7728,7 +7823,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a749c74d7c7fa7548d2",
+      "hash": "86aead0716ab284fa74a60f826894f7b",
       "fs": [
         "read"
       ],
@@ -7764,7 +7859,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74c9c00906c8c1f49a",
+      "hash": "86aead0716ab284f97875bfc26089269",
       "fs": [
         "read"
       ],
@@ -7801,7 +7896,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74aed7462846dd5ae7",
+      "hash": "86aead0716ab284fa2078b5ab1848c1c",
       "fs": [
         "read"
       ],
@@ -7843,7 +7938,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7416a8922e9e936b4e",
+      "hash": "86aead0716ab284f2e3e3e10228c9d93",
       "fs": [
         "read",
         "write"
@@ -7895,7 +7990,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74fae6818e439fe9e8",
+      "hash": "86aead0716ab284f16308cca71005bb6",
       "fs": [
         "read"
       ],
@@ -7963,7 +8058,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74cd0fae8182e6644d",
+      "hash": "86aead0716ab284fa9617636cc8e3cbc",
       "fs": [
         "read"
       ],
@@ -8029,7 +8124,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74db6581c5f7d7de2c",
+      "hash": "86aead0716ab284f035146bd49dff3c9",
       "fs": [
         "read"
       ],
@@ -8068,12 +8163,12 @@
     },
     {
       "fn": "mcp::tools::arg_str",
-      "loc": "src/mcp/tools.rs:849:1: 849:70",
+      "loc": "src/mcp/tools.rs:851:1: 851:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f87a5c75e1e00903",
+      "hash": "86aead0716ab284fa03de71aadcb693e",
       "invisible": [
         "serde_json"
       ]
@@ -8105,7 +8200,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a745baa0a93681a65ac",
+      "hash": "86aead0716ab284f8266067cdfaee9c2",
       "cmds": [
         "aws",
         "ssh"
@@ -8155,31 +8250,31 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a744e59eefd5d041566",
+      "hash": "86aead0716ab284f3a6d17bec7abf6c4",
       "incomplete": [
         "Fs"
       ]
     },
     {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:909:1: 909:66",
+      "loc": "src/mcp/tools.rs:911:1: 911:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74206597d613708f00",
+      "hash": "86aead0716ab284fd88a9b4663daa3ef",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::parse_tables",
-      "loc": "src/mcp/tools.rs:857:1: 857:70",
+      "loc": "src/mcp/tools.rs:859:1: 859:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a748519c31f500d6451",
+      "hash": "86aead0716ab284f32cbd9a1c948af3f",
       "invisible": [
         "serde_json"
       ]
@@ -8198,7 +8293,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749259e67297f0e992",
+      "hash": "86aead0716ab284f7e3b248729d76e0d",
       "fs": [
         "read"
       ],
@@ -8213,38 +8308,38 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bd73b7cfdeae4944",
+      "hash": "86aead0716ab284f385d29b317683069",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:997:1: 997:85",
+      "loc": "src/mcp/tools.rs:999:1: 999:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74777a6aa4ce2e28fd",
+      "hash": "86aead0716ab284f62d20970f92dfa47",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::render_environments",
-      "loc": "src/mcp/tools.rs:703:1: 707:12",
+      "loc": "src/mcp/tools.rs:705:1: 709:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747008d091f176e32e",
+      "hash": "86aead0716ab284f01f571306bbf01b0",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::render_found",
-      "loc": "src/mcp/tools.rs:638:1: 638:73",
+      "loc": "src/mcp/tools.rs:640:1: 640:73",
       "inferred": [
         "Env"
       ],
@@ -8253,7 +8348,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7484123305563a567b",
+      "hash": "86aead0716ab284f67c048105920cf28",
       "calls": [
         "util::config_file"
       ],
@@ -8269,7 +8364,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740bbf8c00488a469a",
+      "hash": "86aead0716ab284f3422bb2e185b946f",
       "invisible": [
         "serde_json"
       ]
@@ -8281,19 +8376,19 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740b4c397448b77281",
+      "hash": "86aead0716ab284f8e5867b01d81eadd",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:1032:1: 1037:12",
+      "loc": "src/mcp/tools.rs:1034:1: 1039:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74743f7625659ce1c4",
+      "hash": "86aead0716ab284fa50103e45342993a",
       "invisible": [
         "postgres_types",
         "serde_json"
@@ -8301,19 +8396,19 @@
     },
     {
       "fn": "mcp::tools::render_sessions_locks",
-      "loc": "src/mcp/tools.rs:874:1: 881:12",
+      "loc": "src/mcp/tools.rs:876:1: 883:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a6568e4b195411cf",
+      "hash": "86aead0716ab284fdba5f1de17152569",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::replica_state",
-      "loc": "src/mcp/tools.rs:773:1: 776:26",
+      "loc": "src/mcp/tools.rs:775:1: 778:26",
       "inferred": [
         "Db",
         "Env",
@@ -8326,7 +8421,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746fd0dd2dfb9ade61",
+      "hash": "86aead0716ab284fac8c57797c354dd6",
       "fs": [
         "read"
       ],
@@ -8343,31 +8438,31 @@
     },
     {
       "fn": "mcp::tools::save_names",
-      "loc": "src/mcp/tools.rs:683:1: 683:63",
+      "loc": "src/mcp/tools.rs:685:1: 685:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744be69b6a844faceb",
+      "hash": "86aead0716ab284f984abaf9c6ce1f00",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::scope_from_args",
-      "loc": "src/mcp/tools.rs:621:1: 621:81",
+      "loc": "src/mcp/tools.rs:623:1: 623:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746d7d0655cbd28843",
+      "hash": "86aead0716ab284fe5acc0b57888a114",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:952:1: 956:28",
+      "loc": "src/mcp/tools.rs:954:1: 958:28",
       "inferred": [
         "Log"
       ],
@@ -8376,7 +8471,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b2eedbbc34c41eef",
+      "hash": "86aead0716ab284febc966e05d28a95d",
       "calls": [
         "batch::check_statements"
       ],
@@ -8409,7 +8504,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a745c369cb737b273eb",
+      "hash": "86aead0716ab284fd6531750501ae613",
       "fs": [
         "read"
       ],
@@ -8445,7 +8540,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments_discover",
-      "loc": "src/mcp/tools.rs:662:1: 665:28",
+      "loc": "src/mcp/tools.rs:664:1: 667:28",
       "inferred": [
         "Env",
         "Exec",
@@ -8460,7 +8555,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74aa8eaab61d161679",
+      "hash": "86aead0716ab284fe0f6b28789eff4ff",
       "fs": [
         "read"
       ],
@@ -8490,7 +8585,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7406138273799d6eff",
+      "hash": "86aead0716ab284f6c28ffbb4313c6e5",
       "invisible": [
         "serde_json"
       ]
@@ -8502,19 +8597,19 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7450dc6249a5cf312e",
+      "hash": "86aead0716ab284ff8311016c14e6c05",
       "invisible": [
         "serde_json"
       ]
     },
     {
       "fn": "mcp::tools::with_replica",
-      "loc": "src/mcp/tools.rs:828:1: 828:80",
+      "loc": "src/mcp/tools.rs:830:1: 830:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74bf466c420dcfb3a5",
+      "hash": "86aead0716ab284f41453d56cf0a1732",
       "invisible": [
         "serde_json"
       ]
@@ -8536,7 +8631,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7420388899383d7467",
+      "hash": "86aead0716ab284f8886c9e3894e9ad1",
       "calls": [
         "conn::Dsn::parse"
       ],
@@ -8558,7 +8653,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b40414d03dc5a487",
+      "hash": "86aead0716ab284f279d8a9ff933899a",
       "invisible": [
         "tracing_core"
       ]
@@ -8577,7 +8672,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a748a93e03ed11e3980",
+      "hash": "86aead0716ab284f727f85cb6c25ca08",
       "incomplete": [
         "Fs"
       ]
@@ -8595,7 +8690,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ac55ac0bc7eb6149",
+      "hash": "86aead0716ab284fc11a09be9e743d3c",
       "fs": [
         "read"
       ],
@@ -8628,7 +8723,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741701ee7b415572a9",
+      "hash": "86aead0716ab284f8aa898d4cabd5558",
       "fs": [
         "read"
       ],
@@ -8654,7 +8749,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d0bc1f8e19588fbb",
+      "hash": "86aead0716ab284f4b89c457b7c19e57",
       "calls": [
         "project::tighten_profile"
       ],
@@ -8669,7 +8764,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a740dd4ef7f3148d590",
+      "hash": "86aead0716ab284f6e9117c8623d3e6d",
       "invisible": [
         "toml"
       ]
@@ -8688,7 +8783,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7458e1c281016daf59",
+      "hash": "86aead0716ab284f2e8fab9f17f663eb",
       "invisible": [
         "tracing_core"
       ]
@@ -8707,7 +8802,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749265c32a3924107e",
+      "hash": "86aead0716ab284f576fcf7a2c755ca0",
       "invisible": [
         "tracing_core"
       ]
@@ -8726,7 +8821,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7427d1c1802fa8d4e3",
+      "hash": "86aead0716ab284fc602697c771a6114",
       "invisible": [
         "tracing_core"
       ]
@@ -8745,7 +8840,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74984e4553c09b0aac",
+      "hash": "86aead0716ab284fc887adc149ccc767",
       "calls": [
         "project::stricter_flag",
         "project::stricter_guard",
@@ -8762,7 +8857,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e97234cd233a8a48",
+      "hash": "86aead0716ab284f5216cfe4eaf09af5",
       "invisible": [
         "serde_json"
       ]
@@ -8774,7 +8869,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7469d7a7ba83b6d19d",
+      "hash": "86aead0716ab284f6b3680a2179a1a64",
       "invisible": [
         "serde_json"
       ]
@@ -8793,7 +8888,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7498b1c2b445c77dea",
+      "hash": "86aead0716ab284f6b60c8ec156b104c",
       "invisible": [
         "serde_json",
         "tokio_postgres"
@@ -8809,7 +8904,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e98bb72216a99384",
+      "hash": "86aead0716ab284f34d0e375688aa5b0",
       "invisible": [
         "sqlformat"
       ]
@@ -8821,7 +8916,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74230671afebdaab2f",
+      "hash": "86aead0716ab284f79fc4423ac09d03b",
       "invisible": [
         "serde_json"
       ]
@@ -8833,7 +8928,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7403461c0a48d325ee",
+      "hash": "86aead0716ab284ff98b5ea21b7bed32",
       "invisible": [
         "serde_json"
       ]
@@ -8845,7 +8940,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b6b83da179dfa795",
+      "hash": "86aead0716ab284f7df53800a7a170d3",
       "invisible": [
         "serde_json"
       ]
@@ -8866,7 +8961,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f9271f9c125257d9",
+      "hash": "86aead0716ab284f37f222a3a09fc8a8",
       "calls": [
         "query::lint::run_lint101",
         "query::lint::run_lint102",
@@ -8897,7 +8992,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746b5df7852a93d7e8",
+      "hash": "86aead0716ab284f2a4c5c47bf912127",
       "invisible": [
         "tokio_postgres"
       ],
@@ -8919,7 +9014,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e6cbaba90efb6d8e",
+      "hash": "86aead0716ab284fbfdb78235816376c",
       "invisible": [
         "tokio_postgres"
       ],
@@ -8941,7 +9036,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b11e9a180d90461c",
+      "hash": "86aead0716ab284fb2e0b78a127ee235",
       "invisible": [
         "tokio_postgres"
       ],
@@ -8963,7 +9058,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74298eb84156563b6a",
+      "hash": "86aead0716ab284f5f949216c5b7174a",
       "invisible": [
         "tokio_postgres"
       ],
@@ -8985,7 +9080,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ee21e748deeaf7a3",
+      "hash": "86aead0716ab284f3e603354f1ce488b",
       "invisible": [
         "tokio_postgres"
       ],
@@ -9007,7 +9102,7 @@
         "Db"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a27c62e3a79e5ad9",
+      "hash": "86aead0716ab284f5a480871b3cfe712",
       "invisible": [
         "tokio_postgres"
       ],
@@ -9032,7 +9127,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74e2674cdc16686425",
+      "hash": "86aead0716ab284fb26d54aca739f116",
       "fs": [
         "read"
       ],
@@ -9046,7 +9141,7 @@
     },
     {
       "fn": "query::probe::run",
-      "loc": "src/query/probe.rs:52:1: 55:27",
+      "loc": "src/query/probe.rs:60:1: 63:27",
       "inferred": [
         "Db",
         "Env",
@@ -9059,7 +9154,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e64e9e3c53a991f3",
+      "hash": "86aead0716ab284fbcb27d4295c32bb6",
       "fs": [
         "read"
       ],
@@ -9091,7 +9186,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b60697daadde5787",
+      "hash": "86aead0716ab284fe584938f8137d723",
       "invisible": [
         "tokio",
         "tokio_postgres",
@@ -9117,7 +9212,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740db8dd1885a14568",
+      "hash": "86aead0716ab284fcdee88fc583c6ac2",
       "fs": [
         "read"
       ],
@@ -9138,7 +9233,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e1e5f4763ce9493b",
+      "hash": "86aead0716ab284fd650850e8b1e5ce3",
       "invisible": [
         "toml"
       ]
@@ -9156,7 +9251,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a749af13bf3d4d52e99",
+      "hash": "86aead0716ab284fb5824dca2a150d85",
       "unknownWhy": [
         "callback:generic iterable driven by map"
       ]
@@ -9174,7 +9269,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7496fd629ead341012",
+      "hash": "86aead0716ab284fdfe080fcfdcee1bb",
       "unknownWhy": [
         "callback:generic iterable driven by any"
       ]
@@ -9196,7 +9291,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7466514474c8535183",
+      "hash": "86aead0716ab284f091944e1abf6c7b5",
       "fs": [
         "read"
       ],
@@ -9223,7 +9318,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74d6d50437a1a5fd5c",
+      "hash": "86aead0716ab284f5bbdc223bdef9832",
       "fs": [
         "write"
       ],
@@ -9256,7 +9351,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74c8852c4935176043",
+      "hash": "86aead0716ab284f4b068120d9060230",
       "calls": [
         "tap::now_unix_micros"
       ],
@@ -9281,7 +9376,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741feff99062e96fdc",
+      "hash": "86aead0716ab284fa26a15fcd14a8761",
       "invisible": [
         "tokio",
         "tracing_core"
@@ -9300,7 +9395,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a749349d7217a41614e",
+      "hash": "86aead0716ab284f9d6fc0ca7d1fadd5",
       "unknownWhy": [
         "callback:generic iterable driven by collect"
       ]
@@ -9318,7 +9413,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a741176b8cceeca19e6",
+      "hash": "86aead0716ab284f2a598555a0c2917c",
       "unknownWhy": [
         "callback:generic iterable driven by collect"
       ]
@@ -9336,7 +9431,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74f197784bdfd41e81",
+      "hash": "86aead0716ab284f8870760ee1230d30",
       "unknownWhy": [
         "callback:generic iterable driven by collect"
       ]
@@ -9354,7 +9449,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74c3be03502ea647c9",
+      "hash": "86aead0716ab284ffaf05e0a14e911e3",
       "unknownWhy": [
         "callback:generic iterable driven by collect"
       ]
@@ -9374,7 +9469,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74a7ee7342a1ed24ef",
+      "hash": "86aead0716ab284fc4dbbffb7c80eee2",
       "calls": [
         "tap::listener::handle_tcp_conn_with_idle_timeout"
       ],
@@ -9399,7 +9494,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74428b2402b5f05788",
+      "hash": "86aead0716ab284f87b7479f315fc868",
       "calls": [
         "tap::WarnThrottle::warn",
         "tap::forward_or_drop",
@@ -9432,7 +9527,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7477f65547a0e05ebc",
+      "hash": "86aead0716ab284f92f811454e83c589",
       "calls": [
         "tap::WarnThrottle::warn",
         "tap::listener::handle_tcp_conn"
@@ -9470,7 +9565,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a749330ad0495eb831d",
+      "hash": "86aead0716ab284fa766b248cff36ff6",
       "calls": [
         "tap::WarnThrottle::warn",
         "tap::forward_or_drop",
@@ -9499,7 +9594,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74dc64272d7f6b1973"
+      "hash": "86aead0716ab284fc3170217e75c9886"
     },
     {
       "fn": "tap::otlp::handle_otlp_conn",
@@ -9516,7 +9611,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743a8c8b757604cb30",
+      "hash": "86aead0716ab284f30dc59bd48f30fad",
       "calls": [
         "tap::otlp::process_otlp_request"
       ],
@@ -9533,7 +9628,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ad09d63f1f56bac1",
+      "hash": "86aead0716ab284f8df43fdf43eaa113",
       "invisible": [
         "serde_json"
       ]
@@ -9545,7 +9640,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a748ebf08c1c70e7089",
+      "hash": "86aead0716ab284fd24df939397c7e45",
       "invisible": [
         "serde_json"
       ]
@@ -9565,7 +9660,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74ba5c718740cd9c0c",
+      "hash": "86aead0716ab284fb724e3a43ad83203",
       "calls": [
         "tap::otlp::span_to_tap_event"
       ],
@@ -9592,7 +9687,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743850c733c8482c88",
+      "hash": "86aead0716ab284f31683dde56e8e119",
       "calls": [
         "tap::forward_or_drop",
         "tap::now_unix_micros",
@@ -9625,7 +9720,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74ee10d76394fa55e3",
+      "hash": "86aead0716ab284f6f2b5ad77e5a2fd5",
       "calls": [
         "tap::WarnThrottle::warn",
         "tap::otlp::handle_otlp_conn"
@@ -9657,7 +9752,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74c5635036a76cefc5",
+      "hash": "86aead0716ab284f4427720c01f411a9",
       "calls": [
         "tap::WarnThrottle::warn"
       ],
@@ -9673,7 +9768,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74aee2c97376ecbbd9",
+      "hash": "86aead0716ab284fe424a00b89b57011",
       "invisible": [
         "serde_json"
       ]
@@ -9685,7 +9780,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e22bb01ba110502d",
+      "hash": "86aead0716ab284f7048adb2e8b8fa95",
       "invisible": [
         "serde_json"
       ]
@@ -9697,7 +9792,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f3b2a99c58044bed",
+      "hash": "86aead0716ab284f08c76ce5a4c6ca3b",
       "invisible": [
         "serde_json"
       ]
@@ -9723,7 +9818,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7464821517e6ff5763",
+      "hash": "86aead0716ab284f29272da894df071b",
       "fs": [
         "read"
       ],
@@ -9747,7 +9842,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7457f1998e9c743e38",
+      "hash": "86aead0716ab284fa51a0d03c334eaf1",
       "invisible": [
         "ratatui_core"
       ]
@@ -9759,7 +9854,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d8a268fff837e39e",
+      "hash": "86aead0716ab284f88a3c4fc2e8d9815",
       "invisible": [
         "ratatui_core"
       ]
@@ -9771,7 +9866,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743b5aa022b14e93b7",
+      "hash": "86aead0716ab284f98c778a654dc3ae4",
       "invisible": [
         "ratatui_core"
       ]
@@ -9783,7 +9878,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e20e2b610ee451d1",
+      "hash": "86aead0716ab284f7f10572e75102572",
       "invisible": [
         "ratatui_core"
       ]
@@ -9803,7 +9898,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7453ca8e26e3fa51bf",
+      "hash": "86aead0716ab284f52653c76fdeb8b3a",
       "fs": [
         "read"
       ],
@@ -9836,7 +9931,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74979cd354d5ed76fe",
+      "hash": "86aead0716ab284f1cb314f2252859a2",
       "calls": [
         "tui::install_panic_hook"
       ],
@@ -9860,7 +9955,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74522d35b834d3acf3",
+      "hash": "86aead0716ab284fb6654e91c632ac4c",
       "invisible": [
         "crossterm",
         "ratatui_core"
@@ -9880,7 +9975,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c04153b3d0f6ab8a"
+      "hash": "86aead0716ab284f758b861bf7d7382f"
     },
     {
       "fn": "tui::install_panic_hook",
@@ -9898,7 +9993,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74b6c6c18ab1cf1ce7",
+      "hash": "86aead0716ab284f6810e3c9fca586f4",
       "calls": [
         "tui::restore_terminal"
       ],
@@ -9920,7 +10015,7 @@
         "Ipc"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a9d6a0ea82c92214"
+      "hash": "86aead0716ab284ffd3297de4134dd59"
     },
     {
       "fn": "tunnel::SshTunnel::drain_stderr",
@@ -9935,7 +10030,7 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7476a54d013bd4a98d",
+      "hash": "86aead0716ab284fdc69b015145c2099",
       "unknownWhy": [
         "dispatch:Read.read_to_end"
       ]
@@ -9959,7 +10054,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74bddc009a4b57d4b5",
+      "hash": "86aead0716ab284f14aa9dbcb41fbe06",
       "cmds": [
         "ssh"
       ],
@@ -10002,7 +10097,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a743d04a30728a71bde",
+      "hash": "86aead0716ab284f5d01b170ab3ad66d",
       "cmds": [
         "ssh"
       ],
@@ -10035,7 +10130,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c8eac8df60fb34c7",
+      "hash": "86aead0716ab284f6af85813824634ba",
       "calls": [
         "<tunnel::SshTunnel as tunnel::Forward>::alive"
       ]
@@ -10051,7 +10146,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7471fb610d7303ed3d",
+      "hash": "86aead0716ab284fc414af5743d5c730",
       "calls": [
         "<tunnel::SshTunnel as tunnel::Forward>::alive"
       ]
@@ -10067,7 +10162,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7472c5b963d872886e",
+      "hash": "86aead0716ab284fbb28e434542b4259",
       "calls": [
         "<tunnel::SshTunnel as tunnel::Forward>::alive"
       ]
@@ -10086,7 +10181,7 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74019977a43ee377dc",
+      "hash": "86aead0716ab284f2c75987c8c467e06",
       "netClass": [
         "unknown-host"
       ]
@@ -10098,7 +10193,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f8548c41c6d7a8ab",
+      "hash": "86aead0716ab284f63bdf16724ebb64a",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10112,7 +10207,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a749fe93cda83635c41",
+      "hash": "86aead0716ab284fbd37db1bcf6f8f7c",
       "invisible": [
         "tb_tui_common"
       ]
@@ -10124,7 +10219,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ed11cb25fa47c9e2",
+      "hash": "86aead0716ab284fd6834076df405741",
       "invisible": [
         "ratatui_core",
         "tb_tui_common"
@@ -10137,7 +10232,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a28712b7f132145b",
+      "hash": "86aead0716ab284f28eac7ada15331a6",
       "invisible": [
         "ratatui_core",
         "tb_tui_common"
@@ -10158,7 +10253,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c646c79168765020",
+      "hash": "86aead0716ab284f367a2ee04e8c7b5b",
       "fs": [
         "read"
       ],
@@ -10191,7 +10286,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74463020c30ce371e1",
+      "hash": "86aead0716ab284f9585954bee73494e",
       "calls": [
         "ui::draw_connection_failed"
       ],
@@ -10217,7 +10312,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743e4288a809bd3b59",
+      "hash": "86aead0716ab284f13cfb1d33fb37b7d",
       "calls": [
         "util::cache_dir"
       ],
@@ -10234,7 +10329,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c4c13c154188ffce",
+      "hash": "86aead0716ab284fd7007649c4ddfe4a",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10248,7 +10343,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74163725c38d839ef1",
+      "hash": "86aead0716ab284f52dad2e067688755",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10261,7 +10356,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741892e3202ee1bc50",
+      "hash": "86aead0716ab284fb50fe39379529c86",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10274,7 +10369,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c91489416ae61ae4",
+      "hash": "86aead0716ab284f1e246cd51b1d3736",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10287,7 +10382,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74027f856c5973d608",
+      "hash": "86aead0716ab284fa4f3b801259097d6",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10301,7 +10396,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c9281fd412db9ba0",
+      "hash": "86aead0716ab284f4bdc0fdcb1de7330",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10315,7 +10410,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744652ca5df2957765",
+      "hash": "86aead0716ab284f8102b54264c7fa35",
       "invisible": [
         "ratatui_core"
       ]
@@ -10327,7 +10422,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747da2b93e1b5d4af9",
+      "hash": "86aead0716ab284fabf2dd72444a4175",
       "invisible": [
         "ratatui_core"
       ]
@@ -10339,7 +10434,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f908ec2ff19ddcdc",
+      "hash": "86aead0716ab284f2ad2d898db003d60",
       "invisible": [
         "ratatui_core"
       ]
@@ -10351,7 +10446,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74fca79bc0422d7472",
+      "hash": "86aead0716ab284feff3971052b40e5a",
       "invisible": [
         "ratatui_core"
       ]
@@ -10363,7 +10458,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a742c6fc13ab3f8158e",
+      "hash": "86aead0716ab284f1d8cc2c602bbc816",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10377,7 +10472,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a747ded0bf4dc6a3fc7",
+      "hash": "86aead0716ab284f2304ae1653c10ae3",
       "invisible": [
         "ratatui_core"
       ]
@@ -10389,7 +10484,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a743c5b44153f96c0c0",
+      "hash": "86aead0716ab284f7437a4b779056cb5",
       "invisible": [
         "ratatui_core"
       ]
@@ -10401,7 +10496,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b6a5207b6409d3ac",
+      "hash": "86aead0716ab284f1de89a6370dcc517",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10415,7 +10510,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741ecd90b5ded7d89f",
+      "hash": "86aead0716ab284f8a6198ff022068f5",
       "invisible": [
         "ratatui_core"
       ]
@@ -10427,7 +10522,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7405023618f1a96ade",
+      "hash": "86aead0716ab284fc74bf1e674de88fe",
       "invisible": [
         "ratatui_core"
       ]
@@ -10439,7 +10534,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7447c92b3be8088dca",
+      "hash": "86aead0716ab284f8d8129af24aa8651",
       "invisible": [
         "ratatui_core"
       ]
@@ -10451,7 +10546,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74caded8e246afd91e",
+      "hash": "86aead0716ab284fb74149db046d468f",
       "invisible": [
         "ratatui_core"
       ]
@@ -10463,7 +10558,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74104942d39731c512",
+      "hash": "86aead0716ab284f54441c19d5a1fd89",
       "invisible": [
         "ratatui_core"
       ]
@@ -10475,7 +10570,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d08c6197de5807dc",
+      "hash": "86aead0716ab284f633e87f24665a4f5",
       "invisible": [
         "ratatui_core"
       ]
@@ -10493,7 +10588,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f072dd79d8a8c0bf",
+      "hash": "86aead0716ab284f2d5395a14a6a0de4",
       "fs": [
         "read"
       ],
@@ -10516,7 +10611,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741acc3d23a931edcc",
+      "hash": "86aead0716ab284ff03de995f65b3b9a",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10530,7 +10625,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a742b5bd60ee725f9b4",
+      "hash": "86aead0716ab284f2cad5ce442024af8",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10539,12 +10634,12 @@
     },
     {
       "fn": "ui::panels::draw_env_discovery",
-      "loc": "src/ui/panels.rs:1444:1: 1444:90",
+      "loc": "src/ui/panels.rs:1482:1: 1482:90",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a746ee22e8fe07e6168",
+      "hash": "86aead0716ab284fc2de87ee868f437b",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10553,7 +10648,7 @@
     },
     {
       "fn": "ui::panels::draw_environments",
-      "loc": "src/ui/panels.rs:1535:1: 1535:70",
+      "loc": "src/ui/panels.rs:1573:1: 1573:70",
       "inferred": [
         "Env"
       ],
@@ -10562,7 +10657,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743257a403d9f5c889",
+      "hash": "86aead0716ab284f6cf498049b088cc9",
       "calls": [
         "util::config_file"
       ],
@@ -10575,12 +10670,12 @@
     },
     {
       "fn": "ui::panels::draw_error_detail",
-      "loc": "src/ui/panels.rs:2133:1: 2133:70",
+      "loc": "src/ui/panels.rs:2173:1: 2173:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7446627aec9c4a71b5",
+      "hash": "86aead0716ab284f1bc8c1a725098eba",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10594,7 +10689,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7489efd304f497f037",
+      "hash": "86aead0716ab284fce6f0d6bb4f32864",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10608,7 +10703,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a742ca04e838cf98fba",
+      "hash": "86aead0716ab284fe03435d44c9b36db",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10622,7 +10717,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74d94dda492ddd868d",
+      "hash": "86aead0716ab284f62fb8a073e8efe4e",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10631,12 +10726,12 @@
     },
     {
       "fn": "ui::panels::draw_notifications",
-      "loc": "src/ui/panels.rs:2068:1: 2068:71",
+      "loc": "src/ui/panels.rs:2108:1: 2108:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a742487e432e893a8db",
+      "hash": "86aead0716ab284f3a85778f5b90c47d",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10645,12 +10740,12 @@
     },
     {
       "fn": "ui::panels::draw_param_prompt",
-      "loc": "src/ui/panels.rs:2015:1: 2015:70",
+      "loc": "src/ui/panels.rs:2055:1: 2055:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f21fe6275eb8a4bd",
+      "hash": "86aead0716ab284fe15c5357727d7c29",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10659,12 +10754,12 @@
     },
     {
       "fn": "ui::panels::draw_rename_prompt",
-      "loc": "src/ui/panels.rs:1946:1: 1946:71",
+      "loc": "src/ui/panels.rs:1986:1: 1986:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7489a9bbb5760a81da",
+      "hash": "86aead0716ab284f40898f1655359ae2",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10673,12 +10768,12 @@
     },
     {
       "fn": "ui::panels::draw_save_query_prompt",
-      "loc": "src/ui/panels.rs:1980:1: 1980:75",
+      "loc": "src/ui/panels.rs:2020:1: 2020:75",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74755b376b04fa071a",
+      "hash": "86aead0716ab284ff55e810d4850d9af",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10687,12 +10782,12 @@
     },
     {
       "fn": "ui::panels::draw_saved_queries",
-      "loc": "src/ui/panels.rs:1835:1: 1835:71",
+      "loc": "src/ui/panels.rs:1875:1: 1875:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e119ee2526086a8e",
+      "hash": "86aead0716ab284fc71a1b45af3c4960",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10701,12 +10796,12 @@
     },
     {
       "fn": "ui::panels::draw_sessions",
-      "loc": "src/ui/panels.rs:1687:1: 1687:66",
+      "loc": "src/ui/panels.rs:1727:1: 1727:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741cef5df528c6b035",
+      "hash": "86aead0716ab284fc416d1f2a0e5393b",
       "calls": [
         "ui::panels::sessions_state_col_width"
       ],
@@ -10723,7 +10818,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7429a3a27a167c34d6",
+      "hash": "86aead0716ab284f9ecd2283552d1abd",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10732,19 +10827,19 @@
     },
     {
       "fn": "ui::panels::push_kv",
-      "loc": "src/ui/panels.rs:2461:1: 2467:2",
+      "loc": "src/ui/panels.rs:2501:1: 2507:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f8b8aef448c40b35",
+      "hash": "86aead0716ab284fa7ab3a363ea3c52e",
       "invisible": [
         "ratatui_core"
       ]
     },
     {
       "fn": "ui::panels::sessions_state_col_width",
-      "loc": "src/ui/panels.rs:1823:1: 1823:80",
+      "loc": "src/ui/panels.rs:1863:1: 1863:80",
       "inferred": [
         "Unknown"
       ],
@@ -10755,19 +10850,19 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74870c37b6632c7f7b",
+      "hash": "86aead0716ab284fbaf35c45b1374273",
       "unknownWhy": [
         "callback:generic iterable driven by max"
       ]
     },
     {
       "fn": "ui::panels::wrap_help_lines",
-      "loc": "src/ui/panels.rs:2265:1: 2272:2",
+      "loc": "src/ui/panels.rs:2305:1: 2312:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7456981c4fd741c21a",
+      "hash": "86aead0716ab284f30b69b2bb097d62d",
       "invisible": [
         "ratatui_core"
       ]
@@ -10779,7 +10874,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e5923b0bc63819e7",
+      "hash": "86aead0716ab284f27a3ea39b4100bc9",
       "invisible": [
         "ratatui_core"
       ]
@@ -10791,7 +10886,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a749ca18349bb24e156",
+      "hash": "86aead0716ab284f52988c0dbe05f1aa",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10805,7 +10900,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741d1a9e932570e51e",
+      "hash": "86aead0716ab284f3de4bdb3e92e1962",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10819,7 +10914,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a5d9145c2e656e03",
+      "hash": "86aead0716ab284fcca44f693e3c6bdc",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10833,7 +10928,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744437016e8cba6414",
+      "hash": "86aead0716ab284fd7f35e82d83e7887",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10847,7 +10942,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741049bd4140012f18",
+      "hash": "86aead0716ab284f6c76a6677a5d7406",
       "invisible": [
         "ratatui_core"
       ]
@@ -10859,7 +10954,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f58cb3e8fa029102",
+      "hash": "86aead0716ab284fdaf9a8456a41cbcd",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10873,7 +10968,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74be0252df02613b02",
+      "hash": "86aead0716ab284f1b6d24a19ef8422e",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets",
@@ -10894,7 +10989,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743ea1a2d7ff6b4a08"
+      "hash": "86aead0716ab284f7f1293a160331289"
     },
     {
       "fn": "ui::tap::draw_tap_monitor",
@@ -10907,7 +11002,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740ec7b9dd955d8bf0",
+      "hash": "86aead0716ab284f2cefba8adb76862b",
       "calls": [
         "ui::tap::draw_tap_monitor_baseline"
       ],
@@ -10928,7 +11023,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a741cb31c94219f1283",
+      "hash": "86aead0716ab284fa3ae65100b4d58b9",
       "calls": [
         "ui::tap::baseline_age_label"
       ],
@@ -10944,7 +11039,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b7bb4d0675e73535",
+      "hash": "86aead0716ab284f793b602dcc3a5f34",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10957,7 +11052,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74af1ee19e11d49e55",
+      "hash": "86aead0716ab284fef4d34b535fae3aa",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10970,7 +11065,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a7473b26cf5e8328f9e",
+      "hash": "86aead0716ab284f0ae75b4639b39662",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10983,7 +11078,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74f42975f33277b779",
+      "hash": "86aead0716ab284f6662225cf60651dc",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -10996,7 +11091,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a744a87fb62cfa36256",
+      "hash": "86aead0716ab284ff909b058115ce94e",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -11009,7 +11104,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a742e3136d125662206",
+      "hash": "86aead0716ab284fe8221cd350aca433",
       "invisible": [
         "ratatui_core",
         "ratatui_widgets"
@@ -11022,7 +11117,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c17a30d5a962b1be",
+      "hash": "86aead0716ab284f75882f9d3e157d5b",
       "invisible": [
         "ratatui_core"
       ]
@@ -11038,7 +11133,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7419e336fff20bbe32",
+      "hash": "86aead0716ab284f8893037c565a8d26",
       "calls": [
         "util::cache_dir"
       ]
@@ -11064,7 +11159,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a7475b5cb0a9fbafbee",
+      "hash": "86aead0716ab284fab2ae2bc9bec08cb",
       "fs": [
         "read",
         "write"
@@ -11109,7 +11204,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74930319517ce22548",
+      "hash": "86aead0716ab284f1742a38e42a14a99",
       "fs": [
         "read",
         "write"
@@ -11154,7 +11249,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74576a62873907c657",
+      "hash": "86aead0716ab284f4f5c988334a5eb3d",
       "fs": [
         "read"
       ],
@@ -11179,7 +11274,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74db1ff9d282f7ad3a",
+      "hash": "86aead0716ab284f600dc129e805c593",
       "fs": [
         "read"
       ],
@@ -11204,7 +11299,7 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a746a9c37bb5fe5ae4d",
+      "hash": "86aead0716ab284f866b3b6cf77b2d83",
       "hosts": [
         "crates.io"
       ],
@@ -11233,7 +11328,7 @@
         "Clock"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7429fbcc47c76723e9"
+      "hash": "86aead0716ab284f8488b3428766f441"
     },
     {
       "fn": "update_check::parse_crates_io_body",
@@ -11242,7 +11337,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "da50989121ee3a741b26e113f3e8b027",
+      "hash": "86aead0716ab284f9e975fd505c9e5f0",
       "invisible": [
         "serde_json"
       ]
@@ -11261,7 +11356,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74b154810e289a6324",
+      "hash": "86aead0716ab284f61e0cb362c344f6e",
       "fs": [
         "read"
       ],
@@ -11292,7 +11387,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a74068d48c2806c8e8e",
+      "hash": "86aead0716ab284f186df97e0eb56dbc",
       "fs": [
         "write"
       ],
@@ -11320,7 +11415,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a86bab5f47eefb08",
+      "hash": "86aead0716ab284f91d83058af201f82",
       "fs": [
         "read",
         "write"
@@ -11348,7 +11443,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c50542ad1d78d900",
+      "hash": "86aead0716ab284f4f2a5e9a8ae61d86",
       "calls": [
         "upgrade::relaunch"
       ],
@@ -11377,7 +11472,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74c40ff76c46897bce",
+      "hash": "86aead0716ab284f04372834e72a4a30",
       "fs": [
         "read",
         "write"
@@ -11410,7 +11505,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a18998e4e2bbada9",
+      "hash": "86aead0716ab284fa62610466f642184",
       "fs": [
         "read",
         "write"
@@ -11443,7 +11538,7 @@
         "Exec"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74115ad28062f4272c",
+      "hash": "86aead0716ab284fe9868dd312f03486",
       "invisible": [
         "anyhow"
       ],
@@ -11468,7 +11563,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a742206a39cc686e812",
+      "hash": "86aead0716ab284f5bc27606f2e332d8",
       "fs": [
         "read",
         "write"
@@ -11508,7 +11603,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74e3dd37cb164e7cab",
+      "hash": "86aead0716ab284ff6082718db6c3053",
       "fs": [
         "read",
         "write"
@@ -11546,7 +11641,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a747599c789a4bce415",
+      "hash": "86aead0716ab284fcef873ac1a76d2af",
       "fs": [
         "read",
         "write"
@@ -11574,7 +11669,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a748471714a480dfc30",
+      "hash": "86aead0716ab284ff70c81a358977639",
       "calls": [
         "util::xdg_dir"
       ]
@@ -11590,7 +11685,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a743c9e5f45260dcc81",
+      "hash": "86aead0716ab284f4916e00f50487151",
       "calls": [
         "util::xdg_dir"
       ]
@@ -11606,7 +11701,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a7457900b6f9d38236c",
+      "hash": "86aead0716ab284f31b0feba1db8c8e8",
       "calls": [
         "util::config_dir"
       ]
@@ -11625,7 +11720,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ef75513e93c7678e",
+      "hash": "86aead0716ab284f77e172b27461aa0a",
       "fs": [
         "write"
       ],
@@ -11647,7 +11742,7 @@
         "Fs"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74ae84c8326e9cc79f",
+      "hash": "86aead0716ab284fb7a40518f8a107b0",
       "incomplete": [
         "Fs"
       ]
@@ -11663,7 +11758,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a749669083c1ce98b6c",
+      "hash": "86aead0716ab284f3f99bdbf75c92a3d",
       "calls": [
         "util::xdg_dir"
       ]
@@ -11685,7 +11780,7 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a74a3f166a42c6bbb24",
+      "hash": "86aead0716ab284fda983b72bd7b2191",
       "fs": [
         "read",
         "write"
@@ -11720,7 +11815,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744bdda63def7353b8",
+      "hash": "86aead0716ab284fe09b4e1525032271",
       "fs": [
         "write"
       ],
@@ -11752,7 +11847,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "da50989121ee3a744d044d6c927e053a",
+      "hash": "86aead0716ab284f8b4fe83007db6acb",
       "fs": [
         "write"
       ],
@@ -11778,7 +11873,7 @@
         "Env"
       ],
       "overdeclared": [],
-      "hash": "da50989121ee3a740d459701a4703b7f"
+      "hash": "86aead0716ab284fc5648dbeb363bfec"
     }
   ]
 }

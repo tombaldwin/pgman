@@ -601,6 +601,14 @@ fn mask_password_params(s: String) -> String {
     out
 }
 
+/// The databases on the server and their sizes, for the start card.
+/// Sizing a database needs CONNECT on it, which RDS's own `rdsadmin`
+/// never grants: only those the user may connect to are sized.
+pub const BOOTSTRAP_SQL: &str = "select datname as database, \
+    case when has_database_privilege(datname, 'CONNECT') \
+         then pg_size_pretty(pg_database_size(datname)) end as size \
+    from pg_database where not datistemplate order by datname";
+
 /// A successful connection's bootstrap result.
 pub struct Booted {
     pub server_version: String,
@@ -785,7 +793,12 @@ pub async fn connect_and_bootstrap(
         .ok()
         .and_then(|row| row.try_get::<usize, String>(0).ok())
         .unwrap_or_else(|| "unknown".to_string());
-    let grid = grid_res.map_err(|e| e.to_string())?;
+    // The list only feeds the start card: a server that won't give it
+    // up still gives the operator a connection.
+    let grid = grid_res.unwrap_or_else(|e| {
+        tracing::warn!("database list unavailable: {e}");
+        Grid::default()
+    });
     Ok(Booted {
         server_version,
         grid,

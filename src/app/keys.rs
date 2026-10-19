@@ -1321,6 +1321,7 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
+                self.remember_env_selection();
                 self.mode = self.environments.opened_from.take().unwrap_or(Mode::Normal);
                 self.environments.connecting = None;
                 self.last_status = None;

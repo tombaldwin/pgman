@@ -174,8 +174,10 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
 
     let files_ref = files.as_ref().and_then(|f| f.as_ref().ok());
     let files_err = files.as_ref().and_then(|f| f.as_ref().err()).cloned();
+    let vt = settings.version_table.clone();
     let probes = ready.into_iter().enumerate().map(|(i, r)| {
         let cfg = cfg.clone();
+        let vt = vt.clone();
         let files_err = files_err.clone();
         let port = via.get(&i).copied();
         async move {
@@ -184,6 +186,10 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
                 Err(e) => return Some(Err(e)),
             };
             dsn.ssh_tunnel = None;
+            // The version table only where the environment says it is.
+            let applies = vt.as_ref().is_some_and(|v| v.applies_to(&dsn.dbname));
+            let cfg = cfg.filter(|_| applies);
+            let files_err = files_err.filter(|_| applies);
             let probe = async {
                 let client =
                     crate::conn::connect_via(dsn, port, PROBE_STATEMENT_TIMEOUT_MS).await?;
