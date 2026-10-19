@@ -1283,9 +1283,8 @@ mod tests {
         .unwrap();
         assert!(v.get("note").is_none());
         assert_eq!(v["live_checks_error"], "LINT101: x");
-        assert_eq!(
+        assert!(
             connections::Role::Primary.refuses("schema_lint").is_some(),
-            true,
             "the primary serves only the pre-flight and the patch check"
         );
     }
