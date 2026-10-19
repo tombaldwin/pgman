@@ -910,6 +910,9 @@ pub struct EnvironmentsUi {
     pub loading: bool,
     /// Why the last gather produced nothing at all (config unreadable).
     pub error: Option<String>,
+    /// Where closing the panel returns to: `Some(ConnPick)` when it was
+    /// opened from the connection picker, `None` for the grid.
+    pub opened_from: Option<Mode>,
 }
 
 impl EnvironmentsUi {

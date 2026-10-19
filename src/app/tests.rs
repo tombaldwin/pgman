@@ -9202,3 +9202,33 @@ fn environments_status_counts_failures() {
         "environments · 2 · 4 databases · 1 failed"
     );
 }
+
+#[test]
+fn environments_open_from_the_connection_picker_and_close_back_to_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.mode = Mode::ConnPick;
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(
+        a.mode,
+        Mode::Environments,
+        "E works before a connection is picked"
+    );
+    assert_eq!(a.environments.reports.len(), 3);
+    press(&mut a, KeyCode::Char('q'));
+    assert_eq!(
+        a.mode,
+        Mode::ConnPick,
+        "closing returns to the picker, not an empty grid"
+    );
+    assert!(
+        !a.should_quit,
+        "q closed the overview, it did not quit pgman"
+    );
+
+    // Opened from the grid, it closes to the grid.
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal);
+}

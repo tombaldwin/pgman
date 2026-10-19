@@ -18,4 +18,4 @@ expression: dump(&buf)
 ││  nothing here connects until you press enter           ││
 │└────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────┘
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · F1 +3 more
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · F1 +4 more

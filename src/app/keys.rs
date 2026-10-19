@@ -693,6 +693,9 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.conn_pick.select_prev(),
             KeyCode::Char('g') | KeyCode::Home => self.conn_pick.select_first(),
             KeyCode::Char('G') | KeyCode::End => self.conn_pick.select_last(),
+            // The overview needs no connection, and before one is picked is
+            // when it is most use; closing it comes back here.
+            KeyCode::Char('E') => self.start_environments(),
             KeyCode::Enter => {
                 if let Some(pick) = self.conn_pick.picks.get(self.conn_pick.index).cloned() {
                     if self.refuse_if_unresolved(&pick) {
@@ -1314,7 +1317,7 @@ impl App {
     pub(super) fn on_environments_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                self.mode = Mode::Normal;
+                self.mode = self.environments.opened_from.take().unwrap_or(Mode::Normal);
                 self.last_status = None;
             }
             KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
