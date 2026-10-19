@@ -44,7 +44,24 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   database connections. Next is (2): tunnel reuse (the connection-pool
   item below becomes a prerequisite: ten databases must not mean ten ssh
   handshakes), then the schema/pending/lag probes. After that, (3):
-  `docker` and the other sources as needed.
+  `docker` and the other sources as needed. Connecting from the screen
+  and AWS discovery came first, at Tom's ask (PLAN.md).
+
+### Environments — follow-ups from connect and discovery (2026-10-19)
+- **Cross-process save race.** `discover::save` serializes saves within
+  one process and re-checks coverage against the file it appends to, but
+  a TUI `s` and an MCP `environments_save` in another process at the
+  same moment can still lose one addition. Needs a lock file.
+- **`\c <db>` after a replica connect** drops the read-only pin back to
+  the database's profile. The replica still refuses writes server-side,
+  but pgman should keep the pin for the session.
+- **Discovery scope in the TUI** is the ambient profile and region only;
+  `pgman env discover` takes `--profile/--region/--account`. A picker,
+  or the profiles already named in environments.toml, would cover
+  multi-account setups.
+- **candor: `on_msg` gained `Unknown` in its own body** with the two new
+  message arms, which only call plain methods. Re-recorded with Tom's OK
+  without pinning the cause; find it.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
