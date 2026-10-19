@@ -402,6 +402,11 @@ pub fn schema_browser_table_key(schema: &str, table: &str) -> String {
     format!("{schema}.{table}")
 }
 
+/// Expand-state key for a table's folded partitions group.
+pub fn schema_browser_partitions_key(schema: &str, table: &str) -> String {
+    format!("{schema}.{table}#partitions")
+}
+
 /// Pure: walking from `from` in `dir`, return the byte position of
 /// the next `SchemaBrowserRow::Schema` row in `rows`. Useful for
 /// `[` / `]` peer-level navigation in the schema browser — jumping
@@ -446,14 +451,19 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             SchemaBrowserRow::Table { name, .. } => name.as_str(),
             SchemaBrowserRow::Column { name, .. } => name.as_str(),
             SchemaBrowserRow::Constraint { name, .. } => name.as_str(),
+            SchemaBrowserRow::Partitions { .. } => "",
+            SchemaBrowserRow::Partition { name, .. } => name.as_str(),
         };
-        name.to_ascii_lowercase().contains(&pat)
+        !name.is_empty() && name.to_ascii_lowercase().contains(&pat)
     };
     let depth = |row: &SchemaBrowserRow| -> usize {
         match row {
             SchemaBrowserRow::Schema { .. } => 0,
             SchemaBrowserRow::Table { .. } => 1,
-            SchemaBrowserRow::Column { .. } | SchemaBrowserRow::Constraint { .. } => 2,
+            SchemaBrowserRow::Column { .. }
+            | SchemaBrowserRow::Constraint { .. }
+            | SchemaBrowserRow::Partitions { .. } => 2,
+            SchemaBrowserRow::Partition { .. } => 3,
         }
     };
     let n = rows.len();
@@ -496,9 +506,28 @@ pub fn flatten_schema_browser(
     cache: &crate::query::schema::SchemaCache,
     expanded: &std::collections::HashSet<String>,
 ) -> Vec<SchemaBrowserRow> {
+    // Partitions fold under the table they belong to (the top of the
+    // tree for sub-partitions) instead of listing beside it.
+    let mut partitions: std::collections::HashMap<(String, String), Vec<(String, String)>> =
+        std::collections::HashMap::new();
+    for (s, n) in cache.partition_parent.keys() {
+        if let Some(root) = cache.partition_root(s, n) {
+            partitions
+                .entry(root)
+                .or_default()
+                .push((s.clone(), n.clone()));
+        }
+    }
+    for v in partitions.values_mut() {
+        v.sort();
+    }
     let mut by_schema: std::collections::HashMap<&str, Vec<&str>> =
         std::collections::HashMap::new();
-    for t in &cache.tables {
+    for t in cache.tables.iter().filter(|t| {
+        !cache
+            .partition_parent
+            .contains_key(&(t.schema.clone(), t.name.clone()))
+    }) {
         by_schema
             .entry(t.schema.as_str())
             .or_default()
@@ -573,6 +602,24 @@ pub fn flatten_schema_browser(
                     table: t.to_string(),
                     name: cn.to_string(),
                 });
+            }
+            if let Some(parts) = partitions.get(&(s.to_string(), t.to_string())) {
+                let group_expanded = expanded.contains(&schema_browser_partitions_key(s, t));
+                out.push(SchemaBrowserRow::Partitions {
+                    schema: s.to_string(),
+                    table: t.to_string(),
+                    count: parts.len(),
+                    expanded: group_expanded,
+                });
+                if group_expanded {
+                    for (ps, pn) in parts {
+                        out.push(SchemaBrowserRow::Partition {
+                            schema: ps.clone(),
+                            table: t.to_string(),
+                            name: pn.clone(),
+                        });
+                    }
+                }
             }
         }
     }
@@ -3669,6 +3716,7 @@ impl App {
             for t in &self.schema_cache.tables {
                 s.insert(t.schema.clone());
                 s.insert(schema_browser_table_key(&t.schema, &t.name));
+                s.insert(schema_browser_partitions_key(&t.schema, &t.name));
             }
             expanded_owned = s;
             &expanded_owned
@@ -3690,6 +3738,14 @@ impl App {
             return;
         }
         self.schema_browser.cursor = 0;
+        // One schema has nothing to choose between: open it, cursor on
+        // its first table.
+        if let [only] = self.schema_cache.schemas.as_slice() {
+            self.schema_browser.expanded.insert(only.clone());
+            if self.schema_cache.tables.iter().any(|t| &t.schema == only) {
+                self.schema_browser.cursor = 1;
+            }
+        }
         self.mode = Mode::SchemaBrowser;
     }
 
@@ -3751,6 +3807,7 @@ impl App {
             return;
         };
         self.slow_queries.cursor = 0;
+        self.slow_queries.error = None;
         self.mode = Mode::SlowQueries;
         self.last_status = Some("loading pg_stat_statements…".into());
         self.spawn_slow_queries_load(client);

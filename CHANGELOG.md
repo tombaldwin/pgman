@@ -82,6 +82,13 @@ and breaking changes.
 - **MCP tunnels stay open between calls** to the same database (5
   minutes idle), so a run of `query` calls pays the ssh handshake once;
   each call still gets a fresh read-only session.
+- **Partitioned tables fold** in the schema browser: one `N partitions`
+  row under the table instead of a screenful of partitions. A database
+  with one schema opens with it expanded.
+- **Slow queries says why it's empty**: without `pg_stat_statements`
+  the panel stays open with how to install it, instead of flashing
+  shut.
+- **Esc from the results goes back to the environments overview.**
 - **Environments are home.** pgman starts on the overview (with
   environments configured and no `--dsn`), full screen, on the row you
   used last. Replicas sit under each database. Probing environments

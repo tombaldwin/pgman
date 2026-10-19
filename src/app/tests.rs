@@ -1464,11 +1464,12 @@ fn a_failed_panel_load_does_not_haunt_the_next_panel() {
             "relation \"pg_stat_statements\" does not exist",
         )),
     });
-    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.mode, Mode::SlowQueries, "the panel stays open to say why");
     assert!(
         a.last_error.is_some(),
         "fixture check: the failed load is an error"
     );
+    a.on_key(KeyEvent::from(KeyCode::Esc));
     a.on_key(KeyEvent::from(KeyCode::Char('S')));
     assert_eq!(a.mode, Mode::SchemaBrowser);
     assert!(
@@ -2591,17 +2592,18 @@ fn slow_queries_loaded_failure_with_missing_extension_hints_install() {
             "relation \"pg_stat_statements\" does not exist",
         )),
     });
-    // Back to Normal + actionable hint in the error — one that says
-    // what the extension needs, not just its name.
-    assert_eq!(a.mode, Mode::Normal);
-    let err = a.last_error.as_deref().unwrap_or("");
+    // The panel stays open with an actionable hint — one that says
+    // what the extension needs and where, not just its name.
+    // The panel stays open and carries the fix.
+    assert_eq!(a.mode, Mode::SlowQueries);
+    let err = a.slow_queries.error.as_deref().unwrap_or("");
     assert!(
         err.contains("CREATE EXTENSION pg_stat_statements"),
         "expected install hint; got: {err}"
     );
     assert!(
-        err.contains("shared_preload_libraries") && err.contains("read-write session"),
-        "the hint must say what CREATE EXTENSION needs; got: {err}"
+        err.contains("shared_preload_libraries") && err.contains("on the primary"),
+        "the hint must say what CREATE EXTENSION needs, and where; got: {err}"
     );
 }
 
@@ -2629,7 +2631,12 @@ fn slow_queries_load_failure_keeps_the_server_message_and_detail_for_f2() {
     let err = a.last_error.as_deref().unwrap_or("");
     assert_eq!(
         err,
-        "slow queries load failed: relation \"pg_stat_statements\" does not exist (try `CREATE EXTENSION pg_stat_statements` — needs shared_preload_libraries and a read-write session)"
+        "slow queries load failed: relation \"pg_stat_statements\" does not exist"
+    );
+    assert_eq!(
+        a.mode,
+        Mode::SlowQueries,
+        "the panel stays open to show why"
     );
     assert_eq!(
         a.last_error_detail.as_ref().and_then(|d| d.code.as_deref()),
@@ -9898,4 +9905,163 @@ fn without_a_state_file_nothing_is_written() {
     );
     press(&mut a, KeyCode::Char('E'));
     press(&mut a, KeyCode::Char('q'));
+}
+
+#[test]
+fn a_lone_schema_opens_expanded_with_the_cursor_on_its_first_table() {
+    let mut a = app_with_schemas();
+    a.schema_cache.tables.retain(|t| t.schema == "public");
+    a.schema_cache.schemas.retain(|s| s == "public");
+    press(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    let rows = a.flattened_schema_browser();
+    assert!(matches!(
+        rows[0],
+        SchemaBrowserRow::Schema { expanded: true, .. }
+    ));
+    assert!(
+        matches!(rows[a.schema_browser.cursor], SchemaBrowserRow::Table { ref name, .. } if name == "orders")
+    );
+
+    // Two schemas: both start collapsed, as before.
+    let mut b = app_with_schemas();
+    press(&mut b, KeyCode::Char('S'));
+    assert!(b.schema_browser.expanded.is_empty());
+    assert_eq!(b.schema_browser.cursor, 0);
+}
+
+#[test]
+fn esc_from_the_results_goes_back_to_the_environments_overview() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('q'));
+    assert_eq!(a.mode, Mode::Normal);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(a.environments.cursor, 1, "on the row it was left on");
+
+    // No environments: Esc in the results stays a no-op.
+    let mut b = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    press(&mut b, KeyCode::Esc);
+    assert_eq!(b.mode, Mode::Normal);
+}
+
+fn app_with_partitions() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let t = |n: &str| crate::query::schema::TableMeta {
+        schema: "public".into(),
+        name: n.into(),
+    };
+    let mut cache = crate::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![
+            t("events"),
+            t("events_2024"),
+            t("events_2024_01"),
+            t("events_2024_02"),
+            t("events_2025"),
+            t("users"),
+        ],
+        ..Default::default()
+    };
+    let p = |c: &str, parent: &str| {
+        (
+            ("public".to_string(), c.to_string()),
+            ("public".to_string(), parent.to_string()),
+        )
+    };
+    // events_2024 is itself partitioned by month.
+    cache.partition_parent.extend([
+        p("events_2024", "events"),
+        p("events_2025", "events"),
+        p("events_2024_01", "events_2024"),
+        p("events_2024_02", "events_2024"),
+    ]);
+    a.schema_cache = cache;
+    a.mode = Mode::Normal;
+    a
+}
+
+#[test]
+fn partitions_fold_under_their_table() {
+    let mut a = app_with_partitions();
+    press(&mut a, KeyCode::Char('S'));
+    let rows = a.flattened_schema_browser();
+    let names: Vec<String> = rows
+        .iter()
+        .map(|r| match r {
+            SchemaBrowserRow::Schema {
+                name, table_count, ..
+            } => format!("schema {name} {table_count}"),
+            SchemaBrowserRow::Table { name, .. } => format!("table {name}"),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["schema public 2", "table events", "table users"],
+        "partitions don't list beside their table, nor count as tables"
+    );
+
+    // Expand events: one folded group, all four partitions at any depth.
+    a.schema_browser.cursor = 1;
+    press(&mut a, KeyCode::Enter);
+    let rows = a.flattened_schema_browser();
+    let group = rows
+        .iter()
+        .position(|r| {
+            matches!(
+                r,
+                SchemaBrowserRow::Partitions {
+                    count: 4,
+                    expanded: false,
+                    ..
+                }
+            )
+        })
+        .expect("a collapsed group of 4");
+    a.schema_browser.cursor = group;
+    press(&mut a, KeyCode::Enter);
+    let rows = a.flattened_schema_browser();
+    let parts: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| match r {
+            SchemaBrowserRow::Partition { name, table, .. } => {
+                assert_eq!(table, "events", "sub-partitions sit under the top table");
+                Some(name.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            "events_2024",
+            "events_2024_01",
+            "events_2024_02",
+            "events_2025"
+        ]
+    );
+
+    // s / i aim at the partition itself.
+    a.schema_browser.cursor = group + 2;
+    assert_eq!(
+        a.focused_schema_browser_table(),
+        Some(("public".into(), "events_2024_01".into()))
+    );
+}
+
+#[test]
+fn the_filter_finds_a_partition_inside_its_folded_group() {
+    let mut a = app_with_partitions();
+    a.schema_browser.filter = Some("2024_02".into());
+    let rows = a.flattened_schema_browser();
+    assert!(
+        rows.iter().any(
+            |r| matches!(r, SchemaBrowserRow::Partition { name, .. } if name == "events_2024_02")
+        ),
+        "{rows:?}"
+    );
 }

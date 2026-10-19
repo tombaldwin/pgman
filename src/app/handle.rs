@@ -231,6 +231,7 @@ impl App {
                     // footer shows this panel now, not that error.
                     self.last_error = None;
                     self.last_error_detail = None;
+                    self.slow_queries.error = None;
                     self.slow_queries.rows = rows;
                     // Preserve the operator's selection across an auto-refresh
                     // tick (R) — clamp to the new length rather than zeroing,
@@ -257,19 +258,20 @@ impl App {
                     // `CREATE EXTENSION` alone is not enough: the
                     // module has to be preloaded, and the session
                     // pgman opened is read-only by default.
-                    let hint = if e.msg.contains("pg_stat_statements") {
-                        " (try `CREATE EXTENSION pg_stat_statements` — needs shared_preload_libraries and a read-write session)"
-                    } else {
-                        ""
-                    };
+                    let hint = slow_queries_hint(&e.msg);
                     tracing::warn!(
                         code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
                         "slow queries load failed: {}",
                         e.msg
                     );
-                    self.last_error = Some(format!("slow queries load failed: {}{hint}", e.msg));
+                    // The panel stays open and says why it's empty: it
+                    // used to close at once, flashing past before the
+                    // footer's message could be read.
+                    self.last_status = None;
+                    self.slow_queries.rows.clear();
+                    self.slow_queries.error = Some(format!("{}{hint}", e.msg));
+                    self.last_error = Some(format!("slow queries load failed: {}", e.msg));
                     self.last_error_detail = e.detail;
-                    self.mode = Mode::Normal;
                 }
             },
             AppMsg::EnvironmentsLoaded(result) => {
@@ -519,5 +521,17 @@ impl App {
             Event::Paste(text) => self.on_paste(text),
             _ => {}
         }
+    }
+}
+
+/// What to do about a slow-queries failure, when pgman knows. Pure.
+pub(crate) fn slow_queries_hint(msg: &str) -> &'static str {
+    if msg.contains("pg_stat_statements") {
+        "\n\npg_stat_statements isn't installed in this database. Install it once, \
+         on the primary: CREATE EXTENSION pg_stat_statements; (the module must be in \
+         shared_preload_libraries — the default on RDS). A replica gets it through \
+         replication."
+    } else {
+        ""
     }
 }

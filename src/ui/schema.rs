@@ -124,6 +124,16 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             SchemaBrowserRow::Constraint { name, .. } => format!("      ◆ {name}"),
+            SchemaBrowserRow::Partitions {
+                count, expanded, ..
+            } => {
+                let marker = if *expanded { "▼" } else { "▶" };
+                format!(
+                    "    {marker} {count} partition{}",
+                    if *count == 1 { "" } else { "s" }
+                )
+            }
+            SchemaBrowserRow::Partition { name, .. } => format!("        · {name}"),
         };
         lines.push(clamped_line(&text, style, tree_width, theme));
     }
@@ -222,6 +232,79 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
             right_lines.push(Line::from(""));
             right_lines.push(clamped_line(
                 "unique / primary-key constraint",
+                Style::default().fg(theme.muted),
+                detail_width,
+                theme,
+            ));
+        }
+        Some(SchemaBrowserRow::Partitions {
+            schema,
+            table,
+            count,
+            ..
+        }) => {
+            right_lines.push(clamped_line(
+                &format!("{schema}.{table}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+                detail_width,
+                theme,
+            ));
+            right_lines.push(Line::from(""));
+            right_lines.push(clamped_line(
+                &format!("partitioned into {count}"),
+                Style::default().fg(theme.text),
+                detail_width,
+                theme,
+            ));
+            right_lines.push(Line::from(""));
+            right_lines.push(clamped_line(
+                "enter to list them",
+                Style::default().fg(theme.muted),
+                detail_width,
+                theme,
+            ));
+        }
+        Some(SchemaBrowserRow::Partition {
+            schema,
+            table,
+            name,
+        }) => {
+            right_lines.push(clamped_line(
+                &format!("{schema}.{name}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+                detail_width,
+                theme,
+            ));
+            right_lines.push(Line::from(""));
+            right_lines.push(clamped_line(
+                &format!("a partition of {table}"),
+                Style::default().fg(theme.text),
+                detail_width,
+                theme,
+            ));
+            if let Some(sz) = app
+                .schema_cache
+                .table_sizes
+                .get(&(schema.clone(), name.clone()))
+            {
+                right_lines.push(clamped_line(
+                    &format!(
+                        "size: {} (total {})",
+                        crate::query::schema::format_bytes(sz.table_bytes),
+                        crate::query::schema::format_bytes(sz.total_bytes)
+                    ),
+                    Style::default().fg(theme.text),
+                    detail_width,
+                    theme,
+                ));
+            }
+            right_lines.push(Line::from(""));
+            right_lines.push(clamped_line(
+                "s SELECT · i INSERT",
                 Style::default().fg(theme.muted),
                 detail_width,
                 theme,

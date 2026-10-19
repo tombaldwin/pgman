@@ -138,13 +138,20 @@ impl App {
     /// (schema, table) — returns None when focused on a Schema row
     /// (no table context) or when the cursor is out-of-bounds.
     /// Column / Constraint rows resolve to their parent table.
-    fn focused_schema_browser_table(&self) -> Option<(String, String)> {
+    pub(super) fn focused_schema_browser_table(&self) -> Option<(String, String)> {
         let rows = self.flattened_schema_browser();
         match rows.get(self.schema_browser.cursor)? {
             SchemaBrowserRow::Table { schema, name, .. } => Some((schema.clone(), name.clone())),
             SchemaBrowserRow::Column { schema, table, .. } => Some((schema.clone(), table.clone())),
             SchemaBrowserRow::Constraint { schema, table, .. } => {
                 Some((schema.clone(), table.clone()))
+            }
+            SchemaBrowserRow::Partitions { schema, table, .. } => {
+                Some((schema.clone(), table.clone()))
+            }
+            // A partition is a table in its own right: s / i target it.
+            SchemaBrowserRow::Partition { schema, name, .. } => {
+                Some((schema.clone(), name.clone()))
             }
             SchemaBrowserRow::Schema { .. } => None,
         }
