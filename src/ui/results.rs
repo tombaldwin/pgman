@@ -28,9 +28,11 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                 _ => "",
             };
             let text = format!("{c}{sort_marker}");
+            // Bold and underlined, never re-cased: these are the query's
+            // own column names, and case is part of a name in SQL.
             let mut style = Style::default()
                 .fg(theme.title)
-                .add_modifier(Modifier::BOLD);
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
             // Focused column reverses to make column nav visible at
             // a glance. App mode doesn't matter — h/l is only useful
             // in Normal mode but the indicator persists so the
