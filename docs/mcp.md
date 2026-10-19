@@ -31,7 +31,7 @@ startup, not accepted and ignored.
 | `query` | One statement against a named connection, returned as typed JSON rows (the same typing as `--batch --format json`). `max_rows` defaults to 200 and is capped at 5000. `truncated` says whether rows were cut. The statement timeout is your profile's, capped at 30 s. |
 | `sessions_locks` | A pre-flight before a schema change. It reports sessions that have held a transaction open for at least `min_xact_age_secs` (default 60), are blocked, are blocking someone, or hold or wait for a lock on one of `tables`, and lists each one's locks on those tables. `server_is_replica` comes from `pg_is_in_recovery()`: on a replica you see the replica's sessions, not the primary's. |
 | `pending_patches` | Patch files whose id the database hasn't recorded. Each id comes from the file's own version-row `INSERT`. It also flags recent files with no version row, recorded ids whose file has no live version row (commented out, say), filename/id mismatches and duplicate ids. Configured by `[patches]` in `.pgman/pgman.toml`, or by passing `dir`, `table` and `column`. A file counts as applied when its id is recorded, not when its statements ran. |
-| `environments` | Every database in each environment of `environments.toml`, replicas under their primary, with role, status and engine version, from the sources alone. It connects to no database. See [Environments](environments.md). |
+| `environments` | Every database in each environment of `environments.toml`, replicas under their primary, with role, status and engine version, from the sources alone. It connects to no database unless `probe: true` is passed. Then the environments with `probe = true` also report server version, recovery state, lag, patch level and pending patches (see [Probes](environments.md#probes)), and the others say probing isn't enabled. |
 | `environments_discover` | Proposals for `environments.toml` from an AWS account (optional `region`, `profile`, `account`): per primary, its replicas, matching secret names, the bastion, and exactly the TOML a save appends, with notes to check. Reads names only, never a secret's value. |
 | `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It's the only tool that writes anything, and it writes a config file, not a database. |
 
@@ -78,6 +78,11 @@ role = "primary"
 
 `${…}` placeholders are not resolved in `connections.toml`. A connection
 that has one is refused; use `password_env` or `secret` instead.
+
+A tunnel stays open between calls to the same database, so a run of
+calls pays the ssh handshake once. It closes after 5 minutes unused, or
+when the server exits. Each call still opens its own read-only Postgres
+connection through it, so nothing about a session carries over.
 
 A tunnel runs the system `ssh` with `BatchMode=yes`, so the key must
 work without a prompt: an `IdentityFile` in `~/.ssh/config` or a key

@@ -90,7 +90,14 @@ pub struct Server {
     pub(crate) cwd: std::path::PathBuf,
     client_name: Mutex<String>,
     client_elicits: AtomicBool,
+    /// ssh tunnels kept open between calls (`TUNNEL_IDLE`), so a burst of
+    /// calls to a tunnelled database pays the handshake once. Each call
+    /// still opens its own read-only Postgres connection.
+    pub(crate) tunnels: crate::tunnel::TunnelCache,
 }
+
+/// How long an unused tunnel stays open.
+pub const TUNNEL_IDLE: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl Server {
     pub fn new(opts: Opts, cwd: std::path::PathBuf) -> Self {
@@ -99,6 +106,7 @@ impl Server {
             cwd,
             client_name: Mutex::new(String::new()),
             client_elicits: AtomicBool::new(false),
+            tunnels: crate::tunnel::TunnelCache::new(TUNNEL_IDLE),
         }
     }
 
@@ -316,6 +324,17 @@ where
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let slots = Arc::new(tokio::sync::Semaphore::new(TOOL_SLOTS));
+    // Close idle tunnels even when no call comes to notice them.
+    let sweeper = {
+        let server = server.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                every.tick().await;
+                server.tunnels.sweep(std::time::Instant::now());
+            }
+        })
+    };
     // One writer, so concurrent tool tasks can't interleave frames.
     // Bounded, so a client that stops reading applies backpressure.
     let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(256);
@@ -386,6 +405,11 @@ where
     // a sender, each time-bounded) finish, then exits.
     drop(out_tx);
     let _ = writer.await;
+    sweeper.abort();
+    // Input closed: no call can use a tunnel now.
+    server
+        .tunnels
+        .sweep(std::time::Instant::now() + TUNNEL_IDLE);
 }
 
 #[cfg(test)]

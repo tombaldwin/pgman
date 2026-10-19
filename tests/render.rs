@@ -18,6 +18,7 @@ use pgman::safety::SafetyConfig;
 use pgman::theme::Theme;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::style::Modifier;
 use ratatui::Terminal;
 
 /// Rows the boxed header takes on a terminal 24 or more rows tall
@@ -1548,4 +1549,32 @@ fn tab_bar_shrinks_labels_and_drops_the_hint_whole_when_the_tabs_need_the_room()
         "the last tab is still on the bar: {bar:?}"
     );
     assert!(bar.len() <= 60, "{bar:?}");
+}
+
+/// Result headers are set apart by style, never re-cased: they are the
+/// query's own column names.
+#[test]
+fn result_headers_are_bold_and_underlined_and_keep_their_case() {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.grid = Grid {
+        columns: vec!["userId".into(), "email".into()],
+        rows: vec![vec!["1".into(), "a@b".into()]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_view.col_cursor = 0;
+    let buf = render(&mut a, 60, 18);
+    let (x, y) = find_cell(&buf, "email").expect("header cell keeps its case");
+    assert!(find_cell(&buf, "EMAIL").is_none() && find_cell(&buf, "userId").is_some());
+    let m = buf[(x, y)].modifier;
+    assert!(
+        m.contains(Modifier::BOLD) && m.contains(Modifier::UNDERLINED),
+        "{m:?}"
+    );
+    let (x, y) = find_cell(&buf, "a@b").unwrap();
+    assert!(
+        !buf[(x, y)].modifier.contains(Modifier::UNDERLINED),
+        "rows aren't"
+    );
 }

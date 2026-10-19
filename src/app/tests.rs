@@ -9258,6 +9258,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
                 profile: None,
                 account: None,
             }),
+            password_env: None,
         }),
     };
     let mut broken = row("stopped-one", Role::Direct, None);
@@ -9731,4 +9732,93 @@ fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
         matches!(&a.environments.probes[0][1], ProbeState::Done(Err(e)) if e.contains("not available"))
     );
     assert_eq!(a.environments.probes[2], [ProbeState::Off]);
+}
+
+#[test]
+fn auto_probe_is_opt_in_paced_and_never_piles_up() {
+    let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = rounds.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(move |r| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::demo::environment_probes(r)
+    })));
+    let rounds_now = || rounds.load(std::sync::atomic::Ordering::SeqCst);
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(rounds_now(), 1, "the listing probes once");
+
+    // Off by default: time passing probes nothing.
+    a.environments.auto_probe_last = None;
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 1);
+
+    press(&mut a, KeyCode::Char('R'));
+    assert!(a.environments.auto_probe);
+    assert_eq!(a.last_status.as_deref(), Some("auto-probe on (30s)"));
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 1, "not before the interval");
+    let past = Instant::now() - ENV_AUTO_PROBE_INTERVAL - Duration::from_secs(1);
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2, "due: probes again");
+
+    // A round still unanswered holds the next one back.
+    a.environments.probes[0][1] = ProbeState::Probing;
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2);
+
+    // Only while the overview is open.
+    a.environments.probes[0][1] = ProbeState::Off;
+    a.mode = Mode::Normal;
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2);
+}
+
+#[test]
+fn auto_probe_needs_an_environment_that_probes() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let mut envs = crate::demo::environments();
+    for e in &mut envs {
+        e.probe = None;
+    }
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(envs));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('R'));
+    assert!(!a.environments.auto_probe);
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("no environment probes"));
+}
+
+#[tokio::test]
+async fn an_environment_password_comes_from_its_variable_at_connect() {
+    let mut a = writable_app();
+    // The replica row has no secret: give it a password_env.
+    if let Ok(spec) = a.environments.reports[0].targets[0].connect.as_mut() {
+        spec.password_env = Some("PGMAN_TEST_APP_ENV_PW".into());
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("can't connect to demo demo-replica/ledger: password_env names $PGMAN_TEST_APP_ENV_PW, which is not set")
+    );
+    assert_eq!(a.dsn, None);
+    // SAFETY: a variable only this test touches.
+    unsafe { std::env::set_var("PGMAN_TEST_APP_ENV_PW", "hunter2") };
+    press(&mut a, KeyCode::Enter);
+    unsafe { std::env::remove_var("PGMAN_TEST_APP_ENV_PW") };
+    assert_eq!(
+        a.dsn.as_ref().and_then(|d| d.password.as_deref()),
+        Some("hunter2")
+    );
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(
+        origin.ends_with("password from $PGMAN_TEST_APP_ENV_PW"),
+        "{origin}"
+    );
+    assert!(!origin.contains("hunter2"));
 }

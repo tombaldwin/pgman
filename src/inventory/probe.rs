@@ -101,7 +101,13 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
                 continue;
             }
         };
-        let mut dsn = spec.dsn;
+        let mut dsn = spec.dsn.clone();
+        if spec.secret.is_none() {
+            if let Err(e) = spec.apply_password_env(&mut dsn) {
+                ready.push(Some(Err(e)));
+                continue;
+            }
+        }
         if let Some(secret) = spec.secret {
             let creds = match secrets.get(&secret.id) {
                 Some(c) => c.clone(),
@@ -282,6 +288,7 @@ mod tests {
                 profile: None,
                 account: None,
             }),
+            password_env: None,
         };
         let mut a = t("one", "app", Role::Direct, None);
         a.connect = Ok(spec("app"));
@@ -318,5 +325,31 @@ mod tests {
                 "the password never reaches an error: {e}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_unset_password_env_fails_the_row_before_any_connect() {
+        let mut row = t("solo", "app", Role::Direct, None);
+        row.connect = Ok(super::super::ConnectSpec {
+            dsn: crate::conn::Dsn::parse("postgres://127.0.0.1:1/app?sslmode=disable").unwrap(),
+            secret: None,
+            password_env: Some("PGMAN_TEST_PROBE_UNSET_PW".into()),
+        });
+        let report = EnvReport {
+            name: "x".into(),
+            source: "test".into(),
+            targets: vec![row],
+            error: None,
+            probe: Some(super::super::ProbeSettings {
+                version_table: None,
+            }),
+        };
+        let out = run(report, std::sync::Arc::new(|_| panic!("no secret"))).await;
+        assert_eq!(
+            out[0],
+            Some(Err(
+                "password_env names $PGMAN_TEST_PROBE_UNSET_PW, which is not set".into()
+            ))
+        );
     }
 }

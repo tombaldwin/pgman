@@ -963,6 +963,12 @@ pub struct EnvironmentsUi {
     pub probes: Vec<Vec<ProbeState>>,
     /// Numbers each listing, so probes of an older one are dropped.
     pub probe_seq: u64,
+    /// `R`: probe again every `ENV_AUTO_PROBE_INTERVAL` while the
+    /// overview is open. Off by default, and apart from the sessions
+    /// panel's auto-refresh, so turning that on never starts
+    /// connecting to databases here.
+    pub auto_probe: bool,
+    pub auto_probe_last: Option<std::time::Instant>,
 }
 
 /// The overview's discovery view: proposed environments, which ones the

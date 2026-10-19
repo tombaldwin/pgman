@@ -1120,6 +1120,51 @@ fn mcp_session_env(
         .collect()
 }
 
+/// [`mcp_session_env`], but each request waits for the reply before the
+/// next is sent — for behaviour that depends on order across calls.
+fn mcp_session_env_sequential(
+    home: &std::path::Path,
+    env: &[(&str, std::ffi::OsString)],
+    requests: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    use std::io::{BufRead, Write};
+    let mut child = Command::new(pgman_binary())
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn pgman mcp serve");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut frames = Vec::new();
+    for r in requests {
+        writeln!(stdin, "{r}").unwrap();
+        loop {
+            let mut line = String::new();
+            assert!(
+                stdout.read_line(&mut line).unwrap() > 0,
+                "server closed early"
+            );
+            let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let done = v["id"] == r["id"];
+            frames.push(v);
+            if done {
+                break;
+            }
+        }
+    }
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+    frames
+}
+
 fn tool_call(id: u64, name: &str, args: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
         "params": {"name": name, "arguments": args}})
@@ -2073,6 +2118,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
             connect: Ok(pgman::inventory::ConnectSpec {
                 dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
                 secret: None,
+                password_env: None,
             }),
         }],
         error: None,
@@ -2113,4 +2159,158 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         "{p:?}"
     );
     assert_eq!(p.schema_version, None);
+}
+
+/// Over MCP, `probe: true` reads the databases of environments that
+/// opted in, and leaves the others alone; without it nothing connects.
+#[cfg(unix)]
+#[test]
+fn mcp_environments_probe_reads_opted_in_environments_only() {
+    let home = scratch_home("mcp-env-probe", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"local\"\nurl = \"postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"probed\"\nsource = { kind = \"static\", connections = [\"local\"] }\nprobe = true\n\
+         [[environments]]\nname = \"quiet\"\nsource = { kind = \"static\", connections = [\"local\"] }\n",
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(1, "environments", serde_json::json!({"probe": true})),
+            tool_call(2, "environments", serde_json::json!({})),
+            tool_call(3, "environments", serde_json::json!({"probe": "yes"})),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let probe = &v["environments"][0]["databases"][0]["probe"];
+    assert!(probe["server_version"].is_string(), "{text}");
+    assert_eq!(probe["in_recovery"], false, "{text}");
+    assert!(v["environments"][1]["probe"]
+        .as_str()
+        .unwrap()
+        .starts_with("not enabled"));
+    let (text, _) = reply(&frames, 2);
+    assert!(
+        !text.contains("server_version"),
+        "nothing connects unasked: {text}"
+    );
+    let (text, is_error) = reply(&frames, 3);
+    assert!(is_error && text.contains("'probe' must be"), "{text}");
+}
+
+/// A stand-in `ssh` on PATH: logs each launch, then forwards its `-L`
+/// port to the target, so a tunnelled connection reaches the test
+/// Postgres without an ssh server.
+#[cfg(unix)]
+fn fake_ssh(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = home.join("fakessh");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = home.join("ssh-launches.log");
+    let _ = std::fs::remove_file(&log);
+    let script = bin.join("ssh");
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/usr/bin/env python3
+import socket, sys, threading
+open({log:?}, "a").write(" ".join(sys.argv[1:]) + "\n")
+fwd = sys.argv[sys.argv.index("-L") + 1].split(":")
+lport, host, port = int(fwd[1]), fwd[2], int(fwd[3])
+srv = socket.socket(); srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(("127.0.0.1", lport)); srv.listen(16)
+def pipe(a, b):
+    try:
+        while True:
+            d = a.recv(65536)
+            if not d: break
+            b.sendall(d)
+    except OSError: pass
+    finally:
+        for s in (a, b):
+            try: s.close()
+            except OSError: pass
+while True:
+    c, _ = srv.accept()
+    u = socket.create_connection((host, port))
+    threading.Thread(target=pipe, args=(c, u), daemon=True).start()
+    threading.Thread(target=pipe, args=(u, c), daemon=True).start()
+"#,
+            log = log.display().to_string()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = std::ffi::OsString::from(&bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, log)
+}
+
+/// Two calls to a tunnelled connection share one ssh: the tunnel stays
+/// open between calls, while each call still gets a fresh read-only
+/// session.
+#[cfg(unix)]
+#[test]
+fn mcp_reuses_one_tunnel_across_calls() {
+    let home = scratch_home("mcp-tunnel-reuse", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"via\"\nurl = \"postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable\"\n\
+         ssh_tunnel = \"bastion.example\"\n",
+    )
+    .unwrap();
+    let (path, log) = fake_ssh(&home);
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[("PATH", path)],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "via", "sql": "SELECT pg_backend_pid() AS pid"}),
+        )],
+    );
+    let (first, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{first}");
+    assert_eq!(std::fs::read_to_string(&log).unwrap().lines().count(), 1);
+    // A second session of the server is a second process: it opens its
+    // own. Within one server, calls share the tunnel:
+    let (path, log) = fake_ssh(&home);
+    let frames = mcp_session_env_sequential(
+        &home,
+        &[("PATH", path)],
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "via", "sql": "SELECT pg_backend_pid() AS pid"}),
+            ),
+            tool_call(
+                2,
+                "query",
+                serde_json::json!({"connection": "via", "sql": "SELECT pg_backend_pid() AS pid"}),
+            ),
+        ],
+    );
+    let (a, e1) = reply(&frames, 1);
+    let (b, e2) = reply(&frames, 2);
+    assert!(!e1 && !e2, "{a}\n{b}");
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap().lines().count(),
+        1,
+        "one ssh for both calls"
+    );
+    assert_ne!(a, b, "a fresh backend (session) per call");
 }

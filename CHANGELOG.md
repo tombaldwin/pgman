@@ -77,6 +77,16 @@ and breaking changes.
   and the global keys), coloured key hints in the footer, and uppercase
   panel column headers. The drawing vocabulary now lives in
   `tb-tui-common`, shared with ebman.
+- **`--batch --discovered`** accepts a checkout that declares one
+  database twice (identical URL and credentials) as a single candidate.
+- **MCP tunnels stay open between calls** to the same database (5
+  minutes idle), so a run of `query` calls pays the ssh handshake once;
+  each call still gets a fresh read-only session.
+- **A `docker` environment source** — local Postgres containers, from
+  `docker ps`, reached on their published port. Environments can name
+  `password_env` for databases without a secret. (Earlier docs said
+  `~/.pgpass` and `PGPASSWORD` applied; pgman never read them for
+  environments.)
 - **Probes** — `probe = true` on an environment adds each database's
   patch level, pending patches and replica lag to the overview. It reads
   through replicas (a primary with a replica isn't touched), uses one

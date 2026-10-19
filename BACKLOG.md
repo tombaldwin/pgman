@@ -41,8 +41,8 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   tickers), and an `environments` MCP tool returning the same rows.
 - **Order.** (1) and (2) are done (PLAN.md): the model, the sources,
   the `E` screen, connecting, AWS discovery, and opt-in probes with one
-  ssh per bastion. Next is (3): `docker` and the other sources as
-  needed.
+  ssh per bastion, and (3) began with `docker`. Cloud SQL, Azure
+  Database and the others follow as they're needed.
 
 ### Shared chrome — follow-ups (2026-10-19)
 - **ebman onto `tui_common::chrome`.** ebman still carries its own copy
@@ -50,19 +50,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   `titled_block`, `pill_chain`, `sep`, `kv`, `join_fields_to_fit`,
   `hints_to_fit`). Switching it over makes the two apps one vocabulary
   for real.
-- **Results grid headers** keep the query's own column names (case
-  matters in SQL); a bold or underlined style, rather than uppercase,
-  could still set them apart.
-
-### Environments — after probes (2026-10-19)
-- **Background refresh.** Probes run on `E` and `r` only. A periodic
-  refresh on the shared frame clock (house rule: no independent tickers)
-  would keep lag current.
-- **Probes over MCP.** The `environments` tool still connects to nothing.
-  A `probe` argument (opt-in environments only) would give an agent the
-  same patch level and lag.
-- **Discovery could propose `probe` and `version_table`**, for instance
-  from a project's `[patches]`. Today they're added by hand.
 
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
@@ -71,14 +58,6 @@ and Tom's decisions that day:
   `SET LOCAL lock_timeout`, a dry run as `BEGIN … ROLLBACK`, and a
   confirm through elicitation where a decline is final and Prod needs a
   typed confirm. It gets its own safety review before it ships.
-- **`--batch` and same-database discovered candidates.** A Spring
-  checkout often declares one database twice (examplecorp: `dataSource` and
-  `replicaDataSource`, both `ledger`), and batch's single-candidate rule
-  counts them as two. MCP lists them with `same_database_as`. Batch could
-  collapse identical targets before counting.
-- **A connection pool, or at least a tunnel kept open, across `query`
-  calls.** Today every call pays the connect, and the ssh handshake when
-  there's a tunnel.
 
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
