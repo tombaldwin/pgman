@@ -51,6 +51,15 @@ and breaking changes.
 - **DBA panels** — schema browser, schema-lint wizard, EXPLAIN tree,
   slow queries, sessions and locks, result diff, `\l`, `\x`, `\c`, `\i`,
   the `\d` family, `\timing`.
+- **MCP server** — `pgman mcp serve` gives Claude Code (or any MCP
+  client) read-only tools: `query`, `sessions_locks` (a pre-flight before
+  a schema change), `pending_patches`, `connections`, `environments` and
+  `doctor`. Every session is read-only whatever `safety.toml` says;
+  personal connections can tunnel and read their password from AWS
+  Secrets Manager; a `primary` connection serves only the lock check.
+- **Environments overview** — `E` lists every database in each
+  environment, replicas under their primary, from RDS (via the `aws`
+  CLI) or hand-listed connections, without connecting to any of them.
 - **A `:` command bar** — `:about`, `:help`, `:update`, `:readonly`,
   `:connect`, and every `\` command; `?` opens help from any mode.
 - **Layout you control** — `z` zooms the results and `Z` the editor to

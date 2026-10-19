@@ -1447,7 +1447,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -1550,4 +1550,112 @@ fn mcp_secret_connections_read_the_secret_and_respect_the_role() {
     assert!(is_error && text.contains("PRIMARY"), "{text}");
     let (text, is_error) = reply(&frames, 2);
     assert!(!is_error, "{text}");
+}
+
+/// `environments` end to end with the fake aws CLI: the account is
+/// checked before instances are listed, a matched primary brings its
+/// replica, and a wrong account lists nothing.
+#[cfg(unix)]
+#[test]
+fn mcp_environments_lists_rds_instances_with_their_replicas() {
+    let home = scratch_home("mcp-envs", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"demo\"\ndatabases = [\"ledger\", \"ledgerlog\"]\n\
+         source = { kind = \"rds\", instances = [\"demo\"], region = \"us-west-1\", account = \"210987654321\" }\n",
+    )
+    .unwrap();
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [
+          {"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10", "DBInstanceStatus": "available",
+           "DBInstanceClass": "db.t4g.medium", "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaDBInstanceIdentifiers": ["demo-read-only-replica"], "DBName": "ledger"},
+          {"DBInstanceIdentifier": "demo-read-only-replica", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+           "Endpoint": {"Address": "demo-read-only-replica.x.rds.amazonaws.com", "Port": 5432},
+           "ReadReplicaSourceDBInstanceIdentifier": "demo", "DBName": "ledger"},
+          {"DBInstanceIdentifier": "production", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium", "DBName": "prod"}
+        ]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |account: &str| {
+        mcp_session_env(
+            &home,
+            &home,
+            &[],
+            &[
+                ("PATH", path.clone()),
+                ("FAKE_AWS_ACCOUNT", account.into()),
+                ("FAKE_RDS_JSON", rds.clone().into()),
+            ],
+            &[tool_call(1, "environments", serde_json::json!({}))],
+        )
+    };
+
+    let frames = run("210987654321");
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows: Vec<(String, String, String)> = v["environments"][0]["databases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["server"].as_str().unwrap().to_string(),
+                d["database"].as_str().unwrap().to_string(),
+                d["role"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("demo".into(), "ledger".into(), "primary".into()),
+            ("demo".into(), "ledgerlog".into(), "primary".into()),
+            (
+                "demo-read-only-replica".into(),
+                "ledger".into(),
+                "replica".into()
+            ),
+            (
+                "demo-read-only-replica".into(),
+                "ledgerlog".into(),
+                "replica".into()
+            ),
+        ]
+    );
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let sts = calls
+        .find("sts get-caller-identity")
+        .expect("account checked");
+    let rds_call = calls
+        .find("rds describe-db-instances")
+        .expect("instances listed");
+    assert!(sts < rds_call, "account must be checked first: {calls}");
+
+    std::fs::remove_file(&log).unwrap();
+    let frames = run("111111111111");
+    let (text, _) = reply(&frames, 1);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(
+        v["environments"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("111111111111"),
+        "{text}"
+    );
+    assert!(v["environments"][0]["databases"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("rds describe"),
+        "listed despite the wrong account: {calls}"
+    );
 }

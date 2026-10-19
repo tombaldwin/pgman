@@ -1,5 +1,6 @@
 ---
 source: tests/snapshots.rs
+assertion_line: 223
 expression: dump(&buf)
 ---
  pgman │ test  connected · pg 16.0
@@ -41,6 +42,7 @@ expression: dump(&buf)
 │              │     ] / [  1..9   next / prev tab · tab N — see the tabs section   │              │
 │              │     T             slow queries (pg_stat_statements top-N)          │              │
 │              │     L             active sessions + locks (pg_stat_activity)       │              │
+│              │     E             environments overview (no connection needed)     │              │
 │              │     F3            LISTEN/NOTIFY arrivals panel (also reachable     │              │
 │              │                   from any mode)                                   │              │
 │              │     h / l  ← →    move column cursor                               │              │
@@ -90,8 +92,7 @@ expression: dump(&buf)
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
 │              │     .             auto-trigger qualified completion (users.|)      │              │
 │              │     (in popup) type to narrow live · esc to restore typed prefix   │              │
-│              │     enter         insert newline                                   │              │
-│              │ ↓ 209 more below                                                   │              │
+│              │ ↓ 218 more below                                                   │              │
 │              │                                                                    │              │
 │              └────────────────────────────────────────────────────────────────────┘              │
 │                                                                                                  │

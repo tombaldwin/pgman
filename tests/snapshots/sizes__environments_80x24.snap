@@ -1,0 +1,29 @@
+---
+source: tests/sizes.rs
+assertion_line: 229
+expression: dump(&buf)
+---
+ pgman │ shop  connected · pg 16.2
+ 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+│> SELECT id, email, plan, created_at                                          │
+│  ┌ environments — r refresh · q close ───────────────────────────────────┐   │
+│  │  staging · RDS 123456789012 eu-west-2                                 │   │
+│  │    database  role     server             status     engine            │   │
+│  │    shop      primary  staging            available  postgres 16.4     │   │
+└──│    shop      replica  └ staging-replica  available  postgres 16.4     │───┘
+┌ r│                                                                       │───┐
+│id│  qa · RDS 123456789012 eu-west-2                                      │   │
+│1 │    database  role     server             status     engine            │   │
+│2 │    shop      direct   qa                 stopped    postgres 16.4     │   │
+│3 │                                                                       │   │
+│4 │  local · connections.toml                                             │   │
+│5 │    database  role     server             status     engine            │   │
+│6 │    shop      direct   shop-local         —          —                 │   │
+│  │                                                                       │   │
+│  │  staging-replica/shop · replica of staging · db.t4g.medium · single-A…│   │
+│  └───────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ RO   TAP   N+1 ×1   j/k navigate · g/G top/bottom · r refresh · F1 +2 more

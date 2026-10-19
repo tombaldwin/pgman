@@ -857,6 +857,19 @@ fn sessions() {
     run_sizes("sessions", scr_sessions);
 }
 
+fn scr_environments() -> App {
+    let mut a = base();
+    a.mode = Mode::Environments;
+    a.environments.reports = pgman::demo::environments();
+    a.environments.cursor = 1;
+    a
+}
+
+#[test]
+fn environments() {
+    run_sizes("environments", scr_environments);
+}
+
 #[test]
 fn schema_lint() {
     run_sizes("schema_lint", scr_schema_lint);

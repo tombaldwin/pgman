@@ -383,6 +383,31 @@ replica and the primary; `query` on the primary was refused. Neither
 secret's password appears in the log or the tool output. Prod has not
 been touched.
 
+## Environments overview, step 1 — 2026-10-19 · behaviour · **in review**
+
+Tom: "something like ebman's main screen", every database in an
+environment with its replicas, configurable beyond RDS (local databases,
+hand-listed remote groups, other clouds). Step 1 (branch `envs-step1`):
+
+- `inventory`: environments of targets from pluggable sources. `rds`
+  runs `describe-db-instances` through the shared `aws_cli` (account
+  checked first; replicas of a match come along). `static` takes names
+  from `connections.toml`. Unknown config keys are errors.
+- An `E` screen that needs no connection: replicas sit under their
+  primary, columns are sized to the data and end in an ellipsis rather
+  than being cut, status sorts ahead of engine so a stopped instance
+  shows on a narrow terminal, and a detail line gives the focused
+  database's full endpoint, class and AZ. Plus an `environments` MCP
+  tool.
+- The loader is injected (`EnvironmentsLoader`) and `None` by default,
+  so no test can read the real config or run the aws CLI. `--demo` gets
+  a synthetic fixture.
+
+Checked live against examplecorp's account using a scratch config, with no
+database connections: demo, prod and dev+test, 10 databases. Demo's
+primary showed `backing-up` at the time. Driven by hand in tmux, which
+is what moved the endpoint out of the table and into the detail line.
+
 ## Release day
 
 ```

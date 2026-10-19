@@ -864,6 +864,7 @@ impl App {
             KeyCode::Char('S') => self.start_schema_browser(),
             KeyCode::Char('T') => self.start_slow_queries(),
             KeyCode::Char('L') => self.start_sessions(),
+            KeyCode::Char('E') => self.start_environments(),
             KeyCode::Char('W') => self.start_schema_lint(),
             KeyCode::Char('Q') => self.open_saved_queries(),
             KeyCode::Char('D') => self.pin_or_diff_result(),
@@ -1306,6 +1307,21 @@ impl App {
                     ));
                 }
             }
+            _ => {}
+        }
+    }
+
+    pub(super) fn on_environments_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                self.last_status = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => self.environments.select_next(),
+            KeyCode::Char('k') | KeyCode::Up => self.environments.select_prev(),
+            KeyCode::Char('g') | KeyCode::Home => self.environments.select_first(),
+            KeyCode::Char('G') | KeyCode::End => self.environments.select_last(),
+            KeyCode::Char('r') => self.refresh_environments(),
             _ => {}
         }
     }

@@ -26,6 +26,7 @@ const HELP_TOPICS: &[(&str, Mode)] = &[
     ("saved", Mode::SavedQueries),
     ("slow", Mode::SlowQueries),
     ("sessions", Mode::Sessions),
+    ("environments", Mode::Environments),
     ("tap", Mode::TapMonitor),
     ("explain", Mode::ExplainTree),
     ("diff", Mode::ResultDiff),

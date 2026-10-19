@@ -552,6 +552,26 @@ impl App {
         });
     }
 
+    /// Gather every environment with the installed loader: on a blocking
+    /// thread for the real one (the aws CLI runs there), at once for a
+    /// fixture. `false` when no loader is installed.
+    pub(super) fn spawn_environments_load(&mut self) -> bool {
+        match self.environments_loader.clone() {
+            None => false,
+            Some(EnvironmentsLoader::Immediate(reports)) => {
+                self.on_msg(AppMsg::EnvironmentsLoaded(Ok(reports)));
+                true
+            }
+            Some(EnvironmentsLoader::Blocking(load)) => {
+                let tx = self.msg_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    let _ = tx.send(AppMsg::EnvironmentsLoaded(load()));
+                });
+                true
+            }
+        }
+    }
+
     pub(super) fn spawn_sessions_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
         let tx = self.msg_tx.clone();
         let generation = self.generation;

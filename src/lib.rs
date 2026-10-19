@@ -5,6 +5,7 @@
 //! `BACKLOG.md` for the milestone plan.
 
 pub mod app;
+pub mod aws_cli;
 pub mod batch;
 pub mod conn;
 pub mod creds;
@@ -16,6 +17,7 @@ pub mod discover;
 // sites and tests keep working untouched.
 pub use tui_common::font_probe;
 pub mod grid;
+pub mod inventory;
 pub mod mcp;
 pub mod project;
 pub mod query;

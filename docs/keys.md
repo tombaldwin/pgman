@@ -53,6 +53,7 @@ once a query has run share one key map.
 | `Q` | Saved queries |
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
+| `E` | Environments: every database and replica, no connection needed ([Environments](environments.md)) |
 | `F3` | NOTIFY arrivals panel (also reachable from any mode) |
 | `]` / `[` / `1`..`9` / `Ctrl-T` | Next / previous tab, jump to tab N, new tab — see [Tabs](#tabs) |
 | `z` | Zoom the results to the whole body; `z` again restores the split exactly as it was |

@@ -132,6 +132,11 @@ pub enum Mode {
     /// `pg_stat_activity` rows with `pg_blocking_pids()` joined in;
     /// blocked sessions sort to the top. `r` refreshes.
     Sessions,
+    /// Environments overview (`E` from Normal): every database in each
+    /// environment of `environments.toml`, replicas included, from the
+    /// sources alone (RDS, connections.toml). Needs no connection; `r`
+    /// refreshes.
+    Environments,
     /// Schema "wizard" / lint (`W` from Normal). Runs
     /// `query::lint::run_all` against the schema cache and lists
     /// findings (missing PK, mixed-case identifiers, reserved-
@@ -864,6 +869,58 @@ pub struct SessionsUi {
 impl ListCursorNav for SessionsUi {
     fn nav_len(&self) -> usize {
         self.rows.len()
+    }
+    fn nav_cursor(&self) -> usize {
+        self.cursor
+    }
+    fn nav_set(&mut self, i: usize) {
+        self.cursor = i;
+    }
+}
+
+/// Where the environments panel's rows come from. `App` has none by
+/// default, so nothing a test does can read the operator's config or run
+/// the aws CLI; `main.rs` installs the real loader, `--demo` a fixture.
+#[derive(Clone)]
+pub enum EnvironmentsLoader {
+    /// Run on a blocking thread (the aws CLI runs inside).
+    Blocking(
+        std::sync::Arc<dyn Fn() -> Result<Vec<crate::inventory::EnvReport>, String> + Send + Sync>,
+    ),
+    /// Fixed rows, applied at once — no I/O, no runtime needed.
+    Immediate(Vec<crate::inventory::EnvReport>),
+}
+
+impl std::fmt::Debug for EnvironmentsLoader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            EnvironmentsLoader::Blocking(_) => "EnvironmentsLoader::Blocking",
+            EnvironmentsLoader::Immediate(_) => "EnvironmentsLoader::Immediate",
+        })
+    }
+}
+
+/// Environments panel state: the last gathered reports and the cursor,
+/// which moves over databases (environment headings are not stops).
+#[derive(Debug, Default)]
+pub struct EnvironmentsUi {
+    pub reports: Vec<crate::inventory::EnvReport>,
+    pub cursor: usize,
+    /// A gather is in flight; the panel says so instead of "none".
+    pub loading: bool,
+    /// Why the last gather produced nothing at all (config unreadable).
+    pub error: Option<String>,
+}
+
+impl EnvironmentsUi {
+    pub fn target_count(&self) -> usize {
+        self.reports.iter().map(|r| r.targets.len()).sum()
+    }
+}
+
+impl ListCursorNav for EnvironmentsUi {
+    fn nav_len(&self) -> usize {
+        self.target_count()
     }
     fn nav_cursor(&self) -> usize {
         self.cursor

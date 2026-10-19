@@ -1565,6 +1565,7 @@ fn a_query_failure_survives_leaving_the_editor_and_viewing_its_detail() {
 fn is_panel_separates_panels_from_base_modes_modals_and_prompts() {
     for m in [
         Mode::Sessions,
+        Mode::Environments,
         Mode::SlowQueries,
         Mode::SchemaLint,
         Mode::SchemaBrowser,
@@ -9120,4 +9121,84 @@ fn tab_index_for_digit_maps_one_to_nine_only() {
     assert_eq!(tab_index_for_digit('0'), None);
     assert_eq!(tab_index_for_digit('a'), None);
     assert_eq!(tab_index_for_digit(']'), None);
+}
+
+#[test]
+fn environments_open_without_a_connection_and_load_the_installed_rows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    // Past the first-visit tip, which owns the status line once.
+    a.mode_seen.insert(Mode::Environments);
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(a.mode, Mode::Environments, "no connection needed");
+    assert_eq!(a.last_error, None);
+    assert_eq!(a.environments.reports.len(), 3);
+    assert!(!a.environments.loading);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("environments · 3 · 4 databases")
+    );
+    // The cursor walks databases, not headings, and stops at the ends.
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.environments.cursor, 3);
+    press(&mut a, KeyCode::Char('g'));
+    assert_eq!(a.environments.cursor, 0);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+#[test]
+fn environments_without_a_loader_say_so_and_never_touch_the_disk_or_aws() {
+    // `App::new` installs no loader: nothing a test presses can read the
+    // operator's environments.toml or run the aws CLI.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(a.mode, Mode::Environments);
+    assert!(!a.environments.loading);
+    assert!(a
+        .environments
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("not available"));
+}
+
+#[test]
+fn an_environments_result_survives_a_reconnect() {
+    // Not connection-bound: a gather that lands after the generation
+    // moved on is still the operator's environments.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.generation = 7;
+    a.environments.loading = true;
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(crate::demo::environments())));
+    assert_eq!(a.environments.reports.len(), 3);
+    assert!(!a.environments.loading);
+
+    a.on_msg(AppMsg::EnvironmentsLoaded(Err(
+        "environments.toml parse error".into(),
+    )));
+    assert!(a.environments.reports.is_empty());
+    assert_eq!(
+        a.environments.error.as_deref(),
+        Some("environments.toml parse error")
+    );
+}
+
+#[test]
+fn environments_status_counts_failures() {
+    assert_eq!(
+        environments_status(0, 0, 0),
+        "environments · none configured"
+    );
+    assert_eq!(
+        environments_status(2, 6, 0),
+        "environments · 2 · 6 databases"
+    );
+    assert_eq!(
+        environments_status(2, 4, 1),
+        "environments · 2 · 4 databases · 1 failed"
+    );
 }

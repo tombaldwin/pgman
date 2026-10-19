@@ -287,6 +287,9 @@ async fn main() -> anyhow::Result<()> {
 
     let safety_config = project::merge_safety(load_safety_config(), project_safety.as_ref());
     let mut application = app::App::new(theme, dsn, data_source_picks, safety_config);
+    application.environments_loader = Some(app::EnvironmentsLoader::Blocking(std::sync::Arc::new(
+        pgman::inventory::load_and_gather,
+    )));
     application.dsn_origin = dsn_origin;
     // Update check: opt-out via --no-update-check or the env var.
     // (--demo and --batch never reach here — --demo builds its own
