@@ -93,6 +93,18 @@ pub fn sessions_status(total: usize, blocked: usize) -> String {
     }
 }
 
+/// The environments panel's status line. Pure / testable.
+pub fn environments_status(envs: usize, dbs: usize, failed: usize) -> String {
+    if envs == 0 {
+        return "environments · none configured".to_string();
+    }
+    let mut s = format!("environments · {envs} · {dbs} databases");
+    if failed > 0 {
+        s.push_str(&format!(" · {failed} failed"));
+    }
+    s
+}
+
 /// A panel: a view the operator opens over the grid / editor and
 /// closes again — as opposed to the two base modes, a decision modal
 /// that owns the keyboard, a text prompt, or the error-detail overlay.
@@ -113,6 +125,7 @@ fn is_panel(mode: Mode) -> bool {
             | Mode::SchemaBrowser
             | Mode::SlowQueries
             | Mode::Sessions
+            | Mode::Environments
             | Mode::SchemaLint
             | Mode::Notifications
             | Mode::TapMonitor
@@ -1204,6 +1217,10 @@ pub struct App {
     pub slow_queries: SlowQueriesUi,
     /// Sessions panel state (snapshot + cursor).
     pub sessions: SessionsUi,
+    pub environments: EnvironmentsUi,
+    /// What fills the environments panel; `None` until `main.rs` (or
+    /// `--demo`) installs one.
+    pub environments_loader: Option<EnvironmentsLoader>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1406,6 +1423,8 @@ impl App {
             schema_lint: SchemaLintUi::default(),
             slow_queries: SlowQueriesUi::default(),
             sessions: SessionsUi::default(),
+            environments: EnvironmentsUi::default(),
+            environments_loader: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -2028,6 +2047,7 @@ impl App {
             Mode::SchemaBrowserFilter => self.on_schema_browser_filter_key(key),
             Mode::SlowQueries => self.on_slow_queries_key(key),
             Mode::Sessions => self.on_sessions_key(key),
+            Mode::Environments => self.on_environments_key(key),
             Mode::SchemaLint => self.on_schema_lint_key(key),
             Mode::ErrorDetail => self.on_error_detail_key(key),
             Mode::ConfirmTerminate => self.on_confirm_terminate_key(key),
@@ -2068,6 +2088,9 @@ impl App {
             ),
             Mode::Sessions => Some(
                 "tip · blocked sessions sort top in red · K terminate · r refresh · F1 full keys",
+            ),
+            Mode::Environments => Some(
+                "tip · from environments.toml · replicas under their primary · r refresh · F1 full keys",
             ),
             Mode::SchemaLint => {
                 Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · F1 full keys")
@@ -2496,6 +2519,7 @@ impl App {
             Mode::ExplainTree => Some("EXPLAIN tree"),
             Mode::SlowQueries => Some("slow queries"),
             Mode::Sessions => Some("active sessions"),
+            Mode::Environments => Some("environments"),
             Mode::GridFilter => Some("grid"),
             Mode::GridFind => Some("grid"),
             Mode::About => Some("grid"),
@@ -3668,6 +3692,28 @@ impl App {
         };
         self.last_status = Some("refreshing pg_stat_statements…".into());
         self.spawn_slow_queries_load(client);
+    }
+
+    /// `E` from Normal: open the environments overview and gather. Needs
+    /// no connection — the sources are the config and the aws CLI.
+    fn start_environments(&mut self) {
+        self.environments.cursor = 0;
+        self.mode = Mode::Environments;
+        self.refresh_environments();
+    }
+
+    fn refresh_environments(&mut self) {
+        if self.environments.loading {
+            return;
+        }
+        self.environments.loading = true;
+        self.last_status = Some("listing environments…".into());
+        if !self.spawn_environments_load() {
+            self.environments.loading = false;
+            self.environments.error =
+                Some("environments are not available in this session".to_string());
+            self.last_status = None;
+        }
     }
 
     /// `L` from Normal — load + open the active-sessions panel.

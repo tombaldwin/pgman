@@ -23,9 +23,10 @@ mod tap;
 use editor::{draw_completion_popup, draw_editor};
 use landing::draw_landing;
 use panels::{
-    draw_about, draw_confirm, draw_conn_pick, draw_error_detail, draw_explain_tree, draw_help,
-    draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
-    draw_save_query_prompt, draw_saved_queries, draw_sessions, draw_slow_queries,
+    draw_about, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
+    draw_explain_tree, draw_help, draw_log_pick, draw_notifications, draw_param_prompt,
+    draw_rename_prompt, draw_save_query_prompt, draw_saved_queries, draw_sessions,
+    draw_slow_queries,
 };
 use results::{draw_cell_detail, draw_grid, draw_result_diff, draw_row_detail};
 use schema::{draw_schema_browser, draw_schema_lint};
@@ -157,6 +158,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.mode == Mode::Sessions {
         draw_sessions(f, area, app);
+    }
+    if app.mode == Mode::Environments {
+        draw_environments(f, area, app);
     }
     if app.mode == Mode::SchemaLint {
         draw_schema_lint(f, area, app);
@@ -1328,7 +1332,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 // TxDecision is handled above with a return — this arm is unreachable.
                 Mode::TxDecision => "y = commit · n / esc = rollback",
                 Mode::Confirm => "y run · n / esc cancel",
-                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · D diff · / filter · f find · ] [ tabs · z zoom · Z zoom editor",
+                Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · E envs · D diff · / filter · f find · ] [ tabs · z zoom · Z zoom editor",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
@@ -1336,6 +1340,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
+                Mode::Environments => "j/k navigate · g/G top/bottom · r refresh · q / esc close",
                 Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
                 Mode::ErrorDetail => "esc / q / F2 close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
@@ -1758,6 +1763,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    E             environments overview (no connection needed)"),
+        &mut lines,
+    );
+    push(
         row("    F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
         &mut lines,
     );
@@ -2075,6 +2084,21 @@ pub(crate) fn help_body(
     push(row("    esc / q       close"), &mut lines);
     push(Line::from(""), &mut lines);
 
+    heading("environments", &mut lines, &mut anchors);
+    push(
+        row("    j / k  ↑ ↓    navigate databases (replicas sit under their primary, marked └)"),
+        &mut lines,
+    );
+    push(
+        row("    r             list again: environments.toml, RDS via the aws CLI, connections.toml"),
+        &mut lines,
+    );
+    push(
+        row("    status        RDS's view of the instance; stopped ones are grey"),
+        &mut lines,
+    );
+    push(Line::from(""), &mut lines);
+
     heading("active sessions", &mut lines, &mut anchors);
     push(
         row("    j / k  ↑ ↓    navigate sessions (blocked ones sort to the top, red)"),
@@ -2159,7 +2183,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                    slow, sessions, tap, explain, diff, wizard"),
+        row("                    slow, sessions, environments, tap, explain, diff, wizard"),
         &mut lines,
     );
     push(row("    :quit  /  :q    quit pgman"), &mut lines);

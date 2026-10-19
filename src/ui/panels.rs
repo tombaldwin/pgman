@@ -1125,6 +1125,258 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
 /// the renderer flags blockers in the same colour as the hottest-
 /// node highlight in the EXPLAIN tree (red) so visual scanning
 /// matches between the two.
+/// One line of the environments panel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EnvLine {
+    /// `name · source`, and the environment's error when it has one.
+    Heading {
+        text: String,
+        error: Option<String>,
+    },
+    /// The column header under a heading.
+    Columns(String),
+    /// A database; `index` is its position in the cursor's order.
+    Row {
+        text: String,
+        index: usize,
+        status: Option<String>,
+    },
+    Blank,
+}
+
+/// The environments panel's lines, columns sized to the data. Pure, so
+/// the layout is tested without a terminal.
+pub(crate) fn environment_lines(reports: &[crate::inventory::EnvReport]) -> Vec<EnvLine> {
+    let all = || reports.iter().flat_map(|r| r.targets.iter());
+    let server = |t: &crate::inventory::Target| {
+        if t.replica_of.is_some() {
+            format!("└ {}", t.server)
+        } else {
+            t.server.clone()
+        }
+    };
+    let w = |head: &str, cells: Vec<String>| {
+        cells
+            .iter()
+            .map(|c| crate::ui::display_width(c))
+            .chain(std::iter::once(head.len()))
+            .max()
+            .unwrap_or(0)
+    };
+    let db_w = w("database", all().map(|t| t.database.clone()).collect());
+    let role_w = w("role", all().map(|t| t.role.label().to_string()).collect());
+    let srv_w = w("server", all().map(server).collect());
+    let st_w = w(
+        "status",
+        all()
+            .map(|t| t.status.clone().unwrap_or_default())
+            .collect(),
+    );
+    let pad = |c: &str, width: usize| {
+        let n = width.saturating_sub(crate::ui::display_width(c));
+        format!("{c}{}", " ".repeat(n))
+    };
+    let mut out = Vec::new();
+    let mut index = 0;
+    for (i, r) in reports.iter().enumerate() {
+        if i > 0 {
+            out.push(EnvLine::Blank);
+        }
+        out.push(EnvLine::Heading {
+            text: format!("  {} · {}", r.name, r.source),
+            error: r.error.clone(),
+        });
+        if r.targets.is_empty() {
+            continue;
+        }
+        out.push(EnvLine::Columns(format!(
+            "    {}  {}  {}  {}  engine",
+            pad("database", db_w),
+            pad("role", role_w),
+            pad("server", srv_w),
+            pad("status", st_w),
+        )));
+        for t in &r.targets {
+            out.push(EnvLine::Row {
+                text: format!(
+                    "    {}  {}  {}  {}  {}",
+                    pad(&t.database, db_w),
+                    pad(t.role.label(), role_w),
+                    pad(&server(t), srv_w),
+                    pad(t.status.as_deref().unwrap_or("—"), st_w),
+                    t.engine.as_deref().unwrap_or("—"),
+                ),
+                index,
+                status: t.status.clone(),
+            });
+            index += 1;
+        }
+    }
+    out
+}
+
+/// The detail line under the table for the focused database: what the
+/// columns leave out — the primary a replica follows, class, multi-AZ
+/// and the full endpoint. Pure / testable.
+pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
+    let mut parts = vec![format!("{}/{}", t.server, t.database)];
+    if let Some(of) = &t.replica_of {
+        parts.push(format!("replica of {of}"));
+    }
+    if let Some(c) = &t.class {
+        parts.push(c.clone());
+    }
+    match t.multi_az {
+        Some(true) => parts.push("multi-AZ".into()),
+        Some(false) => parts.push("single-AZ".into()),
+        None => {}
+    }
+    // Longest last, so a narrow panel cuts the endpoint, not the facts.
+    match (&t.host, t.port) {
+        (Some(h), Some(p)) => parts.push(format!("{h}:{p}")),
+        (Some(h), None) => parts.push(h.clone()),
+        _ => {}
+    }
+    format!("  {}", parts.join(" · "))
+}
+
+/// The panel height below which the detail line is left out.
+const DETAIL_MIN_HEIGHT: u16 = 12;
+
+pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
+    let theme = &app.theme;
+    let popup = centered_pct(area, 92, 80);
+    f.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border_active))
+        .title(Span::styled(
+            " environments — r refresh · q close ",
+            Style::default().fg(theme.title),
+        ));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let ui = &app.environments;
+    if ui.reports.is_empty() {
+        let (msg, colour) = if let Some(e) = &ui.error {
+            (e.clone(), theme.health_red)
+        } else if ui.loading {
+            ("listing environments…".to_string(), theme.muted)
+        } else {
+            (
+                format!(
+                    "no environments configured — add {} (see docs/environments.md)",
+                    crate::util::config_file("environments.toml").display()
+                ),
+                theme.muted,
+            )
+        };
+        f.render_widget(
+            Paragraph::new(Text::from(msg))
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(colour)),
+            inner,
+        );
+        return;
+    }
+
+    // The last line shows the focused database's detail when the panel
+    // is tall enough that the line doesn't push rows out of view; on a
+    // short terminal the rows are worth more.
+    let focused = ui
+        .reports
+        .iter()
+        .flat_map(|r| r.targets.iter())
+        .nth(ui.cursor);
+    let (table, detail_area) = match focused {
+        Some(_) if inner.height >= DETAIL_MIN_HEIGHT => (
+            Rect {
+                height: inner.height - 1,
+                ..inner
+            },
+            Some(Rect {
+                y: inner.y + inner.height - 1,
+                height: 1,
+                ..inner
+            }),
+        ),
+        _ => (inner, None),
+    };
+    if let (Some(t), Some(at)) = (focused, detail_area) {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                crate::grid::truncate_cell(&environment_detail(t), at.width as usize),
+                Style::default().fg(theme.muted),
+            ))),
+            at,
+        );
+    }
+    let inner = table;
+    let env_lines = environment_lines(&ui.reports);
+    let focus_line = env_lines
+        .iter()
+        .position(|l| matches!(l, EnvLine::Row { index, .. } if *index == ui.cursor))
+        .unwrap_or(0);
+    let visible_h = inner.height as usize;
+    let width = inner.width as usize;
+    // End-ellipsise what doesn't fit rather than letting the frame cut a
+    // value mid-word.
+    let fit = |t: &str| crate::grid::truncate_cell(t, width);
+    let scroll = scroll_offset(focus_line, visible_h);
+    let mut lines: Vec<Line> = Vec::new();
+    for l in env_lines.iter().skip(scroll).take(visible_h) {
+        lines.push(match l {
+            EnvLine::Blank => Line::from(""),
+            EnvLine::Heading { text, error } => {
+                let head = fit(text);
+                let room = width.saturating_sub(crate::ui::display_width(&head));
+                let mut spans = vec![Span::styled(
+                    head,
+                    Style::default()
+                        .fg(theme.title)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                if let Some(e) = error {
+                    if room > 4 {
+                        spans.push(Span::styled(
+                            crate::grid::truncate_cell(&format!("  ✗ {e}"), room),
+                            Style::default().fg(theme.health_red),
+                        ));
+                    }
+                }
+                Line::from(spans)
+            }
+            EnvLine::Columns(text) => Line::from(Span::styled(
+                fit(text),
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            EnvLine::Row {
+                text,
+                index,
+                status,
+            } => {
+                let style = if *index == ui.cursor {
+                    Style::default()
+                        .fg(theme.text)
+                        .bg(theme.row_selected_bg)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(match status.as_deref() {
+                        Some("available") | None => theme.text,
+                        Some("stopped") | Some("stopping") => theme.health_grey,
+                        Some(_) => theme.health_yellow,
+                    })
+                };
+                Line::from(Span::styled(fit(text), style))
+            }
+        });
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 92, 80);
@@ -1933,6 +2185,74 @@ fn push_kv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_lines_group_replicas_under_their_primary_and_align_columns() {
+        let lines = environment_lines(&crate::demo::environments());
+        let rows: Vec<(&str, usize)> = lines
+            .iter()
+            .filter_map(|l| match l {
+                EnvLine::Row { text, index, .. } => Some((text.as_str(), *index)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.iter().map(|r| r.1).collect::<Vec<_>>(), [0, 1, 2, 3]);
+        assert!(rows[1].0.contains("└ staging-replica"), "{}", rows[1].0);
+        assert!(rows[1].0.contains("replica"));
+        // Columns line up: every row puts the engine at the header's column.
+        let col = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
+        let header = lines
+            .iter()
+            .find_map(|l| match l {
+                EnvLine::Columns(t) => Some(t.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(col(rows[0].0, "postgres"), col(&header, "engine"));
+        assert_eq!(col(rows[1].0, "postgres"), col(&header, "engine"));
+        // Static rows carry no engine or status: shown as a dash.
+        assert!(rows[3].0.contains("—"), "{}", rows[3].0);
+    }
+
+    #[test]
+    fn the_detail_line_carries_what_the_columns_leave_out() {
+        let envs = crate::demo::environments();
+        let d = environment_detail(&envs[0].targets[1]);
+        assert!(d.contains("staging-replica/shop"), "{d}");
+        assert!(
+            d.contains("staging-replica.c1x2y3.eu-west-2.rds.amazonaws.com:5432"),
+            "{d}"
+        );
+        assert!(
+            d.contains("db.t4g.medium") && d.contains("single-AZ"),
+            "{d}"
+        );
+        assert!(d.contains("replica of staging"), "{d}");
+        assert!(
+            d.find("replica of").unwrap() < d.find("rds.amazonaws.com").unwrap(),
+            "the endpoint goes last, so truncation takes it first: {d}"
+        );
+        let local = environment_detail(&envs[2].targets[0]);
+        assert_eq!(local, "  shop-local/shop · localhost:5432");
+    }
+
+    #[test]
+    fn a_failed_environment_keeps_its_heading_and_its_error() {
+        let reports = vec![crate::inventory::EnvReport {
+            name: "prod".into(),
+            source: "RDS".into(),
+            targets: Vec::new(),
+            error: Some("aws sts failed: token expired".into()),
+        }];
+        let lines = environment_lines(&reports);
+        assert_eq!(
+            lines,
+            [EnvLine::Heading {
+                text: "  prod · RDS".into(),
+                error: Some("aws sts failed: token expired".into())
+            }]
+        );
+    }
 
     /// A pick built from `url`, with everything resolved.
     fn pick(url: &str) -> crate::app::DataSourcePick {

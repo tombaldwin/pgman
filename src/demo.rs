@@ -34,6 +34,7 @@ pub fn app(theme: Theme) -> App {
     // no disk writes, and every frame identical. An update check
     // would violate all three.
     a.update_check_enabled = false;
+    a.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(environments()));
     a.dsn_origin = Some("--demo (synthetic data)".into());
     a.conn_state = ConnState::Connected {
         server_version: "16.2 (demo)".into(),
@@ -692,6 +693,64 @@ fn query(
         dropped_events_total: None,
         txn_outcome: None,
     }
+}
+
+/// The environments panel in `--demo`: synthetic, fixed, no aws CLI.
+pub fn environments() -> Vec<crate::inventory::EnvReport> {
+    use crate::inventory::{EnvReport, Target};
+    use crate::mcp::connections::Role;
+    let rds = |db: &str, server: &str, role: Role, of: Option<&str>, status: &str| Target {
+        database: db.into(),
+        server: server.into(),
+        role,
+        replica_of: of.map(str::to_string),
+        host: Some(format!("{server}.c1x2y3.eu-west-2.rds.amazonaws.com")),
+        port: Some(5432),
+        engine: Some("postgres 16.4".into()),
+        status: Some(status.into()),
+        class: Some("db.t4g.medium".into()),
+        multi_az: Some(false),
+    };
+    vec![
+        EnvReport {
+            name: "staging".into(),
+            source: "RDS 123456789012 eu-west-2".into(),
+            targets: vec![
+                rds("shop", "staging", Role::Primary, None, "available"),
+                rds(
+                    "shop",
+                    "staging-replica",
+                    Role::Replica,
+                    Some("staging"),
+                    "available",
+                ),
+            ],
+            error: None,
+        },
+        EnvReport {
+            name: "qa".into(),
+            source: "RDS 123456789012 eu-west-2".into(),
+            targets: vec![rds("shop", "qa", Role::Direct, None, "stopped")],
+            error: None,
+        },
+        EnvReport {
+            name: "local".into(),
+            source: "connections.toml".into(),
+            targets: vec![Target {
+                database: "shop".into(),
+                server: "shop-local".into(),
+                role: Role::Direct,
+                replica_of: None,
+                host: Some("localhost".into()),
+                port: Some(5432),
+                engine: None,
+                status: None,
+                class: None,
+                multi_az: None,
+            }],
+            error: None,
+        },
+    ]
 }
 
 #[cfg(test)]

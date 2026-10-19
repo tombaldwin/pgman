@@ -6,8 +6,10 @@ impl App {
     /// at startup and lives independently of the DB connection,
     /// so events arriving across a reconnect are still meaningful.
     pub(super) fn on_msg(&mut self, msg: AppMsg) {
-        if !matches!(msg, AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_))
-            && msg.generation() != self.generation
+        if !matches!(
+            msg,
+            AppMsg::TapEvent { .. } | AppMsg::UpdateCheck(_) | AppMsg::EnvironmentsLoaded(_)
+        ) && msg.generation() != self.generation
         {
             tracing::debug!(
                 "dropping stale message from generation {}",
@@ -265,6 +267,32 @@ impl App {
                     self.mode = Mode::Normal;
                 }
             },
+            AppMsg::EnvironmentsLoaded(result) => {
+                self.environments.loading = false;
+                match result {
+                    Ok(reports) => {
+                        let dbs: usize = reports.iter().map(|r| r.targets.len()).sum();
+                        let failed = reports.iter().filter(|r| r.error.is_some()).count();
+                        self.environments.reports = reports;
+                        self.environments.error = None;
+                        self.environments.cursor = self
+                            .environments
+                            .cursor
+                            .min(self.environments.target_count().saturating_sub(1));
+                        self.last_status = Some(environments_status(
+                            self.environments.reports.len(),
+                            dbs,
+                            failed,
+                        ));
+                    }
+                    Err(e) => {
+                        tracing::warn!("environments load failed: {e}");
+                        self.environments.reports.clear();
+                        self.environments.error = Some(e);
+                        self.last_status = None;
+                    }
+                }
+            }
             AppMsg::SessionsLoaded { result, .. } => match result {
                 Ok(rows) => {
                     self.last_error = None;
