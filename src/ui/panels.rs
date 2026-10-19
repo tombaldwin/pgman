@@ -1684,13 +1684,11 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     }
     for p in &plan.patches {
         out.push((format!("  {}", p.file.file), false));
+        // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
-            let first = s
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("")
-                .trim();
-            out.push((format!("      {first}"), false));
+            for line in s.lines().filter(|l| !l.trim().is_empty()) {
+                out.push((format!("      {}", line.trim_end()), false));
+            }
         }
     }
     if let Some((file, why)) = &plan.stopped_at {
@@ -3136,6 +3134,15 @@ mod tests {
         assert!(done[3]
             .0
             .starts_with("  still pending: 44-orders-created-idx.sql"));
+        let mut long = crate::demo::patch_plan("staging", "staging", "shop");
+        long.patches[0].statements = vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()];
+        v.stage = PatchStage::Plan(Ok(long));
+        assert!(
+            patch_lines(&v)
+                .iter()
+                .any(|l| l.0 == "        DROP COLUMN notes"),
+            "every line of a statement is shown"
+        );
         v.stage = PatchStage::Plan(Err("no version_table".into()));
         assert_eq!(patch_lines(&v)[1], ("  ✗ no version_table".into(), true));
     }

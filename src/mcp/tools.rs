@@ -793,6 +793,21 @@ pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String,
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
+    message.push_str(&format!("\n\nWhat will run (files in {}):", plan.dir));
+    let mut shown = 0usize;
+    'files: for p in &plan.patches {
+        message.push_str(&format!("\n\n-- {}", p.file.file));
+        for s in &p.statements {
+            if shown + s.len() > CONFIRM_SQL_BUDGET {
+                message.push_str(&format!(
+                    "\n… more than {CONFIRM_SQL_BUDGET} characters of SQL: read the files before confirming."
+                ));
+                break 'files;
+            }
+            shown += s.len();
+            message.push_str(&format!("\n{s};"));
+        }
+    }
     let schema = if plan.protected {
         message.push_str(&format!(
             " {} is protected: type its name to confirm.",
@@ -812,6 +827,10 @@ pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String,
     };
     (message, schema)
 }
+
+/// How much patch SQL the confirmation shows before it points at the
+/// files instead.
+const CONFIRM_SQL_BUDGET: usize = 6000;
 
 /// Whether the operator's answer confirms `plan`. Pure.
 pub fn confirmed(

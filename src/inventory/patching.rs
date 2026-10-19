@@ -55,6 +55,8 @@ pub struct PatchPlan {
     /// The first pending patch that can't be applied here, and why; the
     /// plan ends before it.
     pub stopped_at: Option<(String, String)>,
+    /// Where the patch files are, for the operator to read them.
+    pub dir: String,
 }
 
 impl PatchPlan {
@@ -241,6 +243,7 @@ pub async fn plan(
         applied_max: report.applied_max,
         patches: Vec::new(),
         stopped_at: None,
+        dir: dir.display().to_string(),
     };
     for file in report.pending {
         let path = dir.join(&file.file);
@@ -444,6 +447,7 @@ mod tests {
                 })
                 .collect(),
             stopped_at: None,
+            dir: "/p".into(),
         }
     }
 

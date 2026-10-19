@@ -286,8 +286,17 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         database: "ledger".into(),
         protected: true,
         applied_max: Some(251),
-        patches: Vec::new(),
+        patches: vec![crate::inventory::patching::PlannedPatch {
+            file: crate::query::patches::PatchFile {
+                file: "252-x.sql".into(),
+                filename_number: Some(252),
+                version_id: Some(252),
+            },
+            text: String::new(),
+            statements: vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()],
+        }],
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
+        dir: "/src/patches".into(),
     };
     let (message, schema) = tools::confirm_request(&plan);
     assert!(message.contains("recorded up to 251"), "{message}");
@@ -296,6 +305,14 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         "{message}"
     );
     assert!(message.contains("type its name"), "{message}");
+    assert!(
+        message.contains("files in /src/patches") && message.contains("\n  DROP COLUMN notes;"),
+        "every line that will run is shown: {message}"
+    );
+    plan.patches[0].statements = vec!["x".repeat(7000)];
+    assert!(tools::confirm_request(&plan)
+        .0
+        .contains("read the files before confirming"));
     assert_eq!(schema["required"], json!(["environment"]));
     let ok = json!({"action": "accept", "content": {"environment": "production"}});
     assert_eq!(tools::confirmed(&plan, &ok), Ok(()));
