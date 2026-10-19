@@ -434,40 +434,7 @@ pub fn mcp_connect_hint(err: &str, dsn: &conn::Dsn) -> Option<String> {
 
 pub use crate::creds::aws_secrets::apply as apply_secret;
 
-/// Most version rows `pending_patches` will read. A version table is
-/// one row per patch; past this something is not what it seems.
-pub const MAX_APPLIED_IDS: usize = 100_000;
-
-/// Largest patch file read. The version row sits at the top; a data
-/// load can be huge, and only its head is needed.
-pub const MAX_PATCH_BYTES: u64 = 1024 * 1024;
-
-/// The recorded ids from the version-table query. A list cut at the row
-/// cap is refused rather than reported on: a missing id would read as a
-/// pending patch, which is the one wrong answer this tool must not give.
-pub fn applied_ids(
-    typed: &conn::TypedRows,
-    truncated: bool,
-    cfg: &patches::PatchesConfig,
-) -> Result<Vec<i64>, String> {
-    if truncated {
-        return Err(format!(
-            "{} holds more than {MAX_APPLIED_IDS} rows; refusing to report on a partial list",
-            cfg.table
-        ));
-    }
-    let mut out = Vec::new();
-    for row in &typed.rows {
-        // A NULL id records nothing.
-        if let Some(text) = row.first().and_then(|c| c.as_deref()) {
-            let id = text
-                .parse::<i64>()
-                .map_err(|_| format!("{}.{} holds a non-integer id", cfg.table, cfg.column))?;
-            out.push(id);
-        }
-    }
-    Ok(out)
-}
+pub use crate::query::patches::{applied_ids, read_patch_files, MAX_APPLIED_IDS, MAX_PATCH_BYTES};
 
 /// The `[patches]` block, with any of `dir` / `table` / `column` the
 /// client passed taking its place. All three must end up set.
@@ -516,36 +483,6 @@ pub fn patch_dir_within(root: &std::path::Path, dir: &str) -> Result<std::path::
         return Err(format!("patch dir {dir:?} is not a directory"));
     }
     Ok(resolved)
-}
-
-/// Every `*.sql` file in `dir` (not recursive), parsed for its id.
-fn read_patch_files(
-    dir: &std::path::Path,
-    cfg: &patches::PatchesConfig,
-) -> Result<Vec<patches::PatchFile>, String> {
-    use std::io::Read;
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
-    let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(file) = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(str::to_string)
-        else {
-            continue;
-        };
-        if !file.to_ascii_lowercase().ends_with(".sql") || !path.is_file() {
-            continue;
-        }
-        let mut text = String::new();
-        std::fs::File::open(&path)
-            .and_then(|f| f.take(MAX_PATCH_BYTES).read_to_string(&mut text))
-            .map_err(|e| format!("cannot read {file}: {e}"))?;
-        out.push(patches::patch_file(&file, &text, cfg));
-    }
-    Ok(out)
 }
 
 pub fn render_pending_patches(
