@@ -1074,8 +1074,20 @@ fn mcp_session(
     extra: &[&str],
     requests: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
+    mcp_session_env(home, cwd, extra, &[], requests)
+}
+
+/// [`mcp_session`] with extra environment variables for the server.
+fn mcp_session_env(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    extra: &[&str],
+    env: &[(&str, std::ffi::OsString)],
+    requests: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
     use std::io::Write;
     let mut child = Command::new(pgman_binary())
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -1351,4 +1363,191 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
         "{text}"
     );
     assert!(table_exists(&home, "pgman_mcp_locked"));
+}
+
+/// `pending_patches` end to end: a version table holding 1 and 2, and a
+/// patch directory with 1–3 plus a file that forgot its version row.
+#[test]
+fn mcp_pending_patches_reports_what_the_database_has_not_recorded() {
+    let home = mcp_home("mcp-patches");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_dbversion (scriptId int, description text); \
+             DELETE FROM pgman_dbversion WHERE TRUE; \
+             INSERT INTO pgman_dbversion VALUES (1, 'one'), (2, 'two')",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let checkout = home.join("checkout");
+    let dir = checkout.join("schema_updates");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(checkout.join(".pgman")).unwrap();
+    std::fs::write(
+        checkout.join(".pgman/pgman.toml"),
+        "[patches]\ndir = \"schema_updates\"\ntable = \"pgman_dbversion\"\ncolumn = \"scriptId\"\n",
+    )
+    .unwrap();
+    for (file, body) in [
+        ("001-a.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (1, 'a');"),
+        ("002-b.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (2, 'b');"),
+        ("003-c.sql", "-- pending\nINSERT INTO pgman_dbversion (scriptId, description)\n  VALUES (3, 'c, with a comma');"),
+        ("004-d.sql", "ALTER TABLE x ADD COLUMN y int;"),
+    ] {
+        std::fs::write(dir.join(file), body).unwrap();
+    }
+    let frames = mcp_session(
+        &home,
+        &checkout,
+        &[],
+        &[
+            tool_call(
+                1,
+                "pending_patches",
+                serde_json::json!({"connection": "test"}),
+            ),
+            tool_call(
+                2,
+                "pending_patches",
+                serde_json::json!({"connection": "test", "dir": ".."}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["applied_max"], 2);
+    assert_eq!(
+        v["pending"],
+        serde_json::json!([{"file": "003-c.sql", "id": 3, "filename_number": 3}])
+    );
+    assert_eq!(v["unversioned_recent"][0]["file"], "004-d.sql");
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("outside"), "{text}");
+}
+
+/// A fake `aws` CLI on the server's PATH: logs its arguments, answers
+/// `sts get-caller-identity` with `$FAKE_AWS_ACCOUNT` and
+/// `secretsmanager get-secret-value` with credentials for the compose
+/// postgres. Returns the PATH to use and the log file.
+#[cfg(unix)]
+fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = home.join("fakebin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = home.join("aws-calls.log");
+    let _ = std::fs::remove_file(&log);
+    let script = bin.join("aws");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = std::ffi::OsString::from(&bin);
+    path.push(":");
+    path.push(std::env::var_os("PATH").unwrap_or_default());
+    (path, log)
+}
+
+/// The password comes from the secret, read through the aws CLI with the
+/// account checked first — and a wrong account stops before the secret
+/// is read. A primary serves only sessions_locks.
+#[cfg(unix)]
+#[test]
+fn mcp_secret_connections_read_the_secret_and_respect_the_role() {
+    let home = scratch_home("mcp-secret", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        "[[connections]]\nname = \"replica\"\nurl = \"postgres://127.0.0.1:55432/pgman_test?sslmode=disable\"\n\
+         secret = \"test/database/pgman/credentials\"\naws_region = \"us-west-1\"\n\
+         aws_account = \"210987654321\"\nrole = \"replica\"\n\
+         [[connections]]\nname = \"primary\"\nurl = \"postgres://127.0.0.1:55432/pgman_test?sslmode=disable\"\n\
+         secret = \"test/database/pgman/credentials\"\nrole = \"primary\"\n",
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let run = |account: &str, requests: &[serde_json::Value]| {
+        mcp_session_env(
+            &home,
+            &home,
+            &[],
+            &[("PATH", path.clone()), ("FAKE_AWS_ACCOUNT", account.into())],
+            requests,
+        )
+    };
+
+    let frames = run(
+        "210987654321",
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "replica", "sql": "SELECT current_user AS u"}),
+            ),
+            tool_call(2, "connections", serde_json::json!({})),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    assert!(text.contains("\"u\":\"pgman_test\""), "{text}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(calls.contains("sts get-caller-identity"), "{calls}");
+    assert!(
+        calls.contains(
+            "secretsmanager get-secret-value --secret-id test/database/pgman/credentials"
+        ),
+        "{calls}"
+    );
+    let (text, _) = reply(&frames, 2);
+    assert!(
+        text.contains("Secrets Manager") && text.contains("\"role\":\"replica\""),
+        "{text}"
+    );
+
+    std::fs::remove_file(&log).unwrap();
+    let frames = run(
+        "111111111111",
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "replica", "sql": "SELECT 1"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(is_error && text.contains("111111111111"), "{text}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("secretsmanager"),
+        "secret read despite the wrong account: {calls}"
+    );
+
+    let frames = run(
+        "210987654321",
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "primary", "sql": "SELECT 1"}),
+            ),
+            tool_call(
+                2,
+                "sessions_locks",
+                serde_json::json!({"connection": "primary"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(is_error && text.contains("PRIMARY"), "{text}");
+    let (text, is_error) = reply(&frames, 2);
+    assert!(!is_error, "{text}");
 }

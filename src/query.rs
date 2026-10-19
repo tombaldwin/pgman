@@ -23,6 +23,7 @@ pub mod lint;
 pub mod logdetect;
 pub mod nplus1;
 pub mod params;
+pub mod patches;
 pub mod pglog;
 pub mod preflight;
 pub mod reconstruct;

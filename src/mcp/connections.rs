@@ -22,7 +22,67 @@
 
 use crate::app::DataSourcePick;
 use crate::conn::Dsn;
+use crate::creds::aws_secrets::SecretRef;
 use crate::project;
+
+/// What a connection is for. Reads go to a replica, where a write is
+/// physically impossible; the primary is reserved for the checks that
+/// must see it — a pre-flight's long transactions and locks — and for
+/// the future two-phase patch apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// No role given: a local or single-server database. Every read tool.
+    #[default]
+    Direct,
+    /// A read replica. Every read tool.
+    Replica,
+    /// The primary behind a replica. Only `sessions_locks`.
+    Primary,
+}
+
+impl Role {
+    pub fn label(self) -> &'static str {
+        match self {
+            Role::Direct => "direct",
+            Role::Replica => "replica",
+            Role::Primary => "primary",
+        }
+    }
+
+    /// Why `tool` may not run on a connection with this role, if it may not.
+    pub fn refuses(self, tool: &str) -> Option<String> {
+        match (self, tool) {
+            (Role::Primary, "sessions_locks") => None,
+            (Role::Primary, _) => Some(format!(
+                "is the PRIMARY (role = \"primary\"), which serves only sessions_locks; run \
+                 {tool} against the replica connection instead"
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// One `[[connections]]` entry in the personal file: the project shape
+/// plus what only the operator's own file may carry.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PersonalConnection {
+    #[serde(flatten)]
+    pub base: project::Connection,
+    /// AWS Secrets Manager secret holding the password (and username).
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub aws_region: Option<String>,
+    #[serde(default)]
+    pub aws_profile: Option<String>,
+    /// The account the AWS credentials must belong to before the secret
+    /// is read.
+    #[serde(default)]
+    pub aws_account: Option<String>,
+    #[serde(default)]
+    pub role: Option<Role>,
+}
 
 /// Where an entry came from. Rendered into `connections` and `doctor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,19 +114,22 @@ pub struct Entry {
     pub refusal: Option<String>,
     /// Where the password comes from, never the password itself.
     pub password_source: String,
+    /// Set when the password is read from AWS Secrets Manager at connect.
+    pub secret: Option<SecretRef>,
+    pub role: Role,
 }
 
 /// The parsed personal file plus whatever went wrong reading it.
 #[derive(Debug, Default)]
 pub struct Personal {
-    pub connections: Vec<project::Connection>,
+    pub connections: Vec<PersonalConnection>,
     pub error: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct PersonalFile {
     #[serde(default)]
-    connections: Vec<project::Connection>,
+    connections: Vec<PersonalConnection>,
 }
 
 /// Parse `connections.toml`. A file that doesn't parse yields no
@@ -102,7 +165,7 @@ pub const PERSONAL_PLACEHOLDER_REFUSAL: &str = "has a ${…} placeholder, which 
 /// Names are unique — a later entry whose name is taken gets ` #2`,
 /// ` #3`, … — so a client can address each one exactly.
 pub fn build(
-    personal: &[project::Connection],
+    personal: &[PersonalConnection],
     discovered: Vec<DataSourcePick>,
     allow_discovered: bool,
 ) -> Vec<Entry> {
@@ -126,7 +189,8 @@ pub fn build(
     out
 }
 
-fn personal_entry(c: &project::Connection) -> Entry {
+fn personal_entry(pc: &PersonalConnection) -> Entry {
+    let c = &pc.base;
     let placeholder = c.url.contains("${") || c.user.as_deref().is_some_and(|u| u.contains("${"));
     let (dsn, refusal) = if placeholder {
         (None, Some(PERSONAL_PLACEHOLDER_REFUSAL.to_string()))
@@ -145,12 +209,38 @@ fn personal_entry(c: &project::Connection) -> Entry {
         None if dsn.as_ref().is_some_and(|d| d.password.is_some()) => "in the url".to_string(),
         None => "none configured".to_string(),
     };
+    let secret = pc.secret.as_ref().map(|id| SecretRef {
+        id: id.clone(),
+        region: pc.aws_region.clone(),
+        profile: pc.aws_profile.clone(),
+        account: pc.aws_account.clone(),
+    });
+    let (refusal, password_source) = match (&secret, refusal) {
+        (_, Some(r)) => (Some(r), password_source),
+        (None, None) => (None, password_source),
+        (Some(s), None) => {
+            let other = c.password_env.as_deref().is_some_and(|v| !v.is_empty())
+                || dsn.as_ref().is_some_and(|d| d.password.is_some());
+            let why = match s.validate() {
+                Err(e) => Some(format!("has an invalid secret reference: {e}")),
+                Ok(()) if other => Some(
+                    "has both a secret and another password (password_env or the url); \
+                     keep one"
+                        .to_string(),
+                ),
+                Ok(()) => None,
+            };
+            (why, s.provenance())
+        }
+    };
     Entry {
         name: c.name.clone(),
         source: Source::Personal,
-        dsn,
+        dsn: if refusal.is_none() { dsn } else { None },
         refusal,
         password_source,
+        secret,
+        role: pc.role.unwrap_or_default(),
     }
 }
 
@@ -192,6 +282,8 @@ fn discovered_entry(pick: DataSourcePick, allow_discovered: bool) -> Entry {
         dsn: if refusal.is_none() { pick.dsn } else { None },
         refusal,
         password_source,
+        secret: None,
+        role: Role::Direct,
     }
 }
 
@@ -250,13 +342,20 @@ mod tests {
     use super::*;
     use crate::app::CredsProvenance;
 
-    fn conn(name: &str, url: &str) -> project::Connection {
-        project::Connection {
-            name: name.to_string(),
-            url: url.to_string(),
-            user: None,
-            password_env: None,
-            ssh_tunnel: None,
+    fn conn(name: &str, url: &str) -> PersonalConnection {
+        PersonalConnection {
+            base: project::Connection {
+                name: name.to_string(),
+                url: url.to_string(),
+                user: None,
+                password_env: None,
+                ssh_tunnel: None,
+            },
+            secret: None,
+            aws_region: None,
+            aws_profile: None,
+            aws_account: None,
+            role: None,
         }
     }
 
@@ -274,7 +373,7 @@ mod tests {
     #[test]
     fn a_personal_connection_is_connectable_tunnel_and_all() {
         let mut c = conn("demo", "postgres://u@db.internal:5432/ledger");
-        c.ssh_tunnel = Some("ec2-user@jump".to_string());
+        c.base.ssh_tunnel = Some("ec2-user@jump".to_string());
         let entries = build(&[c], Vec::new(), false);
         assert_eq!(entries[0].refusal, None);
         let dsn = entries[0].dsn.as_ref().expect("connectable");
@@ -399,6 +498,61 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_and_role_parse_from_the_personal_file() {
+        let p = parse_personal(
+            "[[connections]]\nname = \"demo\"\n\
+             url = \"postgres://demo-read-only-replica.example:5432/ledger?sslmode=require\"\n\
+             ssh_tunnel = \"ec2-user@jump\"\nsecret = \"demo/database/ledger_replica/credentials\"\n\
+             aws_region = \"us-west-1\"\naws_account = \"210987654321\"\nrole = \"replica\"\n",
+        );
+        assert_eq!(p.error, None);
+        let entries = build(&p.connections, Vec::new(), false);
+        let e = &entries[0];
+        assert_eq!(e.refusal, None);
+        assert_eq!(e.role, Role::Replica);
+        let s = e.secret.as_ref().expect("secret ref");
+        assert_eq!(s.id, "demo/database/ledger_replica/credentials");
+        assert_eq!(s.account.as_deref(), Some("210987654321"));
+        assert!(
+            e.password_source.contains("Secrets Manager"),
+            "{}",
+            e.password_source
+        );
+        assert!(parse_personal(
+            "[[connections]]\nname=\"x\"\nurl=\"postgres://h/d\"\nrole=\"leader\"\n"
+        )
+        .error
+        .is_some());
+    }
+
+    #[test]
+    fn a_secret_beside_another_password_or_an_invalid_one_is_refused() {
+        let mut c = conn("x", "postgres://u:inline@h/d");
+        c.secret = Some("demo/database/ledger/credentials".into());
+        let e = &build(&[c], Vec::new(), false)[0];
+        assert!(e.refusal.as_deref().unwrap().contains("keep one"));
+        assert!(e.dsn.is_none());
+
+        let mut c = conn("y", "postgres://u@h/d");
+        c.secret = Some("--endpoint-url=x".into());
+        let e = &build(&[c], Vec::new(), false)[0];
+        assert!(e.refusal.as_deref().unwrap().contains("invalid secret"));
+    }
+
+    #[test]
+    fn the_primary_serves_only_the_lock_preflight() {
+        assert_eq!(Role::Primary.refuses("sessions_locks"), None);
+        for tool in ["query", "pending_patches"] {
+            assert!(
+                Role::Primary.refuses(tool).unwrap().contains("replica"),
+                "{tool}"
+            );
+            assert_eq!(Role::Replica.refuses(tool), None);
+            assert_eq!(Role::Direct.refuses(tool), None);
+        }
+    }
+
+    #[test]
     fn a_personal_file_that_does_not_parse_yields_nothing_and_says_so() {
         let p = parse_personal("[[connections]]\nname = 1\n");
         assert!(p.connections.is_empty());
@@ -408,7 +562,7 @@ mod tests {
             "[[connections]]\nname = \"local\"\nurl = \"postgres://ledger@localhost/ledger\"\n",
         );
         assert_eq!(p.error, None);
-        assert_eq!(p.connections[0].name, "local");
+        assert_eq!(p.connections[0].base.name, "local");
         assert!(parse_personal("").connections.is_empty());
     }
 }
