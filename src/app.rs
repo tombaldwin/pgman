@@ -1280,6 +1280,9 @@ pub struct App {
     /// Where the overview's last-used row is kept between runs; `None`
     /// (the default, and every test) remembers nothing on disk.
     pub environments_state_file: Option<std::path::PathBuf>,
+    /// Reads RDS log errors for the overview's `l`; `None` until
+    /// `main.rs` installs one.
+    pub env_log_fetcher: Option<EnvLogFetcher>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1493,6 +1496,7 @@ impl App {
             env_discoverer: None,
             env_prober: None,
             environments_state_file: None,
+            env_log_fetcher: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -3903,6 +3907,73 @@ impl App {
                 "can't connect to {what}: secrets are not available in this session"
             ));
         }
+    }
+
+    /// `l` in the overview: recent errors from the focused server's RDS
+    /// log, in a view over the list.
+    pub(super) fn start_env_logs(&mut self) {
+        let Some((env, t)) = self.environments.selected() else {
+            return;
+        };
+        if !env.source.starts_with("RDS") {
+            self.last_status = Some(format!(
+                "logs come from RDS; {} is a {} environment",
+                env.name, env.source
+            ));
+            return;
+        }
+        let Some(fetcher) = self.env_log_fetcher.clone() else {
+            self.last_error = Some("logs are not available in this session".into());
+            return;
+        };
+        let (environment, server) = (env.name.clone(), t.server.clone());
+        self.environments.logs = Some(LogsView {
+            environment: environment.clone(),
+            server: server.clone(),
+            loading: true,
+            ..LogsView::default()
+        });
+        self.last_status = Some(format!("reading {server}'s log…"));
+        if fetcher.immediate {
+            let result = (fetcher.fetch)(&environment, &server);
+            self.on_env_logs(&environment, &server, result);
+        } else {
+            let tx = self.msg_tx.clone();
+            tokio::task::spawn_blocking(move || {
+                let result = (fetcher.fetch)(&environment, &server);
+                let _ = tx.send(AppMsg::EnvLogs {
+                    environment,
+                    server,
+                    result,
+                });
+            });
+        }
+    }
+
+    fn on_env_logs(
+        &mut self,
+        environment: &str,
+        server: &str,
+        result: Result<Vec<crate::inventory::rds_logs::LogError>, String>,
+    ) {
+        // Closed, or moved to another server, while it read: not ours.
+        let Some(v) = self.environments.logs.as_mut() else {
+            return;
+        };
+        if v.environment != environment || v.server != server {
+            return;
+        }
+        v.loading = false;
+        self.last_status = Some(match &result {
+            Ok(e) if e.is_empty() => format!("{server}: no errors in its recent log"),
+            Ok(e) => format!(
+                "{server}: {} distinct error(s) · j/k scroll · r again · q back",
+                e.len()
+            ),
+            Err(_) => format!("{server}: log not read"),
+        });
+        v.result = Some(result);
+        v.scroll = 0;
     }
 
     /// `d` in the environments overview: discover environments from the

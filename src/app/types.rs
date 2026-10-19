@@ -1002,6 +1002,38 @@ pub struct EnvironmentsUi {
     /// Each replica row's recent lag readings, oldest first, keyed by
     /// (environment, server, database). Grows with each probe.
     pub lag_history: std::collections::HashMap<(String, String, String), Vec<f64>>,
+    /// `l`: recent errors from the focused server's RDS log.
+    pub logs: Option<LogsView>,
+}
+
+/// The log view over the overview.
+#[derive(Debug, Clone, Default)]
+pub struct LogsView {
+    pub environment: String,
+    pub server: String,
+    pub loading: bool,
+    pub result: Option<Result<Vec<crate::inventory::rds_logs::LogError>, String>>,
+    pub scroll: usize,
+}
+
+/// Reads a server's recent log errors. Injected like
+/// [`EnvironmentsLoader`]; `None` reads nothing.
+#[derive(Clone)]
+pub struct EnvLogFetcher {
+    /// Blocking: the aws CLI. (environment, server).
+    pub fetch: LogFetchFn,
+    /// Run at once on this thread (`--demo`, tests).
+    pub immediate: bool,
+}
+
+pub type LogFetchFn = std::sync::Arc<
+    dyn Fn(&str, &str) -> Result<Vec<crate::inventory::rds_logs::LogError>, String> + Send + Sync,
+>;
+
+impl std::fmt::Debug for EnvLogFetcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EnvLogFetcher")
+    }
 }
 
 /// Lag readings kept per replica row.

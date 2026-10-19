@@ -10123,3 +10123,51 @@ fn replica_lag_readings_accumulate_capped_and_stale_ones_are_dropped() {
     // The primary row (via replica) records nothing.
     assert_eq!(a.environments.lag_history.len(), 1);
 }
+
+#[test]
+fn l_reads_an_rds_servers_log_errors_into_a_view() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = asked.clone();
+    a.env_log_fetcher = Some(EnvLogFetcher {
+        fetch: std::sync::Arc::new(move |env, server| {
+            log.lock().unwrap().push(format!("{env}/{server}"));
+            Ok(crate::demo::log_errors())
+        }),
+        immediate: true,
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('l'));
+    let v = a.environments.logs.as_ref().expect("view open");
+    assert_eq!(v.result.as_ref().unwrap().as_ref().unwrap().len(), 2);
+    assert_eq!(*asked.lock().unwrap(), ["staging/staging"]);
+    // Enter here is not a connect; q closes the view, not the overview.
+    press(&mut a, KeyCode::Char('q'));
+    assert!(a.environments.logs.is_none());
+    assert_eq!(a.mode, Mode::Environments);
+
+    // A connections.toml environment has no RDS log.
+    press(&mut a, KeyCode::Char('G'));
+    press(&mut a, KeyCode::Char('l'));
+    assert!(a.environments.logs.is_none());
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("logs come from RDS"));
+
+    // A late answer for another server is dropped.
+    a.environments.logs = Some(LogsView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        loading: true,
+        ..LogsView::default()
+    });
+    a.on_msg(AppMsg::EnvLogs {
+        environment: "staging".into(),
+        server: "staging-replica".into(),
+        result: Ok(Vec::new()),
+    });
+    assert!(a.environments.logs.as_ref().unwrap().loading, "not ours");
+}

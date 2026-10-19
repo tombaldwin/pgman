@@ -315,6 +315,16 @@ async fn main() -> anyhow::Result<()> {
             std::sync::Arc::new(pgman::creds::aws_secrets::fetch),
         ))
     })));
+    application.env_log_fetcher = Some(app::EnvLogFetcher {
+        fetch: std::sync::Arc::new(|environment, server| {
+            pgman::inventory::rds_logs::for_environment(
+                environment,
+                server,
+                pgman::inventory::rds_logs::DEFAULT_FILES,
+            )
+        }),
+        immediate: false,
+    });
     application.env_discoverer = Some(app::EnvDiscoverer {
         discover: std::sync::Arc::new(pgman::inventory::discover::discover_for_overview),
         save: std::sync::Arc::new(pgman::inventory::discover::save),

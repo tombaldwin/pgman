@@ -1591,6 +1591,72 @@ pub(crate) fn drift_matrix(
     (dbs, envs, cells)
 }
 
+/// The log view's lines: one heading, then each distinct error. Pure.
+pub(crate) fn log_lines(v: &crate::app::LogsView) -> Vec<(String, bool)> {
+    let mut out = vec![(
+        format!(
+            "  {} · {} — recent errors from its RDS log",
+            v.environment, v.server
+        ),
+        false,
+    )];
+    match &v.result {
+        None => out.push(("  reading…".into(), false)),
+        Some(Err(e)) => out.push((format!("  ✗ {e}"), true)),
+        Some(Ok(errors)) if errors.is_empty() => out.push((
+            "  no ERROR, FATAL or PANIC lines in the recent log files".into(),
+            false,
+        )),
+        Some(Ok(errors)) => {
+            for e in errors {
+                let who = if e.who.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", e.who)
+                };
+                out.push((
+                    format!("  {} ×{} · last {}{who}", e.level, e.count, e.last_seen),
+                    e.level != "ERROR",
+                ));
+                out.push((format!("      {}", e.message), false));
+            }
+        }
+    }
+    out
+}
+
+fn draw_env_logs(f: &mut Frame, inner: Rect, app: &App, v: &crate::app::LogsView) {
+    let theme = &app.theme;
+    let width = inner.width as usize;
+    let all = log_lines(v);
+    let (head, body) = all.split_first().expect("a heading");
+    let mut lines = vec![
+        Line::from(Span::styled(
+            crate::grid::truncate_cell(&head.0, width),
+            Style::default()
+                .fg(theme.title)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let room = (inner.height as usize).saturating_sub(2);
+    let scroll = v.scroll.min(body.len().saturating_sub(room));
+    for (text, loud) in body.iter().skip(scroll).take(room) {
+        let colour = if *loud {
+            theme.health_red
+        } else if text.starts_with("      ") {
+            theme.text
+        } else {
+            theme.health_yellow
+        };
+        lines.push(Line::from(Span::styled(
+            crate::grid::truncate_cell(text, width),
+            Style::default().fg(colour),
+        )));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 fn draw_drift(f: &mut Frame, inner: Rect, app: &App) {
     let theme = &app.theme;
     let (dbs, envs, cells) = drift_matrix(&app.environments.reports, &app.environments.probes);
@@ -1849,6 +1915,10 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    if let Some(v) = &ui.logs {
+        draw_env_logs(f, inner, app, v);
+        return;
+    }
     if ui.drift {
         draw_drift(f, inner, app);
         return;
@@ -2902,6 +2972,45 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_log_view_lists_each_error_with_its_count_and_message() {
+        let v = crate::app::LogsView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            loading: false,
+            result: Some(Ok(crate::demo::log_errors())),
+            scroll: 0,
+        };
+        let lines = log_lines(&v);
+        assert_eq!(
+            lines[0].0,
+            "  staging · staging — recent errors from its RDS log"
+        );
+        assert_eq!(
+            lines[1],
+            (
+                "  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]".into(),
+                true
+            ),
+            "newest first; FATAL is loud"
+        );
+        assert_eq!(
+            lines[3].0,
+            "  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop"
+        );
+        assert!(lines[4].0.contains("orders_pkey"));
+        let empty = crate::app::LogsView {
+            result: Some(Ok(Vec::new())),
+            ..v.clone()
+        };
+        assert!(log_lines(&empty)[1].0.contains("no ERROR"));
+        let failed = crate::app::LogsView {
+            result: Some(Err("AccessDenied".into())),
+            ..v
+        };
+        assert_eq!(log_lines(&failed)[1], ("  ✗ AccessDenied".into(), true));
     }
 
     #[test]

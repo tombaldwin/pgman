@@ -23,6 +23,7 @@ pub mod discover;
 pub mod docker;
 pub mod probe;
 pub mod rds;
+pub mod rds_logs;
 
 use crate::aws_cli::AwsScope;
 use crate::conn::Dsn;
@@ -221,6 +222,11 @@ impl Source {
                 s
             }
         }
+    }
+
+    /// The AWS scope an `rds` source reads in.
+    pub fn rds_scope(&self) -> Option<AwsScope> {
+        self.scope()
     }
 
     fn scope(&self) -> Option<AwsScope> {

@@ -906,6 +906,23 @@ fn environments() {
     run_sizes("environments", scr_environments);
 }
 
+fn scr_env_logs() -> App {
+    let mut a = scr_environments();
+    a.environments.logs = Some(pgman::app::LogsView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        loading: false,
+        result: Some(Ok(pgman::demo::log_errors())),
+        scroll: 0,
+    });
+    a
+}
+
+#[test]
+fn env_logs() {
+    run_sizes("env_logs", scr_env_logs);
+}
+
 fn scr_env_drift() -> App {
     let mut a = scr_environments();
     a.environments.drift = true;

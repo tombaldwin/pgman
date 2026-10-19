@@ -38,6 +38,10 @@ pub fn app(theme: Theme) -> App {
     a.env_prober = Some(crate::app::EnvProber::Immediate(std::sync::Arc::new(
         environment_probes,
     )));
+    a.env_log_fetcher = Some(crate::app::EnvLogFetcher {
+        fetch: std::sync::Arc::new(|_, _| Ok(log_errors())),
+        immediate: true,
+    });
     a.env_discoverer = Some(crate::app::EnvDiscoverer {
         discover: std::sync::Arc::new(|_| Ok(discovery())),
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
@@ -793,6 +797,15 @@ pub fn environment_probes(
             })),
         })
         .collect()
+}
+
+/// Log errors in `--demo`: synthetic, in RDS's shape.
+pub fn log_errors() -> Vec<crate::inventory::rds_logs::LogError> {
+    crate::inventory::rds_logs::parse_errors(
+        "2026-03-02 09:14:02 UTC:10.0.4.7(51022):shop@shop:[4411]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
+         2026-03-02 09:20:40 UTC:10.0.4.7(51040):shop@shop:[4419]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
+         2026-03-02 09:31:12 UTC:10.0.4.9(40110):[unknown]@[unknown]:[4501]:FATAL:  password authentication failed for user \"report\"\n",
+    )
 }
 
 /// The discovery view in `--demo`: proposals from a synthetic account,

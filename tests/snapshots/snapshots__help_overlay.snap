@@ -93,7 +93,7 @@ expression: dump(&buf)
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
 │              │                   script                                           │              │
 │              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
-│              │ ↓ 227 more below                                                   │              │
+│              │ ↓ 228 more below                                                   │              │
 │              │                                                                    │              │
 │              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │

@@ -1332,6 +1332,19 @@ impl App {
     }
 
     pub(super) fn on_environments_key(&mut self, key: KeyEvent) {
+        if let Some(v) = self.environments.logs.as_mut() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.environments.logs = None;
+                    self.last_status = None;
+                }
+                KeyCode::Char('j') | KeyCode::Down => v.scroll = v.scroll.saturating_add(1),
+                KeyCode::Char('k') | KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
+                KeyCode::Char('r') => self.start_env_logs(),
+                _ => {}
+            }
+            return;
+        }
         if self.environments.discovery.is_some() {
             self.on_env_discovery_key(key);
             return;
@@ -1346,6 +1359,7 @@ impl App {
             KeyCode::Enter => self.connect_to_environment_target(),
             KeyCode::Char('d') => self.start_env_discovery(Default::default()),
             KeyCode::Char('R') => self.toggle_env_auto_probe(),
+            KeyCode::Char('l') => self.start_env_logs(),
             KeyCode::Char('v') => {
                 self.environments.drift = !self.environments.drift;
                 self.last_status = Some(if self.environments.drift {

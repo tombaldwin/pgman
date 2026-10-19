@@ -2179,6 +2179,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    l             recent errors from the server's RDS log"),
+        &mut lines,
+    );
+    push(
         row("    r             list again: environments.toml, RDS via the aws CLI, connections.toml"),
         &mut lines,
     );

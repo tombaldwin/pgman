@@ -1509,7 +1509,7 @@ fn fake_aws(home: &std::path::Path) -> (std::ffi::OsString, std::path::PathBuf) 
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"rds describe-db-engine-versions\") echo '{{\"DBEngineVersions\":[{{\"ValidUpgradeTarget\":[{{\"EngineVersion\":\"16.15\",\"IsMajorVersionUpgrade\":false}},{{\"EngineVersion\":\"18.6\",\"IsMajorVersionUpgrade\":true}}]}}]}}' ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n  \"sts get-caller-identity\") echo \"$FAKE_AWS_ACCOUNT\" ;;\n  \"secretsmanager get-secret-value\") echo '{{\"username\":\"pgman_test\",\"password\":\"pgman_test\",\"engine\":\"postgres\"}}' ;;\n  \"rds describe-db-instances\") cat \"$FAKE_RDS_JSON\" ;;\n  \"rds describe-db-log-files\") echo '{{\"DescribeDBLogFiles\":[{{\"LogFileName\":\"error/postgresql.log.1\",\"LastWritten\":1}}]}}' ;;\n  \"rds download-db-log-file-portion\") printf '%s' '{{\"LogFileData\":\"2026-10-19 20:54:06 UTC:10.0.0.1(1):ledger@ledger:[14]:ERROR:  permission denied for database rdsadmin\\n2026-10-19 20:54:06 UTC:10.0.0.1(1):ledger@ledger:[14]:STATEMENT:  select secret\"}}' ;;\n  \"rds describe-db-engine-versions\") echo '{{\"DBEngineVersions\":[{{\"ValidUpgradeTarget\":[{{\"EngineVersion\":\"16.15\",\"IsMajorVersionUpgrade\":false}},{{\"EngineVersion\":\"18.6\",\"IsMajorVersionUpgrade\":true}}]}}]}}' ;;\n  \"secretsmanager list-secrets\") echo '{{\"SecretList\":[{{\"Name\":\"demo/database/ledger/credentials\"}},{{\"Name\":\"demo/database/ledger_replica/credentials\"}},{{\"Name\":\"demo-database-password\"}}]}}' ;;\n  \"ec2 describe-instances\") echo '{{\"Reservations\":[{{\"Instances\":[{{\"InstanceId\":\"i-1\",\"VpcId\":\"vpc-1\",\"PublicDnsName\":\"bastion.example.com\"}}]}}]}}' ;;\n  \"configure get\") echo us-west-1 ;;\n  *) echo \"unexpected: $*\" >&2; exit 1 ;;\nesac\n",
             log.display()
         ),
     )
@@ -2752,4 +2752,69 @@ fn schema_lint_finds_an_unused_index_and_a_bloated_table() {
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     panic!("LINT102 on {t}_tag and LINT104 on {t} expected: {last}");
+}
+
+/// `environment_logs` reads a listed server's log errors and refuses a
+/// server the environment doesn't list.
+#[cfg(unix)]
+#[test]
+fn mcp_environment_logs_reads_only_listed_servers() {
+    let home = scratch_home("mcp-logs", WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        "[[environments]]\nname = \"demo\"\nsource = { kind = \"rds\", instances = [\"demo\"], region = \"us-west-1\", account = \"210987654321\" }\n",
+    )
+    .unwrap();
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10",
+          "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+          "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432}, "DBName": "ledger"}]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[
+            ("PATH", path),
+            ("FAKE_AWS_ACCOUNT", "210987654321".into()),
+            ("FAKE_RDS_JSON", rds.clone().into()),
+        ],
+        &[
+            tool_call(
+                1,
+                "environment_logs",
+                serde_json::json!({"environment": "demo", "server": "demo"}),
+            ),
+            tool_call(
+                2,
+                "environment_logs",
+                serde_json::json!({"environment": "demo", "server": "production"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["errors"][0]["message"],
+        "permission denied for database rdsadmin"
+    );
+    assert!(
+        !text.contains("select secret"),
+        "STATEMENT lines never surface: {text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(
+        is_error && text.contains("isn't one of demo's servers"),
+        "{text}"
+    );
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.contains("--db-instance-identifier production"),
+        "an unlisted server's logs are never asked for: {calls}"
+    );
 }

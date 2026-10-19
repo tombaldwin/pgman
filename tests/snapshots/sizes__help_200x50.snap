@@ -42,7 +42,7 @@ expression: dump(&buf)
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
 │                             │     D             pin result as A · run another query, D again to diff as B                                                              │                             │
-│                             │ ↓ 208 more below                                                                                                                         │                             │
+│                             │ ↓ 209 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │
