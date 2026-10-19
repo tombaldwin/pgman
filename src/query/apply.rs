@@ -50,15 +50,14 @@ pub fn check_patch(
     }
     let statements =
         crate::batch::check_statements(safety, db, sql, true).map_err(|r| match r {
-            crate::batch::Refusal::Block { kind, stmt, .. } => {
+            // `assume_yes` answers a Confirm, so only a Block lands here.
+            crate::batch::Refusal::Block { kind, stmt, .. }
+            | crate::batch::Refusal::Confirm { kind, stmt, .. } => {
                 format!("blocked by safety: {kind} (statement: {stmt})")
             }
             crate::batch::Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
             crate::batch::Refusal::ReadOnlyEscape => {
                 crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
-            }
-            crate::batch::Refusal::Confirm { kind, stmt, .. } => {
-                format!("{kind} needs confirming (statement: {stmt})")
             }
         })?;
     if statements.is_empty() {
@@ -139,12 +138,9 @@ pub async fn apply(
         .batch_execute("COMMIT")
         .await
         .map_err(|e| format!("commit failed: {e}"))?;
-    let sql = patches::applied_ids_sql(cfg)?;
-    let (typed, truncated) =
-        conn::run_statement_typed_capped(client, &sql, Some(patches::MAX_APPLIED_IDS))
-            .await
-            .map_err(|e| e.msg)?;
-    let applied = patches::applied_ids(&typed, truncated, cfg)?;
+    let applied = applied_ids(client, cfg).await.map_err(|e| {
+        format!("committed, but the version table couldn't be read afterwards: {e}")
+    })?;
     let id = patch.version_id.or(patch.filename_number);
     Ok(Applied {
         file: patch.file.clone(),
