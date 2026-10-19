@@ -51,11 +51,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   `hints_to_fit`). Switching it over makes the two apps one vocabulary
   for real.
 
-### Environments — after probes (2026-10-19)
-- **Background refresh.** Probes run on `E` and `r` only. A periodic
-  refresh on the shared frame clock (house rule: no independent tickers)
-  would keep lag current.
-
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:

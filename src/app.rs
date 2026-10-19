@@ -1675,6 +1675,7 @@ impl App {
             || matches!(self.mode, Mode::About)
             || matches!(self.conn_state, ConnState::Connecting)
             || (self.auto_refresh && matches!(self.mode, Mode::SlowQueries | Mode::Sessions))
+            || (self.environments.auto_probe && self.mode == Mode::Environments)
     }
 
     /// Fold one [`crate::tap::TapEvent`] into the app state.
@@ -2908,6 +2909,7 @@ impl App {
     /// Sessions modes and while a query is in flight (refresh
     /// would queue behind it and arrive cluttered).
     fn tick_auto_refresh(&mut self) {
+        self.tick_env_auto_probe();
         if !self.auto_refresh || self.query_running {
             return;
         }
@@ -2925,6 +2927,51 @@ impl App {
             Mode::Sessions => self.refresh_sessions(),
             _ => {}
         }
+    }
+
+    /// `R` in the environments overview: probe the listed environments
+    /// again, no oftener than `ENV_AUTO_PROBE_INTERVAL`, while the
+    /// overview is open and showing its list.
+    fn toggle_env_auto_probe(&mut self) {
+        if !self.environments.reports.iter().any(|r| r.probe.is_some()) {
+            self.last_status =
+                Some("no environment probes — set probe = true on one in environments.toml".into());
+            return;
+        }
+        let ui = &mut self.environments;
+        ui.auto_probe = !ui.auto_probe;
+        ui.auto_probe_last = Some(Instant::now());
+        self.last_status = Some(format!(
+            "auto-probe {} ({}s)",
+            if ui.auto_probe { "on" } else { "off" },
+            ENV_AUTO_PROBE_INTERVAL.as_secs(),
+        ));
+    }
+
+    fn tick_env_auto_probe(&mut self) {
+        let ui = &self.environments;
+        if !ui.auto_probe
+            || self.mode != Mode::Environments
+            || ui.discovery.is_some()
+            || ui.loading
+            // The last round hasn't answered yet: don't pile another on.
+            || ui
+                .probes
+                .iter()
+                .flatten()
+                .any(|p| *p == ProbeState::Probing)
+        {
+            return;
+        }
+        let now = Instant::now();
+        if ui
+            .auto_probe_last
+            .is_some_and(|t| now.saturating_duration_since(t) < ENV_AUTO_PROBE_INTERVAL)
+        {
+            return;
+        }
+        self.environments.auto_probe_last = Some(now);
+        self.start_env_probes();
     }
 
     fn tick_watch(&mut self) {
@@ -4566,6 +4613,10 @@ pub const HISTORY_CAP: usize = 50;
 /// enough at that cadence to not whiplash the UI, while still
 /// being live-enough for "find the blocker" workflows.
 pub const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often `R` in the environments overview probes again. Each round
+/// connects to every probed database, so it's slower than the panels'.
+pub const ENV_AUTO_PROBE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Cap on the in-memory notification ring. Operator can see the
 /// most recent 200 NOTIFY arrivals; older ones drop off the

@@ -2171,6 +2171,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    R             probe again every 30s while open (probe = true environments)"),
+        &mut lines,
+    );
+    push(
         row("    r             list again: environments.toml, RDS via the aws CLI, connections.toml"),
         &mut lines,
     );

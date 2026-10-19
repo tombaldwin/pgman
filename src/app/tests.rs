@@ -9732,3 +9732,63 @@ fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
     );
     assert_eq!(a.environments.probes[2], [ProbeState::Off]);
 }
+
+#[test]
+fn auto_probe_is_opt_in_paced_and_never_piles_up() {
+    let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = rounds.clone();
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(move |r| {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        crate::demo::environment_probes(r)
+    })));
+    let rounds_now = || rounds.load(std::sync::atomic::Ordering::SeqCst);
+    press(&mut a, KeyCode::Char('E'));
+    assert_eq!(rounds_now(), 1, "the listing probes once");
+
+    // Off by default: time passing probes nothing.
+    a.environments.auto_probe_last = None;
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 1);
+
+    press(&mut a, KeyCode::Char('R'));
+    assert!(a.environments.auto_probe);
+    assert_eq!(a.last_status.as_deref(), Some("auto-probe on (30s)"));
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 1, "not before the interval");
+    let past = Instant::now() - ENV_AUTO_PROBE_INTERVAL - Duration::from_secs(1);
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2, "due: probes again");
+
+    // A round still unanswered holds the next one back.
+    a.environments.probes[0][1] = ProbeState::Probing;
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2);
+
+    // Only while the overview is open.
+    a.environments.probes[0][1] = ProbeState::Off;
+    a.mode = Mode::Normal;
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 2);
+}
+
+#[test]
+fn auto_probe_needs_an_environment_that_probes() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let mut envs = crate::demo::environments();
+    for e in &mut envs {
+        e.probe = None;
+    }
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(envs));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('R'));
+    assert!(!a.environments.auto_probe);
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("no environment probes"));
+}

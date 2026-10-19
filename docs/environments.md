@@ -160,7 +160,7 @@ probe = true
 version_table = { table = "public.db_version", column = "id", patches = "~/src/app/db/patches" }
 ```
 
-Every refresh (`E`, `r`) then reads, from each database (and so does
+Every refresh (`E`, `r`, and every 30 s after `R`) then reads, from each database (and so does
 the MCP `environments` tool when called with `probe: true`):
 
 - **Version, recovery and lag**, in one round trip. A replica shows
@@ -191,6 +191,7 @@ How a probe connects:
 | `E` | Open from the grid or the connection picker. No connection is needed. |
 | `j` / `k`, `g` / `G` | Move between databases. |
 | `Enter` | Connect to the database under the cursor. |
+| `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |
 | `d` | Discover environments from AWS (`space` choose, `s` save, `p` next profile/scope, `q` back). |
 | `r` | List again. |
 | `q` / `Esc` | Close, cancelling a connect that is still reading its secret. |
