@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  WHE┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
+│  WHE╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────╮     │
 │  ORD│▼ public  (4)                     schema: public                                      │     │
 │     │  ▼ orders  (5 col, 1 cons)                                                           │     │
-└─────│      · user_id : bigint NOT NULL 4 table(s)                                          │─────┘
-┌ resu│      · status : varchar(20) NOT…                                                     │─────┐
+╰─────│      · user_id : bigint NOT NULL 4 table(s)                                          │─────╯
+╭[ ◆ r│      · status : varchar(20) NOT…                                                     │─────╮
 │id  e│  ▼ users  (4 col, 1 cons)        enter to expand — then arrow / j/k into the tables  │     │
 │1   a│      ◆ users_pkey                                                                    │     │
 │2   l│                                                                                      │     │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
-│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   filter: /us  · 6 row(s) · enter accept · esc clear

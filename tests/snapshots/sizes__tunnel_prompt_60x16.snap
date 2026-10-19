@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  FROM users                                              │
 │  WHERE plan = 'pro'                                      │
 │  ORDER BY created_at DESC;                               │
-└──────────────────────────────────────────────────────────┘
-┌┌ open an ssh tunnel? ───────────────────────────────────┐┐
+╰──────────────────────────────────────────────────────────╯
+╭╭[ ◆ open an ssh tunnel? ◆ ]─────────────────────────────╮╮
 ││  ssh tom@bastion.example.com → db.internal:5432        ││
 ││                                                        ││
 ││  picked project data source 'via-bastion' wants an ssh ││
 ││  pgman runs the system ssh binary with your keys, agent││
 ││  ~/.ssh/config — before any Postgres traffic, so a fail││
 ││  database login would not stop it.                     ││
-└└────────────────────────────────────────────────────────┘┘
+╰╰────────────────────────────────────────────────────────╯╯
  RO   TAP   N+1 ×1   y proceed · any other key cancels

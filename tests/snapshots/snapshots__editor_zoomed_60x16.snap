@@ -5,7 +5,7 @@ expression: text
 ---
  pgman X.X.X │ test  connected · pg 16.0
  1 SELECT id, email  ] [ switch · ctrl-t new · ctrl-w close
-┌ editor · zoomed (esc, z) ────────────────────────────────┐
+╭[ ◆ editor ◆ ] · zoomed (esc, z) ─────────────────────────╮
 │> SELECT id, email                                        │
 │  FROM users                                              │
 │  WHERE active = true                                     │
@@ -17,5 +17,5 @@ expression: text
 │                                                          │
 │                                                          │
 │                                                          │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   esc then z restores the split (alt-z too)

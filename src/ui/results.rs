@@ -96,10 +96,9 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .column_spacing(2)
         .row_highlight_style(Style::default().bg(theme.row_selected_bg))
         .block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_idle))
-                .title(Span::styled(title, Style::default().fg(theme.title))),
+                .title(crate::ui::chrome::panel_title(theme, &title)),
         );
     f.render_stateful_widget(table, area, &mut app.grid_state);
 }
@@ -225,11 +224,10 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let body = Paragraph::new(Text::from(lines))
         .scroll((effective_scroll, 0))
         .block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_active))
                 .padding(Padding::uniform(1))
-                .title(Span::styled(title, Style::default().fg(theme.title))),
+                .title(crate::ui::chrome::panel_title(theme, &title)),
         );
     f.render_widget(body, popup);
 
@@ -359,11 +357,10 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
         Paragraph::new(Text::from(lines))
             .scroll((effective_scroll, 0))
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
+                crate::ui::chrome::panel_block(theme)
                     .border_style(Style::default().fg(theme.border_active))
                     .padding(Padding::uniform(1))
-                    .title(Span::styled(title, Style::default().fg(theme.title))),
+                    .title(crate::ui::chrome::panel_title(theme, &title)),
             ),
         popup,
     );
@@ -436,10 +433,9 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
         bn = state.b_rows.len(),
         key = key_desc,
     );
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(title, Style::default().fg(theme.title)));
+        .title(crate::ui::chrome::panel_title(theme, &title));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 

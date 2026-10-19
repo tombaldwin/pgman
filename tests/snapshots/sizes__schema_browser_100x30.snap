@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  WHE┌ schema browser — q / esc close ──────────────────────────────────────────────────────┐     │
+│  WHE╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────╮     │
 │  ORD│▼ public  (4)                     schema: public                                      │     │
 │     │  ▼ item  (4 col, 1 cons)                                                             │     │
-└─────│      · id : bigint NOT NULL      4 table(s)                                          │─────┘
-┌ resu│      · order_id : bigint NOT NU…                                                     │─────┐
+╰─────│      · id : bigint NOT NULL      4 table(s)                                          │─────╯
+╭[ ◆ r│      · order_id : bigint NOT NU…                                                     │─────╮
 │id  e│      · sku : varchar(40) NOT NU… enter to expand — then arrow / j/k into the tables  │     │
 │1   a│      · qty : integer NOT NULL                                                        │     │
 │2   l│      ◆ item_pkey                                                                     │     │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │     │      · user_id : bigint NOT NULL                                                     │     │
 │     │      · status : varchar(20) NOT…                                                     │     │
 │     │      · total_cents : integer NO…                                                     │     │
-│     └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   expanded all

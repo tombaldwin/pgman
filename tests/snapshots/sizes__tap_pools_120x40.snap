@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
-│  OR┌ JDBC tap — 8 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · … ─────┐    │
+│  OR╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · … ╮    │
 │    │  conns   peak   calls    err        busy        p95  pool · app                                            │    │
-└────│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                    │────┘
-┌ res│                                                                                                            │────┐
+╰────│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                    │────╯
+╭[ ◆ │                                                                                                            │────╮
 │id  │                                                                                                            │    │
 │1   │                                                                                                            │    │
 │2   │                                                                                                            │    │
@@ -37,9 +37,9 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ environments — enter connect · d discover · q close ──────────────────┐   │
+│  ╭[ ◆ environments ◆ ] enter connect · d discover · q close ─────────────╮   │
 │  │  staging · RDS 123456789012 eu-west-2                                 │   │
 │  │    database  role     server             status     probe            …│   │
 │  │    shop      primary  staging            available  via replica      …│   │
-└──│    shop      replica  └ staging-replica  available  v251 · 1 pending …│───┘
-┌ r│                                                                       │───┐
+╰──│    shop      replica  └ staging-replica  available  v251 · 1 pending …│───╯
+╭[ │                                                                       │───╮
 │id│  qa · RDS 123456789012 eu-west-2                                      │   │
 │1 │    database  role     server             status     engine            │   │
 │2 │    shop      direct   qa                 stopped    postgres 16.4     │   │
@@ -22,8 +22,8 @@ expression: dump(&buf)
 │6 │    shop      direct   shop-local         —          —                 │   │
 │  │                                                                       │   │
 │  │  staging-replica/shop · replica of staging · db.t4g.medium · single-A…│   │
-│  └───────────────────────────────────────────────────────────────────────┘   │
+│  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · F1 +3 more

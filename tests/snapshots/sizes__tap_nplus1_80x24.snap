@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ JDBC tap — 8 queries · 0 heartbeats · view: N+1 · v cycle · … ────────┐   │
+│  ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: N+1 · v cycle · … ───╮   │
 │  │   calls        span  txn / conn          caller · fingerprint         │   │
 │  │       6     125.0ms  conn-7#42           OrderService.loadItems:88 · …│   │
 │  │                                                                       │   │
-└──│                                                                       │───┘
-┌ r│                                                                       │───┐
+╰──│                                                                       │───╯
+╭[ │                                                                       │───╮
 │id│                                                                       │   │
 │1 │                                                                       │   │
 │2 │                                                                       │   │
@@ -22,8 +22,8 @@ expression: dump(&buf)
 │6 │                                                                       │   │
 │  │                                                                       │   │
 │  │                                                                       │   │
-│  └───────────────────────────────────────────────────────────────────────┘   │
+│  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · F1 +4 more

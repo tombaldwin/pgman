@@ -141,11 +141,10 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(Text::from(lines))
             .alignment(Alignment::Center)
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
+                crate::ui::chrome::panel_block(theme)
                     .border_style(Style::default().fg(theme.border_active))
                     .padding(pad)
-                    .title(Span::styled(" about ", Style::default().fg(theme.title))),
+                    .title(crate::ui::chrome::panel_title(theme, " about ")),
             ),
         popup,
     );
@@ -245,13 +244,13 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(
         Paragraph::new(Text::from(lines))
             .block(
-                Block::default()
-                    .borders(Borders::ALL)
+                crate::ui::chrome::panel_block(theme)
                     .border_style(Style::default().fg(theme.health_yellow))
                     .style(Style::default().fg(theme.text))
-                    .title(Span::styled(
-                        " confirm ",
-                        Style::default().fg(theme.health_yellow),
+                    .title(crate::ui::chrome::panel_title_in(
+                        theme,
+                        "confirm",
+                        theme.health_yellow,
                     )),
             )
             .wrap(ratatui::widgets::Wrap { trim: true }),
@@ -448,11 +447,10 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_active))
                 .style(Style::default().fg(theme.text))
-                .title(Span::styled(title, Style::default().fg(theme.title))),
+                .title(crate::ui::chrome::panel_title(theme, &title)),
         ),
         popup,
     );
@@ -622,13 +620,13 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(Clear, popup);
         f.render_widget(
             Paragraph::new(Text::from(lines)).block(
-                Block::default()
-                    .borders(Borders::ALL)
+                crate::ui::chrome::panel_block(theme)
                     .border_style(Style::default().fg(theme.health_yellow))
                     .style(Style::default().fg(theme.text))
-                    .title(Span::styled(
-                        " open an ssh tunnel? ",
-                        Style::default().fg(theme.health_yellow),
+                    .title(crate::ui::chrome::panel_title_in(
+                        theme,
+                        "open an ssh tunnel?",
+                        theme.health_yellow,
                     )),
             ),
             popup,
@@ -768,11 +766,10 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_active))
                 .style(Style::default().fg(theme.text))
-                .title(Span::styled(title, Style::default().fg(theme.title))),
+                .title(crate::ui::chrome::panel_title(theme, &title)),
         ),
         popup,
     );
@@ -837,8 +834,7 @@ pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
         .scroll((effective_scroll, 0))
         .style(Style::default().fg(theme.text))
         .block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_active))
                 .padding(Padding::uniform(1)),
         );
@@ -908,12 +904,11 @@ pub(super) fn draw_explain_tree(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_pct(area, 88, 80);
     f.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " EXPLAIN plan — q / esc close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1006,12 +1001,11 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " slow queries — pg_stat_statements — r refresh · enter copy · q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1542,24 +1536,22 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
     if let Some(d) = &app.environments.discovery {
-        let block = Block::default()
-            .borders(Borders::ALL)
+        let block = crate::ui::chrome::panel_block(theme)
             .border_style(Style::default().fg(theme.border_active))
-            .title(Span::styled(
+            .title(crate::ui::chrome::panel_title(
+                theme,
                 " discover — space choose · s save · p scope · q back ",
-                Style::default().fg(theme.title),
             ));
         let inner = block.inner(popup);
         f.render_widget(block, popup);
         draw_env_discovery(f, inner, app, d);
         return;
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " environments — enter connect · d discover · q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1696,12 +1688,11 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
     let popup = centered_pct(area, 92, 80);
     f.render_widget(Clear, popup);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " active sessions — pg_stat_activity — r refresh · q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1857,10 +1848,9 @@ pub(super) fn draw_saved_queries(f: &mut Frame, area: Rect, app: &App) {
             " saved queries — enter load · r rename · d delete · / search · q close ".to_string()
         }
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(title, Style::default().fg(theme.title)));
+        .title(crate::ui::chrome::panel_title(theme, &title));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -1956,15 +1946,14 @@ pub(super) fn draw_rename_prompt(f: &mut Frame, area: Rect, app: &App) {
     let w = 70u16.min(area.width.saturating_sub(2));
     let popup = centered(area, w, 5);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
-            format!(
+        .title(crate::ui::chrome::panel_title(
+            theme,
+            &format!(
                 " rename '{}' · enter save · esc cancel ",
                 app.saved_ui.rename_from
             ),
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -1992,12 +1981,11 @@ pub(super) fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
     let h = 5u16;
     let popup = centered(area, w, h);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " save query · enter persist · esc cancel ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -2038,10 +2026,9 @@ pub(super) fn draw_param_prompt(f: &mut Frame, area: Rect, app: &App) {
         (pp.idx + 1).min(pp.params.len()),
         pp.params.len(),
     );
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(title, Style::default().fg(theme.title)));
+        .title(crate::ui::chrome::panel_title(theme, &title));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
 
@@ -2080,12 +2067,11 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 90, 80);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " NOTIFY arrivals — j/k · y yank · c clear · q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -2146,12 +2132,11 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let popup = centered_pct(area, 85, 70);
     f.render_widget(Clear, popup);
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.health_red))
-        .title(Span::styled(
+        .title(crate::ui::chrome::panel_title(
+            theme,
             " error detail — F2 / esc / q close ",
-            Style::default().fg(theme.title),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);

@@ -190,18 +190,14 @@ pub(super) fn draw_editor(f: &mut Frame, area: Rect, app: &mut App) {
     }
     // The title says so when highlighting is off, so the flat colour
     // reads as a decision rather than as a broken highlighter.
-    let mut title_spans = vec![Span::styled(
-        format!(" {title_text} "),
-        Style::default().fg(theme.title),
-    )];
+    let mut title_spans = crate::ui::chrome::panel_title(theme, &title_text).spans;
     if plain_only {
         title_spans.push(Span::styled(
-            "(large buffer — highlighting off) ",
+            " (large buffer — highlighting off) ",
             Style::default().fg(theme.muted),
         ));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(border_color))
         .title(Line::from(title_spans));
     let inner = block.inner(area);
@@ -697,10 +693,9 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(
-            Block::default()
-                .borders(Borders::ALL)
+            crate::ui::chrome::panel_block(theme)
                 .border_style(Style::default().fg(theme.border_active))
-                .title(Span::styled(title, Style::default().fg(theme.title))),
+                .title(crate::ui::chrome::panel_title(theme, &title)),
         ),
         popup,
     );

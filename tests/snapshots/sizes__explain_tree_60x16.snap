@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│  F┌ EXPLAIN plan — q / esc close ────────────────────┐   │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│  F╭[ ◆ EXPLAIN plan ◆ ] q / esc close ───────────────╮   │
 │  W│▼ Hash Join · 50.00ms · 4500 rows                 │   │
 │  O│    Hash Cond: (o.user_id = u.id)                 │   │
-└───│  · Seq Scan on orders o · 30.00ms · ~10000 rows  │───┘
-┌ re│  ▼ Hash · 5.00ms                                 │───┐
+╰───│  · Seq Scan on orders o · 30.00ms · ~10000 rows  │───╯
+╭[ ◆│  ▼ Hash · 5.00ms                                 │───╮
 │id │    · Seq Scan on users u · 4.00ms                │   │
 │1  │                                                  │   │
 │2  │                                                  │   │
 │3  │                                                  │   │
-│4  └──────────────────────────────────────────────────┘   │
+│4  ╰──────────────────────────────────────────────────╯   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · F1 +4 more

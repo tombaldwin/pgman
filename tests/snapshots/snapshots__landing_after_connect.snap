@@ -5,10 +5,10 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ test  connected · pg 16.0
  1 empty                                 ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-┌ start ───────────────────────────────────────────────────────────────────────┐
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────╮
 │ connected to test on localhost:5432 · pg 16.0 · RO                           │
 │ databases  test 1.2 GB · analytics 300 MB                                    │
 │                                                                              │
@@ -17,5 +17,5 @@ expression: dump(&buf)
 │   W   schema wizard                    L   sessions & locks                  │
 │   F8  logs → SQL (paste a log first)   F4  JDBC tap                          │
 │   ?   all keys                         ctrl-t  new tab                       │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   q quit · ? help · e editor · S schema · W wizard · Q saved · F1 +9 more

@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  ┌ discover — space choose · s save · p scope · q back ──────────────────┐   │
+│  ╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ─────────────╮   │
 │  │  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2  │   │
 │  │                                                                       │   │
 │  │  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note  │   │
-└──│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note  │───┘
-┌ r│      staging    already in environment staging                        │───┐
+╰──│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note  │───╯
+╭[ │      staging    already in environment staging                        │───╮
 │id│                                                                       │   │
 │1 │  s appends for analytics:                                             │   │
 │2 │  # tunnels through bastion (i-0demo); the ssh user comes from ~/.ssh/…│   │
@@ -22,8 +22,8 @@ expression: dump(&buf)
 │6 │  ssh_tunnel = "bastion.eu-west-2.compute.amazonaws.com"               │   │
 │  │  sslmode = "require"                                                  │   │
 │  │                                                                       │   │
-│  └───────────────────────────────────────────────────────────────────────┘   │
+│  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · F1 +3 more

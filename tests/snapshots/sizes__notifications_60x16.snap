@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│  ┌ NOTIFY arrivals — j/k · y yank · c clear · q close ┐  │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│  ╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q c╮  │
 │  │  channel                  pid  payload             │  │
 │  │  orders_channel          4321  order:9001 shipped  │  │
-└──│  cache_invalidate        4322  users               │──┘
-┌ r│                                                    │──┐
+╰──│  cache_invalidate        4322  users               │──╯
+╭[ │                                                    │──╮
 │id│                                                    │  │
 │1 │                                                    │  │
 │2 │                                                    │  │
 │3 │                                                    │  │
-│4 └────────────────────────────────────────────────────┘  │
+│4 ╰────────────────────────────────────────────────────╯  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · F1 +4 more

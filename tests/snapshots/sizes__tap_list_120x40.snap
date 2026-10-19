@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                  │
 │  FROM users                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                  │
-│  OR┌ JDBC tap — 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ┐    │
+│  OR╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q c╮    │
 │    │    duration       rows  app                   sql / kind                                                   │    │
-└────│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?      │────┘
-┌ res│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │────┐
+╰────│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?      │────╯
+╭[ ◆ │       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │────╮
 │id  │       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
 │1   │       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
 │2   │       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
@@ -37,9 +37,9 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

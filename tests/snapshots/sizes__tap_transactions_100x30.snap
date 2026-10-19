@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · v cycle · … ──────────────────┐   │
+│  W╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: transactions · v cycle · … ─────────────╮   │
 │  O│  state        stmts    fps        span     db-time  pool          txn / conn · last sql  │   │
 │   │  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * f…│   │
-└───│  open             1      1         0µs       1.8ms  primary       (autocommi… · select id│───┘
-┌ re│  open             1      1         0µs       310µs  primary       (autocommi… · select id│───┐
+╰───│  open             1      1         0µs       1.8ms  primary       (autocommi… · select id│───╯
+╭[ ◆│  open             1      1         0µs       310µs  primary       (autocommi… · select id│───╮
 │id │                                                                                          │   │
 │1  │                                                                                          │   │
 │2  │                                                                                          │   │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                                                                                                                                  │
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY created_at DESC;                                                                                                                                                                           │
-│       ┌ JDBC tap — 8 queries · 0 heartbeats · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────────────────────────┐       │
-└───────│  state        stmts    fps        span     db-time  pool          txn / conn · last sql                                                                                              │───────┘
-┌ result│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * from order_items where order_id = ?                                                           │───────┐
+│       ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: transactions · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────╮       │
+╰───────│  state        stmts    fps        span     db-time  pool          txn / conn · last sql                                                                                              │───────╯
+╭[ ◆ res│  open             6      1     125.0ms       2.7ms  primary       conn-7#42 · select * from order_items where order_id = ?                                                           │───────╮
 │id  ema│  open             1      1         0µs       1.8ms  primary       (autocommit · select-orders) · select id, user_id, status from orders where status = ?                             │       │
 │1   ada│  open             1      1         0µs       310µs  primary       (autocommit · select-user) · select id, email, plan from users where id = ?                                        │       │
 │2   lin│                                                                                                                                                                                      │       │
@@ -46,10 +46,10 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘       │
+│       ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help

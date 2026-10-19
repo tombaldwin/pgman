@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
 │  WHERE plan = 'pro'                                                                              │
-│  ORDER BY cre┌────────────────────────────────────────────────────────────────────┐              │
+│  ORDER BY cre╭────────────────────────────────────────────────────────────────────╮              │
 │              │                                                                    │              │
-└──────────────│ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │──────────────┘
-┌ result · 6 ro│ notify)                                                            │──────────────┐
+╰──────────────│ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │──────────────╯
+╭[ ◆ result · 6│ notify)                                                            │──────────────╮
 │id  email     │                                                                    │              │
 │1   ada@exampl│   grid                                                             │              │
 │2   linus@exam│     q             quit (esc here is a no-op so a reflex press      │              │
@@ -26,10 +26,10 @@ expression: dump(&buf)
 │              │     S             schema browser (psql `\d` equivalent)            │              │
 │              │ ↓ 277 more below                                                   │              │
 │              │                                                                    │              │
-│              └────────────────────────────────────────────────────────────────────┘              │
+│              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

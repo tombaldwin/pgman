@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│ ┌ slow queries — pg_stat_statements — r refresh · ente┐  │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│ ╭[ ◆ slow queries ◆ ] pg_stat_statements — r refresh ·╮  │
 │ │    total ms    mean ms     calls      rows  query   │  │
 │ │    12345.60      12.34   1000000   1000000  SELECT *│  │
-└─│      800.00       3.20       250       250  UPDATE o│──┘
-┌ │                                                     │──┐
+╰─│      800.00       3.20       250       250  UPDATE o│──╯
+╭[│                                                     │──╮
 │i│                                                     │  │
 │1├─────────────────────────────────────────────────────┤  │
 │2│SELECT * FROM users WHERE active = true              │  │
 │3│                                                     │  │
-│4└─────────────────────────────────────────────────────┘  │
+│4╰─────────────────────────────────────────────────────╯  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter copy · F1 +4 more

@@ -5,25 +5,25 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  FR┌ saved queries — enter load · r rename · d delete · / search · q clo┐    │
+│  FR╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · ╮    │
 │  WH│  pro-users                     SELECT id, email, created_at FROM us│    │
 │  OR│  order-by-id                   SELECT * FROM orders WHERE id = :ord│    │
 │    │  daily-revenue                 SELECT date_trunc('day', created_at)│    │
-└────│                                                                    │────┘
-┌ res│                                                                    │────┐
-│id  ┌ rename 'pro-users' · enter save · esc cancel ──────────────────────┐    │
+╰────│                                                                    │────╯
+╭[ ◆ │                                                                    │────╮
+│id  ╭[ ◆ rename 'pro-users' · enter save · esc cancel ◆ ]────────────────╮    │
 │1   │new name:                                                           │    │
 │2   │pro-users                                                           │    │
 │3   │                                                                    │    │
-│4   └────────────────────────────────────────────────────────────────────┘    │
+│4   ╰────────────────────────────────────────────────────────────────────╯    │
 │5   │                                                                    │    │
 │6   │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │
-│    └────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   rename · edit name · enter save · esc cancel

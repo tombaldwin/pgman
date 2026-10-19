@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ environments — enter connect · d discover · q close ─────────────────────────────────────┐   │
+│  W╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────╮   │
 │  O│  staging · RDS 123456789012 eu-west-2                                                    │   │
 │   │    database  role     server             status     probe                        engine  │   │
-└───│    shop      primary  staging            available  via replica                  postgre…│───┘
-┌ re│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgre…│───┐
+╰───│    shop      primary  staging            available  via replica                  postgre…│───╯
+╭[ ◆│    shop      replica  └ staging-replica  available  v251 · 1 pending · lag 0.4s  postgre…│───╮
 │id │                                                                                          │   │
 │1  │  qa · RDS 123456789012 eu-west-2                                                         │   │
 │2  │    database  role     server             status     engine                               │   │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica…│   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help

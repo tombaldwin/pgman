@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                                              │
 │  FROM users                                                                                      │
-│  W┌ discover — space choose · s save · p scope · q back ─────────────────────────────────────┐   │
+│  W╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ────────────────────────────────╮   │
 │  O│  AWS account 123456789012, eu-west-2 · ambient profile · p scope 1/2                     │   │
 │   │                                                                                          │   │
-└───│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                     │───┘
-┌ re│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                     │───┐
+╰───│  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note                     │───╯
+╭[ ◆│  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note                     │───╮
 │id │      staging    already in environment staging                                           │   │
 │1  │                                                                                          │   │
 │2  │  s appends for analytics:                                                                │   │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │   │  "analytics-replica" = "analytics/database/warehouse_replica/credentials"                │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
-│   └──────────────────────────────────────────────────────────────────────────────────────────┘   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · d again · F1 +2 more

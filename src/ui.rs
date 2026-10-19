@@ -9,10 +9,11 @@ use crate::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 
+mod chrome;
 mod editor;
 mod landing;
 mod panels;
@@ -875,7 +876,8 @@ fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
         return;
     }
     let room = usize::from(last_x - start + 1);
-    buf.set_stringn(start, y, suffix, room, style);
+    // One space between the title and the suffix.
+    buf.set_stringn(start, y, format!(" {suffix}"), room, style);
 }
 
 /// Fit a ` · `-joined hint string into `width` columns without ever
@@ -2698,13 +2700,9 @@ fn scroll_offset(cursor: usize, visible: usize) -> usize {
 
 /// A titled, idle-bordered block.
 fn bordered(theme: &Theme, title: &str) -> Block<'static> {
-    Block::default()
-        .borders(Borders::ALL)
+    crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_idle))
-        .title(Span::styled(
-            format!(" {title} "),
-            Style::default().fg(theme.title),
-        ))
+        .title(crate::ui::chrome::panel_title(theme, &format!(" {title} ")))
 }
 
 #[cfg(test)]

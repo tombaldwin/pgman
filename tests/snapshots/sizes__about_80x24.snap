@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
-│  WHERE plan = ┌ about ───────────────────────────────────────┐               │
+│  WHERE plan = ╭[ ◆ about ◆ ]─────────────────────────────────╮               │
 │  ORDER BY crea│                                              │               │
 │               │                                              │               │
-└───────────────│              pgman X.X.X · beta              │───────────────┘
-┌ result · 6 row│       installed via a standalone binary      │───────────────┐
+╰───────────────│              pgman X.X.X · beta              │───────────────╯
+╭[ ◆ result · 6 │       installed via a standalone binary      │───────────────╮
 │id  email      │   k9s-style Postgres TUI for Java/AWS shops  │               │
 │1   ada@example│            server: pg 16.2 (demo)            │               │
 │2   linus@examp│                                              │               │
@@ -21,9 +21,9 @@ expression: dump(&buf)
 │5   edsger@exam│                                              │               │
 │6   katherine@e│           esc / enter / A to close           │               │
 │               │                                              │               │
-│               └──────────────────────────────────────────────┘               │
+│               ╰──────────────────────────────────────────────╯               │
 │                                                                              │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / enter / A close · F1 help

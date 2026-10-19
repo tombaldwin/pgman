@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-┌ editor (e to focus) ─────────────────────────────────────┐
-│  F┌ saved queries — enter load · r rename · d delete ┐   │
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│  F╭[ ◆ saved queries ◆ ] enter load · r rename · d de╮   │
 │  W│  pro-users                     SELECT id, email, │   │
 │  O│  order-by-id                   SELECT * FROM orde│   │
-└┌ rename 'pro-users' · enter save · esc cancel ──────────┐┘
-┌│new name:                                               │┐
+╰╭[ ◆ rename 'pro-users' · enter save · esc cancel ◆ ]────╮╯
+╭│new name:                                               │╮
 ││pro-users                                               ││
 ││                                                        ││
-│└────────────────────────────────────────────────────────┘│
+│╰────────────────────────────────────────────────────────╯│
 │3  │  FROM users                                      │   │
-│4  └──────────────────────────────────────────────────┘   │
+│4  ╰──────────────────────────────────────────────────╯   │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
-└──────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   rename · enter save · esc cancel

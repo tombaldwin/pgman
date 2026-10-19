@@ -40,12 +40,11 @@ pub(super) fn draw_tap_monitor(f: &mut Frame, area: Rect, app: &App) {
     // either side of the title text. Without this the border cut the
     // title mid-word (`… Shift-B base┐`).
     let title_budget = (popup.width.saturating_sub(4)) as usize;
-    let block = Block::default()
-        .borders(Borders::ALL)
+    let block = crate::ui::chrome::panel_block(theme)
         .border_style(Style::default().fg(theme.border_active))
-        .title(Span::styled(
-            format!(" {} ", fit_title(&title, title_budget)),
-            Style::default().fg(theme.title),
+        .title(crate::ui::chrome::panel_title(
+            theme,
+            &format!(" {} ", fit_title(&title, title_budget)),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);

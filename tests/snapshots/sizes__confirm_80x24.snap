@@ -5,25 +5,25 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY created_at DESC;                                                   │
 │                                                                              │
-└───────────┌ confirm ─────────────────────────────────────────────┐───────────┘
-┌ result · 6│run (DELETE without WHERE) · will be refused — this   │───────────┐
+╰───────────╭[ ◆ confirm ◆ ]───────────────────────────────────────╮───────────╯
+╭[ ◆ result │run (DELETE without WHERE) · will be refused — this   │───────────╮
 │id  email  │session is read-only                                  │           │
 │1   ada@exa│                                                      │           │
 │2   linus@e│DELETE FROM orders                                    │           │
 │3   grace@e│                                                      │           │
 │4   alan@ex│y = run · n / esc = cancel                            │           │
-│5   edsger@└──────────────────────────────────────────────────────┘           │
+│5   edsger@╰──────────────────────────────────────────────────────╯           │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   y run · n / esc cancel

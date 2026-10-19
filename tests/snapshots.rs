@@ -809,11 +809,11 @@ fn editor_zoomed_60x16() {
         !text.contains("result") && !text.contains("(no rows)"),
         "no result block while the editor is zoomed:\n{text}"
     );
-    assert!(text.contains(" editor · zoomed (esc, z) "), "{text}");
+    assert!(text.contains("[ ◆ editor ◆ ] · zoomed (esc, z) "), "{text}");
     let corners: Vec<usize> = text
         .lines()
         .enumerate()
-        .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
+        .filter(|(_, l)| l.starts_with('╭') || l.starts_with('╰'))
         .map(|(y, _)| y)
         .collect();
     assert_eq!(
@@ -845,14 +845,17 @@ fn grid_zoomed_80x24() {
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
     assert!(
-        !text.contains("┌ editor") && !text.contains("> SELECT id, name"),
+        !text.contains("◆ editor") && !text.contains("> SELECT id, name"),
         "no editor block while the grid is zoomed:\n{text}"
     );
-    assert!(text.contains(" result · 2 row(s) · zoomed (z) "), "{text}");
+    assert!(
+        text.contains("[ ◆ result · 2 row(s) ◆ ] · zoomed (z) "),
+        "{text}"
+    );
     let corners: Vec<usize> = text
         .lines()
         .enumerate()
-        .filter(|(_, l)| l.starts_with('┌') || l.starts_with('└'))
+        .filter(|(_, l)| l.starts_with('╭') || l.starts_with('╰'))
         .map(|(y, _)| y)
         .collect();
     assert_eq!(

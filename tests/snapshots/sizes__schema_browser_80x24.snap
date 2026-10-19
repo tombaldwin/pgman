@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  FR┌ schema browser — q / esc close ────────────────────────────────────┐    │
+│  FR╭[ ◆ schema browser ◆ ] q / esc close ───────────────────────────────╮    │
 │  WH│▼ public  (4)               schema: public                          │    │
 │  OR│  ▼ item  (4 col, 1 cons)                                           │    │
 │    │      · id : bigint NOT NU… 4 table(s)                              │    │
-└────│      · order_id : bigint …                                         │────┘
-┌ res│      · sku : varchar(40) … enter to expand — then arrow / j/k into…│────┐
+╰────│      · order_id : bigint …                                         │────╯
+╭[ ◆ │      · sku : varchar(40) … enter to expand — then arrow / j/k into…│────╮
 │id  │      · qty : integer NOT …                                         │    │
 │1   │      ◆ item_pkey                                                   │    │
 │2   │  ▼ order_items  (5 col, 1…                                         │    │
@@ -22,8 +22,8 @@ expression: dump(&buf)
 │6   │      · qty : integer NOT …                                         │    │
 │    │      · price_cents : inte…                                         │    │
 │    │      ◆ order_items_pkey                                            │    │
-│    └────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   expanded all

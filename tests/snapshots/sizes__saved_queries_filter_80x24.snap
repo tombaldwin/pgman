@@ -5,14 +5,14 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-┌ editor (e to focus) ─────────────────────────────────────────────────────────┐
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
-│  FR┌ saved queries — /d  (3/3 shown) · enter load · esc clear ──────────┐    │
+│  FR╭[ ◆ saved queries ◆ ] /d  (3/3 shown) · enter load · esc clear ─────╮    │
 │  WH│  pro-users                     SELECT id, email, created_at FROM us│    │
 │  OR│  order-by-id                   SELECT * FROM orders WHERE id = :ord│    │
 │    │  daily-revenue                 SELECT date_trunc('day', created_at)│    │
-└────│                                                                    │────┘
-┌ res│                                                                    │────┐
+╰────│                                                                    │────╯
+╭[ ◆ │                                                                    │────╮
 │id  │  pro-users                                                         │    │
 │1   │  SELECT id, email, created_at                                      │    │
 │2   │  FROM users                                                        │    │
@@ -22,8 +22,8 @@ expression: dump(&buf)
 │6   │                                                                    │    │
 │    │                                                                    │    │
 │    │                                                                    │    │
-│    └────────────────────────────────────────────────────────────────────┘    │
+│    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 │                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   filter saved queries · type to narrow

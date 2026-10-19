@@ -756,14 +756,14 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     let lines: Vec<&str> = rendered.lines().collect();
     let panel_top = lines
         .iter()
-        .position(|l| l.starts_with("┌ pgman"))
+        .position(|l| l.starts_with("╭[ ◆ pgman"))
         .expect("results panel border");
     assert!(
         !lines[panel_top].contains("pick a connection"),
         "picker landed on the panel's top border row:\n{rendered}"
     );
     assert!(
-        lines[panel_top + 1].starts_with("│┌ pick a connection"),
+        lines[panel_top + 1].starts_with("│╭[ ◆ pick a connection"),
         "picker should float one row/column inside the panel:\n{rendered}"
     );
 
@@ -771,7 +771,7 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     // the longest target doesn't read as jammed against the frame.
     let right_border = lines[panel_top + 1]
         .chars()
-        .position(|c| c == '┐')
+        .position(|c| c == '╮')
         .expect("popup right border");
     for line in &lines[panel_top + 2..] {
         let chars: Vec<char> = line.chars().collect();
@@ -1317,14 +1317,14 @@ fn alt_z_twice_restores_the_exact_prior_split() {
     let before = render(&mut a, 80, 24);
     let body_before: Vec<String> = (0..23).map(|y| row_text(&before, y)).collect();
     assert!(
-        row_text(&before, 11).starts_with('└'),
+        row_text(&before, 11).starts_with('╰'),
         "8 lines + 2 borders under the header and tab bar: bottom border on row 11:\n{}",
         dump(&before)
     );
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
     let zoomed = render(&mut a, 80, 24);
     assert!(
-        row_text(&zoomed, 22).starts_with('└'),
+        row_text(&zoomed, 22).starts_with('╰'),
         "zoomed: the editor's bottom border is on the footer:\n{}",
         dump(&zoomed)
     );
@@ -1441,7 +1441,7 @@ fn tab_bar_is_visible_with_a_single_tab_once_connected() {
         "never wider than the terminal: {bar:?}"
     );
     assert!(
-        row_text(&buf, 2).starts_with('┌'),
+        row_text(&buf, 2).starts_with('╭'),
         "the editor starts under the bar:\n{}",
         dump(&buf)
     );
@@ -1455,7 +1455,7 @@ fn tab_bar_is_hidden_before_a_connection() {
     a.conn_state = ConnState::Failed("refused".into());
     let buf = render(&mut a, 80, 24);
     assert!(
-        row_text(&buf, 1).starts_with('┌'),
+        row_text(&buf, 1).starts_with('╭'),
         "no tab bar on the failure card:\n{}",
         dump(&buf)
     );
@@ -1503,7 +1503,7 @@ fn tab_bar_yields_its_row_on_a_cramped_terminal_unless_there_are_two_tabs() {
     let mut a = connected_app();
     let buf = render(&mut a, 60, 13);
     assert!(
-        row_text(&buf, 1).starts_with('┌'),
+        row_text(&buf, 1).starts_with('╭'),
         "60x13 is an 11-row body: no bar:\n{}",
         dump(&buf)
     );
