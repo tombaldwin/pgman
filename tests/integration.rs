@@ -1251,3 +1251,104 @@ fn mcp_discovered_connections_need_the_flag() {
     let (text, is_error) = reply(&frames, 2);
     assert!(!is_error, "{text}");
 }
+
+/// A real session holding a lock on a table shows up in `sessions_locks`
+/// scoped to that table, with the lock named — and its long-open
+/// transaction is reported even without the table filter.
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
+    let home = mcp_home("mcp-locks");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_mcp_locked (id int)",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    // Hold an open transaction with a lock on the table while MCP looks.
+    let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).unwrap();
+    let (holder, _t) = pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+        .await
+        .unwrap();
+    holder
+        .batch_execute("BEGIN; LOCK TABLE pgman_mcp_locked IN SHARE MODE")
+        .await
+        .unwrap();
+    let pid: i32 = holder
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+
+    let home2 = home.clone();
+    let frames = tokio::task::spawn_blocking(move || {
+        mcp_session(
+            &home2,
+            &home2,
+            &[],
+            &[
+                tool_call(
+                    1,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "tables": ["pgman_mcp_locked"], "min_xact_age_secs": 3600}),
+                ),
+                tool_call(
+                    2,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "min_xact_age_secs": 0}),
+                ),
+                tool_call(
+                    3,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "tables": ["x'; DROP TABLE pgman_mcp_locked; --"]}),
+                ),
+            ],
+        )
+    })
+    .await
+    .unwrap();
+    holder.batch_execute("ROLLBACK").await.unwrap();
+
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["server_is_replica"], false);
+    let row = v["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["pid"] == pid)
+        .unwrap_or_else(|| panic!("lock holder {pid} not reported: {text}"));
+    assert!(
+        row["locks_on_tables"]
+            .as_str()
+            .unwrap()
+            .contains("pgman_mcp_locked ShareLock"),
+        "{row}"
+    );
+
+    let (text, _) = reply(&frames, 2);
+    assert!(
+        text.contains(&format!("\"pid\":{pid}")),
+        "open transaction not reported: {text}"
+    );
+
+    let (text, is_error) = reply(&frames, 3);
+    assert!(
+        is_error && text.contains("not a plain table name"),
+        "{text}"
+    );
+    assert!(table_exists(&home, "pgman_mcp_locked"));
+}

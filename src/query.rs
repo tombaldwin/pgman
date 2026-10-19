@@ -24,6 +24,7 @@ pub mod logdetect;
 pub mod nplus1;
 pub mod params;
 pub mod pglog;
+pub mod preflight;
 pub mod reconstruct;
 pub mod row_diff;
 pub mod schema;

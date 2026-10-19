@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use super::connections::{self, Entry};
 use super::Server;
 use crate::conn;
+use crate::query::preflight;
 
 /// Rows `query` returns when the client doesn't say.
 pub const DEFAULT_MAX_ROWS: usize = 200;
@@ -47,6 +48,21 @@ pub fn tool_table() -> Value {
                 "additionalProperties": false
             },
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
+            "name": "sessions_locks",
+            "description": "Pre-flight for a schema change: client sessions that have held a transaction open for at least `min_xact_age_secs` (default 60), are blocked, are blocking another session, or hold or wait for a lock on one of `tables`. Each session lists its locks on those tables (on any table when `tables` is omitted), marked `(waiting)` when not granted, plus `blocked_by` and `blocking` pids. `server_is_replica` comes from pg_is_in_recovery() on the same connection. CAVEATS: on a read replica these are the REPLICA's sessions and locks; the primary's long transactions, which are what block a migration, are invisible from there. It is a snapshot taken at one instant. Table names must be plain identifiers (name or schema.name, unquoted) and match how the table was created without quotes. pgman's own session is excluded. Rows past 5000 are cut, see `truncated`.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connection": {"type": "string", "description": "A name from `connections`."},
+                    "tables": {"type": "array", "items": {"type": "string"}, "maxItems": preflight::MAX_TABLES, "description": "Tables the change will touch."},
+                    "min_xact_age_secs": {"type": "integer", "minimum": 0, "description": "Default 60."}
+                },
+                "required": ["connection"],
+                "additionalProperties": false
+            },
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
         }
     ])
 }
@@ -67,7 +83,7 @@ pub fn tool_names() -> Vec<String> {
 /// `query` allows for a tunnel coming up plus the statement timeout.
 pub fn call_timeout_secs(tool: &str) -> u64 {
     match tool {
-        "query" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 30,
+        "query" | "sessions_locks" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 30,
         _ => 10,
     }
 }
@@ -78,6 +94,7 @@ impl Server {
             "doctor" => Ok(self.tool_doctor()),
             "connections" => Ok(self.tool_connections()),
             "query" => self.tool_query(args).await,
+            "sessions_locks" => self.tool_sessions_locks(args).await,
             other => Err(format!("unknown tool '{other}'")),
         }
     }
@@ -116,7 +133,7 @@ impl Server {
                 "discovered connections are refused unless the server runs with --project-connections",
                 "a discovered connection that opens an ssh tunnel is always refused; tunnels belong in connections.toml",
                 "${…} placeholders in connections.toml are not resolved; use password_env",
-                "no sessions/locks or pending-patches tools yet (planned)",
+                "no pending-patches tool yet (planned)",
             ],
             "config": {
                 "working_directory": self.cwd.display().to_string(),
@@ -138,15 +155,59 @@ impl Server {
     }
 
     async fn tool_query(&self, args: &Value) -> Result<String, String> {
-        let name = args
-            .get("connection")
-            .and_then(Value::as_str)
-            .ok_or("missing required argument 'connection'")?;
-        let sql = args
-            .get("sql")
-            .and_then(Value::as_str)
-            .ok_or("missing required argument 'sql'")?;
+        let name = arg_str(args, "connection")?;
+        let sql = arg_str(args, "sql")?;
         let max_rows = parse_max_rows(args.get("max_rows"))?;
+        let target = self.prepare(name)?;
+        let statement = single_checked_statement(&target.safety, &target.dsn.dbname, sql)?;
+        tracing::info!(target: "pgman::mcp", connection = name, db = %target.dsn.dbname, "query");
+        let (client, _tunnel) = connect(name, target).await?;
+        let (typed, truncated) =
+            conn::run_statement_typed_capped(&client, &statement, Some(max_rows))
+                .await
+                .map_err(|e| e.msg)?;
+        Ok(render_query(name, &typed, truncated, max_rows))
+    }
+
+    async fn tool_sessions_locks(&self, args: &Value) -> Result<String, String> {
+        let name = arg_str(args, "connection")?;
+        let min_age = match args.get("min_xact_age_secs") {
+            None | Some(Value::Null) => preflight::DEFAULT_MIN_XACT_AGE_SECS,
+            Some(v) => v
+                .as_u64()
+                .ok_or("min_xact_age_secs must be a non-negative integer")?,
+        };
+        let tables = parse_tables(args.get("tables"))?;
+        let sql = preflight::sessions_locks_sql(min_age, &tables)?;
+        let target = self.prepare(name)?;
+        // pgman's own SQL, but through the same guards as anything else:
+        // a read-only floor that only holds for client SQL is not one.
+        let statement = single_checked_statement(&target.safety, &target.dsn.dbname, &sql)?;
+        tracing::info!(target: "pgman::mcp", connection = name, "sessions_locks");
+        let (client, _tunnel) = connect(name, target).await?;
+        let (replica, _) =
+            conn::run_statement_typed_capped(&client, preflight::IS_REPLICA_SQL, Some(1))
+                .await
+                .map_err(|e| e.msg)?;
+        let is_replica = replica
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|c| c.as_deref())
+            .map(|v| v == "t");
+        let (typed, truncated) =
+            conn::run_statement_typed_capped(&client, &statement, Some(MAX_MAX_ROWS))
+                .await
+                .map_err(|e| e.msg)?;
+        Ok(render_sessions_locks(
+            name, is_replica, min_age, &tables, &typed, truncated,
+        ))
+    }
+
+    /// Everything about a connection that can be decided before
+    /// touching the network: which DSN, under which (read-only) safety
+    /// profile, with which statement timeout.
+    fn prepare(&self, name: &str) -> Result<Target, String> {
         let (entries, _) = connections::load(&self.cwd, self.opts.project_connections);
         let dsn = pick_dsn(&entries, name)?;
         let safety = read_only_safety(crate::project::merge_safety(
@@ -155,30 +216,111 @@ impl Server {
                 .and_then(|(_, cfg)| cfg.safety)
                 .as_ref(),
         ));
-        let statement = single_checked_statement(&safety, &dsn.dbname, sql)?;
         let timeout_ms =
             capped_statement_timeout(safety.profile_for(&dsn.dbname).statement_timeout_ms);
-        tracing::info!(target: "pgman::mcp", connection = name, db = %dsn.dbname, "query");
-
-        let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (notification_tx, _notification_rx) = tokio::sync::mpsc::unbounded_channel();
-        let dsn_for_hint = dsn.clone();
-        let (client, _tunnel) =
-            conn::connect_only(dsn, true, timeout_ms, notice_tx, notification_tx)
-                .await
-                .map_err(|e| {
-                    let mut msg = format!("connect to '{name}' failed: {e}");
-                    if let Some(hint) = conn::connect_hint(&e, &dsn_for_hint) {
-                        msg.push_str(&format!("\nhint: {hint}"));
-                    }
-                    msg
-                })?;
-        let (typed, truncated) =
-            conn::run_statement_typed_capped(&client, &statement, Some(max_rows))
-                .await
-                .map_err(|e| e.msg)?;
-        Ok(render_query(name, &typed, truncated, max_rows))
+        Ok(Target {
+            dsn,
+            safety,
+            timeout_ms,
+        })
     }
+}
+
+/// A connection resolved and checked, not yet opened.
+pub(super) struct Target {
+    pub dsn: conn::Dsn,
+    pub safety: crate::safety::SafetyConfig,
+    pub timeout_ms: u64,
+}
+
+/// Open `target` read-only. Notices and notifications are dropped: a
+/// one-shot call has nowhere to show them.
+async fn connect(
+    name: &str,
+    target: Target,
+) -> Result<
+    (
+        std::sync::Arc<tokio_postgres::Client>,
+        Option<crate::tunnel::SshTunnel>,
+    ),
+    String,
+> {
+    let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notification_rx) = tokio::sync::mpsc::unbounded_channel();
+    let dsn_for_hint = target.dsn.clone();
+    conn::connect_only(
+        target.dsn,
+        true,
+        target.timeout_ms,
+        notice_tx,
+        notification_tx,
+    )
+    .await
+    .map_err(|e| {
+        let mut msg = format!("connect to '{name}' failed: {e}");
+        if let Some(hint) = conn::connect_hint(&e, &dsn_for_hint) {
+            msg.push_str(&format!("\nhint: {hint}"));
+        }
+        msg
+    })
+}
+
+/// A required string argument.
+fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing required argument '{key}'"))
+}
+
+/// `tables`: absent, or an array of strings. Names are validated when
+/// the statement is built.
+pub fn parse_tables(v: Option<&Value>) -> Result<Vec<String>, String> {
+    match v {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|i| {
+                i.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "tables must be an array of strings".to_string())
+            })
+            .collect(),
+        Some(_) => Err("tables must be an array of strings".to_string()),
+    }
+}
+
+/// `sessions_locks`' JSON. `is_replica` comes from `pg_is_in_recovery()`
+/// on the same connection; on a replica the note says what that means.
+pub fn render_sessions_locks(
+    name: &str,
+    is_replica: Option<bool>,
+    min_age: u64,
+    tables: &[String],
+    typed: &conn::TypedRows,
+    truncated: bool,
+) -> String {
+    let sessions: Value = serde_json::from_str(&crate::batch::render_typed_json(typed))
+        .unwrap_or_else(|_| Value::Array(Vec::new()));
+    let note = match is_replica {
+        Some(true) => Some(
+            "this server is a READ REPLICA: these are the replica's sessions and locks, not \
+             the primary's. A pre-flight for a change on the primary must run against the \
+             primary.",
+        ),
+        Some(false) => None,
+        None => Some("could not tell whether this server is a replica"),
+    };
+    json!({
+        "connection": name,
+        "server_is_replica": is_replica,
+        "note": note,
+        "min_xact_age_secs": min_age,
+        "tables": tables,
+        "sessions": sessions,
+        "session_count": typed.rows.len(),
+        "truncated": truncated,
+    })
+    .to_string()
 }
 
 /// The client's `max_rows`, defaulted and bounded. A value out of range
@@ -347,7 +489,10 @@ mod tests {
             assert!(desc.contains("CAVEATS:"), "{} has no CAVEATS", d["name"]);
             assert_eq!(d["annotations"]["readOnlyHint"], true, "{}", d["name"]);
         }
-        assert_eq!(tool_names(), ["doctor", "connections", "query"]);
+        assert_eq!(
+            tool_names(),
+            ["doctor", "connections", "query", "sessions_locks"]
+        );
     }
 
     #[test]
@@ -460,6 +605,56 @@ mod tests {
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["connections"][0]["target"]["database"], "db");
         assert_eq!(v["connections"][0]["usable"], true);
+    }
+
+    #[test]
+    fn tables_must_be_an_array_of_strings() {
+        assert_eq!(parse_tables(None), Ok(Vec::new()));
+        assert_eq!(
+            parse_tables(Some(&json!(["t_user", "audit.t_log"]))),
+            Ok(vec!["t_user".to_string(), "audit.t_log".to_string()])
+        );
+        assert!(parse_tables(Some(&json!("t_user"))).is_err());
+        assert!(parse_tables(Some(&json!(["t_user", 3]))).is_err());
+    }
+
+    #[test]
+    fn the_sessions_locks_statement_passes_the_read_only_guards() {
+        let cfg = read_only_safety(SafetyConfig::default());
+        let sql = preflight::sessions_locks_sql(60, &["t_user".into()]).unwrap();
+        assert!(single_checked_statement(&cfg, "db", &sql).is_ok());
+    }
+
+    #[test]
+    fn a_replica_says_whose_sessions_these_are() {
+        let typed = conn::TypedRows {
+            columns: vec![("pid".to_string(), Type::INT4)],
+            rows: vec![vec![Some("42".to_string())]],
+            affected: None,
+        };
+        let v: Value = serde_json::from_str(&render_sessions_locks(
+            "c",
+            Some(true),
+            60,
+            &[],
+            &typed,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(v["server_is_replica"], true);
+        assert!(v["note"].as_str().unwrap().contains("REPLICA"));
+        assert_eq!(v["sessions"][0]["pid"], 42);
+
+        let v: Value = serde_json::from_str(&render_sessions_locks(
+            "c",
+            Some(false),
+            60,
+            &[],
+            &typed,
+            false,
+        ))
+        .unwrap();
+        assert_eq!(v["note"], Value::Null);
     }
 
     #[test]

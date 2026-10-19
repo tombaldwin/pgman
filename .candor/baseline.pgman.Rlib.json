@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 2037,
-    "digest": "fddfedc814510412"
+    "count": 2052,
+    "digest": "e492ab3eb32a2a9f"
   },
   "resolves": [
     "fs",
@@ -5498,7 +5498,7 @@
     },
     {
       "fn": "mcp::Server::handle_request",
-      "loc": "src/mcp/mod.rs:106:5: 106:69",
+      "loc": "src/mcp/mod.rs:114:5: 114:69",
       "inferred": [
         "Clock",
         "Db",
@@ -5658,7 +5658,7 @@
     },
     {
       "fn": "mcp::parse_error",
-      "loc": "src/mcp/mod.rs:274:1: 274:27",
+      "loc": "src/mcp/mod.rs:282:1: 282:27",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -5670,7 +5670,7 @@
     },
     {
       "fn": "mcp::run",
-      "loc": "src/mcp/mod.rs:282:1: 282:56",
+      "loc": "src/mcp/mod.rs:290:1: 290:56",
       "inferred": [
         "Clock",
         "Db",
@@ -5731,7 +5731,7 @@
     },
     {
       "fn": "mcp::serve",
-      "loc": "src/mcp/mod.rs:298:1: 301:55",
+      "loc": "src/mcp/mod.rs:306:1: 309:55",
       "inferred": [
         "Clock",
         "Db",
@@ -5792,7 +5792,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::call_tool",
-      "loc": "src/mcp/tools.rs:76:5: 76:93",
+      "loc": "src/mcp/tools.rs:92:5: 92:93",
       "inferred": [
         "Clock",
         "Db",
@@ -5825,7 +5825,8 @@
       "calls": [
         "mcp::tools::<impl mcp::Server>::tool_connections",
         "mcp::tools::<impl mcp::Server>::tool_doctor",
-        "mcp::tools::<impl mcp::Server>::tool_query"
+        "mcp::tools::<impl mcp::Server>::tool_query",
+        "mcp::tools::<impl mcp::Server>::tool_sessions_locks"
       ],
       "invisible": [
         "futures_util",
@@ -5849,8 +5850,44 @@
       ]
     },
     {
+      "fn": "mcp::tools::<impl mcp::Server>::prepare",
+      "loc": "src/mcp/tools.rs:210:5: 210:60",
+      "inferred": [
+        "Env",
+        "Fs",
+        "Log",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Env",
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "5ccc040b33f0e94f4bc894b50009e4a3",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "mcp::connections::load",
+        "project::load_from",
+        "project::merge_safety",
+        "safety::SafetyConfig::load_personal"
+      ],
+      "invisible": [
+        "quick_xml",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
       "fn": "mcp::tools::<impl mcp::Server>::tool_connections",
-      "loc": "src/mcp/tools.rs:135:5: 135:41",
+      "loc": "src/mcp/tools.rs:152:5: 152:41",
       "inferred": [
         "Env",
         "Fs",
@@ -5884,7 +5921,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_doctor",
-      "loc": "src/mcp/tools.rs:85:5: 85:36",
+      "loc": "src/mcp/tools.rs:102:5: 102:36",
       "inferred": [
         "Env",
         "Fs",
@@ -5924,7 +5961,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_query",
-      "loc": "src/mcp/tools.rs:140:5: 140:71",
+      "loc": "src/mcp/tools.rs:157:5: 157:71",
       "inferred": [
         "Clock",
         "Db",
@@ -5959,14 +5996,11 @@
       ],
       "calls": [
         "<tunnel::SshTunnel as std::ops::Drop>::drop",
-        "conn::connect_only",
         "conn::run_statement_typed_capped",
-        "mcp::connections::load",
+        "mcp::tools::<impl mcp::Server>::prepare",
         "mcp::tools::<impl mcp::Server>::tool_query::{closure#0}::__CALLSITE",
-        "mcp::tools::single_checked_statement",
-        "project::load_from",
-        "project::merge_safety",
-        "safety::SafetyConfig::load_personal"
+        "mcp::tools::connect",
+        "mcp::tools::single_checked_statement"
       ],
       "invisible": [
         "futures_util",
@@ -5990,8 +6024,129 @@
       ]
     },
     {
+      "fn": "mcp::tools::<impl mcp::Server>::tool_sessions_locks",
+      "loc": "src/mcp/tools.rs:172:5: 172:80",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "direct": [
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "5ccc040b33f0e94f801c7e1314932111",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "ssh"
+      ],
+      "calls": [
+        "<tunnel::SshTunnel as std::ops::Drop>::drop",
+        "conn::run_statement_typed_capped",
+        "mcp::tools::<impl mcp::Server>::prepare",
+        "mcp::tools::<impl mcp::Server>::tool_sessions_locks::{closure#0}::__CALLSITE",
+        "mcp::tools::connect",
+        "mcp::tools::single_checked_statement"
+      ],
+      "invisible": [
+        "futures_util",
+        "quick_xml",
+        "rustls",
+        "serde_json",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
+      "fn": "mcp::tools::arg_str",
+      "loc": "src/mcp/tools.rs:269:1: 269:70",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94fa8cef20057b295b4",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
+      "fn": "mcp::tools::connect",
+      "loc": "src/mcp/tools.rs:238:1: 247:2",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "5ccc040b33f0e94f90bdd3fbb9c9d9d8",
+      "cmds": [
+        "ssh"
+      ],
+      "calls": [
+        "conn::connect_only"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:187:1: 187:66",
+      "loc": "src/mcp/tools.rs:329:1: 329:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6002,8 +6157,20 @@
       ]
     },
     {
+      "fn": "mcp::tools::parse_tables",
+      "loc": "src/mcp/tools.rs:277:1: 277:70",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94f3ce7f11c640df653",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:272:1: 272:85",
+      "loc": "src/mcp/tools.rs:414:1: 414:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6015,7 +6182,7 @@
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:306:1: 311:12",
+      "loc": "src/mcp/tools.rs:448:1: 453:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6027,8 +6194,20 @@
       ]
     },
     {
+      "fn": "mcp::tools::render_sessions_locks",
+      "loc": "src/mcp/tools.rs:294:1: 301:12",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "5ccc040b33f0e94fa91bb0753b3389dc",
+      "invisible": [
+        "serde_json"
+      ]
+    },
+    {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:227:1: 231:28",
+      "loc": "src/mcp/tools.rs:369:1: 373:28",
       "inferred": [
         "Log"
       ],
@@ -6047,7 +6226,7 @@
     },
     {
       "fn": "mcp::tools::tool_names",
-      "loc": "src/mcp/tools.rs:55:1: 55:35",
+      "loc": "src/mcp/tools.rs:71:1: 71:35",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -6059,7 +6238,7 @@
     },
     {
       "fn": "mcp::tools::tool_table",
-      "loc": "src/mcp/tools.rs:22:1: 22:29",
+      "loc": "src/mcp/tools.rs:23:1: 23:29",
       "inferred": [],
       "declared": [],
       "undeclared": [],
