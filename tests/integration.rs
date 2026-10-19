@@ -1025,3 +1025,330 @@ fn batch_csv_non_row_statement_still_reports_the_affected_count() {
         "expected the status grid: {stdout}"
     );
 }
+
+/// Connect through the library (not the binary), read-only, with the
+/// notice/notification channels left to drain into nothing.
+async fn lib_client() -> (
+    std::sync::Arc<tokio_postgres::Client>,
+    Option<pgman::tunnel::SshTunnel>,
+) {
+    let (notice_tx, _notice_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notification_rx) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    pgman::conn::connect_only(dsn, true, 30_000, notice_tx, notification_tx)
+        .await
+        .expect("connect to the compose postgres")
+}
+
+/// The cap is honoured and `truncated` says whether anything was past it
+/// — including the boundary, where exactly `cap` rows is NOT truncated.
+#[tokio::test]
+async fn typed_capped_runner_stops_at_the_cap_and_says_so() {
+    let (client, _tunnel) = lib_client().await;
+    let sql = "SELECT g FROM generate_series(1, 10) g";
+    for (cap, want_rows, want_truncated) in [
+        (Some(3), 3, true),
+        (Some(10), 10, false),
+        (Some(11), 10, false),
+        (None, 10, false),
+    ] {
+        let (typed, truncated) = pgman::conn::run_statement_typed_capped(&client, sql, cap)
+            .await
+            .expect("query runs");
+        assert_eq!(typed.rows.len(), want_rows, "cap {cap:?}");
+        assert_eq!(truncated, want_truncated, "cap {cap:?}");
+    }
+    // The connection is still usable after a stream was dropped mid-result.
+    let (typed, _) = pgman::conn::run_statement_typed_capped(&client, "SELECT 1", Some(1))
+        .await
+        .expect("the connection survives a dropped stream");
+    assert_eq!(typed.rows, vec![vec![Some("1".to_string())]]);
+}
+
+/// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
+/// close stdin, and return every frame it wrote. Every stdout line must
+/// parse as JSON — stdout is protocol only.
+fn mcp_session(
+    home: &std::path::Path,
+    cwd: &std::path::Path,
+    extra: &[&str],
+    requests: &[serde_json::Value],
+) -> Vec<serde_json::Value> {
+    use std::io::Write;
+    let mut child = Command::new(pgman_binary())
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(cwd)
+        .args(["mcp", "serve"])
+        .args(extra)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn pgman mcp serve");
+    {
+        let mut stdin = child.stdin.take().unwrap();
+        for r in requests {
+            writeln!(stdin, "{r}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().expect("mcp serve exits");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| {
+            serde_json::from_str(l).unwrap_or_else(|e| panic!("non-JSON on stdout ({e}): {l}"))
+        })
+        .collect()
+}
+
+fn tool_call(id: u64, name: &str, args: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": {"name": name, "arguments": args}})
+}
+
+/// The reply with `id`, as (text, isError). Calls run concurrently, so
+/// replies arrive in any order.
+fn reply(frames: &[serde_json::Value], id: u64) -> (String, bool) {
+    let f = frames
+        .iter()
+        .find(|f| f["id"] == id)
+        .unwrap_or_else(|| panic!("no reply to {id}: {frames:?}"));
+    (
+        f["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+        f["result"]["isError"].as_bool().unwrap(),
+    )
+}
+
+/// A personal connection to the compose postgres. The profile is
+/// WRITABLE on purpose: MCP must be read-only regardless.
+fn mcp_home(name: &str) -> std::path::PathBuf {
+    let home = scratch_home(name, WRITABLE_PROFILE);
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"test\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    home
+}
+
+#[test]
+fn mcp_query_returns_typed_rows_and_says_when_it_truncated() {
+    let home = mcp_home("mcp-rows");
+    let frames = mcp_session(
+        &home,
+        &home,
+        &[],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "test", "max_rows": 2,
+                "sql": "SELECT g AS n, NULL::text AS t FROM generate_series(1, 5) g"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["rows"],
+        serde_json::json!([{"n": 1, "t": null}, {"n": 2, "t": null}])
+    );
+    assert_eq!(v["truncated"], true);
+}
+
+/// The read-only floor holds server-side, not just in the classifier:
+/// `nextval` passes the guards (it is a SELECT) and the server refuses it.
+#[test]
+fn mcp_query_is_read_only_even_under_a_writable_profile() {
+    let home = mcp_home("mcp-ro");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE SEQUENCE IF NOT EXISTS pgman_mcp_seq",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+    let frames = mcp_session(
+        &home,
+        &home,
+        &[],
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "test",
+                "sql": "SELECT nextval('pgman_mcp_seq')"}),
+            ),
+            tool_call(
+                2,
+                "query",
+                serde_json::json!({"connection": "test",
+                "sql": "CREATE TABLE pgman_mcp_should_not_exist (id int)"}),
+            ),
+        ],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(is_error, "nextval ran: {text}");
+    assert!(text.contains("read-only"), "{text}");
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error, "CREATE ran: {text}");
+    assert!(!table_exists(&home, "pgman_mcp_should_not_exist"));
+}
+
+/// A connection the checkout declares is listed and refused until the
+/// server is started with `--project-connections`.
+#[test]
+fn mcp_discovered_connections_need_the_flag() {
+    let home = mcp_home("mcp-discovered");
+    let checkout = home.join("checkout");
+    std::fs::create_dir_all(checkout.join(".pgman")).unwrap();
+    std::fs::write(
+        checkout.join(".pgman/pgman.toml"),
+        format!("[[connections]]\nname = \"proj\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let ask = [
+        tool_call(1, "connections", serde_json::json!({})),
+        tool_call(
+            2,
+            "query",
+            serde_json::json!({"connection": "proj", "sql": "SELECT 1"}),
+        ),
+    ];
+    let frames = mcp_session(&home, &checkout, &[], &ask);
+    let (text, _) = reply(&frames, 1);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let proj = v["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "proj")
+        .expect("listed");
+    assert_eq!(proj["usable"], false);
+    assert!(
+        !text.contains("pgman_test:pgman_test"),
+        "password leaked: {text}"
+    );
+    let (text, is_error) = reply(&frames, 2);
+    assert!(is_error && text.contains("--project-connections"), "{text}");
+
+    let frames = mcp_session(&home, &checkout, &["--project-connections"], &ask[1..]);
+    let (text, is_error) = reply(&frames, 2);
+    assert!(!is_error, "{text}");
+}
+
+/// A real session holding a lock on a table shows up in `sessions_locks`
+/// scoped to that table, with the lock named — and its long-open
+/// transaction is reported even without the table filter.
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
+    let home = mcp_home("mcp-locks");
+    let setup = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            "CREATE TABLE IF NOT EXISTS pgman_mcp_locked (id int)",
+        ],
+    );
+    assert!(
+        setup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    // Hold an open transaction with a lock on the table while MCP looks.
+    let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).unwrap();
+    let (holder, _t) = pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+        .await
+        .unwrap();
+    holder
+        .batch_execute("BEGIN; LOCK TABLE pgman_mcp_locked IN SHARE MODE")
+        .await
+        .unwrap();
+    let pid: i32 = holder
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+
+    let home2 = home.clone();
+    let frames = tokio::task::spawn_blocking(move || {
+        mcp_session(
+            &home2,
+            &home2,
+            &[],
+            &[
+                tool_call(
+                    1,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "tables": ["pgman_mcp_locked"], "min_xact_age_secs": 3600}),
+                ),
+                tool_call(
+                    2,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "min_xact_age_secs": 0}),
+                ),
+                tool_call(
+                    3,
+                    "sessions_locks",
+                    serde_json::json!({"connection": "test",
+                    "tables": ["x'; DROP TABLE pgman_mcp_locked; --"]}),
+                ),
+            ],
+        )
+    })
+    .await
+    .unwrap();
+    holder.batch_execute("ROLLBACK").await.unwrap();
+
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["server_is_replica"], false);
+    let row = v["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["pid"] == pid)
+        .unwrap_or_else(|| panic!("lock holder {pid} not reported: {text}"));
+    assert!(
+        row["locks_on_tables"]
+            .as_str()
+            .unwrap()
+            .contains("pgman_mcp_locked ShareLock"),
+        "{row}"
+    );
+
+    let (text, _) = reply(&frames, 2);
+    assert!(
+        text.contains(&format!("\"pid\":{pid}")),
+        "open transaction not reported: {text}"
+    );
+
+    let (text, is_error) = reply(&frames, 3);
+    assert!(
+        is_error && text.contains("not a plain table name"),
+        "{text}"
+    );
+    assert!(table_exists(&home, "pgman_mcp_locked"));
+}

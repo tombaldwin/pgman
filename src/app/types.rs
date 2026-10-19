@@ -605,7 +605,7 @@ pub struct DataSourcePick {
     /// Human label shown in the picker (e.g. the `<data-source name="…">`).
     /// For a Spring pick with an unresolved `${...}` in its url/username,
     /// this already carries a trailing `— unresolved ${NAME}` note (see
-    /// `main.rs::discover_spring_datasources`) so the picker row surfaces
+    /// `discover::discover_spring_datasources`) so the picker row surfaces
     /// it without the row-rendering code needing to know about
     /// `unresolved` itself.
     pub name: String,

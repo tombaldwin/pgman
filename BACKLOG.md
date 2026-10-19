@@ -5,6 +5,39 @@ window: PLAN.md — an item lives in exactly one of the two.
 
 ## Open
 
+### MCP server — after Part A (2026-10-19)
+Part A (`doctor`, `connections`, `query`) is in PLAN.md. Behind it, from
+the examplecorp Lead session and Tom's decisions that day:
+- **AWS Secrets Manager credential resolver.** It replaces 1Password,
+  which is dropped. A `connections.toml` entry names a secret, never a
+  value. Auth is the ambient AWS profile, the same as ebman, with no
+  prompts. examplecorp's names follow `<env>/database/<db>/credentials`; the
+  legacy duplicates are ignored. The value never reaches tracing or the
+  client.
+- **Reads go to the read-only replica.** Read tools point at the
+  `*-read-only-replica` endpoint so a write is physically impossible.
+  The one exception is a Prod pre-flight lock check, which needs the
+  primary, still read-only. `doctor` and CAVEATS must say that
+  sessions/locks on a replica show the replica.
+- **`sessions_locks` tool**: long transactions, `pg_blocking_pids`, and
+  `pg_locks` optionally scoped to named tables.
+- **`pending_patches` tool**: a pure parser over a configured patch dir
+  (examplecorp: `schema_updates/NNN-*.sql`, scriptId from the patch's
+  `INSERT INTO t_schema_version`) compared against the database.
+  Configured through a `[patches]` block, not hardcoded for examplecorp.
+- **Two-phase `apply_patches`**: pending patches in ONE transaction with
+  `SET LOCAL lock_timeout`, a dry run as `BEGIN … ROLLBACK`, and a
+  confirm through elicitation where a decline is final and Prod needs a
+  typed confirm. It gets its own safety review before it ships.
+- **`--batch` and same-database discovered candidates.** A Spring
+  checkout often declares one database twice (examplecorp: `dataSource` and
+  `replicaDataSource`, both `ledger`), and batch's single-candidate rule
+  counts them as two. MCP lists them with `same_database_as`. Batch could
+  collapse identical targets before counting.
+- **A connection pool, or at least a tunnel kept open, across `query`
+  calls.** Today every call pays the connect, and the ssh handshake when
+  there's a tunnel.
+
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
   300+ lines at 80 columns (needs sections that collapse or a topic

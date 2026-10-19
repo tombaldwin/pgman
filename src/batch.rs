@@ -64,28 +64,51 @@ fn stmt_summary(stmt: &str) -> String {
     s
 }
 
-/// Check every statement in `sql` against the guard rails for `db`. Returns
-/// `Err(message)` for the first statement a guard refuses: `Block` always
-/// refuses; `Confirm` refuses unless `assume_yes` (the `--yes` flag). This is
-/// the non-interactive analogue of the editor's classify→guard step, so a
-/// `safety.toml` rule holds in CI exactly as it does in the TUI. Pure (no I/O)
-/// so it's unit-tested.
+/// Why [`check_statements`] refused a script — structured, so each
+/// non-interactive caller words the way forward for its own surface
+/// (`--batch` can offer `--yes`; the MCP server has nothing to offer).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// `safety::split_verified` could not account for the script.
+    Split,
+    /// The statement would lift (or step out of) the read-only floor.
+    ReadOnlyEscape,
+    /// A `Confirm` guard, with no `assume_yes` to answer it.
+    Confirm {
+        kind: String,
+        db: String,
+        stmt: String,
+    },
+    /// A `Block` guard.
+    Block {
+        kind: String,
+        db: String,
+        stmt: String,
+    },
+}
+
+/// Check every statement in `sql` against the guard rails for `db`.
+/// Returns the first statement a guard refuses: `Block` always refuses;
+/// `Confirm` refuses unless `assume_yes` (the `--yes` flag). This is the
+/// non-interactive analogue of the editor's classify→guard step, so a
+/// `safety.toml` rule holds in CI exactly as it does in the TUI. Pure (no
+/// I/O) so it's unit-tested.
 ///
 /// On success it returns **the verified statements**, and the caller must run
 /// those rather than the original string — otherwise the server executes text
 /// the classifier never saw. A script `safety::split_verified` cannot account
 /// for is refused outright: guards computed from the wrong statement
 /// boundaries approve the wrong statements.
-pub fn check_batch_safety(
+pub fn check_statements(
     config: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
     assume_yes: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Refusal> {
     use crate::safety::Guard;
     let statements = crate::safety::split_verified(sql).map_err(|e| {
         tracing::warn!("batch: {e:?}");
-        crate::safety::SPLIT_REFUSAL.to_string()
+        Refusal::Split
     })?;
     let read_only = config.profile_for(db).read_only;
     for stmt in &statements {
@@ -98,38 +121,53 @@ pub fn check_batch_safety(
         // `default_transaction_read_only` had been lifted. Not a category
         // guard, so `--yes` does not apply.
         if read_only && crate::safety::is_transaction_control(stmt) {
-            return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
+            return Err(Refusal::ReadOnlyEscape);
         }
         let decision = crate::safety::evaluate(config, db, stmt);
         match decision.guard {
             Guard::Allow => {}
             Guard::Confirm if assume_yes => {}
             Guard::Confirm => {
-                return Err(format!(
-                    "blocked by safety: {} on '{}' would need confirmation \
-                     — re-run with --yes to allow guarded writes in batch mode (statement: {})",
-                    decision.kind.describe(),
-                    db,
-                    stmt_summary(stmt),
-                ));
+                return Err(Refusal::Confirm {
+                    kind: decision.kind.describe(),
+                    db: db.to_string(),
+                    stmt: stmt_summary(stmt),
+                });
             }
             // Not a category guard: the profile asked for a read-only
             // session, and `--yes` does not buy a way out of it either.
-            Guard::Block if decision.read_only_escape => {
-                return Err(crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string());
-            }
+            Guard::Block if decision.read_only_escape => return Err(Refusal::ReadOnlyEscape),
             Guard::Block => {
-                return Err(format!(
-                    "blocked by safety: {} on '{}' is set to block \
-                     — change this guard to \"confirm\" in safety.toml to permit it (statement: {})",
-                    decision.kind.describe(),
-                    db,
-                    stmt_summary(stmt),
-                ));
+                return Err(Refusal::Block {
+                    kind: decision.kind.describe(),
+                    db: db.to_string(),
+                    stmt: stmt_summary(stmt),
+                });
             }
         }
     }
     Ok(statements)
+}
+
+/// [`check_statements`] with the refusal worded for `--batch`.
+pub fn check_batch_safety(
+    config: &crate::safety::SafetyConfig,
+    db: &str,
+    sql: &str,
+    assume_yes: bool,
+) -> Result<Vec<String>, String> {
+    check_statements(config, db, sql, assume_yes).map_err(|r| match r {
+        Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
+        Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
+        Refusal::Confirm { kind, db, stmt } => format!(
+            "blocked by safety: {kind} on '{db}' would need confirmation \
+             — re-run with --yes to allow guarded writes in batch mode (statement: {stmt})"
+        ),
+        Refusal::Block { kind, db, stmt } => format!(
+            "blocked by safety: {kind} on '{db}' is set to block \
+             — change this guard to \"confirm\" in safety.toml to permit it (statement: {stmt})"
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -517,7 +555,7 @@ async fn run_statement_typed_json(
 /// [`conn::TypedRows`] into a JSON array of objects, or (for a
 /// non-row-returning statement) the same one-row "status" shape the
 /// `Grid` path uses.
-fn render_typed_json(typed: &conn::TypedRows) -> String {
+pub(crate) fn render_typed_json(typed: &conn::TypedRows) -> String {
     if let Some(affected) = typed.affected {
         let mut out = String::from("[{");
         push_json_string(&mut out, "status");

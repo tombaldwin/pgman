@@ -307,6 +307,50 @@ view while keeping the highlighted field.
 not find any of this. Fifteen minutes of the maintainer using the tool
 for its actual purpose did.
 
+## MCP server, Part A — 2026-10-19 · architecture · **in progress**
+
+Tom wants examplecorp's database access to move to pgman the way it already
+uses ebman over MCP, so real use drives features. Part A is the
+read-only slice: `pgman mcp serve`, stdio JSON-RPC, porting ebman's
+patterns (stdout is protocol only; concurrent, time-bounded tool calls;
+`doctor` never cut; a CAVEATS paragraph per tool; `--read-only` /
+`--allow-writes`).
+
+Design note:
+
+- **Tools**: `doctor`, `connections`, `query`. No write verbs exist, so
+  `--allow-writes` with any value is a usage error rather than a flag
+  that silently grants nothing.
+- **Where connections come from** (Tom, 2026-10-19): connections that
+  tunnel or carry secrets live in the operator's own
+  `connections.toml` under `util::config_dir()`, never in the project
+  toml. Project files keep local-only connections. MCP has no keypress,
+  so a project connection is connectable only when the server was
+  started with `--project-connections` — the same deliberate act as
+  batch's `--discovered` — and one with a tunnel (field *or* URL param)
+  is never connectable.
+- **`query`**: one statement, connection forced read-only whatever
+  `safety.toml` says, the same `check_batch_safety` guards with no
+  `--yes` (a `Confirm` guard is a refusal — nobody is there to
+  confirm), a row cap with a `truncated` flag, the profile's
+  `statement_timeout`. Rows stream through a capped runner in
+  `conn.rs` so the `Db` effect stays in the data layer.
+- **Later** (BACKLOG.md, "MCP server — after Part A"): Part B
+  (`sessions_locks`, `pending_patches`, and a Secrets Manager credential
+  resolver — Tom dropped 1Password the same day — with reads routed to
+  the read-only replica), then a two-phase `apply_patches` with its own
+  safety review.
+
+Landed on branch `mcp-part-a`: the capped typed runner, the
+safety-config loader and discovery moved into the library (one commit
+each), then the server. Smoke-tested 2026-10-19 against examplecorp's local ledger-db
+from `~/git/examplecorp` with `--project-connections`: four Spring/IntelliJ
+connections listed with no password values and the two `ledger` entries
+linked; `t_schema_version` read back (latest scriptId 248);
+`default_transaction_read_only` = `on`. It found one defect: a refused
+write relayed batch's "re-run with --yes", which an MCP client cannot
+do (fixed, with a guard). Remaining: review and merge of `mcp-part-a`.
+
 ## Release day
 
 ```
