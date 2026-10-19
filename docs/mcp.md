@@ -79,6 +79,11 @@ role = "primary"
 `${…}` placeholders are not resolved in `connections.toml`. A connection
 that has one is refused; use `password_env` or `secret` instead.
 
+A tunnel stays open between calls to the same database, so a run of
+calls pays the ssh handshake once. It closes after 5 minutes unused, or
+when the server exits. Each call still opens its own read-only Postgres
+connection through it, so nothing about a session carries over.
+
 A tunnel runs the system `ssh` with `BatchMode=yes`, so the key must
 work without a prompt: an `IdentityFile` in `~/.ssh/config` or a key
 loaded with `ssh-add`. Use `sslmode=require` through a tunnel:

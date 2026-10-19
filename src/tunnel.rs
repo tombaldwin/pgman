@@ -289,6 +289,98 @@ impl SshTunnel {
     }
 }
 
+/// What [`TunnelCache`] keeps: a local forward that may have died.
+pub trait Forward {
+    fn local_port(&self) -> u16;
+    /// `false` once the forwarding process has exited.
+    fn alive(&mut self) -> bool;
+}
+
+impl Forward for SshTunnel {
+    fn local_port(&self) -> u16 {
+        self.local_port
+    }
+    fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+/// Where a cached tunnel goes: the bastion and the database behind it.
+pub type TunnelKey = (SshTunnelSpec, String, u16);
+
+/// Tunnels kept open between calls, so a burst of short connections to
+/// one database pays the ssh handshake once. Each entry closes after
+/// `idle` unused, or as soon as its process has exited. Only the tunnel
+/// is shared: every caller still opens its own Postgres connection
+/// through it.
+pub struct TunnelCache<F: Forward = SshTunnel> {
+    idle: Duration,
+    entries: std::sync::Mutex<std::collections::HashMap<TunnelKey, (F, Instant)>>,
+}
+
+impl<F: Forward> TunnelCache<F> {
+    pub fn new(idle: Duration) -> Self {
+        Self {
+            idle,
+            entries: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<TunnelKey, (F, Instant)>> {
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The local port of a live tunnel for `key`, marking it used.
+    pub fn get(&self, key: &TunnelKey, now: Instant) -> Option<u16> {
+        let mut entries = self.lock();
+        let (fwd, last) = entries.get_mut(key)?;
+        if now.saturating_duration_since(*last) >= self.idle || !fwd.alive() {
+            entries.remove(key);
+            return None;
+        }
+        *last = now;
+        Some(fwd.local_port())
+    }
+
+    /// Keep `fwd` for `key` and return the port to use. When a live one
+    /// got there first, it wins and `fwd` is closed.
+    pub fn put(&self, key: TunnelKey, mut fwd: F, now: Instant) -> u16 {
+        let mut entries = self.lock();
+        if let Some((existing, last)) = entries.get_mut(&key) {
+            if existing.alive() {
+                *last = now;
+                return existing.local_port();
+            }
+        }
+        let _ = fwd.alive();
+        let port = fwd.local_port();
+        entries.insert(key, (fwd, now));
+        port
+    }
+
+    /// Drop the tunnel for `key` — it carried a connection that failed.
+    pub fn evict(&self, key: &TunnelKey) {
+        self.lock().remove(key);
+    }
+
+    /// Close every tunnel idle past the limit or no longer running.
+    pub fn sweep(&self, now: Instant) {
+        let idle = self.idle;
+        self.lock()
+            .retain(|_, (fwd, last)| now.saturating_duration_since(*last) < idle && fwd.alive());
+    }
+
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 impl Drop for SshTunnel {
     fn drop(&mut self) {
         // `Child::kill` sends SIGKILL on Unix (and the equivalent
@@ -615,5 +707,84 @@ mod tests {
         let args = super::build_ssh_args(&spec, "fwd", "tom@bastion");
         let p = args.iter().position(|a| a == "-p").expect("'-p' present");
         assert_eq!(args.get(p + 1).map(String::as_str), Some("2222"));
+    }
+
+    struct FakeForward {
+        port: u16,
+        alive: std::rc::Rc<std::cell::Cell<bool>>,
+    }
+
+    impl super::Forward for FakeForward {
+        fn local_port(&self) -> u16 {
+            self.port
+        }
+        fn alive(&mut self) -> bool {
+            self.alive.get()
+        }
+    }
+
+    fn key(host: &str) -> super::TunnelKey {
+        (SshTunnelSpec::parse("bastion").unwrap(), host.into(), 5432)
+    }
+
+    fn fake(port: u16) -> (FakeForward, std::rc::Rc<std::cell::Cell<bool>>) {
+        let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+        (
+            FakeForward {
+                port,
+                alive: alive.clone(),
+            },
+            alive,
+        )
+    }
+
+    #[test]
+    fn a_cached_tunnel_is_reused_until_idle_or_dead() {
+        let cache = super::TunnelCache::<FakeForward>::new(Duration::from_secs(300));
+        let t0 = Instant::now();
+        assert_eq!(cache.get(&key("db"), t0), None);
+        let (f, alive) = fake(4000);
+        assert_eq!(cache.put(key("db"), f, t0), 4000);
+        assert_eq!(
+            cache.get(&key("db"), t0 + Duration::from_secs(200)),
+            Some(4000)
+        );
+        assert_eq!(
+            cache.get(&key("db"), t0 + Duration::from_secs(450)),
+            Some(4000),
+            "each use restarts the idle clock"
+        );
+        assert_eq!(cache.get(&key("other"), t0), None, "per database");
+        alive.set(false);
+        assert_eq!(cache.get(&key("db"), t0), None, "ssh exited: gone");
+        assert!(cache.is_empty());
+
+        let (f, _) = fake(4001);
+        cache.put(key("db"), f, t0);
+        assert_eq!(
+            cache.get(&key("db"), t0 + Duration::from_secs(300)),
+            None,
+            "idle too long"
+        );
+    }
+
+    #[test]
+    fn the_first_live_tunnel_wins_and_sweeps_close_the_idle() {
+        let cache = super::TunnelCache::<FakeForward>::new(Duration::from_secs(300));
+        let t0 = Instant::now();
+        let (a, _) = fake(4000);
+        let (b, _) = fake(4001);
+        assert_eq!(cache.put(key("db"), a, t0), 4000);
+        assert_eq!(
+            cache.put(key("db"), b, t0),
+            4000,
+            "a racing second open loses"
+        );
+        let (c, _) = fake(4002);
+        cache.put(key("db2"), c, t0 + Duration::from_secs(200));
+        cache.sweep(t0 + Duration::from_secs(350));
+        assert_eq!(cache.len(), 1, "db idle past the limit, db2 not");
+        cache.evict(&key("db2"));
+        assert!(cache.is_empty());
     }
 }

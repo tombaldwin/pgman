@@ -58,9 +58,6 @@ and Tom's decisions that day:
   `SET LOCAL lock_timeout`, a dry run as `BEGIN … ROLLBACK`, and a
   confirm through elicitation where a decline is final and Prod needs a
   typed confirm. It gets its own safety review before it ships.
-- **A connection pool, or at least a tunnel kept open, across `query`
-  calls.** Today every call pays the connect, and the ssh handshake when
-  there's a tunnel.
 
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
