@@ -79,6 +79,12 @@ pub fn tool_table() -> Value {
                 "additionalProperties": false
             },
             "annotations": {"readOnlyHint": true, "openWorldHint": true}
+        },
+        {
+            "name": "environments",
+            "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. CAVEATS: nothing here connects to a database, so there is no schema version, pending-patch count or replica lag yet, and `status` is RDS's view of the instance, not proof that Postgres answers. Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+            "annotations": {"readOnlyHint": true, "openWorldHint": true}
         }
     ])
 }
@@ -102,6 +108,8 @@ pub fn call_timeout_secs(tool: &str) -> u64 {
         // Statement cap, plus up to two aws CLI calls (each bounded at 10s
         // connect + 10s read) for a secret, plus connecting.
         "query" | "sessions_locks" | "pending_patches" => STATEMENT_TIMEOUT_CAP_MS / 1000 + 60,
+        // One aws CLI listing (plus an account check) per distinct scope.
+        "environments" => 60,
         _ => 10,
     }
 }
@@ -114,6 +122,7 @@ impl Server {
             "query" => self.tool_query(args).await,
             "sessions_locks" => self.tool_sessions_locks(args).await,
             "pending_patches" => self.tool_pending_patches(args).await,
+            "environments" => tool_environments().await,
             other => Err(format!("unknown tool '{other}'")),
         }
     }
@@ -503,6 +512,58 @@ fn find_on_path(name: &str) -> Option<std::path::PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// `environments`: every configured environment's databases, from the
+/// sources alone — nothing connects to a database.
+async fn tool_environments() -> Result<String, String> {
+    let reports = tokio::task::spawn_blocking(crate::inventory::load_and_gather)
+        .await
+        .map_err(|e| format!("environments task failed: {e}"))??;
+    Ok(render_environments(
+        &crate::util::config_file("environments.toml"),
+        &reports,
+    ))
+}
+
+pub fn render_environments(
+    path: &std::path::Path,
+    reports: &[crate::inventory::EnvReport],
+) -> String {
+    let envs: Vec<Value> = reports
+        .iter()
+        .map(|r| {
+            let rows: Vec<Value> = r
+                .targets
+                .iter()
+                .map(|t| {
+                    json!({
+                        "database": t.database,
+                        "server": t.server,
+                        "role": t.role.label(),
+                        "replica_of": t.replica_of,
+                        "host": t.host,
+                        "port": t.port,
+                        "engine": t.engine,
+                        "status": t.status,
+                        "class": t.class,
+                        "multi_az": t.multi_az,
+                    })
+                })
+                .collect();
+            json!({"name": r.name, "source": r.source, "error": r.error, "databases": rows})
+        })
+        .collect();
+    json!({
+        "config": path.display().to_string(),
+        "environments": envs,
+        "note": if reports.is_empty() {
+            Some("no environments configured; see docs/environments.md")
+        } else {
+            None
+        },
+    })
+    .to_string()
+}
+
 /// A required string argument.
 fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args.get(key)
@@ -738,7 +799,8 @@ mod tests {
                 "connections",
                 "query",
                 "sessions_locks",
-                "pending_patches"
+                "pending_patches",
+                "environments"
             ]
         );
     }
