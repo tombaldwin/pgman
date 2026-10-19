@@ -1971,3 +1971,56 @@ fn mcp_environments_discover_and_save() {
         "no secret value read: {calls}"
     );
 }
+
+/// A save in another process waits for the lock, then lands.
+#[cfg(unix)]
+#[test]
+fn env_discover_save_waits_for_another_process_holding_the_lock() {
+    let home = scratch_home("env-lock", WRITABLE_PROFILE);
+    let cfg = home.join(".config/pgman/environments.toml");
+    let _ = std::fs::remove_file(&cfg);
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "demo", "Engine": "postgres", "EngineVersion": "16.10",
+           "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+           "Endpoint": {"Address": "demo.x.rds.amazonaws.com", "Port": 5432}, "DBName": "ledger"}]}"#,
+    )
+    .unwrap();
+    let (path, _log) = fake_aws(&home);
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join(".config/pgman/.environments.toml.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let mut child = Command::new(pgman_binary())
+        .env("PATH", &path)
+        .env("FAKE_AWS_ACCOUNT", "210987654321")
+        .env("FAKE_RDS_JSON", &rds)
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["env", "discover", "--save"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "still waiting for the lock"
+    );
+    assert!(
+        !cfg.exists(),
+        "nothing written while another process holds it"
+    );
+    lock.unlock().unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("added demo"));
+    assert!(std::fs::read_to_string(&cfg)
+        .unwrap()
+        .contains("name = \"demo\""));
+}

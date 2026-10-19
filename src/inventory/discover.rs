@@ -601,6 +601,50 @@ pub fn proposals(d: &Discovery, existing: &[Environment]) -> Vec<Proposal> {
     )
 }
 
+/// How long a save waits for another process's save to finish.
+const SAVE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// An exclusive advisory lock on `path` (created `0600` when missing),
+/// held until the returned file is dropped. Waits up to `wait` for
+/// whoever holds it.
+fn lock_exclusive(
+    path: &std::path::Path,
+    wait: std::time::Duration,
+) -> Result<std::fs::File, String> {
+    if let Some(dir) = path.parent() {
+        crate::util::create_dir_all_private(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    }
+    let mut open = std::fs::OpenOptions::new();
+    open.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    let file = open
+        .open(path)
+        .map_err(|e| format!("could not open {}: {e}", path.display()))?;
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(format!(
+                    "another pgman is saving environments.toml (lock {} held); try again",
+                    path.display()
+                ))
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(format!("could not lock {}: {e}", path.display()))
+            }
+        }
+    }
+}
+
 /// Append `chosen` to `environments.toml` under `util::config_dir()`,
 /// creating it (`0600`) when missing. Returns the path written.
 pub fn save(chosen: &[&Proposal]) -> Result<std::path::PathBuf, String> {
@@ -610,6 +654,12 @@ pub fn save(chosen: &[&Proposal]) -> Result<std::path::PathBuf, String> {
     static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _held = SAVING.lock().unwrap_or_else(|e| e.into_inner());
     let path = crate::util::config_file("environments.toml");
+    // And one across processes: the TUI, `pgman env discover` and an MCP
+    // server can all save.
+    let _locked = lock_exclusive(
+        &path.with_file_name(".environments.toml.lock"),
+        SAVE_LOCK_WAIT,
+    )?;
     let existing = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -1118,5 +1168,25 @@ mod tests {
         assert!(append("not toml [", &[&p])
             .unwrap_err()
             .contains("existing file doesn't load"));
+    }
+
+    #[test]
+    fn the_save_lock_waits_for_its_holder_then_gives_up() {
+        let dir = std::env::temp_dir().join(format!("pgman-lock-{}", std::process::id()));
+        let path = dir.join(".environments.toml.lock");
+        let held = lock_exclusive(&path, std::time::Duration::ZERO).unwrap();
+        let started = std::time::Instant::now();
+        let err = lock_exclusive(&path, std::time::Duration::from_millis(200)).unwrap_err();
+        assert!(err.contains("another pgman is saving"), "{err}");
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(200),
+            "it waited"
+        );
+        drop(held);
+        assert!(
+            lock_exclusive(&path, std::time::Duration::ZERO).is_ok(),
+            "free once dropped"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

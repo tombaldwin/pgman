@@ -48,10 +48,6 @@ clouds. So it's an inventory layer, and RDS is one source of it.
   and AWS discovery came first, at Tom's ask (PLAN.md).
 
 ### Environments — follow-ups from connect and discovery (2026-10-19)
-- **Cross-process save race.** `discover::save` serializes saves within
-  one process and re-checks coverage against the file it appends to, but
-  a TUI `s` and an MCP `environments_save` in another process at the
-  same moment can still lose one addition. Needs a lock file.
 - **Discovery scope in the TUI** is the ambient profile and region only;
   `pgman env discover` takes `--profile/--region/--account`. A picker,
   or the profiles already named in environments.toml, would cover
