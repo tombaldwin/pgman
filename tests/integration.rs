@@ -2698,3 +2698,58 @@ fn a_probe_counts_a_blocked_session() {
         waiting.await.unwrap().unwrap();
     });
 }
+
+/// The unused-index and bloat checks find a real index nothing scans and
+/// a table whose dead rows passed the threshold.
+#[test]
+fn schema_lint_finds_an_unused_index_and_a_bloated_table() {
+    let home = scratch_home("lint-stats", WRITABLE_PROFILE);
+    let t = format!("pgman_it_bloat_{}", std::process::id());
+    let setup = format!(
+        "CREATE TABLE {t} (id int PRIMARY KEY, tag text) WITH (autovacuum_enabled = false); \
+         CREATE INDEX {t}_tag ON {t} (tag); \
+         INSERT INTO {t} SELECT g, 'x' || g FROM generate_series(1, 3000) g; \
+         DELETE FROM {t} WHERE id <= 1000"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    // Statistics reach pg_stat_* shortly after the writing session ends.
+    let mut last = String::new();
+    for _ in 0..30 {
+        let frames = mcp_session_env(
+            &home,
+            &home,
+            &[],
+            &[],
+            &[tool_call(
+                1,
+                "schema_lint",
+                serde_json::json!({"connection": "local"}),
+            )],
+        );
+        let (text, is_error) = reply(&frames, 1);
+        assert!(!is_error, "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let has =
+            |code: &str, needle: &str| {
+                v["findings"].as_array().unwrap().iter().any(|f| {
+                    f["code"] == code && f["object"].as_str().unwrap_or("").contains(needle)
+                })
+            };
+        if has("LINT102", &format!("{t}_tag")) && has("LINT104", &t) {
+            return;
+        }
+        last = text;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    panic!("LINT102 on {t}_tag and LINT104 on {t} expected: {last}");
+}
