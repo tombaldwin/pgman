@@ -1230,6 +1230,9 @@ pub struct App {
     /// Probes environments that opted in; `None` until `main.rs` (or
     /// `--demo`) installs one.
     pub env_prober: Option<EnvProber>,
+    /// Where the overview's last-used row is kept between runs; `None`
+    /// (the default, and every test) remembers nothing on disk.
+    pub environments_state_file: Option<std::path::PathBuf>,
     /// SQL of the most recent successful `Run` query, kept so the
     /// grid post-load step can re-parse it to infer the single
     /// source table (when there is one). Not set for batch /
@@ -1442,6 +1445,7 @@ impl App {
             replica_pin: false,
             env_discoverer: None,
             env_prober: None,
+            environments_state_file: None,
             last_run_sql: None,
             result_diff: ResultDiffUi::default(),
             command_bar: None,
@@ -1577,6 +1581,7 @@ impl App {
         // where the buffer / history / saved-queries are synthetic
         // fixtures that must not overwrite the operator's real files.
         if !self.demo {
+            self.remember_env_selection();
             // Persist the editor draft so the next launch can restore
             // whatever the operator had in flight. Best-effort: failure
             // logs and moves on — the loop is already finishing.
@@ -1652,7 +1657,9 @@ impl App {
             self.conn_state,
             ConnState::Connected { .. } | ConnState::Failed(_)
         );
-        let is_picker = matches!(self.mode, Mode::ConnPick);
+        // The picker and the environments overview are both places to
+        // choose a connection from: neither waits for one to resolve.
+        let is_picker = matches!(self.mode, Mode::ConnPick | Mode::Environments);
         if splash_should_dismiss(
             self.splash_visible,
             self.splash_until,
@@ -3761,7 +3768,8 @@ impl App {
     /// `E` from Normal: open the environments overview and gather. Needs
     /// no connection — the sources are the config and the aws CLI.
     pub(super) fn start_environments(&mut self) {
-        self.environments.cursor = 0;
+        // The cursor stays where it was: the overview reopens on the row
+        // last used, as ebman's main screen does.
         self.environments.opened_from = (self.mode == Mode::ConnPick).then_some(Mode::ConnPick);
         self.mode = Mode::Environments;
         self.refresh_environments();
@@ -3794,6 +3802,7 @@ impl App {
             return;
         };
         let what = format!("{} {}/{}", env.name, target.server, target.database);
+        self.remember_env_selection();
         let spec = match &target.connect {
             Ok(spec) => spec.clone(),
             Err(why) => {
@@ -4063,6 +4072,27 @@ impl App {
                 self.last_status = None;
                 self.last_error = Some(format!("secret not read: {e}"));
             }
+        }
+    }
+
+    /// Start on the overview — pgman's home when environments are
+    /// configured — with the cursor going to `last` once the listing
+    /// lands.
+    pub fn open_environments_at_start(&mut self, last: Option<EnvSelection>) {
+        self.environments.restore = last;
+        self.start_environments();
+    }
+
+    /// Keep the row under the cursor for the next run. Best effort: a
+    /// write that fails costs only the convenience.
+    pub(super) fn remember_env_selection(&self) {
+        let (Some(path), Some(sel)) =
+            (&self.environments_state_file, self.environments.selection())
+        else {
+            return;
+        };
+        if let Err(e) = crate::util::write_private(path, &sel.to_line()) {
+            tracing::warn!("could not save the environments selection: {e}");
         }
     }
 

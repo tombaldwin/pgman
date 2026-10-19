@@ -321,6 +321,19 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.dsn_origin = dsn_origin;
+    // Environments are home when there are any and no --dsn named a
+    // connection: the overview opens first, on the row used last time.
+    let env_state = pgman::util::data_dir().join("environments-last");
+    application.environments_state_file = Some(env_state.clone());
+    let has_environments = pgman::inventory::load()
+        .environments
+        .is_ok_and(|e| !e.is_empty());
+    if application.dsn.is_none() && has_environments {
+        let last = std::fs::read_to_string(&env_state)
+            .ok()
+            .and_then(|t| app::EnvSelection::parse(&t));
+        application.open_environments_at_start(last);
+    }
     // Update check: opt-out via --no-update-check or the env var.
     // (--demo and --batch never reach here — --demo builds its own
     // App with the check disabled, --batch exits before the TUI.)

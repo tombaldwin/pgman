@@ -1534,7 +1534,9 @@ fn draw_env_discovery(f: &mut Frame, inner: Rect, app: &App, d: &crate::app::Dis
 
 pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
-    let popup = centered_pct(area, 92, 80);
+    // The whole body, not a popup: the overview is pgman's home view,
+    // as ebman's environment table is its own.
+    let popup = area;
     f.render_widget(Clear, popup);
     if let Some(d) = &app.environments.discovery {
         let block = crate::ui::chrome::panel_block(theme)

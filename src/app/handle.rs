@@ -281,9 +281,13 @@ impl App {
                         self.environments.reports = reports;
                         self.environments.error = None;
                         self.start_env_probes();
-                        self.environments.cursor = self
+                        let restored = self
                             .environments
-                            .cursor
+                            .restore
+                            .take()
+                            .and_then(|sel| self.environments.index_of(&sel));
+                        self.environments.cursor = restored
+                            .unwrap_or(self.environments.cursor)
                             .min(self.environments.target_count().saturating_sub(1));
                         self.last_status = Some(environments_status(
                             self.environments.reports.len(),

@@ -969,6 +969,39 @@ pub struct EnvironmentsUi {
     /// connecting to databases here.
     pub auto_probe: bool,
     pub auto_probe_last: Option<std::time::Instant>,
+    /// The row to put the cursor on when the next listing lands — the
+    /// one used last time pgman ran.
+    pub restore: Option<EnvSelection>,
+}
+
+/// A row of the overview by what it is, not where it sits: listings
+/// reorder, names don't.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvSelection {
+    pub environment: String,
+    pub server: String,
+    pub database: String,
+}
+
+impl EnvSelection {
+    /// One tab-separated line, as saved between runs. Pure.
+    pub fn to_line(&self) -> String {
+        format!("{}\t{}\t{}\n", self.environment, self.server, self.database)
+    }
+
+    /// The saved line back; `None` for anything that isn't one. Pure.
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.lines().next()?.split('\t');
+        let (e, s, d) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() || e.is_empty() || s.is_empty() || d.is_empty() {
+            return None;
+        }
+        Some(Self {
+            environment: e.into(),
+            server: s.into(),
+            database: d.into(),
+        })
+    }
 }
 
 /// The overview's discovery view: proposed environments, which ones the
@@ -1057,6 +1090,26 @@ impl std::fmt::Debug for EnvDiscoverer {
 }
 
 impl EnvironmentsUi {
+    /// What the cursor is on, by name.
+    pub fn selection(&self) -> Option<EnvSelection> {
+        let (env, t) = self.selected()?;
+        Some(EnvSelection {
+            environment: env.name.clone(),
+            server: t.server.clone(),
+            database: t.database.clone(),
+        })
+    }
+
+    /// The cursor position of `sel` in the current listing.
+    pub fn index_of(&self, sel: &EnvSelection) -> Option<usize> {
+        self.reports
+            .iter()
+            .flat_map(|r| r.targets.iter().map(move |t| (r, t)))
+            .position(|(r, t)| {
+                r.name == sel.environment && t.server == sel.server && t.database == sel.database
+            })
+    }
+
     /// The probe of the row under the cursor.
     pub fn selected_probe(&self) -> &ProbeState {
         let mut left = self.cursor;
