@@ -91,6 +91,17 @@ impl VersionTable {
         }
     }
 
+    /// Whether `patches` is shaped right: `~/…` or absolute. Pure, so
+    /// parsing the file reads nothing from the environment.
+    fn check_patches(&self) -> Result<(), String> {
+        match &self.patches {
+            Some(raw) if !raw.starts_with("~/") && !std::path::Path::new(raw).is_absolute() => Err(
+                format!("version_table.patches {raw:?} must be absolute or start with ~/"),
+            ),
+            _ => Ok(()),
+        }
+    }
+
     /// The patch directory, `~/` expanded; it must end up absolute.
     pub fn patch_dir(&self) -> Option<Result<std::path::PathBuf, String>> {
         let raw = self.patches.as_ref()?;
@@ -202,9 +213,7 @@ impl Environment {
         if let Some(v) = &self.version_table {
             crate::query::patches::applied_ids_sql(&v.config())
                 .map_err(|e| format!("version_table: {e}"))?;
-            if let Some(Err(e)) = v.patch_dir() {
-                return Err(e);
-            }
+            v.check_patches()?;
         }
         for (key, id) in &self.secrets {
             self.secret_ref(id)
