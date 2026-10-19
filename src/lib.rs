@@ -17,6 +17,7 @@ pub mod discover;
 // sites and tests keep working untouched.
 pub use tui_common::font_probe;
 pub mod grid;
+pub mod inventory;
 pub mod mcp;
 pub mod project;
 pub mod query;
