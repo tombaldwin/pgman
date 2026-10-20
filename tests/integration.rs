@@ -2879,6 +2879,10 @@ fn mcp_environment_logs_reads_only_listed_servers() {
         !calls.contains("--db-instance-identifier production"),
         "an unlisted server's logs are never asked for: {calls}"
     );
+    assert!(
+        !calls.contains("describe-db-engine-versions"),
+        "finding the server needs no upgrade targets: {calls}"
+    );
 }
 
 /// Applying a patch: it runs and records itself; a failing statement

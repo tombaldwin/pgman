@@ -203,7 +203,7 @@ pub fn for_environment(
         ));
     };
     let scope = env.source.rds_scope().unwrap_or_default();
-    let listed = super::fetch_rds(&scope)?;
+    let listed = super::fetch_rds_listing(&scope)?;
     let ours = super::rds_targets(env, &listed);
     if !ours.iter().any(|t| t.server == server) {
         return Err(format!("{server} isn't one of {environment}'s servers"));

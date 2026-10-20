@@ -719,12 +719,22 @@ pub(crate) fn list_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String
     Ok(all)
 }
 
-/// List RDS instances through the aws CLI, checking the account first.
+/// RDS instances through the aws CLI, the account checked first, without
+/// the upgrade targets [`fetch_rds`] adds: for finding a server an
+/// environment lists (logs, patches), which needs the listing and its
+/// replica links but not one `describe-db-engine-versions` per version.
 /// Blocking.
-pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+pub fn fetch_rds_listing(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
     scope.validate()?;
     scope.check_account("RDS instances")?;
-    let mut all = list_rds(scope)?;
+    list_rds(scope)
+}
+
+/// List RDS instances through the aws CLI, checking the account first,
+/// with each engine version's upgrade targets for the overview.
+/// Blocking.
+pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+    let mut all = fetch_rds_listing(scope)?;
     // Upgrade targets, once per engine version. Best effort: without
     // them the engine column just shows the version.
     let mut seen: HashMap<(String, String), Option<rds::Upgrades>> = HashMap::new();
