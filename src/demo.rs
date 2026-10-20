@@ -1040,6 +1040,7 @@ pub fn discovery() -> crate::inventory::discover::Found {
         db_name: Some(db.into()),
         vpc_id: Some("vpc-demo".into()),
         upgrades: None,
+        cluster: None,
     };
     let instances = vec![
         inst("staging", None, &["staging-replica"], "shop"),

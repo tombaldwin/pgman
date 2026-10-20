@@ -649,7 +649,7 @@ pub fn discover(scope: &AwsScope) -> Result<Discovery, String> {
         }
     }
     scope.validate()?;
-    let instances = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(&scope))?)?;
+    let instances = super::list_rds(&scope)?;
     let secrets =
         crate::aws_cli::run(&list_secrets_args(&scope)).and_then(|j| parse_secret_names(&j));
     let hosts = crate::aws_cli::run(&describe_hosts_args(&scope)).and_then(|j| parse_hosts(&j));
@@ -992,6 +992,18 @@ mod tests {
         let orphan: Vec<RdsInstance> = all().into_iter().filter(|i| i.id != "demo").collect();
         let ps = propose(&orphan, &[], &[], &scope(), &[]);
         assert!(ps.iter().any(|p| p.env.name == "demo-read-only-replica"));
+    }
+
+    #[test]
+    fn an_aurora_cluster_is_one_environment_named_for_its_writer() {
+        let mut all = rds::parse_describe(rds::tests::AURORA_INSTANCES).unwrap();
+        rds::apply_clusters(
+            &mut all,
+            &rds::parse_clusters(rds::tests::AURORA_CLUSTERS).unwrap(),
+        );
+        let ps = propose(&all, &[], &[], &scope(), &[]);
+        let names: Vec<&str> = ps.iter().map(|p| p.env.name.as_str()).collect();
+        assert_eq!(names, ["app-2", "solo-1"], "no environment per reader");
     }
 
     #[test]

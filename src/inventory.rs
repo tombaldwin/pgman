@@ -702,12 +702,29 @@ pub fn gather(
         .collect()
 }
 
+/// `describe-db-instances`, with Aurora's writer and readers placed
+/// when there is an Aurora instance to place (`describe-db-clusters`).
+/// Best effort for the clusters: without them each instance stands
+/// alone. Blocking.
+pub(crate) fn list_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+    let mut all = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)?;
+    if all.iter().any(|i| i.is_postgres() && i.cluster.is_some()) {
+        match crate::aws_cli::run(&rds::describe_clusters_args(scope))
+            .and_then(|j| rds::parse_clusters(&j))
+        {
+            Ok(clusters) => rds::apply_clusters(&mut all, &clusters),
+            Err(e) => tracing::warn!("Aurora cluster members unavailable: {e}"),
+        }
+    }
+    Ok(all)
+}
+
 /// List RDS instances through the aws CLI, checking the account first.
 /// Blocking.
 pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
     scope.validate()?;
     scope.check_account("RDS instances")?;
-    let mut all = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)?;
+    let mut all = list_rds(scope)?;
     // Upgrade targets, once per engine version. Best effort: without
     // them the engine column just shows the version.
     let mut seen: HashMap<(String, String), Option<rds::Upgrades>> = HashMap::new();
@@ -790,6 +807,34 @@ mod tests {
         // Nothing matching at all still says so.
         let r = gather(&envs, &[], |_| Ok(Vec::new()), || Ok(Vec::new()));
         assert_eq!(r[0].error.as_deref(), Some("matched nothing"));
+    }
+
+    #[test]
+    fn aurora_readers_are_rows_under_the_writer_with_the_clusters_database() {
+        let mut all = rds::parse_describe(rds::tests::AURORA_INSTANCES).unwrap();
+        rds::apply_clusters(
+            &mut all,
+            &rds::parse_clusters(rds::tests::AURORA_CLUSTERS).unwrap(),
+        );
+        let envs = parse_config(
+            "[[environments]]\nname = \"app\"\nsource = { kind = \"rds\", instances = [\"app-1\"] }\n",
+        )
+        .unwrap();
+        let rows: Vec<(String, String, Role, Option<String>)> = rds_targets(&envs[0], &all)
+            .into_iter()
+            .map(|t| (t.server, t.database, t.role, t.replica_of))
+            .collect();
+        let row = |s: &str, d: &str, r, of: Option<&str>| {
+            (s.to_string(), d.to_string(), r, of.map(str::to_string))
+        };
+        assert_eq!(
+            rows,
+            [
+                row("app-2", "ledger", Role::Primary, None),
+                row("app-1", "ledger", Role::Replica, Some("app-2")),
+                row("app-3", "own", Role::Replica, Some("app-2")),
+            ]
+        );
     }
 
     use super::*;
