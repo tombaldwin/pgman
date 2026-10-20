@@ -15,7 +15,7 @@ expression: dump(&buf)
 │  43-customer-tier.sql                                    │
 │      INSERT INTO db_version (id) VALUES (43)             │
 │      ALTER TABLE customers ADD COLUMN tier smallint NOT …│
-│  not included: 44-orders-created-idx.sql — the patch bui…│
+│  not included: 44-orders-created-idx.sql — the patch use…│
 │  type production to apply: produc▏                       │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · ? +5 more

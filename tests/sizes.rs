@@ -933,6 +933,7 @@ fn scr_env_patch() -> App {
             "production",
             "production",
             "shop",
+            false,
         ))),
         typed: "produc".into(),
         scroll: 0,

@@ -238,10 +238,12 @@ impl Server {
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
             ));
         }
+        // Never outside a transaction: that takes the TUI's typed confirm.
         let plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
             database.clone(),
+            false,
         )
         .await?;
         if plan.patches.is_empty() {

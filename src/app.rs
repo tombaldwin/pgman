@@ -4041,6 +4041,29 @@ impl App {
         };
         let (environment, server, database) =
             (env.name.clone(), t.server.clone(), t.database.clone());
+        self.plan_env_patch(patcher, environment, server, database, false);
+    }
+
+    /// `o` on a plan that stopped at a patch needing no transaction: plan
+    /// again, letting such patches run outside one.
+    fn replan_env_patch_outside(&mut self) {
+        let (Some(patcher), Some(v)) = (self.env_patcher.clone(), self.environments.patch.as_ref())
+        else {
+            return;
+        };
+        let (environment, server, database) =
+            (v.environment.clone(), v.server.clone(), v.database.clone());
+        self.plan_env_patch(patcher, environment, server, database, true);
+    }
+
+    fn plan_env_patch(
+        &mut self,
+        patcher: crate::app::EnvPatcher,
+        environment: String,
+        server: String,
+        database: String,
+        outside: bool,
+    ) {
         self.environments.patch = Some(PatchView {
             environment: environment.clone(),
             server: server.clone(),
@@ -4050,7 +4073,12 @@ impl App {
             scroll: 0,
         });
         self.last_status = Some(format!("planning {server}/{database}'s patches…"));
-        let fut = (patcher.plan)(environment.clone(), server.clone(), database.clone());
+        let fut = (patcher.plan)(
+            environment.clone(),
+            server.clone(),
+            database.clone(),
+            outside,
+        );
         if patcher.immediate {
             let result = futures::executor::block_on(fut);
             self.on_env_patch_planned(&environment, &server, &database, result);
@@ -4107,7 +4135,7 @@ impl App {
         if plan.patches.is_empty() {
             return;
         }
-        if plan.protected && v.typed != plan.environment {
+        if plan.needs_typed() && v.typed != plan.environment {
             self.last_status = Some(format!(
                 "that isn't {} — type the name exactly, or Esc to cancel",
                 plan.environment
@@ -4175,8 +4203,12 @@ impl App {
             return;
         };
         let typing =
-            matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.protected && !p.patches.is_empty());
+            matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.needs_typed() && !p.patches.is_empty());
         let confirmable = matches!(&v.stage, PatchStage::Plan(Ok(p)) if !p.patches.is_empty());
+        let outside_helps = matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.outside_would_help);
+        let ctrl = key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Down => v.scroll = v.scroll.saturating_add(1),
             KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
@@ -4186,6 +4218,10 @@ impl App {
             KeyCode::Esc => {
                 self.environments.patch = None;
                 self.last_status = None;
+            }
+            // While a name is typed, `o` is a letter of it: ctrl-o then.
+            KeyCode::Char('o') if outside_helps && (ctrl || !typing) => {
+                self.replan_env_patch_outside()
             }
             KeyCode::Backspace if typing => {
                 v.typed.pop();
@@ -5360,11 +5396,29 @@ mod tests;
 fn patch_hint(plan: &Result<crate::inventory::patching::PatchPlan, String>) -> String {
     match plan {
         Err(_) => "no plan · q back".into(),
+        Ok(p) if p.patches.is_empty() && p.outside_would_help => {
+            "nothing to apply in a transaction · o plan outside one · q back".into()
+        }
         Ok(p) if p.patches.is_empty() => "nothing to apply · q back".into(),
-        Ok(p) if p.protected => format!(
-            "{} is protected: type its name, then Enter · Esc cancel",
-            p.environment
-        ),
-        Ok(_) => "y apply · q cancel".into(),
+        Ok(p) => {
+            let first = if p.protected {
+                format!(
+                    "{} is protected: type its name, then Enter · Esc cancel",
+                    p.environment
+                )
+            } else if p.needs_typed() {
+                format!(
+                    "outside a transaction: type {}, then Enter · Esc cancel",
+                    p.environment
+                )
+            } else {
+                "y apply · q cancel".into()
+            };
+            match (p.outside_would_help, p.needs_typed()) {
+                (true, true) => format!("{first} · ctrl-o plan outside a transaction"),
+                (true, false) => format!("{first} · o plan outside a transaction"),
+                (false, _) => first,
+            }
+        }
     }
 }

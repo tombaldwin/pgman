@@ -1043,7 +1043,8 @@ pub enum PatchStage {
 /// [`EnvLogFetcher`]; `None` applies nothing.
 #[derive(Clone)]
 pub struct EnvPatcher {
-    /// (environment, server, database) → the plan.
+    /// (environment, server, database, outside) → the plan; `outside`
+    /// lets patches that need it run outside a transaction.
     pub plan: PatchPlanFn,
     pub apply: PatchApplyFn,
     /// Run at once on this thread (`--demo`, tests): the futures must
@@ -1056,6 +1057,7 @@ pub type PatchPlanFn = std::sync::Arc<
             String,
             String,
             String,
+            bool,
         ) -> futures::future::BoxFuture<
             'static,
             Result<crate::inventory::patching::PatchPlan, String>,

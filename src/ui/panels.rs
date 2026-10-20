@@ -1745,7 +1745,17 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         ));
     }
     for p in &plan.patches {
-        out.push((format!("  {}", p.file.file), false));
+        match p.outside {
+            None => out.push((format!("  {}", p.file.file), false)),
+            Some(what) => out.push((
+                format!(
+                    "  ⚠ {} — OUTSIDE a transaction ({what}): each statement commits as it \
+                     runs, so a failure leaves the ones before it applied",
+                    p.file.file
+                ),
+                true,
+            )),
+        }
         // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
             for line in s.lines().filter(|l| !l.trim().is_empty()) {
@@ -1784,7 +1794,7 @@ pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> 
     match &v.stage {
         PatchStage::Applying(_) => Some(("  applying…".into(), false)),
         PatchStage::Plan(Ok(p)) if p.patches.is_empty() => None,
-        PatchStage::Plan(Ok(p)) if p.protected => Some((
+        PatchStage::Plan(Ok(p)) if p.needs_typed() => Some((
             format!("  type {} to apply: {}▏", p.environment, v.typed),
             true,
         )),
@@ -3182,7 +3192,7 @@ mod tests {
     #[test]
     fn the_patch_view_shows_the_plan_then_what_ran() {
         use crate::app::{PatchStage, PatchView};
-        let plan = crate::demo::patch_plan("production", "production", "shop");
+        let plan = crate::demo::patch_plan("production", "production", "shop", false);
         let mut v = PatchView {
             environment: "production".into(),
             server: "production".into(),
@@ -3234,7 +3244,7 @@ mod tests {
         assert!(done[4]
             .0
             .starts_with("  still pending: 44-orders-created-idx.sql"));
-        let mut long = crate::demo::patch_plan("staging", "staging", "shop");
+        let mut long = crate::demo::patch_plan("staging", "staging", "shop", false);
         long.patches[0].statements = vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()];
         v.stage = PatchStage::Plan(Ok(long));
         assert!(
@@ -3248,9 +3258,39 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_outside_a_transaction_is_called_out_and_typed() {
+        use crate::app::{PatchStage, PatchView};
+        let plan = crate::demo::patch_plan("staging", "staging", "shop", true);
+        let v = PatchView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan)),
+            typed: "sta".into(),
+            scroll: 0,
+        };
+        let lines = patch_lines(&v);
+        assert!(
+            lines.contains(&(
+                "  ⚠ 44-orders-created-idx.sql — OUTSIDE a transaction (CONCURRENTLY): each \
+                 statement commits as it runs, so a failure leaves the ones before it applied"
+                    .into(),
+                true
+            )),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&("  42-order-notes.sql".into(), false)));
+        assert_eq!(
+            patch_prompt(&v),
+            Some(("  type staging to apply: sta▏".into(), true)),
+            "unprotected, but typed"
+        );
+    }
+
+    #[test]
     fn a_patch_below_the_recorded_version_is_called_out_before_and_after() {
         use crate::app::{PatchStage, PatchView};
-        let mut plan = crate::demo::patch_plan("staging", "staging", "shop");
+        let mut plan = crate::demo::patch_plan("staging", "staging", "shop", false);
         plan.below_recorded = vec!["7-old.sql".into()];
         let warning = (
             "  ⚠ not included: 7-old.sql — pending, but numbered below the recorded 41; \

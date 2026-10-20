@@ -19,7 +19,7 @@ expression: dump(&buf)
 │  43-customer-tier.sql                                                                                                                                                                                │
 │      INSERT INTO db_version (id) VALUES (43)                                                                                                                                                         │
 │      ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0                                                                                                                               │
-│  not included: 44-orders-created-idx.sql — the patch builds or drops an index CONCURRENTLY, which can't run in a transaction; apply it by hand                                                       │
+│  not included: 44-orders-created-idx.sql — the patch uses CONCURRENTLY, which can't run in a transaction; pgman's environments view can plan it to run outside one (o), or apply it by hand          │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

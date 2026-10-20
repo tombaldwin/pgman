@@ -43,8 +43,8 @@ pub fn app(theme: Theme) -> App {
         immediate: true,
     });
     a.env_patcher = Some(crate::app::EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d| {
-            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d))))
+        plan: std::sync::Arc::new(|e, s, d, outside| {
+            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
         }),
         apply: std::sync::Arc::new(|p| {
             Box::pin(std::future::ready(
@@ -924,12 +924,14 @@ pub fn sessions() -> Vec<crate::query::sessions::SessionRow> {
     ]
 }
 
-/// A patch plan in `--demo`: two pending patches and one left for a
-/// human; protected when the environment's name says production.
+/// A patch plan in `--demo`: two pending patches, then one that can't
+/// run in a transaction — left out, or with `outside` planned to run
+/// without one; protected when the environment's name says production.
 pub fn patch_plan(
     environment: &str,
     server: &str,
     database: &str,
+    outside: bool,
 ) -> crate::inventory::patching::PatchPlan {
     let patch =
         |id: i64, name: &str, statements: &[&str]| crate::inventory::patching::PlannedPatch {
@@ -940,38 +942,62 @@ pub fn patch_plan(
             },
             text: statements.join("\n"),
             statements: statements.iter().map(|s| s.to_string()).collect(),
+            outside: None,
         };
+    let mut patches = vec![
+        patch(
+            42,
+            "order-notes",
+            &[
+                "INSERT INTO db_version (id) VALUES (42)",
+                "ALTER TABLE orders ADD COLUMN notes text",
+            ],
+        ),
+        patch(
+            43,
+            "customer-tier",
+            &[
+                "INSERT INTO db_version (id) VALUES (43)",
+                "ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0",
+            ],
+        ),
+    ];
+    let idx = "44-orders-created-idx.sql";
+    let stopped_at = if outside {
+        patches.push(crate::inventory::patching::PlannedPatch {
+            outside: Some("CONCURRENTLY"),
+            ..patch(
+                44,
+                "orders-created-idx",
+                &[
+                    "INSERT INTO db_version (id) VALUES (44)",
+                    "CREATE INDEX CONCURRENTLY orders_created_idx ON orders (created_at)",
+                ],
+            )
+        });
+        None
+    } else {
+        Some((
+            idx.to_string(),
+            format!(
+                "the patch uses CONCURRENTLY, which can't run in a transaction; {}",
+                crate::query::apply::OUTSIDE_HINT
+            ),
+        ))
+    };
     crate::inventory::patching::PatchPlan {
         environment: environment.into(),
         server: server.into(),
         database: database.into(),
         protected: environment.to_ascii_lowercase().contains("prod"),
         applied_max: Some(41),
-        patches: vec![
-            patch(
-                42,
-                "order-notes",
-                &[
-                    "INSERT INTO db_version (id) VALUES (42)",
-                    "ALTER TABLE orders ADD COLUMN notes text",
-                ],
-            ),
-            patch(
-                43,
-                "customer-tier",
-                &[
-                    "INSERT INTO db_version (id) VALUES (43)",
-                    "ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0",
-                ],
-            ),
-        ],
+        patches,
         dir: "~/src/shop/db/patches".into(),
         recorded: (1..=41).collect(),
         below_recorded: Vec::new(),
-        stopped_at: Some((
-            "44-orders-created-idx.sql".into(),
-            "the patch builds or drops an index CONCURRENTLY, which can't run in a transaction; apply it by hand".into(),
-        )),
+        outside_transaction: outside,
+        outside_would_help: !outside,
+        stopped_at,
     }
 }
 
