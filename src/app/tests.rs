@@ -10950,3 +10950,19 @@ fn r_in_the_schema_browser_reloads_and_says_so_when_it_cant() {
     );
     assert!(!a.schema_reload_announce);
 }
+
+#[test]
+fn backslash_d_on_a_name_nothing_matches_says_so() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    run_command(&mut a, "d nosuchthing");
+    assert_eq!(a.mode, Mode::Normal, "no empty browser");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("\\d nosuchthing: no schema, table or column matches · r in the schema browser reloads it")
+    );
+    assert_eq!(a.schema_browser.filter, None);
+    run_command(&mut a, "d ord");
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    assert_eq!(a.schema_browser.filter.as_deref(), Some("ord"));
+}

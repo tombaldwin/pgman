@@ -118,6 +118,17 @@ impl App {
                 // `\d` alone → open with no filter (default view).
                 self.schema_browser.filter = target.clone();
                 self.schema_browser.cursor = 0;
+                // A name nothing matches opened an empty browser with
+                // no word about why; psql says so, and so does this.
+                if let Some(t) = target.as_deref() {
+                    if self.flattened_schema_browser().is_empty() {
+                        self.schema_browser.filter = None;
+                        self.last_status = Some(format!(
+                            "\\d {t}: no schema, table or column matches · r in the schema browser reloads it"
+                        ));
+                        return;
+                    }
+                }
                 self.mode = Mode::SchemaBrowser;
                 self.last_status = Some(match target {
                     Some(t) => format!("\\d {t} → schema browser filtered to '{t}'"),
