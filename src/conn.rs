@@ -292,7 +292,7 @@ impl Dsn {
     /// falls through to a weaker mode at connect time.
     ///
     /// An IPv6 host is written in brackets (`[::1]`, `[::1]:5433`), as
-    /// in any URL; `host` holds it without them (see [`split_host_port`]
+    /// in any URL; `host` holds it without them (see `split_host_port`
     /// and, for the way back, [`host_port`]).
     pub fn parse(dsn: &str) -> Result<Dsn, DsnError> {
         let dsn = dsn.trim();
@@ -450,7 +450,7 @@ impl Dsn {
 /// An unbracketed host with more than one colon is a bare IPv6 address
 /// with no port — `::1` read as host `:` port `1` was the other way
 /// this went wrong.
-pub fn split_host_port(hostport: &str) -> Result<(&str, u16), DsnError> {
+fn split_host_port(hostport: &str) -> Result<(&str, u16), DsnError> {
     let port = |p: &str| {
         p.parse::<u16>()
             .map_err(|_| DsnError::BadPort(p.to_string()))
@@ -482,7 +482,7 @@ pub fn split_host_port(hostport: &str) -> Result<(&str, u16), DsnError> {
 }
 
 /// `host:port` for display and for `ssh -L`, with an IPv6 host put back
-/// in the brackets [`split_host_port`] took off, so `::1` port 5432
+/// in the brackets `split_host_port` took off, so `::1` port 5432
 /// reads `[::1]:5432`, not `::1:5432`.
 pub fn host_port(host: &str, port: u16) -> String {
     if host.contains(':') {
