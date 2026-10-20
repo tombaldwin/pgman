@@ -1807,14 +1807,23 @@ impl App {
         self.tap_generation = self.tap_generation.wrapping_add(1);
     }
 
-    /// True while the picker is asking the operator to authorise an
-    /// `ssh` session to a bastion a committed file named. That prompt
-    /// says "any other key cancels" and means it: the global `?` and
-    /// `:` handlers step aside so the key reaches the picker and
-    /// cancels, rather than leaving the question armed behind an
-    /// overlay.
-    fn tunnel_prompt_open(&self) -> bool {
-        self.mode == Mode::ConnPick && self.pending_tunnel.is_some()
+    /// True while a prompt inside a non-typing mode owns every
+    /// character, so the global plain keys (`?`, `:`, `!`, the tab
+    /// digits and brackets) step aside and the key reaches it:
+    ///
+    /// - the picker asking to authorise an `ssh` session to a bastion
+    ///   a committed file named, which says "any other key cancels"
+    ///   and means it, rather than leaving the question armed behind
+    ///   an overlay;
+    /// - the patch view while a protected environment's name is
+    ///   typed, where `prod2` switched to tab 2 at the `2`.
+    fn prompt_owns_keys(&self) -> bool {
+        let tunnel = self.mode == Mode::ConnPick && self.pending_tunnel.is_some();
+        let naming = self.mode == Mode::Environments
+            && self.environments.patch.as_ref().is_some_and(|v| {
+                matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.needs_typed() && !p.patches.is_empty())
+            });
+        tunnel || naming
     }
 
     /// Key dispatch — [`Self::on_key_inner`] wrapped in one invariant the
@@ -1920,7 +1929,7 @@ impl App {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.mode != Mode::Help
             && !self.mode.is_text_input()
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
         {
             self.open_help_from(self.mode);
             return;
@@ -2009,7 +2018,7 @@ impl App {
         if !ctrl
             && !alt
             && !typing_mode
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
             && matches!(key.code, KeyCode::Char(':'))
         {
             self.open_command_bar();
@@ -2052,7 +2061,7 @@ impl App {
         if ctrl
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'))
             && (!typing_mode || self.mode == Mode::Editor)
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
         {
             self.cycle_tab(true);
             return;
@@ -2078,7 +2087,7 @@ impl App {
         // so is the keypress after `m` / `'`, which names a bookmark
         // (or cancels the pending one) rather than a tab.
         let mark_pending = self.pending_mark_set || self.pending_mark_jump;
-        if !ctrl && !alt && !typing_mode && !mark_pending && !self.tunnel_prompt_open() {
+        if !ctrl && !alt && !typing_mode && !mark_pending && !self.prompt_owns_keys() {
             if let KeyCode::Char(c) = key.code {
                 let bracket_is_mine = self.mode != Mode::SchemaBrowser;
                 if c == ']' && bracket_is_mine {
@@ -2103,7 +2112,7 @@ impl App {
         // keyboard, and reshaping the panes — or swapping the buffer —
         // under it is not what a chord typed there meant. The decision
         // modals returned above.
-        if alt && (!typing_mode || self.mode == Mode::Editor) && !self.tunnel_prompt_open() {
+        if alt && (!typing_mode || self.mode == Mode::Editor) && !self.prompt_owns_keys() {
             match key.code {
                 KeyCode::Char('n') => {
                     self.cycle_tab(true);

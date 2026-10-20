@@ -10704,3 +10704,27 @@ fn a_new_probe_round_keeps_showing_the_last_reading() {
     a.start_env_probes();
     assert_eq!(a.environments.probes[0][1], first, "blanked to probing");
 }
+
+#[test]
+fn a_protected_name_types_digits_brackets_and_punctuation() {
+    // Every global plain key — the tab digits, `[` / `]`, `?`, `:` —
+    // used to act while a protected environment's name was typed:
+    // `prod2` switched to tab 2 at the `2`.
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    a.new_tab();
+    a.mode = Mode::Environments;
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
+        p.protected = true;
+        Box::pin(std::future::ready(Ok(p)))
+    });
+    press(&mut a, KeyCode::Char('P'));
+    let tab = a.active_tab;
+    for c in "1[]?:".chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(a.active_tab, tab, "a digit or bracket switched tabs");
+    assert_eq!(a.environments.patch.as_ref().unwrap().typed, "1[]?:");
+}
