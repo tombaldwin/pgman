@@ -28,4 +28,4 @@ expression: dump(&buf)
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close · F1 help
+ RO   j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close · ? help

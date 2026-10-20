@@ -42,4 +42,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica.c1x2y3.eu-west-2.rds.amazon…│
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · ? help

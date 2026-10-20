@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel · F1 help
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel · ? help

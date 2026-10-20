@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter connect · q quit · F1 +2 more
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter connect · q quit · ? +2 more

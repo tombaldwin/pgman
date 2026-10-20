@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │  type production to apply: produc▏                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · F1 +3 more
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

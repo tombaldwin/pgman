@@ -2157,28 +2157,28 @@ impl App {
         }
         let hint = match mode {
             Mode::SchemaBrowser => Some(
-                "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · F1 full keys",
+                "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · ? full keys",
             ),
             Mode::ExplainTree => {
-                Some("tip · j/k navigate · enter expand · hottest node is red · F1 full keys")
+                Some("tip · j/k navigate · enter expand · hottest node is red · ? full keys")
             }
             Mode::SlowQueries => Some(
-                "tip · enter copy SQL to editor · r refresh from pg_stat_statements · F1 full keys",
+                "tip · enter copy SQL to editor · r refresh from pg_stat_statements · ? full keys",
             ),
             Mode::Sessions => Some(
-                "tip · blocked sessions sort top in red · K terminate · r refresh · F1 full keys",
+                "tip · blocked sessions sort top in red · K terminate · r refresh · ? full keys",
             ),
             Mode::Environments => Some(
-                "tip · from environments.toml · replicas under their primary · r refresh · F1 full keys",
+                "tip · from environments.toml · replicas under their primary · r refresh · ? full keys",
             ),
             Mode::SchemaLint => {
-                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · F1 full keys")
+                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys")
             }
             Mode::LogPick => {
-                Some("tip · c toggles cluster view · enter loads selected · F1 full keys")
+                Some("tip · c toggles cluster view · enter loads selected · ? full keys")
             }
             Mode::RowDetail => {
-                Some("tip · J/K next/prev row · enter zooms a field · y yanks · F1 full keys")
+                Some("tip · J/K next/prev row · enter zooms a field · y yanks · ? full keys")
             }
             Mode::CellDetail => {
                 Some("tip · JSON cells render as a tree · y yanks the value (or jq path)")

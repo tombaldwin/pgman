@@ -18,4 +18,4 @@ expression: dump(&buf)
 │4   a│           esc / enter / A to close           │00   │
 │5   e╰──────────────────────────────────────────────╯00   │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   esc / enter / A close · F1 help
+ RO   TAP   N+1 ×1   esc / enter / A close · ? help

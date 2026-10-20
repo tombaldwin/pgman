@@ -20,4 +20,4 @@ expression: dump(&buf)
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close · F1 help
+ RO   j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close · ? help

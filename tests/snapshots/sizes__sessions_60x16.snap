@@ -18,4 +18,4 @@ expression: dump(&buf)
 │4╰─────────────────────────────────────────────────────╯  │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00   │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · K terminate · F1 +4 more
+ RO   TAP   N+1 ×1   j/k navigate · K terminate · ? +4 more

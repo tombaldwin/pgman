@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │  [environments.secrets]                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · F1 +3 more
+ RO   TAP   N+1 ×1   j/k navigate · space choose · s save · p scope · ? +3 more

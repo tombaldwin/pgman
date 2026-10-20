@@ -1,6 +1,6 @@
 # Keys
 
-Press `F1` or `?` for the in-app cheat sheet — it auto-scrolls to the section
+Press `?` (or `F1`, which also works while typing) for the in-app cheat sheet — it auto-scrolls to the section
 for whatever mode you opened it from. `q` closes most panels and quits from
 the grid / connection picker; `Esc` closes overlays but is a no-op in Normal
 mode (a reflex press can't drop the session). `F1` (help), `F2` (error

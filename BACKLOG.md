@@ -54,12 +54,6 @@ and Tom's decisions that day:
   the real thing, on the same server, so it wants its own decision —
   probably only where the profile isn't protected.
 
-### Hints
-- **The universal hint says `F1 help`** (`ui.rs` appends it to every
-  non-modal hint bar). On a Mac/iTerm F1 often needs fn and is easy to
-  miss; `?` already opens help. Seen 2026-10-20 in a hand-driven
-  session. Say `? help` instead (snapshots move with it).
-
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
   300+ lines at 80 columns (needs sections that collapse or a topic
