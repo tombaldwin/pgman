@@ -89,6 +89,10 @@ pub enum DsnError {
     /// recognised modes. A typo or wrong separator here must never
     /// fall through to a weaker mode — see `apply_ssl_mode`.
     UnknownSslMode(String),
+    /// `sslmode` given twice with different values. pgman used the
+    /// first, libpq the last: `?sslmode=disable&sslmode=verify-full`
+    /// meant no TLS to one and verified TLS to the other.
+    ConflictingSslMode,
 }
 
 impl fmt::Display for DsnError {
@@ -102,6 +106,9 @@ impl fmt::Display for DsnError {
                 f,
                 "unknown sslmode {v:?} — use one of disable, allow, prefer, require, verify-ca, verify-full"
             ),
+            DsnError::ConflictingSslMode => {
+                write!(f, "sslmode is given twice with different values — keep one")
+            }
         }
     }
 }
@@ -389,6 +396,12 @@ impl Dsn {
                 let lower = v.to_ascii_lowercase();
                 if !KNOWN_SSLMODES.contains(&lower.as_str()) {
                     return Err(DsnError::UnknownSslMode(v));
+                }
+                if params
+                    .iter()
+                    .any(|(pk, pv)| pk.eq_ignore_ascii_case("sslmode") && *pv != lower)
+                {
+                    return Err(DsnError::ConflictingSslMode);
                 }
                 params.push((k, lower));
             } else {
@@ -1748,6 +1761,18 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Two sslmodes that disagree are refused: which one wins differs
+    /// between pgman and libpq, and the loser could be the TLS one.
+    #[test]
+    fn conflicting_sslmodes_are_refused() {
+        assert_eq!(
+            Dsn::parse("postgres://h/db?sslmode=disable&sslmode=verify-full").unwrap_err(),
+            DsnError::ConflictingSslMode
+        );
+        // The same value twice is harmless.
+        assert!(Dsn::parse("postgres://h/db?sslmode=require&SSLMODE=Require").is_ok());
+    }
 
     #[test]
     fn a_dsns_debug_never_shows_its_password() {
