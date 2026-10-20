@@ -3544,3 +3544,66 @@ fn a_probe_without_read_all_stats_doesnt_report_zero_long_transactions() {
         assert!(p.sessions.is_some());
     });
 }
+
+/// A connection the inventory calls direct but that is really a hot
+/// standby is refused before any patch runs: the server is asked.
+#[test]
+fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
+    let home = scratch_home("patch-standby", WRITABLE_PROFILE);
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        "INSERT INTO pgman_it_sb_v (id) VALUES (2);\n",
+    )
+    .unwrap();
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"sb\"\nsource = {{ kind = \"static\", connections = [\"s\"] }}\n\
+         version_table = {{ table = \"pgman_it_sb_v\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "standby".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(STANDBY_DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    let plan = pgman::inventory::patching::PatchPlan {
+        environment: "sb".into(),
+        server: "standby".into(),
+        database: "pgman_test".into(),
+        protected: false,
+        applied_max: None,
+        patches: Vec::new(),
+        stopped_at: None,
+        dir: dir.display().to_string(),
+        recorded: Vec::new(),
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let r = rt.block_on(pgman::inventory::patching::apply(
+        &env,
+        &target,
+        &writable,
+        &no_secrets,
+        &plan,
+    ));
+    let err = r.error.expect("refused");
+    assert!(err.contains("is a standby"), "{err}");
+}
