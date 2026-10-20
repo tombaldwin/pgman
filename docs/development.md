@@ -14,7 +14,7 @@ For changes that touch live-database behaviour, also run the integration
 suite against a real Postgres:
 
 ```bash
-docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d --wait
 cargo test --features integration
 docker compose -f docker-compose.test.yml down
 ```
