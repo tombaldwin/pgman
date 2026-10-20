@@ -11207,3 +11207,42 @@ fn closing_the_popup_by_typing_takes_its_status_with_it() {
     assert!(a.completion.is_none());
     assert_eq!(a.last_status, None, "the popup's status left with it");
 }
+
+#[test]
+fn a_written_file_is_named_first_and_its_directory_shortened() {
+    use crate::app::cmd::wrote_status;
+    let home = std::ffi::OsStr::new("/Users/someone");
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone/.cache/pgman/reports/pgman-report-1.md"),
+            Some(home)
+        ),
+        "wrote report to pgman-report-1.md · in ~/.cache/pgman/reports"
+    );
+    assert_eq!(
+        wrote_status("3 row(s)", std::path::Path::new("/tmp/x.xml"), Some(home)),
+        "wrote 3 row(s) to x.xml · in /tmp"
+    );
+    assert_eq!(
+        wrote_status("report", std::path::Path::new("r.md"), None),
+        "wrote report to r.md"
+    );
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone/r.md"),
+            Some(home)
+        ),
+        "wrote report to r.md · in ~"
+    );
+    // A sibling of home isn't under it.
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone2/r.md"),
+            Some(home)
+        ),
+        "wrote report to r.md · in /Users/someone2"
+    );
+}

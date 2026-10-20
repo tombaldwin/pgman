@@ -45,6 +45,33 @@ pub(crate) fn help_topics() -> &'static [(&'static str, Mode)] {
     HELP_TOPICS
 }
 
+/// The status after `\\report` / `\\fixture` wrote `path`: the file's
+/// name first and its directory after, the home directory as `~`. A
+/// full path at the end of the line was what the footer cut, mid-name,
+/// so the part the operator looks for went first. Pure.
+pub fn wrote_status(what: &str, path: &std::path::Path, home: Option<&std::ffi::OsStr>) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+    let Some(dir) = dir else {
+        return format!("wrote {what} to {name}");
+    };
+    let shown = match home.map(std::path::Path::new) {
+        Some(h) if !h.as_os_str().is_empty() && dir.starts_with(h) => {
+            let rest = dir.strip_prefix(h).unwrap_or(dir);
+            if rest.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rest.display())
+            }
+        }
+        _ => dir.display().to_string(),
+    };
+    format!("wrote {what} to {name} · in {shown}")
+}
+
 /// Candidate command names for `typed` — every entry of
 /// [`COMMAND_NAMES`] it is a prefix of. Pure; drives Tab completion
 /// in the command bar.
@@ -576,7 +603,7 @@ impl App {
             crate::report::ReportFormat::Markdown => crate::report::render_markdown(&snapshot),
             crate::report::ReportFormat::Html => crate::report::render_html(&snapshot),
         };
-        let ok = format!("wrote report to {}", path.display());
+        let ok = wrote_status("report", &path, std::env::var_os("HOME").as_deref());
         self.write_export(&path, &body, "\\report", ok);
     }
 
@@ -618,7 +645,11 @@ impl App {
             Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
             _ => default_fixture_path(&table),
         };
-        let ok = format!("wrote {} row(s) to {}", fixture.rows.len(), path.display());
+        let ok = wrote_status(
+            &format!("{} row(s)", fixture.rows.len()),
+            &path,
+            std::env::var_os("HOME").as_deref(),
+        );
         self.write_export(&path, &xml, "\\fixture", ok);
     }
 }
