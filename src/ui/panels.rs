@@ -1,4 +1,5 @@
 use super::*;
+use crate::inventory::patching::RunMode;
 
 /// "About pgman" overlay — same info as the splash but reachable any time
 /// from Normal mode (`A`). Renders the elephant at scale 1 so the popup
@@ -1708,6 +1709,20 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         .applied_max
         .map_or("nothing".to_string(), |m| m.to_string());
     if let PatchStage::Done(_, report) = &v.stage {
+        match report.mode {
+            RunMode::Apply => {}
+            RunMode::DryRun => out.push((
+                "  dry run — everything below was rolled back; nothing was kept".into(),
+                false,
+            )),
+            RunMode::Copy => out.push((
+                format!(
+                    "  on a copy of {} — {} itself is unchanged",
+                    v.database, v.database
+                ),
+                false,
+            )),
+        }
         if let Some(e) = &report.error {
             out.push((format!("  ✗ nothing applied: {e}"), true));
         }
@@ -1729,8 +1744,28 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         for p in plan.patches.iter().skip(ran) {
             out.push((format!("  · {} — not run", p.file.file), false));
         }
-        if let Some(v) = report.recorded_after {
-            out.push((format!("  recorded up to {v} now (was {recorded})"), false));
+        match (report.recorded_after, report.mode) {
+            (None, _) => {}
+            (Some(v), RunMode::DryRun) => out.push((
+                format!("  recorded up to {v} still (was {recorded})"),
+                false,
+            )),
+            (Some(v), RunMode::Copy) => out.push((
+                format!("  the copy recorded up to {v} (was {recorded})"),
+                false,
+            )),
+            (Some(v), RunMode::Apply) => {
+                out.push((format!("  recorded up to {v} now (was {recorded})"), false))
+            }
+        }
+        if let Some(c) = &report.copy {
+            match &c.dropped {
+                Ok(()) => out.push((format!("  copy {} dropped", c.name), false)),
+                Err(e) => out.push((
+                    format!("  ✗ copy {} NOT dropped: {e} — drop it by hand", c.name),
+                    true,
+                )),
+            }
         }
         if let Some((file, why)) = &plan.stopped_at {
             out.push((format!("  still pending: {file} — {why}"), true));
@@ -1757,6 +1792,9 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
             ),
             outside > 0,
         ));
+    }
+    if !plan.patches.is_empty() {
+        mode_lines(v, plan, &mut out);
     }
     for p in &plan.patches {
         match p.outside {
@@ -1785,6 +1823,57 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     }
     below_recorded_lines(plan, &mut out);
     out
+}
+
+/// What the chosen run mode does, under the plan's heading: nothing for
+/// the real thing, a warning for the others. Pure.
+fn mode_lines(
+    v: &crate::app::PatchView,
+    plan: &crate::inventory::patching::PatchPlan,
+    out: &mut Vec<(String, bool)>,
+) {
+    match v.mode {
+        RunMode::Apply => out.push(("  mode: for real · Tab dry run or copy".into(), false)),
+        RunMode::DryRun => {
+            out.push((
+                "  mode: DRY RUN · all in one transaction, rolled back at the end · Tab copy"
+                    .into(),
+                true,
+            ));
+            out.push((
+                format!(
+                    "    nothing is kept, but it takes the same locks and does the same work on {}, \
+                     holding the locks until the last patch",
+                    plan.server
+                ),
+                true,
+            ));
+            if let Some(p) = plan.patches.iter().find(|p| p.outside.is_some()) {
+                out.push((
+                    format!(
+                        "    it stops at {}: {} can't run in a transaction",
+                        p.file.file,
+                        p.outside.unwrap_or_default()
+                    ),
+                    true,
+                ));
+            }
+        }
+        RunMode::Copy => {
+            out.push((
+                "  mode: ON A COPY · copied, patched for real, then dropped · Tab for real".into(),
+                true,
+            ));
+            out.push((
+                format!(
+                    "    CREATE DATABASE … TEMPLATE {} on {}: it needs nobody else connected, \
+                     and copies all of it",
+                    plan.database, plan.server
+                ),
+                true,
+            ));
+        }
+    }
 }
 
 /// The plan's skipped gaps, loud: each is a patch the database never ran
@@ -1823,8 +1912,9 @@ pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> 
         PatchStage::Plan(Ok(p)) if p.patches.is_empty() => None,
         PatchStage::Plan(Ok(p)) if p.needs_typed() => Some((
             format!(
-                "  type {} to apply: {}▏{}",
+                "  type {} to {}: {}▏{}",
                 p.environment,
+                verb(v.mode),
                 v.typed,
                 if p.outside_would_help {
                     "   (ctrl-o: plan the rest outside a transaction)"
@@ -1835,11 +1925,25 @@ pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> 
             true,
         )),
         PatchStage::Plan(Ok(p)) if p.outside_would_help => Some((
-            "  y apply · o plan the rest outside a transaction · q cancel".into(),
+            format!(
+                "  y {} · Tab mode · o plan the rest outside a transaction · q cancel",
+                verb(v.mode)
+            ),
             false,
         )),
-        PatchStage::Plan(Ok(_)) => Some(("  y apply · q cancel".into(), false)),
+        PatchStage::Plan(Ok(_)) => {
+            Some((format!("  y {} · Tab mode · q cancel", verb(v.mode)), false))
+        }
         _ => None,
+    }
+}
+
+/// What confirming does, in `mode`. Pure.
+fn verb(mode: RunMode) -> &'static str {
+    match mode {
+        RunMode::Apply => "apply",
+        RunMode::DryRun => "dry-run",
+        RunMode::Copy => "apply to a copy",
     }
 }
 
@@ -3242,16 +3346,18 @@ mod tests {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         };
         let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
         assert_eq!(
             text[1],
             "  2 to apply, in order, each in its own transaction · recorded up to 41"
         );
-        assert_eq!(text[2], "  42-order-notes.sql");
-        assert_eq!(text[4], "      ALTER TABLE orders ADD COLUMN notes text");
-        assert!(text[8].starts_with("  not included: 44-orders-created-idx.sql"));
-        assert_eq!(text.len(), 9, "the prompt is pinned, not in the list");
+        assert_eq!(text[2], "  mode: for real · Tab dry run or copy");
+        assert_eq!(text[3], "  42-order-notes.sql");
+        assert_eq!(text[5], "      ALTER TABLE orders ADD COLUMN notes text");
+        assert!(text[9].starts_with("  not included: 44-orders-created-idx.sql"));
+        assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
         assert_eq!(
             patch_prompt(&v),
             Some((
@@ -3275,6 +3381,7 @@ mod tests {
                 ],
                 error: None,
                 recorded_after: Some(42),
+                ..Default::default()
             },
         );
         let done = patch_lines(&v);
@@ -3316,6 +3423,7 @@ mod tests {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         };
         let lines = patch_lines(&v);
         assert_eq!(
@@ -3377,6 +3485,7 @@ mod tests {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         };
         assert_eq!(
             patch_prompt(&v),
@@ -3396,6 +3505,75 @@ mod tests {
     }
 
     #[test]
+    fn the_patch_view_says_what_a_dry_run_or_a_copy_does() {
+        use crate::app::{PatchStage, PatchView};
+        use crate::inventory::patching::{ApplyReport, CopyNote, PatchResult};
+        let plan = crate::demo::patch_plan("staging", "staging", "shop", true);
+        let mut v = PatchView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan.clone())),
+            typed: String::new(),
+            scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
+            mode: RunMode::DryRun,
+        };
+        let lines = patch_lines(&v);
+        assert_eq!(
+            lines[2],
+            (
+                "  mode: DRY RUN · all in one transaction, rolled back at the end · Tab copy"
+                    .into(),
+                true
+            )
+        );
+        assert!(lines[3]
+            .0
+            .contains("the same locks and does the same work on staging"));
+        assert_eq!(
+            lines[4].0,
+            "    it stops at 44-orders-created-idx.sql: CONCURRENTLY can't run in a transaction"
+        );
+        assert!(patch_prompt(&v).unwrap().0.contains("to dry-run: "));
+        v.mode = RunMode::Copy;
+        let lines = patch_lines(&v);
+        assert!(lines[2].0.starts_with("  mode: ON A COPY"));
+        assert!(lines[3].0.contains("TEMPLATE shop on staging"));
+        assert!(patch_prompt(&v).unwrap().0.contains("to apply to a copy: "));
+        let done = |mode, copy| ApplyReport {
+            results: vec![PatchResult {
+                file: "42-order-notes.sql".into(),
+                outcome: Ok(2),
+            }],
+            recorded_after: Some(42),
+            mode,
+            copy,
+            ..Default::default()
+        };
+        v.stage = PatchStage::Done(plan.clone(), done(RunMode::DryRun, None));
+        let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            text[1],
+            "  dry run — everything below was rolled back; nothing was kept"
+        );
+        assert!(text.contains(&"  recorded up to 42 still (was 41)".to_string()));
+        let copy = CopyNote {
+            name: "shop_pgman_copy_7".into(),
+            dropped: Err("in use".into()),
+        };
+        v.stage = PatchStage::Done(plan, done(RunMode::Copy, Some(copy)));
+        let lines = patch_lines(&v);
+        assert_eq!(lines[1].0, "  on a copy of shop — shop itself is unchanged");
+        assert!(lines.contains(&("  the copy recorded up to 42 (was 41)".into(), false)));
+        assert!(lines.contains(&(
+            "  ✗ copy shop_pgman_copy_7 NOT dropped: in use — drop it by hand".into(),
+            true
+        )));
+    }
+
+    #[test]
     fn the_pinned_prompt_offers_o_when_it_would_get_further() {
         use crate::app::{PatchStage, PatchView};
         let mut plan = crate::demo::patch_plan("staging", "staging", "shop", false);
@@ -3408,10 +3586,11 @@ mod tests {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         };
         assert_eq!(
             patch_prompt(&v).unwrap().0,
-            "  y apply · o plan the rest outside a transaction · q cancel"
+            "  y apply · Tab mode · o plan the rest outside a transaction · q cancel"
         );
         plan.protected = true;
         v.stage = PatchStage::Plan(Ok(plan.clone()));
@@ -3450,6 +3629,7 @@ mod tests {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         };
         assert_eq!(patch_lines(&v).last(), Some(&warning));
         v.stage = PatchStage::Done(plan, Default::default());

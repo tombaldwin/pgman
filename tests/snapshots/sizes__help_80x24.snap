@@ -23,7 +23,7 @@ expression: dump(&buf)
 │     e / i / tab   focus editor                                               │
 │     c             change connection (opens the picker mid-session)           │
 │     S             schema browser (psql `\d` equivalent)                      │
-│ ↓ 250 more below                                                             │
+│ ↓ 251 more below                                                             │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

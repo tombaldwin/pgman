@@ -46,7 +46,14 @@ pub fn app(theme: Theme) -> App {
         plan: std::sync::Arc::new(|e, s, d, outside| {
             Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
         }),
-        apply: std::sync::Arc::new(|p, _cancel| {
+        apply: std::sync::Arc::new(|p, mode, _cancel| {
+            use crate::inventory::patching::{CopyNote, RunMode};
+            let ran = p
+                .patches
+                .iter()
+                .filter_map(|x| x.file.version_id)
+                .max()
+                .or(p.applied_max);
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
                     results: p
@@ -58,13 +65,17 @@ pub fn app(theme: Theme) -> App {
                         })
                         .collect(),
                     error: None,
-                    // Every planned patch ran and recorded its own id.
-                    recorded_after: p
-                        .patches
-                        .iter()
-                        .filter_map(|x| x.file.version_id)
-                        .max()
-                        .or(p.applied_max),
+                    // Every planned patch ran and recorded its own id;
+                    // a dry run kept none of it.
+                    recorded_after: match mode {
+                        RunMode::DryRun => p.applied_max,
+                        _ => ran,
+                    },
+                    mode,
+                    copy: (mode == RunMode::Copy).then(|| CopyNote {
+                        name: crate::query::apply::copy_name(&p.database, 1_760_000_000),
+                        dropped: Ok(()),
+                    }),
                 },
             ))
         }),

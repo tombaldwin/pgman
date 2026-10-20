@@ -26,6 +26,11 @@
 //! failure part-way leaves the earlier ones applied, and says so. The
 //! other refusals stand.
 //!
+//! A dry run holds one transaction ([`begin`]) around every patch it
+//! tries ([`try_patch`]) and rolls it back ([`rollback`]). A copy is made
+//! with [`create_copy`] and dropped with [`drop_copy`], which takes only
+//! a name [`copy_name`] made.
+//!
 //! Each statement goes to the server on its own through the extended
 //! protocol, which refuses a string holding more than one command: what
 //! the server runs is one statement, whatever its lexer makes of it.
@@ -163,33 +168,14 @@ pub async fn apply(
     patch: &PatchFile,
     statements: &[String],
 ) -> Result<Applied, String> {
-    client
-        .batch_execute(&format!("BEGIN; SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
-        .await
-        .map_err(|e| format!("could not begin: {e}"))?;
-    for (i, stmt) in statements.iter().enumerate() {
-        // Again before each statement: a function the patch calls could
-        // have changed it (`SET` and `set_config` themselves are refused).
-        let reset = client
-            .batch_execute(&format!("SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
-            .await;
-        // `execute` prepares: one command per string, or the server refuses.
-        let run = match reset {
-            Ok(()) => client.execute(stmt.as_str(), &[]).await.map(drop),
-            Err(e) => Err(e),
-        };
-        if let Err(e) = run {
-            let _ = client.batch_execute("ROLLBACK").await;
-            let msg = e
-                .as_db_error()
-                .map(|d| d.message().to_string())
-                .unwrap_or_else(|| e.to_string());
-            return Err(format!(
-                "statement {} of {} failed, nothing applied: {msg}",
-                i + 1,
-                statements.len()
-            ));
-        }
+    begin(client).await?;
+    if let Err((i, msg)) = run_in_transaction(client, statements).await {
+        let _ = client.batch_execute("ROLLBACK").await;
+        return Err(format!(
+            "statement {} of {} failed, nothing applied: {msg}",
+            i + 1,
+            statements.len()
+        ));
     }
     client
         .batch_execute("COMMIT")
@@ -204,6 +190,83 @@ pub async fn apply(
         statements: statements.len(),
         recorded: id.is_some_and(|id| applied.contains(&id)),
     })
+}
+
+/// Open a transaction on `client`: [`apply`]'s for one patch, or a dry
+/// run's around all of them.
+pub async fn begin(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute("BEGIN")
+        .await
+        .map_err(|e| format!("could not begin: {e}"))
+}
+
+/// End a dry run: everything since [`begin`] is undone.
+pub async fn rollback(client: &tokio_postgres::Client) -> Result<(), String> {
+    client
+        .batch_execute("ROLLBACK")
+        .await
+        .map_err(|e| format!("could not roll back: {e}"))
+}
+
+/// Run `statements` (from [`check_patch`]) inside the transaction the
+/// caller holds — a dry run's — then read the version table in it, so
+/// the patch's own version row shows. Nothing is committed: on a failure
+/// the transaction is aborted and the caller rolls it back, as it does
+/// after the last patch anyway.
+pub async fn try_patch(
+    client: &tokio_postgres::Client,
+    cfg: &PatchesConfig,
+    patch: &PatchFile,
+    statements: &[String],
+) -> Result<Applied, String> {
+    if let Err((i, msg)) = run_in_transaction(client, statements).await {
+        return Err(format!(
+            "statement {} of {} failed: {msg}",
+            i + 1,
+            statements.len()
+        ));
+    }
+    let applied = applied_ids(client, cfg)
+        .await
+        .map_err(|e| format!("ran, but the version table couldn't be read: {e}"))?;
+    let id = patch.version_id.or(patch.filename_number);
+    Ok(Applied {
+        file: patch.file.clone(),
+        statements: statements.len(),
+        recorded: id.is_some_and(|id| applied.contains(&id)),
+    })
+}
+
+/// `statements` inside an open transaction, each with the lock timeout;
+/// the index and server message of the first that fails.
+async fn run_in_transaction(
+    client: &tokio_postgres::Client,
+    statements: &[String],
+) -> Result<(), (usize, String)> {
+    for (i, stmt) in statements.iter().enumerate() {
+        // Before each statement: a function the patch calls could have
+        // changed it (`SET` and `set_config` themselves are refused).
+        let reset = client
+            .batch_execute(&format!("SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            .await;
+        // `execute` prepares: one command per string, or the server refuses.
+        let run = match reset {
+            Ok(()) => client.execute(stmt.as_str(), &[]).await.map(drop),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = run {
+            return Err((i, server_message(&e)));
+        }
+    }
+    Ok(())
+}
+
+/// The server's own message for `e`, or the client's when there is none.
+fn server_message(e: &tokio_postgres::Error) -> String {
+    e.as_db_error()
+        .map(|d| d.message().to_string())
+        .unwrap_or_else(|| e.to_string())
 }
 
 /// Run `statements` (from a [`check_patch`] with `outside`) one at a
@@ -283,11 +346,7 @@ async fn run_without_timeout(
             Err(e) => Err(e),
         };
         if let Err(e) = run {
-            let msg = e
-                .as_db_error()
-                .map(|d| d.message().to_string())
-                .unwrap_or_else(|| e.to_string());
-            return Err((i, msg));
+            return Err((i, server_message(&e)));
         }
     }
     Ok(())
@@ -308,6 +367,110 @@ fn outside_failure(i: usize, n: usize, stmt: &str, msg: &str, recorded: &str) ->
         );
     }
     out
+}
+
+/// What marks a database as a copy pgman made to try patches on.
+const COPY_MARK: &str = "_pgman_copy_";
+
+/// The name of a copy of `db` made at `stamp` (seconds since the
+/// epoch): `db` reduced to lowercase letters, digits and `_`, shortened
+/// to fit Postgres's 63 bytes, then `_pgman_copy_` and the stamp. Pure.
+pub fn copy_name(db: &str, stamp: u64) -> String {
+    let tail = format!("{COPY_MARK}{stamp}");
+    let base: String = db
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .take(63 - tail.len())
+        .collect();
+    format!("{base}{tail}")
+}
+
+/// Whether `name` is one [`copy_name`] makes: the only databases pgman
+/// drops. Pure.
+pub fn is_copy_name(name: &str) -> bool {
+    name.len() <= 63
+        && name.rsplit_once(COPY_MARK).is_some_and(|(base, stamp)| {
+            !base.is_empty()
+                && !stamp.is_empty()
+                && stamp.bytes().all(|b| b.is_ascii_digit())
+                && base
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        })
+}
+
+/// `name` as a quoted identifier. Pure.
+fn quoted(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// How many sessions other than `client`'s own are connected to `db`: a
+/// template copy needs none.
+pub async fn other_sessions(client: &tokio_postgres::Client, db: &str) -> Result<i64, String> {
+    client
+        .query_one(
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
+            &[&db],
+        )
+        .await
+        .map(|r| r.get(0))
+        .map_err(|e| format!("could not count the sessions on {db}: {e}"))
+}
+
+/// `CREATE DATABASE copy TEMPLATE source`, with no statement timeout: a
+/// large database takes a while to copy, and the caller can cancel.
+/// `client` must be connected to another database than `source`.
+pub async fn create_copy(
+    client: &tokio_postgres::Client,
+    source: &str,
+    copy: &str,
+) -> Result<(), String> {
+    if !is_copy_name(copy) {
+        return Err(format!("{copy:?} isn't a name pgman makes for a copy"));
+    }
+    client
+        .batch_execute("SET statement_timeout = 0")
+        .await
+        .map_err(|e| format!("could not lift the statement timeout: {e}"))?;
+    client
+        .batch_execute(&format!(
+            "CREATE DATABASE {} TEMPLATE {}",
+            quoted(copy),
+            quoted(source)
+        ))
+        .await
+        .map_err(|e| format!("could not copy {source}: {}", server_message(&e)))
+}
+
+/// Drop a copy [`create_copy`] made. Refuses any other name: this is the
+/// one `DROP DATABASE` pgman runs. The copy's own connection may take a
+/// moment to go once closed, so a busy copy is tried again for a while.
+pub async fn drop_copy(client: &tokio_postgres::Client, copy: &str) -> Result<(), String> {
+    if !is_copy_name(copy) {
+        return Err(format!("{copy:?} isn't a copy pgman made; not dropping it"));
+    }
+    let sql = format!("DROP DATABASE IF EXISTS {}", quoted(copy));
+    let mut tries = 0;
+    loop {
+        match client.batch_execute(&sql).await {
+            Ok(()) => return Ok(()),
+            // 55006 object_in_use: our own session still closing.
+            Err(e)
+                if tries < 40
+                    && e.code() == Some(&tokio_postgres::error::SqlState::OBJECT_IN_USE) =>
+            {
+                tries += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(e) => return Err(server_message(&e)),
+        }
+    }
 }
 
 /// Whether `client`'s server is a standby.
@@ -349,6 +512,39 @@ mod tests {
             filename_number: Some(id),
             version_id: Some(id),
         }
+    }
+
+    #[test]
+    fn a_copy_is_named_so_pgman_can_tell_it_made_it() {
+        assert_eq!(
+            copy_name("ledger", 1_760_000_000),
+            "ledger_pgman_copy_1760000000"
+        );
+        assert_eq!(copy_name("My-DB", 7), "my_db_pgman_copy_7");
+        let long = copy_name(&"x".repeat(80), 1_760_000_000);
+        assert_eq!(long.len(), 63);
+        assert!(long.ends_with("_pgman_copy_1760000000"));
+        for made in [copy_name("ledger", 1), copy_name("Ünïcode db", 2), long] {
+            assert!(is_copy_name(&made), "{made}");
+        }
+        for not in [
+            "ledger",
+            "ledger_pgman_copy_",
+            "_pgman_copy_1",
+            "ledger_pgman_copy_1x",
+            "Ledger_pgman_copy_1",
+            "led\"ger_pgman_copy_1",
+            "ledger_pgman_copy_1; DROP DATABASE ledger",
+        ] {
+            assert!(!is_copy_name(not), "{not}");
+        }
+        assert!(!is_copy_name(&format!("{}_pgman_copy_1", "x".repeat(60))));
+    }
+
+    #[test]
+    fn an_identifier_is_quoted_whatever_it_holds() {
+        assert_eq!(quoted("ledger"), "\"ledger\"");
+        assert_eq!(quoted("a\"b"), "\"a\"\"b\"");
     }
 
     #[test]

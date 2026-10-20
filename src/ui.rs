@@ -2207,7 +2207,11 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  o in the plan: patches needing no transaction, outside one)"),
+        row("                  o in the plan: patches needing no transaction, outside one;"),
+        &mut lines,
+    );
+    push(
+        row("                  Tab: a dry run, rolled back, or for real on a copy)"),
         &mut lines,
     );
     push(

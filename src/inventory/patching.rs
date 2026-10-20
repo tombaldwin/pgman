@@ -22,6 +22,11 @@
 //! with no transaction; confirming such a plan takes the typed name even
 //! where the environment isn't protected. MCP never plans that way.
 //!
+//! A confirmed plan runs as its [`RunMode`] says: for real; as a dry
+//! run, every patch in one transaction rolled back at the end (the TUI's
+//! Tab, MCP's `mode`); or for real on a template copy of the database
+//! made on the same server and dropped afterwards.
+//!
 //! Only a primary (or a plain server) is patched; a replica is refused.
 //! An environment is *protected* when it says `protected = true`, or by
 //! default when its name contains "prod"; a protected one is confirmed
@@ -95,6 +100,58 @@ impl PatchPlan {
     }
 }
 
+/// How a confirmed plan runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunMode {
+    /// For real: each patch committed in turn.
+    #[default]
+    Apply,
+    /// Every patch in ONE transaction, rolled back at the end: nothing is
+    /// kept, but it takes the same locks and does the same work as the
+    /// real run, holding them until the last patch is done. A patch
+    /// that can't run in a transaction ends it.
+    DryRun,
+    /// For real, on a copy of the database (`CREATE DATABASE … TEMPLATE`)
+    /// on the same server, dropped afterwards. The copy needs nobody
+    /// else connected to the database.
+    Copy,
+}
+
+impl RunMode {
+    /// The next mode, for the TUI's Tab. Pure.
+    pub fn next(self) -> Self {
+        match self {
+            RunMode::Apply => RunMode::DryRun,
+            RunMode::DryRun => RunMode::Copy,
+            RunMode::Copy => RunMode::Apply,
+        }
+    }
+
+    /// Its name in MCP's `mode` argument. Pure.
+    pub fn name(self) -> &'static str {
+        match self {
+            RunMode::Apply => "apply",
+            RunMode::DryRun => "dry_run",
+            RunMode::Copy => "copy",
+        }
+    }
+
+    /// The mode MCP's `mode` argument names. Pure.
+    pub fn parse(s: &str) -> Option<Self> {
+        [RunMode::Apply, RunMode::DryRun, RunMode::Copy]
+            .into_iter()
+            .find(|m| m.name() == s)
+    }
+}
+
+/// The copy a [`RunMode::Copy`] run made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyNote {
+    pub name: String,
+    /// Dropped afterwards, or why not: it is then still on the server.
+    pub dropped: Result<(), String>,
+}
+
 /// One planned patch's result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchResult {
@@ -110,8 +167,12 @@ pub struct ApplyReport {
     /// Set when it couldn't start (connect, re-check).
     pub error: Option<String>,
     /// The highest id recorded after the run, read again at the end;
-    /// `None` when it couldn't be read (or the run never connected).
+    /// `None` when it couldn't be read (or the run never connected). On
+    /// a copy, the copy's.
     pub recorded_after: Option<i64>,
+    pub mode: RunMode,
+    /// Set once a [`RunMode::Copy`] run has made its copy.
+    pub copy: Option<CopyNote>,
 }
 
 impl ApplyReport {
@@ -125,21 +186,43 @@ impl ApplyReport {
 
     /// One line for a status bar or a tool result.
     pub fn summary(&self) -> String {
+        let copy = match &self.copy {
+            None => String::new(),
+            Some(c) => match &c.dropped {
+                Ok(()) => format!(" · copy {} dropped", c.name),
+                Err(e) => format!(" · copy {} NOT dropped ({e}): drop it by hand", c.name),
+            },
+        };
         if let Some(e) = &self.error {
-            return format!("nothing applied: {e}");
+            return format!("{}nothing applied: {e}{copy}", self.prefix());
         }
         let ran = self.ran();
-        match self.recorded_after {
-            Some(v) => format!("{ran} · recorded up to {v} now"),
-            None => ran,
+        let recorded = match (self.recorded_after, self.mode) {
+            (None, _) => String::new(),
+            (Some(v), RunMode::DryRun) => format!(" · all rolled back, recorded up to {v} still"),
+            (Some(v), RunMode::Copy) => format!(" · the copy recorded up to {v}"),
+            (Some(v), RunMode::Apply) => format!(" · recorded up to {v} now"),
+        };
+        format!("{}{ran}{recorded}{copy}", self.prefix())
+    }
+
+    fn prefix(&self) -> &'static str {
+        match self.mode {
+            RunMode::Apply => "",
+            RunMode::DryRun => "dry run: ",
+            RunMode::Copy => "on a copy: ",
         }
     }
 
     fn ran(&self) -> String {
+        let verb = match self.mode {
+            RunMode::DryRun => "ran",
+            _ => "applied",
+        };
         match self.failed() {
-            None => format!("applied {} patch(es)", self.applied()),
+            None => format!("{verb} {} patch(es)", self.applied()),
             Some(f) => format!(
-                "applied {}, then {} failed: {}",
+                "{verb} {}, then {} failed: {}",
                 self.applied(),
                 f.file,
                 f.outcome.as_ref().err().map(String::as_str).unwrap_or("")
@@ -511,18 +594,24 @@ pub fn still_as_planned(plan: &PatchPlan, done: usize, applied: &[i64]) -> Resul
     Ok(())
 }
 
-/// Run `plan` on `target`: each patch in its own transaction, in order,
-/// stopping at the first failure. Once connected, `cancel` can stop the
-/// running statement; that fails the patch like any other error.
+/// Run `plan` on `target` as `mode` says: each patch in its own
+/// transaction, in order, stopping at the first failure (on the database,
+/// or on a copy of it); or all in one transaction that is rolled back.
+/// Once connected, `cancel` can stop the running statement; that fails
+/// the patch like any other error.
 pub async fn apply(
     env: &Environment,
     target: &Target,
     safety: &crate::safety::SafetyConfig,
     fetch_secret: &FetchSecret,
     plan: &PatchPlan,
+    mode: RunMode,
     cancel: &CancelSlot,
 ) -> ApplyReport {
-    let mut report = ApplyReport::default();
+    let mut report = ApplyReport {
+        mode,
+        ..Default::default()
+    };
     let start = async {
         let cfg = refuse(env, target)?;
         if plan.environment != env.name
@@ -531,100 +620,254 @@ pub async fn apply(
         {
             return Err("the plan is for another database".to_string());
         }
-        let dsn = dsn_for(target, fetch_secret).await?;
-        let (client, tunnel) = connect(dsn, false, APPLY_STATEMENT_TIMEOUT_MS).await?;
-        // The inventory's role can be wrong (a static connection to a hot
-        // standby reads as direct): ask the server.
-        if crate::query::apply::in_recovery(&client).await? {
-            return Err(format!(
-                "{} is a standby (in recovery); patches go to its primary",
-                target.server
-            ));
-        }
-        Ok((cfg, client, tunnel))
+        Ok((cfg, dsn_for(target, fetch_secret).await?))
     };
-    let (cfg, client, _tunnel) = match start.await {
+    let (cfg, dsn) = match start.await {
         Ok(x) => x,
         Err(e) => {
             report.error = Some(e);
             return report;
         }
     };
-    cancel.set(canceller(&client));
-    for (i, p) in plan.patches.iter().enumerate() {
-        if cancel.requested() {
+    let run = Run {
+        cfg: &cfg,
+        safety,
+        database: &target.database,
+        plan,
+        cancel,
+    };
+    match mode {
+        RunMode::Apply | RunMode::DryRun => match open_writable(dsn, &target.server).await {
+            Ok((client, _tunnel)) => run.on(&client, mode == RunMode::DryRun, &mut report).await,
+            Err(e) => report.error = Some(e),
+        },
+        RunMode::Copy => run.on_copy(dsn, &target.server, &mut report).await,
+    }
+    report
+}
+
+/// A writable connection to `dsn`, refused when its server is a standby:
+/// the inventory's role can be wrong (a static connection to a hot
+/// standby reads as direct), so the server is asked.
+async fn open_writable(
+    dsn: crate::conn::Dsn,
+    server: &str,
+) -> Result<
+    (
+        std::sync::Arc<tokio_postgres::Client>,
+        Option<crate::tunnel::SshTunnel>,
+    ),
+    String,
+> {
+    let (client, tunnel) = connect(dsn, false, APPLY_STATEMENT_TIMEOUT_MS).await?;
+    if crate::query::apply::in_recovery(&client).await? {
+        return Err(format!(
+            "{server} is a standby (in recovery); patches go to its primary"
+        ));
+    }
+    Ok((client, tunnel))
+}
+
+/// What one [`apply`] runs, whichever database it runs on.
+struct Run<'a> {
+    cfg: &'a PatchesConfig,
+    safety: &'a crate::safety::SafetyConfig,
+    /// The planned database, whose safety profile the patches are checked
+    /// against — on a copy too.
+    database: &'a str,
+    plan: &'a PatchPlan,
+    cancel: &'a CancelSlot,
+}
+
+impl Run<'_> {
+    /// The plan's patches on `client`, into `report`; with `dry`, all in
+    /// one transaction that is rolled back at the end.
+    async fn on(&self, client: &tokio_postgres::Client, dry: bool, report: &mut ApplyReport) {
+        let (plan, cancel) = (self.plan, self.cancel);
+        cancel.set(canceller(client));
+        if dry {
+            if let Err(e) = crate::query::apply::begin(client).await {
+                cancel.clear();
+                report.error = Some(e);
+                return;
+            }
+        }
+        for (i, p) in plan.patches.iter().enumerate() {
+            if cancel.requested() {
+                report.results.push(PatchResult {
+                    file: p.file.file.clone(),
+                    outcome: Err("cancelled before it started; nothing applied".to_string()),
+                });
+                break;
+            }
+            let outcome = self.patch(client, i, p, dry).await;
+            let failed = outcome.is_err();
             report.results.push(PatchResult {
                 file: p.file.file.clone(),
-                outcome: Err("cancelled before it started; nothing applied".to_string()),
+                outcome,
             });
-            break;
-        }
-        let outcome = async {
-            let applied = crate::query::apply::applied_ids(&client, &cfg).await?;
-            still_as_planned(plan, i, &applied)?;
-            // Checked again: safety.toml may have changed since the plan.
-            let checked = crate::query::apply::check_patch(
-                safety,
-                &target.database,
-                &p.text,
-                plan.outside_transaction,
-            )?;
-            if checked.statements != p.statements || checked.outside != p.outside {
-                return Err("the patch's statements differ from the plan".to_string());
+            if failed {
+                break;
             }
-            let statements = checked.statements;
-            let done = match p.outside {
-                None => crate::query::apply::apply(&client, &cfg, &p.file, &statements).await?,
-                Some(what) => {
-                    tracing::warn!(
-                        target: "pgman::patching",
-                        environment = %plan.environment,
-                        server = %plan.server,
-                        database = %plan.database,
-                        file = %p.file.file,
-                        what,
-                        "patch running outside a transaction"
-                    );
-                    crate::query::apply::apply_outside(&client, &cfg, &p.file, &statements).await?
-                }
-            };
-            if !done.recorded {
+        }
+        if dry {
+            // Failing, the connection closing undoes it all the same.
+            if let Err(e) = crate::query::apply::rollback(client).await {
+                tracing::warn!(target: "pgman::patching", error = %e, "dry run's rollback failed");
+            }
+        }
+        // Nothing to cancel from here on, and a late cancel mustn't hit
+        // the re-read below.
+        cancel.clear();
+        report.recorded_after = match crate::query::apply::applied_ids(client, self.cfg).await {
+            Ok(ids) => ids.into_iter().max(),
+            Err(e) => {
+                tracing::warn!(target: "pgman::patching", error = %e, "couldn't re-read the version table");
+                None
+            }
+        };
+    }
+
+    /// Planned patch `i`, `p`, on `client`: its statement count, or why
+    /// it failed.
+    async fn patch(
+        &self,
+        client: &tokio_postgres::Client,
+        i: usize,
+        p: &PlannedPatch,
+        dry: bool,
+    ) -> Result<usize, String> {
+        let plan = self.plan;
+        let applied = crate::query::apply::applied_ids(client, self.cfg).await?;
+        still_as_planned(plan, i, &applied)?;
+        // Checked again: safety.toml may have changed since the plan.
+        let checked = crate::query::apply::check_patch(
+            self.safety,
+            self.database,
+            &p.text,
+            plan.outside_transaction,
+        )?;
+        if checked.statements != p.statements || checked.outside != p.outside {
+            return Err("the patch's statements differ from the plan".to_string());
+        }
+        let statements = checked.statements;
+        let done = match (p.outside, dry) {
+            (Some(what), true) => {
                 return Err(format!(
-                    "it ran, but recorded no version row {}; stopping",
-                    PatchPlan::id(&p.file).unwrap_or_default()
+                    "{what} can't run in a transaction, so the dry run stops here"
+                ))
+            }
+            (None, true) => {
+                crate::query::apply::try_patch(client, self.cfg, &p.file, &statements).await?
+            }
+            (None, false) => {
+                crate::query::apply::apply(client, self.cfg, &p.file, &statements).await?
+            }
+            (Some(what), false) => {
+                tracing::warn!(
+                    target: "pgman::patching",
+                    environment = %plan.environment,
+                    server = %plan.server,
+                    database = %plan.database,
+                    file = %p.file.file,
+                    what,
+                    "patch running outside a transaction"
+                );
+                crate::query::apply::apply_outside(client, self.cfg, &p.file, &statements).await?
+            }
+        };
+        if !done.recorded {
+            return Err(format!(
+                "it ran, but recorded no version row {}; stopping",
+                PatchPlan::id(&p.file).unwrap_or_default()
+            ));
+        }
+        tracing::info!(
+            target: "pgman::patching",
+            environment = %plan.environment,
+            server = %plan.server,
+            database = %plan.database,
+            file = %p.file.file,
+            dry_run = dry,
+            "patch applied"
+        );
+        Ok(done.statements)
+    }
+
+    /// The plan applied for real to a fresh template copy of the
+    /// database, on the same server, dropped afterwards.
+    async fn on_copy(&self, dsn: crate::conn::Dsn, server: &str, report: &mut ApplyReport) {
+        let made = async {
+            let (admin, tunnel) = open_admin(&dsn, server).await?;
+            let others = crate::query::apply::other_sessions(&admin, self.database).await?;
+            if others > 0 {
+                return Err(format!(
+                    "a copy needs nobody else connected to {}, and {others} session(s) are; \
+                     it suits an idle database, such as a local or dev one",
+                    self.database
                 ));
             }
-            tracing::info!(
-                target: "pgman::patching",
-                environment = %plan.environment,
-                server = %plan.server,
-                database = %plan.database,
-                file = %p.file.file,
-                "patch applied"
-            );
-            Ok(done.statements)
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let name = crate::query::apply::copy_name(self.database, stamp);
+            self.cancel.set(canceller(&admin));
+            let created = crate::query::apply::create_copy(&admin, self.database, &name).await;
+            self.cancel.clear();
+            created?;
+            Ok((admin, tunnel, name))
+        };
+        let (admin, _admin_tunnel, name) = match made.await {
+            Ok(x) => x,
+            Err(e) => {
+                report.error = Some(e);
+                return;
+            }
+        };
+        tracing::info!(target: "pgman::patching", server, database = %self.database, copy = %name, "copy made to apply patches to");
+        let mut on_copy = dsn;
+        on_copy.dbname = name.clone();
+        match connect(on_copy, false, APPLY_STATEMENT_TIMEOUT_MS).await {
+            // Closed before the drop below: a copy can't be dropped
+            // while connected to.
+            Ok((client, _tunnel)) => self.on(&client, false, report).await,
+            Err(e) => report.error = Some(format!("could not connect to the copy {name}: {e}")),
         }
-        .await;
-        let failed = outcome.is_err();
-        report.results.push(PatchResult {
-            file: p.file.file.clone(),
-            outcome,
-        });
-        if failed {
-            break;
+        let dropped = crate::query::apply::drop_copy(&admin, &name).await;
+        if let Err(e) = &dropped {
+            tracing::warn!(target: "pgman::patching", copy = %name, error = %e, "couldn't drop the copy");
+        }
+        report.copy = Some(CopyNote { name, dropped });
+    }
+}
+
+/// A writable connection to another database on `dsn`'s server, to copy
+/// `dsn`'s from: `postgres`, or `template1` where that can't be reached.
+async fn open_admin(
+    dsn: &crate::conn::Dsn,
+    server: &str,
+) -> Result<
+    (
+        std::sync::Arc<tokio_postgres::Client>,
+        Option<crate::tunnel::SshTunnel>,
+    ),
+    String,
+> {
+    let mut first = None;
+    for db in ["postgres", "template1"] {
+        let mut d = dsn.clone();
+        d.dbname = db.to_string();
+        match open_writable(d, server).await {
+            Ok(x) => return Ok(x),
+            Err(e) => {
+                first.get_or_insert(e);
+            }
         }
     }
-    // Nothing to cancel from here on, and a late cancel mustn't hit the
-    // re-read below.
-    cancel.clear();
-    report.recorded_after = match crate::query::apply::applied_ids(&client, &cfg).await {
-        Ok(ids) => ids.into_iter().max(),
-        Err(e) => {
-            tracing::warn!(target: "pgman::patching", error = %e, "couldn't re-read the version table");
-            None
-        }
-    };
-    report
+    Err(format!(
+        "could not connect to {server}'s postgres database to make the copy: {}",
+        first.unwrap_or_default()
+    ))
 }
 
 /// [`plan`] for a database named in environments.toml, with the
@@ -645,7 +888,7 @@ pub async fn plan_for(
 }
 
 /// [`apply`] for a plan from [`plan_for`], resolving its database again.
-pub async fn apply_for(p: PatchPlan, cancel: CancelSlot) -> ApplyReport {
+pub async fn apply_for(p: PatchPlan, mode: RunMode, cancel: CancelSlot) -> ApplyReport {
     let (e, s, d) = (p.environment.clone(), p.server.clone(), p.database.clone());
     let resolved = tokio::task::spawn_blocking(move || resolve(&e, &s, &d))
         .await
@@ -654,12 +897,12 @@ pub async fn apply_for(p: PatchPlan, cancel: CancelSlot) -> ApplyReport {
     match resolved {
         Ok((env, target)) => {
             let safety = crate::safety::SafetyConfig::load_personal().0;
-            apply(&env, &target, &safety, &aws_secrets(), &p, &cancel).await
+            apply(&env, &target, &safety, &aws_secrets(), &p, mode, &cancel).await
         }
         Err(e) => ApplyReport {
-            results: Vec::new(),
             error: Some(e),
-            recorded_after: None,
+            mode,
+            ..Default::default()
         },
     }
 }
@@ -811,6 +1054,8 @@ mod tests {
             ],
             error: None,
             recorded_after: None,
+            mode: RunMode::Apply,
+            copy: None,
         };
         assert_eq!(r.summary(), "applied 1, then 3-x.sql failed: lock timeout");
         let read = ApplyReport {
@@ -829,5 +1074,59 @@ mod tests {
             .summary(),
             "nothing applied: no route"
         );
+    }
+
+    #[test]
+    fn a_dry_run_or_a_copy_says_so_in_its_summary() {
+        let r = ApplyReport {
+            results: vec![PatchResult {
+                file: "2-x.sql".into(),
+                outcome: Ok(2),
+            }],
+            recorded_after: Some(1),
+            mode: RunMode::DryRun,
+            ..Default::default()
+        };
+        assert_eq!(
+            r.summary(),
+            "dry run: ran 1 patch(es) · all rolled back, recorded up to 1 still"
+        );
+        let copy = ApplyReport {
+            recorded_after: Some(2),
+            mode: RunMode::Copy,
+            copy: Some(CopyNote {
+                name: "d_pgman_copy_7".into(),
+                dropped: Ok(()),
+            }),
+            ..r.clone()
+        };
+        assert_eq!(
+            copy.summary(),
+            "on a copy: applied 1 patch(es) · the copy recorded up to 2 · copy d_pgman_copy_7 dropped"
+        );
+        let stuck = ApplyReport {
+            error: Some("could not connect to the copy".into()),
+            copy: Some(CopyNote {
+                name: "d_pgman_copy_7".into(),
+                dropped: Err("in use".into()),
+            }),
+            ..copy
+        };
+        assert_eq!(
+            stuck.summary(),
+            "on a copy: nothing applied: could not connect to the copy · copy d_pgman_copy_7 NOT dropped (in use): drop it by hand"
+        );
+    }
+
+    #[test]
+    fn modes_go_round_and_parse_by_name() {
+        let mut m = RunMode::default();
+        for want in [RunMode::DryRun, RunMode::Copy, RunMode::Apply] {
+            m = m.next();
+            assert_eq!(m, want);
+            assert_eq!(RunMode::parse(m.name()), Some(m));
+        }
+        assert_eq!(RunMode::parse("dry-run"), None);
+        assert_eq!(RunMode::parse(""), None);
     }
 }

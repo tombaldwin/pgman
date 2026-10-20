@@ -303,7 +303,8 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         outside_transaction: false,
         outside_would_help: false,
     };
-    let (message, schema) = tools::confirm_request(&plan);
+    let (message, schema) =
+        tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
     assert!(message.contains("recorded up to 251"), "{message}");
     assert!(
         message.contains("Not included: 253-idx.sql (CONCURRENTLY)"),
@@ -316,7 +317,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     );
     plan.below_recorded = vec!["7-old.sql".into()];
     assert!(
-        tools::confirm_request(&plan)
+        tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply)
             .0
             .contains("WARNING, not included: 7-old.sql — pending but numbered below"),
         "a skipped gap is put to the operator"
@@ -331,10 +332,54 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     let result: Value =
         serde_json::from_str(&tools::render_apply(&plan, Some(&report), "")).unwrap();
     assert_eq!(result["recorded_after"], json!(252));
+    // A dry run and a copy say what they do, and are confirmed the same.
+    use crate::inventory::patching::{CopyNote, RunMode};
+    let (dry, dry_schema) = tools::confirm_request(&plan, RunMode::DryRun);
+    assert!(
+        dry.starts_with("DRY RUN 1 patch(es) to production"),
+        "{dry}"
+    );
+    assert!(
+        dry.contains("rolled back") && dry.contains("same locks"),
+        "{dry}"
+    );
+    assert_eq!(dry_schema, schema, "a protected one still takes its name");
+    let (copy, _) = tools::confirm_request(&plan, RunMode::Copy);
+    assert!(
+        copy.starts_with("Apply 1 patch(es) to a COPY of production"),
+        "{copy}"
+    );
+    assert!(
+        copy.contains("TEMPLATE") && copy.contains("dropped"),
+        "{copy}"
+    );
+    plan.protected = false;
+    assert_eq!(
+        tools::confirm_request(&plan, RunMode::DryRun).1["properties"]["apply"]["title"],
+        json!("Dry-run these patches (rolled back)")
+    );
+    plan.protected = true;
+    let report = crate::inventory::patching::ApplyReport {
+        mode: RunMode::Copy,
+        copy: Some(CopyNote {
+            name: "ledger_pgman_copy_7".into(),
+            dropped: Err("in use".into()),
+        }),
+        ..report
+    };
+    let result: Value =
+        serde_json::from_str(&tools::render_apply(&plan, Some(&report), "")).unwrap();
+    assert_eq!(result["mode"], json!("copy"));
+    assert_eq!(
+        result["copy"],
+        json!({"name": "ledger_pgman_copy_7", "dropped": false, "drop_error": "in use"})
+    );
     plan.patches[0].statements = vec!["x".repeat(7000)];
-    assert!(tools::confirm_request(&plan)
-        .0
-        .contains("read the files before confirming"));
+    assert!(
+        tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply)
+            .0
+            .contains("read the files before confirming")
+    );
     assert_eq!(schema["required"], json!(["environment"]));
     let ok = json!({"action": "accept", "content": {"environment": "production"}});
     assert_eq!(tools::confirmed(&plan, &ok), Ok(()));
@@ -348,7 +393,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         assert!(tools::confirmed(&plan, &bad).is_err(), "{bad}");
     }
     plan.protected = false;
-    let (_, schema) = tools::confirm_request(&plan);
+    let (_, schema) = tools::confirm_request(&plan, crate::inventory::patching::RunMode::Apply);
     assert_eq!(schema["required"], json!(["apply"]));
     assert_eq!(
         tools::confirmed(

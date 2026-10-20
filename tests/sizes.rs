@@ -939,6 +939,7 @@ fn scr_env_patch() -> App {
         scroll: 0,
         cancel: Default::default(),
         cancel_armed: false,
+        mode: Default::default(),
     });
     a
 }

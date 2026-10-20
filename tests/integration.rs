@@ -3071,6 +3071,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &writable,
             &no_secrets,
             &p,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3110,6 +3111,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &writable,
             &no_secrets,
             &p2,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3159,6 +3161,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &writable,
             &no_secrets,
             &fresh,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3178,6 +3181,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &writable,
             &no_secrets,
             &fresh,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3334,6 +3338,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             &writable,
             &no_secrets,
             &p,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3358,6 +3363,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             &writable,
             &no_secrets,
             &forged,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3377,6 +3383,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             &writable,
             &no_secrets,
             &forged,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3388,6 +3395,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             &writable,
             &no_secrets,
             &p,
+            pgman::inventory::patching::RunMode::Apply,
             &Default::default(),
         )
         .await;
@@ -3574,7 +3582,16 @@ fn cancelling_a_run_stops_the_running_statement() {
                 let running = {
                     let slot = slot.clone();
                     tokio::spawn(async move {
-                        apply(&env, &target, &writable, &no_secrets, &p, &slot).await
+                        apply(
+                            &env,
+                            &target,
+                            &writable,
+                            &no_secrets,
+                            &p,
+                            pgman::inventory::patching::RunMode::Apply,
+                            &slot,
+                        )
+                        .await
                     })
                 };
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -3596,7 +3613,16 @@ fn cancelling_a_run_stops_the_running_statement() {
         // Cancelled before it connected: it starts nothing.
         let early = CancelSlot::default();
         assert!(!early.cancel());
-        let r = apply(&env, &target, &writable, &no_secrets, &p, &early).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            pgman::inventory::patching::RunMode::Apply,
+            &early,
+        )
+        .await;
         assert_eq!(r.results.len(), 1);
         assert!(r.results[0]
             .outcome
@@ -3624,6 +3650,302 @@ fn cancelling_a_run_stops_the_running_statement() {
             "inside: rolled back: {err}"
         );
         assert_eq!(r.recorded_after, Some(2));
+    });
+}
+
+/// The local test server as an environment's only database, `db`, with
+/// its version table `vt` and patches in `dir`.
+fn local_env(
+    name: &str,
+    db: &str,
+    vt: &str,
+    dir: &std::path::Path,
+) -> (pgman::inventory::Environment, pgman::inventory::Target) {
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"{name}\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let mut dsn = pgman::conn::Dsn::parse(DSN).unwrap();
+    dsn.dbname = db.to_string();
+    let target = pgman::inventory::Target {
+        database: db.into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn,
+            secret: None,
+            password_env: None,
+        }),
+    };
+    (env, target)
+}
+
+/// A plain connection to `db` on the local test server.
+async fn raw(db: &str) -> tokio_postgres::Client {
+    let dsn = DSN.replace("/pgman_test?", &format!("/{db}?"));
+    let (c, conn) = tokio_postgres::connect(&dsn, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    c
+}
+
+/// A dry run runs every patch in one transaction — a later patch sees
+/// what an earlier one did — and rolls it all back: nothing recorded,
+/// nothing changed, and a real run afterwards goes through. A patch
+/// that can't run in a transaction ends it.
+#[test]
+fn a_dry_run_runs_every_patch_then_rolls_it_all_back() {
+    let home = scratch_home("env-patch-dry", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_dv_{pid}");
+    let tbl = format!("pgman_it_dt_{pid}");
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    let write = |name: &str, body: String| std::fs::write(dir.join(name), body).unwrap();
+    write(
+        "002-col.sql",
+        format!("{}ALTER TABLE {tbl} ADD COLUMN c int;\n", row(2)),
+    );
+    // Only works after 002: the dry run holds one transaction throughout.
+    write(
+        "003-default.sql",
+        format!(
+            "{}ALTER TABLE {tbl} ALTER COLUMN c SET DEFAULT 7;\n",
+            row(3)
+        ),
+    );
+    write(
+        "004-bad.sql",
+        format!("{}SELECT * FROM pgman_it_no_such_table;\n", row(4)),
+    );
+    let (env, target) = local_env("it-dry", "pgman_test", &vt, &dir);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan, RunMode};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let c = raw("pgman_test").await;
+        c.batch_execute(&format!(
+            "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"
+        ))
+        .await
+        .unwrap();
+        let columns = || async {
+            c.query_one(
+                "SELECT count(*) FROM information_schema.columns WHERE table_name = $1",
+                &[&tbl],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+        };
+        let p = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 3);
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::DryRun,
+            &Default::default(),
+        )
+        .await;
+        assert_eq!(r.error, None);
+        assert_eq!(r.results[0].outcome, Ok(2));
+        assert_eq!(r.results[1].outcome, Ok(2), "003 saw 002's column");
+        let err = r.results[2].outcome.as_ref().unwrap_err();
+        assert!(err.contains("pgman_it_no_such_table"), "{err}");
+        assert_eq!(r.recorded_after, Some(1), "all rolled back: {r:?}");
+        assert_eq!(columns().await, 1, "the column went with it");
+        assert!(r
+            .summary()
+            .starts_with("dry run: ran 2, then 004-bad.sql failed"));
+
+        // A patch with no transaction ends the dry run before it starts.
+        write("004-bad.sql", format!("{}VACUUM {tbl};\n", row(4)));
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        assert_eq!(p.patches[2].outside, Some("VACUUM"));
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::DryRun,
+            &Default::default(),
+        )
+        .await;
+        assert_eq!(r.results.len(), 3);
+        assert_eq!(
+            r.results[2].outcome,
+            Err("VACUUM can't run in a transaction, so the dry run stops here".into())
+        );
+        assert_eq!(r.recorded_after, Some(1));
+        assert_eq!(columns().await, 1);
+
+        // Nothing was left behind: the same plan applies for real.
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::Apply,
+            &Default::default(),
+        )
+        .await;
+        assert_eq!(r.failed(), None, "{r:?}");
+        assert_eq!(r.recorded_after, Some(4));
+        assert_eq!(columns().await, 2);
+    });
+}
+
+/// Applying to a copy patches a fresh template copy of the database for
+/// real and drops it, leaving the database itself as it was; with anyone
+/// else connected to the database it makes no copy at all.
+#[test]
+fn applying_to_a_copy_patches_the_copy_then_drops_it() {
+    let home = scratch_home("env-patch-copy", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let src = format!("pgman_it_src_{pid}");
+    let vt = "pgman_it_cv";
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    for id in [2, 3] {
+        std::fs::write(
+            dir.join(format!("00{id}-t.sql")),
+            format!("INSERT INTO {vt} (id) VALUES ({id});\nCREATE TABLE t{id} (id int);\n"),
+        )
+        .unwrap();
+    }
+    let (env, target) = local_env("it-copy", &src, vt, &dir);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan, RunMode};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let admin = raw("pgman_test").await;
+        for sql in [
+            format!("DROP DATABASE IF EXISTS {src}"),
+            format!("CREATE DATABASE {src}"),
+        ] {
+            admin.batch_execute(&sql).await.unwrap();
+        }
+        let on_src = raw(&src).await;
+        on_src
+            .batch_execute(&format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"
+            ))
+            .await
+            .unwrap();
+        let p = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 2);
+        // Connected to it: no copy.
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::Copy,
+            &Default::default(),
+        )
+        .await;
+        let err = r.error.clone().expect("refused");
+        assert!(err.contains("needs nobody else connected"), "{err}");
+        assert_eq!(r.copy, None);
+        drop(on_src);
+        // Wait for that session (and the plan's) to be gone.
+        let others = || async {
+            admin
+                .query_one(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = $1",
+                    &[&src],
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+        };
+        for _ in 0..40 {
+            if others().await == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            RunMode::Copy,
+            &Default::default(),
+        )
+        .await;
+        assert_eq!(r.error, None, "{r:?}");
+        assert_eq!(r.failed(), None, "{r:?}");
+        assert_eq!(r.recorded_after, Some(3), "the copy took both");
+        let copy = r.copy.clone().expect("a copy was made");
+        assert!(
+            copy.name.starts_with(&format!("{src}_pgman_copy_")),
+            "{copy:?}"
+        );
+        assert_eq!(copy.dropped, Ok(()));
+        let left: i64 = admin
+            .query_one(
+                "SELECT count(*) FROM pg_database WHERE datname LIKE $1",
+                &[&format!("{src}_pgman_copy_%")],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(left, 0, "the copy is gone");
+        // The one DROP DATABASE pgman runs takes only a name it made.
+        let err = pgman::query::apply::drop_copy(&admin, &src)
+            .await
+            .unwrap_err();
+        assert!(err.contains("isn't a copy pgman made"), "{err}");
+        let on_src = raw(&src).await;
+        let max: i32 = on_src
+            .query_one(&format!("SELECT max(id) FROM {vt}"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(max, 1, "the database itself is untouched");
+        drop(on_src);
+        for _ in 0..40 {
+            if others().await == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        admin
+            .batch_execute(&format!("DROP DATABASE IF EXISTS {src}"))
+            .await
+            .unwrap();
     });
 }
 
@@ -4103,6 +4425,7 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         &writable,
         &no_secrets,
         &plan,
+        pgman::inventory::patching::RunMode::Apply,
         &Default::default(),
     ));
     let err = r.error.expect("refused");

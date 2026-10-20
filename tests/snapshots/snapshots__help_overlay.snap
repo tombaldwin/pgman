@@ -109,7 +109,7 @@ expression: dump(&buf)
 │     esc / q       close                                                                          │
 │                                                                                                  │
 │   cell detail                                                                                    │
-│ ↓ 140 more below                                                                                 │
+│ ↓ 141 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   esc / ?  close help
