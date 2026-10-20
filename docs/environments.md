@@ -276,6 +276,28 @@ steps:
    cancels the running statement on the server: a patch in its
    transaction rolls back; outside one, what ran stays.
 
+**Tab** in the plan picks how it runs, and the plan says which in red
+before you confirm:
+
+- **for real** (the default), as above;
+- **dry run**: every patch in *one* transaction, rolled back at the end,
+  so nothing is kept — not the changes, not the version rows. A later
+  patch sees what an earlier one did, as in the real run. It takes the
+  same locks and does the same work as the real thing, on the same
+  server, and holds every lock until the last patch is done, so on a
+  busy database it costs what the real run costs. It's confirmed like
+  the real run (a protected environment by its name). A patch that
+  can't run in a transaction ends it, since it can't be rolled back;
+- **on a copy**: `CREATE DATABASE <db>_pgman_copy_<time> TEMPLATE <db>`
+  on the same server, the patches applied to the copy for real, then
+  the copy dropped. The database itself is untouched. A template copy
+  needs nobody else connected to the database, and copies all of it to
+  disk, so it suits an idle local or dev database, not a live one;
+  pgman refuses when anyone else is connected rather than make the
+  copy. If the copy can't be dropped afterwards, the result names it
+  for you to drop. That `DROP DATABASE` is the only one pgman runs, and
+  it takes only a name pgman made.
+
 Patches are all or nothing *each*, not as a batch: when the third of
 three fails, the first two stay applied and recorded, and the database
 reads as two patches further on. Each patch records its own version, so
@@ -306,7 +328,8 @@ run **outside a transaction**:
 
 Ordinary patches in the same plan still run in their own transactions,
 and every other refusal stands. MCP's `apply_patches` never plans this
-way: run those patches from the TUI.
+way: run those patches from the TUI. Its `mode` argument picks a dry
+run (`dry_run`) or a copy (`copy`), as Tab does.
 
 A replica is never patched: its primary is. An environment is
 **protected** when it says `protected = true`, or — when it says

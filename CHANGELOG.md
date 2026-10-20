@@ -132,6 +132,10 @@ and breaking changes.
   `CONCURRENTLY`, …) is refused up front; in the TUI, `o` plans it to
   run outside one, statement by statement and with no statement
   timeout, behind a typed confirm. Esc twice cancels a running patch.
+  Tab in the plan (`mode` over MCP) runs a **dry run** instead — every
+  patch in one transaction, rolled back, with the same locks as the
+  real run — or applies the patches to a **copy** of the database made
+  on the same server, dropped afterwards.
   Never on a replica, and only on a database `safety.toml` lets write.
 - **Safer and more honest, from a four-reviewer robustness pass.** A
   unicode-escaped name (`U&"pg_\0072ead_file"`) no longer slips past the

@@ -47,12 +47,13 @@ clouds. So it's an inventory layer, and RDS is one source of it.
 ### MCP server — after Part A (2026-10-19)
 Parts A and B are in PLAN.md. Behind them, from the examplecorp Lead session
 and Tom's decisions that day:
-- **`apply_patches` dry run.** Applying shipped (2026-10-20) as Tom
-  chose then: one transaction per patch, stop at the first failure, a
-  typed name for a protected environment. Not built: a dry run as
-  `BEGIN … ROLLBACK` before the real run. It takes the same locks as
-  the real thing, on the same server, so it wants its own decision —
-  probably only where the profile isn't protected.
+- **Applying patches to a copy of a live database.** The copy mode
+  (Tab / MCP `mode: "copy"`) uses `CREATE DATABASE … TEMPLATE`, which
+  needs nobody else connected, so it only suits an idle local or dev
+  database. For a live one the options are a `pg_dump | pg_restore`
+  copy (needs the client tools, slow on a big database, schema-only
+  misses data-dependent failures) or an RDS snapshot restore (minutes
+  to hours, costs money, needs IAM). Wants a decision on which, if any.
 
 ### From the robustness pass (2026-10-20) — not yet done
 Four Fable reviewers (hands-on tmux, MCP security, environments
