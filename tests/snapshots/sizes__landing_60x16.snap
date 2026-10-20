@@ -18,4 +18,4 @@ expression: dump(&buf)
 │   W   schema wizard                                      │
 │   L   sessions & locks                                   │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   q quit · ? help · F1 +13 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · ? +12 more

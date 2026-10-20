@@ -20,7 +20,11 @@
   and a `set_config` whose first argument pgman cannot read as a plain
   name — an expression, a nested call, an `E'…'` string with
   backslashes — is refused too: a name that cannot be read is not one
-  that can be vouched for. **`DO` and `CALL` are refused outright on a
+  that can be vouched for. The same goes for any unicode-escaped name or
+  string (`U&"…"`, `U&'…'`): Postgres decodes `U&"pg_\0074erminate_backend"`
+  to `pg_terminate_backend` and pgman has no decoder, so a statement
+  carrying one is refused on a read-only profile and needs confirming
+  otherwise. **`DO` and `CALL` are refused outright on a
   read-only profile.** Their bodies are procedural code (plpgsql) that
   is a dollar-quoted string to pgman's lexer, so a `SET` inside is
   invisible; opaque is not the same as safe. And a `--batch` script
@@ -110,8 +114,10 @@
   case: the inner statement genuinely executes, so it's always wrapped
   in a transaction that is unconditionally rolled back regardless of
   the `auto_tx` setting — the mutation is guaranteed never to land.
-- **`EXPLAIN` (without `ANALYZE`) bypasses guards entirely** — it
-  never executes the inner statement, so there's nothing to guard.
+- **The explain keys (`Ctrl-E` / `F6`) bypass guards** — plain
+  `EXPLAIN` never executes the inner statement, so there's nothing to
+  guard. A typed `EXPLAIN DELETE …` is classified as the statement it
+  explains, and guarded like it.
 - **`--batch --yes` semantics.** Non-interactive batch mode
   (`pgman --batch --sql "…"`) runs the same classify/guard pipeline
   as the editor, evaluated statement-by-statement before ever opening
@@ -251,7 +257,8 @@ rather than following the link and re-permissioning a directory it
 does not own; if you point `~/.cache/pgman` at a shared volume, its
 mode stays yours to set. `pgman --upgrade` runs its subprocesses from
 `$HOME`, or from that cache directory when `$HOME` is unusable, never
-from a shared temp directory — `cargo` and `brew` search upward from
+from a shared temp directory (with neither usable it falls back to the
+system temp directory, and says so in the log) — `cargo` and `brew` search upward from
 the working directory for a `.cargo/config.toml`, and one in a
 world-writable `/tmp` would be anyone's to write. That's a floor, not a
 substitute for filesystem hygiene: if your `~` itself isn't otherwise
@@ -269,8 +276,9 @@ process memory for the duration of the connection, sourced from
 `PGPASSWORD` (for a `--dsn` only), a `password_env`-named variable, a
 Spring config file's own plaintext `password` key (if present in the
 file — pgman doesn't add a new place for it to live), or a URL's
-embedded password. pgman does not read `dataSources.local.xml`'s
-`<secret-storage>` / OS-keychain-backed password at all.
+embedded password. From `dataSources.local.xml` pgman reads only the
+user name and database names, never its `<secret-storage>` /
+OS-keychain-backed password.
 
 ## What leaves the machine
 

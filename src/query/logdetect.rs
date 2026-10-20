@@ -79,6 +79,7 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
         (line.contains("org.hibernate.SQL") && !line.contains("org.hibernate.SQL_SLOW"))
             || line.contains("o.h.SQL")
             || line.contains("binding parameter")
+            || line.trim_start().starts_with("Hibernate:")
     });
     if looks_hibernate {
         return Some(LogKind::Hibernate);

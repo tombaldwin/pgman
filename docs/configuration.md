@@ -20,14 +20,18 @@ URL-embedded password.
 | `~/.local/share/pgman/saved.toml` | Named saved queries. |
 | `~/.cache/pgman/pgman.log.YYYY-MM-DD` | `tracing` output, rotated daily at midnight UTC. Level via `RUST_LOG` (default `info`). |
 | `~/.cache/pgman/update_check.json` | Cached result of the crates.io version check (re-checked at most every 6 hours). |
-| `~/.cache/pgman/report-<ts>-<pid>.md`/`.html` | Default `\report` output path when none is given. |
+| `~/.cache/pgman/report-<secs>-<nanos>-<pid>.md`/`.html` | Default `\report` output path when none is given. |
+| `~/.local/share/pgman/environments-last` | The overview row used last, to start on it next time. |
 | `~/.cache/pgman/<table>-fixture-<ts>-<pid>.xml` | Default `\fixture` output path. |
 
 Every path above honours `XDG_CONFIG_HOME` / `XDG_DATA_HOME` /
 `XDG_CACHE_HOME` when set to an absolute path. Every file pgman writes
 is `0600` and every directory it creates is `0700`, regardless of your
-umask. `safety.toml`, `connections.toml`, `environments.toml` and `pgman.toml` are yours, not pgman's — it
+umask. `safety.toml`, `connections.toml` and `pgman.toml` are yours, not pgman's — it
 never writes them, so their permissions are whatever you gave them.
+`environments.toml` is yours too, except that a discovery save (`d` in
+the overview, `pgman env discover --save`, MCP `environments_save`)
+appends to it, under a lock (`.environments.toml.lock`).
 
 ## `~/.config/pgman/safety.toml`
 
@@ -154,8 +158,9 @@ are the same connection count as one candidate.
 
 Spring/IntelliJ files often use `${VAR}` / `${VAR:default}`
 placeholders. pgman resolves these against the shell environment for
-**username, password, database name, and query parameters** — never
-host or port, since that could turn a secret into a DNS lookup.
+**username, password and database name** — never host, port or query
+parameters (where `sslmode` and `ssh_tunnel` live): a placeholder there
+refuses the URL, since resolving it could turn a secret into a DNS lookup.
 An unresolved placeholder stays visible in the picker, marked, and
 connecting to it is refused.
 

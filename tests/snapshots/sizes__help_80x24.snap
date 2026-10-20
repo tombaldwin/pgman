@@ -9,21 +9,21 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM users                                                                  │
-│  WHERE pla╭──────────────────────────────────────────────────────╮           │
-│  ORDER BY │                                                      │           │
-╰───────────│ pgman — keys (? / F1 help · : commands · F2 error    │───────────╯
-╭[ ◆ result │ detail · F3 notify)                                  │───────────╮
-│id  email  │                                                      │           │
-│1   ada@exa│   grid                                               │           │
-│2   linus@e│     q             quit (esc here is a no-op so a     │           │
-│3   grace@e│                   reflex press doesn't lose the      │           │
-│4   alan@ex│ ↓ 361 more below                                     │           │
-│5   edsger@│                                                      │           │
-│6   katheri╰──────────────────────────────────────────────────────╯           │
+╭──────────────────────────────────────────────────────────────────────────────╮
 │                                                                              │
+│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)        │
+│                                                                              │
+│   grid                                                                       │
+│     q             quit                                                       │
+│     esc           back to the environments overview, when environments are   │
+│                   configured                                                 │
+│     ? / F1        toggle this help (both work from every non-typing mode)    │
+│     :             command bar — see the ': commands' section                 │
+│     A             about pgman (version, credits)                             │
+│     e / i / tab   focus editor                                               │
+│     c             change connection (opens the picker mid-session)           │
+│     S             schema browser (psql `\d` equivalent)                      │
+│ ↓ 249 more below                                                             │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

@@ -26,4 +26,4 @@ expression: dump(&buf)
 │   ╰──────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · F1 +2 more
+ RO   TAP   N+1 ×1   j/k navigate · y yank payload · c clear · ? +2 more

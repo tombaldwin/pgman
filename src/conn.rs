@@ -89,6 +89,10 @@ pub enum DsnError {
     /// recognised modes. A typo or wrong separator here must never
     /// fall through to a weaker mode — see `apply_ssl_mode`.
     UnknownSslMode(String),
+    /// `sslmode` given twice with different values. pgman used the
+    /// first, libpq the last: `?sslmode=disable&sslmode=verify-full`
+    /// meant no TLS to one and verified TLS to the other.
+    ConflictingSslMode,
 }
 
 impl fmt::Display for DsnError {
@@ -102,6 +106,9 @@ impl fmt::Display for DsnError {
                 f,
                 "unknown sslmode {v:?} — use one of disable, allow, prefer, require, verify-ca, verify-full"
             ),
+            DsnError::ConflictingSslMode => {
+                write!(f, "sslmode is given twice with different values — keep one")
+            }
         }
     }
 }
@@ -389,6 +396,12 @@ impl Dsn {
                 let lower = v.to_ascii_lowercase();
                 if !KNOWN_SSLMODES.contains(&lower.as_str()) {
                     return Err(DsnError::UnknownSslMode(v));
+                }
+                if params
+                    .iter()
+                    .any(|(pk, pv)| pk.eq_ignore_ascii_case("sslmode") && *pv != lower)
+                {
+                    return Err(DsnError::ConflictingSslMode);
                 }
                 params.push((k, lower));
             } else {
@@ -767,6 +780,30 @@ pub async fn connect_only(
 /// (`tunnel::SshTunnel::open_many`): TCP goes to `127.0.0.1:<via>`,
 /// while `dsn.host` stays the name TLS checks. `dsn.ssh_tunnel` must be
 /// unset — the caller owns the tunnel. Notices are dropped.
+/// Set the live session's `default_transaction_read_only`: every
+/// transaction from the next one on opens read-only (or not). The one in
+/// progress, if any, keeps what it began with — callers refuse while one
+/// is open.
+pub async fn set_session_read_only(
+    client: &tokio_postgres::Client,
+    on: bool,
+) -> Result<(), String> {
+    let sql = if on {
+        "SET default_transaction_read_only = on"
+    } else {
+        "SET default_transaction_read_only = off"
+    };
+    client.batch_execute(sql).await.map_err(|e| {
+        e.as_db_error()
+            .map(|d| d.message().to_string())
+            .unwrap_or_else(|| e.to_string())
+    })
+}
+
+/// How long a connect waits for the server to answer — the same budget
+/// the ssh tunnel gets.
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn connect_via(
     dsn: Dsn,
     via: Option<u16>,
@@ -903,6 +940,9 @@ async fn connect_inner(
         cfg.password(password);
     }
     cfg.application_name(application_name(&dsn));
+    // A host that drops packets would otherwise hold "connecting…" until
+    // the OS gives up (75 s on macOS, minutes on Linux).
+    cfg.connect_timeout(CONNECT_TIMEOUT);
     let verify = apply_ssl_mode(&mut cfg, &dsn);
 
     // Connect with TLS when we can build a connector; fall back to
@@ -1721,6 +1761,18 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Two sslmodes that disagree are refused: which one wins differs
+    /// between pgman and libpq, and the loser could be the TLS one.
+    #[test]
+    fn conflicting_sslmodes_are_refused() {
+        assert_eq!(
+            Dsn::parse("postgres://h/db?sslmode=disable&sslmode=verify-full").unwrap_err(),
+            DsnError::ConflictingSslMode
+        );
+        // The same value twice is harmless.
+        assert!(Dsn::parse("postgres://h/db?sslmode=require&SSLMODE=Require").is_ok());
+    }
 
     #[test]
     fn a_dsns_debug_never_shows_its_password() {

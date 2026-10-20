@@ -526,7 +526,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     }
     actions.push_str(" · q quit");
     lines.push(Line::from(Span::styled(
-        fit_hints(&actions, inner_width),
+        fit_hints(&actions, inner_width, "?"),
         label,
     )));
 
@@ -890,9 +890,10 @@ fn paint_title_suffix(f: &mut Frame, area: Rect, suffix: &str, app: &App) {
 /// truncating a hint mid-item. `hints` is treated as an ordered list of
 /// `" · "`-separated items, already written most-important-first; when
 /// the full string doesn't fit, whole trailing items are dropped and
-/// replaced with a single `"F1 +N more"` item (so the join reads `"…kept ·
-/// F1 +N more"`) telling the operator how many hints were cut and that
-/// F1 — help, reachable from every mode — is where they are. The returned
+/// replaced with a single `"<help> +N more"` item (so the join reads
+/// `"…kept · ? +N more"`) telling the operator how many hints were cut
+/// and that help — `help`, the key that opens it from here — is where
+/// they are. The returned
 /// string is never wider than `width` — if even the first item plus the
 /// marker can't fit, the marker alone is returned; if that doesn't fit
 /// either, an empty string is returned.
@@ -932,17 +933,17 @@ pub(crate) fn hint_spans(fitted: &str, theme: &Theme) -> Vec<Span<'static>> {
     spans
 }
 
-pub(crate) fn fit_hints(hints: &str, width: usize) -> String {
+pub(crate) fn fit_hints(hints: &str, width: usize, help: &str) -> String {
     const SEP: &str = " · ";
     if hints.is_empty() || display_width(hints) <= width {
         return hints.to_string();
     }
     let items: Vec<&str> = hints.split(SEP).collect();
     // Try keeping progressively fewer leading items, each candidate
-    // capped off with an "F1 +N more" marker accounting for the rest.
+    // capped off with a "? +N more" marker accounting for the rest.
     for kept in (0..items.len()).rev() {
         let remaining = items.len() - kept;
-        let marker = format!("F1 +{remaining} more");
+        let marker = format!("{help} +{remaining} more");
         let mut pieces: Vec<&str> = items[..kept].to_vec();
         pieces.push(&marker);
         let candidate = pieces.join(SEP);
@@ -1276,7 +1277,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 + display_width(" :")
                 + display_width(bar.input.text())
                 + display_width(GAP);
-            let fitted = fit_hints(list, (area.width as usize).saturating_sub(used));
+            // Typing: `?` is a character here, so help is F1.
+            let fitted = fit_hints(list, (area.width as usize).saturating_sub(used), "F1");
             if !fitted.is_empty() {
                 spans.push(Span::styled(
                     format!("{GAP}{fitted}"),
@@ -1405,7 +1407,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::Confirm => "y run · n / esc cancel",
                 Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · E envs · D diff · / filter · f find · ] [ tabs · z zoom · Z zoom editor",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
-                Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
+                Mode::GridFind => "type to find · ↑↓ jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
                 Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · q close",
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
@@ -1432,13 +1434,25 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::CommandBar => "type a command · enter run · tab complete · esc cancel",
             }
         };
-        // Append a universal "F1 help" pointer to every non-modal
+        // Append a universal "? help" pointer to every non-modal
         // hint so the help overlay is discoverable from any mode
         // without the operator having to know `?` is the right
         // key. Skip in modes that already mention help, in input
         // modes where the user is typing literal characters, and
         // in the y/n prompts (TxDecision returns early upstream;
         // Confirm + Help are noisy with extra hints).
+        // With environments listed, Esc from the results goes back to
+        // the overview: say so where the overview's key is.
+        let normal_with_envs;
+        let hints: &str = if app.mode == Mode::Normal && !app.environments.reports.is_empty() {
+            normal_with_envs = hints.replacen("E envs", "esc / E envs", 1);
+            &normal_with_envs
+        } else {
+            hints
+        };
+        // `?` opens help everywhere except where it's a character being
+        // typed; there only F1 does (fn-F1 on a Mac keyboard).
+        let help_key = if app.mode.is_text_input() { "F1" } else { "?" };
         let appended;
         let hints: &str = if matches!(
             app.mode,
@@ -1461,7 +1475,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         {
             hints
         } else {
-            appended = format!("{hints} · F1 help");
+            appended = format!("{hints} · {help_key} help");
             &appended
         };
         // Fit whole hints into what's left after the badges and the
@@ -1472,7 +1486,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .width
             .saturating_sub(badge_width)
             .saturating_sub(LEADING_SPACE) as usize;
-        let fitted = fit_hints(hints, available);
+        let fitted = fit_hints(hints, available, help_key);
         let mut spans = vec![Span::raw(" ")];
         spans.extend(hint_spans(&fitted, theme));
         Line::from(spans)
@@ -1793,7 +1807,13 @@ pub(crate) fn help_body(
     push(Line::from(""), &mut lines);
 
     heading("grid", &mut lines, &mut anchors);
-    push(row("    q             quit (esc here is a no-op so a reflex press doesn't lose the session)"), &mut lines);
+    push(row("    q             quit"), &mut lines);
+    push(
+        row(
+            "    esc           back to the environments overview, when environments are configured",
+        ),
+        &mut lines,
+    );
     push(
         row("    ? / F1        toggle this help (both work from every non-typing mode)"),
         &mut lines,
@@ -1853,7 +1873,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    f             find within grid (HIGHLIGHTS / jumps; n/N step matches)"),
+        row("    f             find within grid (↑↓ step while typing; n/N after enter)"),
         &mut lines,
     );
     push(row("    F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value"), &mut lines);
@@ -2646,7 +2666,7 @@ fn tap_setup_hint_lines(theme: &crate::theme::Theme) -> Vec<Line<'static>> {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "Once events arrive: j/k navigate · v cycle views · s sort · F1 help",
+            "Once events arrive: j/k navigate · v cycle views · s sort · ? help",
             muted,
         )),
     ]

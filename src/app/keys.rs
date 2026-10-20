@@ -844,14 +844,21 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.scroll(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll(-1),
             KeyCode::Char('h') | KeyCode::Left => self.move_col_cursor(-1),
+            // Before the plain `l` below (house rule: a guarded Ctrl arm
+            // precedes the unguarded one for the same char). Logs → SQL
+            // from the start card and the results, as from the editor.
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.log_import_from_normal()
+            }
+            KeyCode::F(8) => self.log_import_from_normal(),
             KeyCode::Char('l') | KeyCode::Right => self.move_col_cursor(1),
             KeyCode::Char('s') => self.cycle_sort(),
             KeyCode::Char('Y') => self.export_grid_to_clipboard(),
             KeyCode::Char('/') => self.start_filter(),
             KeyCode::Char('f') => self.start_find(),
             KeyCode::Char('F') => self.navigate_fk_from_focused_cell(),
-            KeyCode::Char('n') => self.filter_step(true),
-            KeyCode::Char('N') => self.filter_step(false),
+            KeyCode::Char('n') => self.filter_or_find_step(true),
+            KeyCode::Char('N') => self.filter_or_find_step(false),
             KeyCode::Char('g') | KeyCode::Home => self.select_row(0),
             KeyCode::Char('G') | KeyCode::End => {
                 // `select_row` clamps to the visible (filtered) set.
@@ -1353,6 +1360,18 @@ impl App {
             self.on_env_discovery_key(key);
             return;
         }
+        // The drift matrix is a view of its own: q / Esc go back to the
+        // list, and the list's keys don't act unseen under it.
+        if self.environments.drift {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v')
+            ) {
+                self.environments.drift = false;
+                self.last_status = Some("environments".into());
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.remember_env_selection();
@@ -1461,29 +1480,29 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.grid_find.needle = None;
+                self.grid_find.accepted = None;
                 self.grid_find.matches.clear();
                 self.last_status = Some("find cleared".into());
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
-                // Accept — stay on the current match; clear the
-                // input but keep the matches for `n`/`N` from
-                // Normal mode? For v1, just exit — operator can
-                // re-press `f` to keep stepping.
-                self.grid_find.needle = None;
+                // Accept: stay on the current match, and let `n` / `N`
+                // from the grid keep stepping through the pattern.
+                let pat = self.grid_find.needle.take().filter(|p| !p.is_empty());
+                self.last_status = pat
+                    .as_ref()
+                    .map(|p| format!("find: {p} · n/N step · f to change"));
+                self.grid_find.accepted = pat;
                 self.grid_find.matches.clear();
-                self.last_status = None;
                 self.mode = Mode::Normal;
             }
-            // n / N work while typing too — they don't conflict
-            // with text since most find patterns aren't bare n/N.
-            // But for safety we only treat them as step keys when
-            // they're ALONE in the buffer (else, treat as a char
-            // and extend the pattern). Simpler: always step on
-            // n/N, and the operator can use Backspace if they
-            // typed it by mistake. This matches vim's behaviour.
-            KeyCode::Char('n') if !ctrl => self.step_grid_find(true),
-            KeyCode::Char('N') if !ctrl => self.step_grid_find(false),
+            // Typing: `n` and `N` are letters of the pattern (a search
+            // for "linus" used to lose its n). Step with the arrows or
+            // ctrl-n / ctrl-p.
+            KeyCode::Down => self.step_grid_find(true),
+            KeyCode::Up => self.step_grid_find(false),
+            KeyCode::Char('n') if ctrl => self.step_grid_find(true),
+            KeyCode::Char('p') if ctrl => self.step_grid_find(false),
             KeyCode::Backspace => {
                 if let Some(f) = self.grid_find.needle.as_mut() {
                     f.pop();

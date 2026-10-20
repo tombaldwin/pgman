@@ -820,6 +820,103 @@ pub fn environment_probes(
         .collect()
 }
 
+/// The slow-queries panel in `--demo`: synthetic `pg_stat_statements`
+/// rows over the demo schema, by total time like the live panel.
+pub fn slow_queries() -> Vec<crate::query::slow_queries::SlowQueryRow> {
+    let row = |query: &str, calls: i64, mean_ms: f64, rows: i64| {
+        crate::query::slow_queries::SlowQueryRow {
+            query: query.into(),
+            calls,
+            total_ms: calls as f64 * mean_ms,
+            mean_ms,
+            rows,
+        }
+    };
+    vec![
+        row(
+            "SELECT o.* FROM orders o JOIN users u ON u.id = o.user_id WHERE u.email = $1",
+            48_210,
+            41.7,
+            96_420,
+        ),
+        row(
+            "SELECT * FROM order_items WHERE order_id = $1",
+            912_004,
+            1.9,
+            2_736_012,
+        ),
+        row(
+            "SELECT count(*) FROM orders WHERE created_at > $1",
+            1_440,
+            212.5,
+            1_440,
+        ),
+        row(
+            "UPDATE orders SET status = $1, updated_at = now() WHERE id = $2",
+            15_380,
+            3.4,
+            15_380,
+        ),
+    ]
+}
+
+/// The sessions panel in `--demo`: one session waiting on another's
+/// lock, the holder idle in transaction, and the app's pool.
+pub fn sessions() -> Vec<crate::query::sessions::SessionRow> {
+    let s = |pid: i32,
+             user: &str,
+             app: &str,
+             state: &str,
+             wait: Option<&str>,
+             by: &str,
+             query: &str,
+             age: f64| {
+        crate::query::sessions::SessionRow {
+            pid,
+            user: user.into(),
+            application: app.into(),
+            state: state.into(),
+            wait_event: wait.map(str::to_string),
+            blocked_by: by.into(),
+            query: query.into(),
+            age_secs: age,
+        }
+    };
+    vec![
+        s(
+            4417,
+            "shop",
+            "shop-api",
+            "active",
+            Some("Lock:transactionid"),
+            "4402",
+            "UPDATE orders SET status = 'shipped' WHERE id = 1042",
+            8.2,
+        ),
+        s(
+            4402,
+            "report",
+            "psql",
+            "idle in transaction",
+            None,
+            "",
+            "SELECT * FROM orders WHERE id = 1042 FOR UPDATE",
+            412.0,
+        ),
+        s(4390, "shop", "shop-api", "idle", None, "", "COMMIT", 1.1),
+        s(
+            4388,
+            "shop",
+            "shop-api",
+            "idle",
+            None,
+            "",
+            "SELECT * FROM users WHERE id = $1",
+            0.4,
+        ),
+    ]
+}
+
 /// A patch plan in `--demo`: two pending patches and one left for a
 /// human; protected when the environment's name says production.
 pub fn patch_plan(

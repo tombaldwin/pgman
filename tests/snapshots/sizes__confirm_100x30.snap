@@ -17,12 +17,12 @@ expression: dump(&buf)
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ result · 6╭[ ◆ confirm ◆ ]─────────────────────────────────────────────────────╮──────────────╮
-│id  email     │run (DELETE without WHERE) · will be refused — this session is      │              │
-│1   ada@exampl│read-only                                                           │              │
+│id  email     │run (DELETE without WHERE) · Postgres will refuse it — this session │              │
+│1   ada@exampl│is read-only                                                        │              │
 │2   linus@exam│                                                                    │              │
 │3   grace@exam│DELETE FROM orders                                                  │              │
 │4   alan@examp│                                                                    │              │
-│5   edsger@exa│y = run · n / esc = cancel                                          │              │
+│5   edsger@exa│y = send it anyway · n / esc = cancel                               │              │
 │6   katherine@╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │
 │                                                                                                  │

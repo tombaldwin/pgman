@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   find: pro  · n/N jump · enter accept · esc cancel
+ RO   TAP   N+1 ×1   find: pro  · ↑↓ jump · enter accept · esc cancel

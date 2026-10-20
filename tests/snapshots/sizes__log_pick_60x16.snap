@@ -18,4 +18,4 @@ expression: dump(&buf)
 ││  [pglog]     select * from orders where user_id = 42   ││
 │╰────────────────────────────────────────────────────────╯│
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · F1 +4 more
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · ? +4 more

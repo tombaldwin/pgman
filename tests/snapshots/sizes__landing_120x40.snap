@@ -22,7 +22,7 @@ expression: dump(&buf)
 │   e   write a query                                                 S   schema browser (4 tables)                    │
 │   Q   saved queries (3)                                             T   slow queries                                 │
 │   W   schema wizard                                                 L   sessions & locks                             │
-│   F8  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                                     │
+│   ctrl-l  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                                 │
 │   ?   all keys                                                      ctrl-t  new tab                                  │
 │                                                                                                                      │
 │ recent                                                                                                               │
@@ -42,4 +42,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · F1 +7 more
+ RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · ? +7 more

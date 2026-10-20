@@ -9,7 +9,7 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────╮
+╭[ ◆ environments · schema drift ◆ ] v / q back ───────────────────────────────╮
 │  schema version of each database, by environment — yellow is behind the newes│
 │                                                                              │
 │    DATABASE  STAGING    QA  LOCAL                                            │
@@ -26,4 +26,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · F1 +3 more
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

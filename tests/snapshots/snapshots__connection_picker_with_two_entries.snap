@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   ↑↓ / j/k navigate · enter connect · q quit · E envs · F1 help
+ RO   ↑↓ / j/k navigate · enter connect · q quit · E envs · ? help

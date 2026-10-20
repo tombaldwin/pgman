@@ -42,4 +42,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter connect · q quit · E envs · F1 help
+ RO   TAP   N+1 ×1   ↑↓ / j/k navigate · enter connect · q quit · E envs · ? help

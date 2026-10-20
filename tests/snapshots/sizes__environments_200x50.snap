@@ -9,7 +9,7 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭[ ◆ environments ◆ ] enter connect · q close · l logs · v drift · P patches · d discover ─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │  staging · RDS 123456789012 eu-west-2                                                                                                                                                                │
 │    DATABASE  ROLE     SERVER             STATUS     SCHEMA     LAG       SESSIONS  SIZE    ENGINE                                                                                                    │
 │    shop      primary  staging            available  v251 (+1)                              postgres 16.4                                                                                             │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · staging-replica.c1x2y3.eu-west-2.rds.amazonaws.com:5432                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · ? help

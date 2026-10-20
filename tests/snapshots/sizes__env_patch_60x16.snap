@@ -5,7 +5,7 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+╭[ ◆ environments · patches ◆ ] q back ────────────────────╮
 │  production · production/shop — pending patches          │
 │                                                          │
 │  2 to apply, in order, each in its own transaction · rec…│
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │  not included: 44-orders-created-idx.sql — the patch bui…│
 │  type production to apply: produc▏                       │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · F1 +5 more
+ RO   TAP   N+1 ×1   j/k navigate · ? +5 more

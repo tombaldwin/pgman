@@ -12,7 +12,9 @@ Three input shapes are recognised:
   statement, followed by the separately-logged bind parameters (`binding
   parameter [1] as [INTEGER] - [42]` on Hibernate 5, `binding parameter
   (1:INTEGER) <- [42]` on Hibernate 6). Multi-line `hibernate.format_sql=true`
-  output is reassembled.
+  output is reassembled. `hibernate.show_sql=true`'s console form —
+  `Hibernate: select …`, what Spring Boot prints by default — works too,
+  with its binds attached.
 
   The bind-parameter lines are logged at `TRACE` and are usually off in
   production, so turn them on deliberately. Hibernate 6 logs them under

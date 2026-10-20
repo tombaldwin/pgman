@@ -39,29 +39,17 @@ jobs:
       # runs them against Postgres, but only on Linux.
       - run: cargo check --locked --all-targets --features integration
 
-  # Integration tests against a real Postgres. Linux only — GitHub
-  # services aren't supported on macOS runners.
+  # Integration tests against a real Postgres: the same compose file as
+  # local runs, a primary and a streaming standby of it. Linux only —
+  # macOS runners have no docker.
   integration:
     name: cargo test --features integration
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: pgman_test
-          POSTGRES_PASSWORD: pgman_test
-          POSTGRES_DB: pgman_test
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U pgman_test -d pgman_test"
-          --health-interval 1s
-          --health-timeout 3s
-          --health-retries 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: docker compose -f docker-compose.test.yml up -d --wait
       - run: cargo test --features integration --test integration
 
   # Coverage report via cargo-llvm-cov. Posts the summary to the run

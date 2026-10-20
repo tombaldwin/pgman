@@ -26,4 +26,4 @@ expression: dump(&buf)
 │    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · F1 +3 more
+ RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · ? +3 more

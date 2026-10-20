@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   q quit · ? help · e editor · S schema · W wizard · Q saved · F1 +9 more
+ RO   q quit · ? help · e editor · S schema · W wizard · Q saved · ? +9 more

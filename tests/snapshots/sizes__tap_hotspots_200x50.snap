@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · F1 help
+ RO   TAP   j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close · ? help

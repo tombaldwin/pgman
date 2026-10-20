@@ -283,15 +283,15 @@ fn footer_badges_drop_counter_surfaces_amber_badge() {
 #[test]
 fn fit_hints_returns_unchanged_when_everything_fits() {
     let hints = "q quit · ? help · e editor";
-    assert_eq!(fit_hints(hints, hints.chars().count()), hints);
-    assert_eq!(fit_hints(hints, hints.chars().count() + 10), hints);
+    assert_eq!(fit_hints(hints, hints.chars().count(), "F1"), hints);
+    assert_eq!(fit_hints(hints, hints.chars().count() + 10, "F1"), hints);
 }
 
 #[test]
 fn fit_hints_never_cuts_mid_item() {
     let hints = "q quit · ? help · e editor · S schema · W wizard";
     for width in 0..=hints.chars().count() {
-        let fitted = fit_hints(hints, width);
+        let fitted = fit_hints(hints, width, "F1");
         assert!(
             fitted.chars().count() <= width,
             "fitted {fitted:?} exceeds width {width}"
@@ -320,7 +320,7 @@ fn fit_hints_width_too_small_for_first_hint_yields_just_the_marker() {
     let hints = "q quit · ? help · e editor";
     // Too narrow even for "q quit" plus a marker, but the bare
     // "F1 +3 more" marker (10 chars) fits.
-    let fitted = fit_hints(hints, 10);
+    let fitted = fit_hints(hints, 10, "F1");
     assert_eq!(fitted, "F1 +3 more");
 }
 
@@ -329,7 +329,7 @@ fn fit_hints_mid_list_cut_drops_whole_items_and_appends_marker() {
     let hints = "q quit · ? help · e editor · S schema · W wizard";
     // Fits "q quit · ? help · e editor" (26 chars) + " · F1 +2 more"
     // (13) = 39.
-    let fitted = fit_hints(hints, 39);
+    let fitted = fit_hints(hints, 39, "F1");
     assert_eq!(fitted, "q quit · ? help · e editor · F1 +2 more");
     assert!(fitted.chars().count() <= 39);
 }
@@ -340,7 +340,7 @@ fn fit_hints_marker_width_is_always_accounted_for() {
     // Any width narrower than the full string must produce output no
     // wider than that width — including the marker itself.
     for width in [0, 1, 5, 8, 9, 10, 15, 20] {
-        let fitted = fit_hints(hints, width);
+        let fitted = fit_hints(hints, width, "F1");
         assert!(
             fitted.chars().count() <= width,
             "fitted {fitted:?} ({}  chars) exceeds width {width}",
@@ -353,7 +353,7 @@ fn fit_hints_marker_width_is_always_accounted_for() {
 fn fit_hints_empty_when_nothing_at_all_fits() {
     // Not even a single-digit "F1 +N more" marker (10 chars) fits in 3.
     let hints = "q quit · ? help";
-    assert_eq!(fit_hints(hints, 3), "");
+    assert_eq!(fit_hints(hints, 3, "F1"), "");
 }
 
 #[test]
@@ -646,7 +646,7 @@ fn fit_status_keeps_the_protected_tail_within_a_cjk_budget() {
 #[test]
 fn fit_hints_measures_cjk_hints_in_columns() {
     let hints = format!("{JA} · b · c");
-    let got = fit_hints(&hints, 20);
+    let got = fit_hints(&hints, 20, "F1");
     assert!(
         display_width(&got) <= 20,
         "fitted hints are {} columns wide: {got:?}",
@@ -817,17 +817,23 @@ fn confirm_wrap_note_says_refused_under_read_only_instead_of_wrapping() {
     use super::panels::confirm_wrap_note;
     assert_eq!(
         confirm_wrap_note(true, true),
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     );
     assert_eq!(
         confirm_wrap_note(true, false),
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     );
     assert_eq!(
         confirm_wrap_note(false, true),
         " · will wrap in transaction"
     );
     assert_eq!(confirm_wrap_note(false, false), "");
+    use super::panels::confirm_action_line;
+    assert_eq!(
+        confirm_action_line(true),
+        "y = send it anyway · n / esc = cancel"
+    );
+    assert_eq!(confirm_action_line(false), "y = run · n / esc = cancel");
 }
 
 // ----- Fitter termination (the read-only refusal hang) -------------------
@@ -963,7 +969,7 @@ mod fitter_properties {
             width in 0usize..160,
         ) {
             let t = text.clone();
-            let got = bounded(move || fit_hints(&t, width));
+            let got = bounded(move || fit_hints(&t, width, "F1"));
             let got = got.expect("fit_hints did not return within 2s");
             prop_assert!(
                 display_width(&got) <= width,
@@ -1231,4 +1237,71 @@ fn the_key_strip_colours_keys_and_keeps_its_text() {
     assert_eq!(key("esc / q"), Some((Some(theme.accent), true)));
     assert_eq!(key(" navigate"), Some((Some(theme.muted), false)));
     assert_eq!(key("connecting…"), Some((Some(theme.muted), false)));
+}
+
+/// The universal help pointer names `?` where `?` opens help, and F1
+/// only where `?` is a character being typed.
+#[test]
+fn the_help_pointer_names_the_key_that_works_in_this_mode() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(
+        crate::demo::environments(),
+    ));
+    app.on_key(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::NONE));
+    let footer = |app: &mut App| {
+        let backend = ratatui::backend::TestBackend::new(140, 24);
+        let mut term = ratatui::Terminal::new(backend).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect::<String>()
+    };
+    let overview = footer(&mut app);
+    assert!(
+        // The overview opens on its tip, which points at help too.
+        overview.contains("? full keys") && !overview.contains("F1"),
+        "{overview}"
+    );
+    assert!(!app.mode.is_text_input());
+}
+
+/// With environments listed, the grid's hints say Esc goes back to them.
+#[test]
+fn the_grid_hints_say_esc_goes_back_to_the_environments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let footer = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(220, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect::<String>()
+    };
+    app.last_status = None;
+    assert!(
+        !footer(&mut app).contains("esc / E envs"),
+        "no environments, no claim"
+    );
+    app.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(
+        crate::demo::environments(),
+    ));
+    app.on_key(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    app.last_status = None;
+    assert_eq!(app.mode, crate::app::Mode::Normal);
+    let f = footer(&mut app);
+    assert!(f.contains("esc / E envs"), "{f}");
 }

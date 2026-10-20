@@ -18,4 +18,4 @@ expression: dump(&buf)
 │  name = "analytics"                                      │
 │  source = { kind = "rds", instances = ["analytics"], reg…│
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · F1 +6 more
+ RO   TAP   N+1 ×1   j/k navigate · space choose · ? +5 more

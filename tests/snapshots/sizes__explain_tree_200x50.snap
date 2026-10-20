@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close · F1 help
+ RO   TAP   N+1 ×1   j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close · ? help

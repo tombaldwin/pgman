@@ -2,7 +2,7 @@
 //! `--features integration` so plain `cargo test` doesn't try to
 //! reach a server that isn't there. Bring the DB up with:
 //!
-//!   docker compose -f docker-compose.test.yml up -d
+//!   docker compose -f docker-compose.test.yml up -d --wait
 //!   cargo test --features integration
 //!   docker compose -f docker-compose.test.yml down
 //!
@@ -16,6 +16,17 @@ use std::process::Command;
 
 /// DSN of the docker-compose postgres. Matches docker-compose.test.yml.
 const DSN: &str = "postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
+
+/// DSN of the compose file's streaming standby of [`DSN`].
+const STANDBY_DSN: &str =
+    "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+
+/// A read-only probe connection to `dsn`.
+async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
+    pgman::conn::connect_via(pgman::conn::Dsn::parse(dsn).unwrap(), None, 10_000)
+        .await
+        .unwrap_or_else(|e| panic!("{dsn}: {e} (is the compose file's standby up?)"))
+}
 
 /// Path to the freshly-built `pgman` binary. Cargo sets this env var
 /// when compiling integration tests so we don't have to guess the
@@ -2597,7 +2608,7 @@ fn probes_recognise_common_migration_tools() {
         if tool == "flyway" {
             // An environment that names its own version table, for other
             // databases only: no guessing here.
-            let mut explicit = report;
+            let mut explicit = report.clone();
             explicit.probe = Some(pgman::inventory::ProbeSettings {
                 version_table: Some(pgman::inventory::VersionTable {
                     table: "t_version".into(),
@@ -2616,6 +2627,27 @@ fn probes_recognise_common_migration_tools() {
                 .unwrap()
                 .unwrap();
             assert_eq!(p.migration_tool, None, "configured, so not detected");
+        }
+        if tool == "django" {
+            // A migrations_dir that can't be read says so on the row.
+            let mut missing = report;
+            missing.probe = Some(pgman::inventory::ProbeSettings {
+                version_table: None,
+                migrations_dir: Some("/nonexistent/pgman/migrations".into()),
+            });
+            let p = rt
+                .block_on(pgman::inventory::probe::run(
+                    missing,
+                    std::sync::Arc::new(|_| unreachable!()),
+                ))
+                .remove(0)
+                .unwrap()
+                .unwrap();
+            let e = p.schema_error.unwrap_or_default();
+            assert!(
+                e.starts_with("migrations_dir: cannot list /nonexistent"),
+                "{e}"
+            );
         }
     }
     let f = &results["flyway"];
@@ -3310,4 +3342,289 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
     });
     assert!(table_exists(&home, &victim), "the hidden DROP never ran");
     assert!(!table_has_id(&home, &vt, 2), "and the patch rolled back");
+}
+
+/// A standby of a primary that has gone quiet has no lag: it has
+/// replayed everything it received. It used to read "time since the last
+/// write", growing (and turning yellow) on every idle replica.
+#[test]
+fn a_caught_up_standby_of_an_idle_primary_has_no_lag() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let primary = probe_client(DSN).await;
+        let standby = probe_client(STANDBY_DSN).await;
+        // A write the standby replays, then nothing for a while.
+        let home = scratch_home("lag-idle", WRITABLE_PROFILE);
+        let t = format!("pgman_it_lag_{}", std::process::id());
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("CREATE TABLE {t} (id int)")],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lsn: String = primary
+            .query_one("SELECT pg_current_wal_lsn()::text", &[])
+            .await
+            .unwrap()
+            .get(0);
+        for _ in 0..100 {
+            let caught: bool = standby
+                .query_one(
+                    &format!("SELECT pg_last_wal_replay_lsn() >= '{lsn}'::pg_lsn"),
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            if caught {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let p = pgman::query::probe::run(&standby, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(p.in_recovery, Some(true));
+        let lag = p.lag_secs.expect("a standby reports lag");
+        assert!(lag < 1.0, "caught up, so no lag — got {lag}s");
+        let p = pgman::query::probe::run(&primary, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(
+            (p.in_recovery, p.lag_secs),
+            (Some(false), None),
+            "a primary has none"
+        );
+    });
+}
+
+/// A unicode-escaped function name doesn't get past `query`'s guards:
+/// `U&"pg_\0072ead_file"` is `pg_read_file` to Postgres.
+#[test]
+fn mcp_query_refuses_unicode_escaped_function_names() {
+    let home = scratch_home("mcp-uescape", "");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "local", "sql": r#"SELECT U&"pg_\0072ead_file"('PG_VERSION')"#}),
+            ),
+            tool_call(
+                2,
+                "query",
+                serde_json::json!({"connection": "local", "sql": r#"SELECT U&"set_\0063onfig"('default_transaction_read_only', 'off', false)"#}),
+            ),
+            tool_call(
+                3,
+                "query",
+                serde_json::json!({"connection": "local", "sql": "SELECT 1 AS one"}),
+            ),
+        ],
+    );
+    for id in [1, 2] {
+        let (text, is_error) = reply(&frames, id);
+        assert!(is_error, "call {id} ran: {text}");
+        assert!(!text.contains("16"), "no file contents: {text}");
+    }
+    let (text, is_error) = reply(&frames, 3);
+    assert!(!is_error && text.contains("\"one\""), "{text}");
+}
+
+/// A batch export past the row cap says so and fails, instead of
+/// handing back 1000 rows as if they were all of them; json returns all.
+#[test]
+fn batch_says_when_a_csv_export_is_truncated() {
+    let home = scratch_home("batch-cap", "");
+    let out = batch_with_home(&home, &["--sql", "SELECT generate_series(1, 1500) AS n"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("output stopped at 1000 rows"));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 1001);
+    let out = batch_with_home(
+        &home,
+        &[
+            "--format",
+            "json",
+            "--sql",
+            "SELECT generate_series(1, 1500) AS n",
+        ],
+    );
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 1500);
+    let out = batch_with_home(&home, &["--sql", "SELECT generate_series(1, 10) AS n"]);
+    assert!(out.status.success() && out.stderr.is_empty());
+}
+
+/// One huge value doesn't come back whole over MCP: `max_rows` counts
+/// rows, and a single cell could be hundreds of megabytes.
+#[test]
+fn mcp_query_cuts_a_huge_cell() {
+    let home = scratch_home("mcp-bigcell", "");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "local", "sql": "SELECT repeat('x', 20000000) AS big"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error);
+    assert!(text.len() < 64 * 1024, "{} bytes came back", text.len());
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["cells_cut"], 1);
+}
+
+/// A host that never answers fails within the connect timeout instead of
+/// waiting out the OS's TCP timeout. (10.255.255.1 is unroutable: on
+/// most networks packets to it vanish, which is the case that hung.)
+#[test]
+fn a_host_that_never_answers_fails_within_the_connect_timeout() {
+    let home = scratch_home("connect-timeout", "");
+    let started = std::time::Instant::now();
+    let out = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args([
+            "--batch",
+            "--dsn",
+            "postgres://u:p@10.255.255.1:5432/db?sslmode=disable",
+            "--sql",
+            "SELECT 1",
+        ])
+        .output()
+        .unwrap();
+    let took = started.elapsed();
+    assert!(!out.status.success());
+    assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+    eprintln!("{}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// A probe user that can't see other sessions' transactions (no
+/// pg_read_all_stats) reports long transactions as unknown, not zero.
+#[test]
+fn a_probe_without_read_all_stats_doesnt_report_zero_long_transactions() {
+    let home = scratch_home("probe-unpriv", WRITABLE_PROFILE);
+    let role = format!("pgman_it_ro_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE ROLE {role} LOGIN PASSWORD 'x' NOSUPERUSER"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let me = probe_client(DSN).await;
+        let p = pgman::query::probe::run(&me, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert!(p.long_tx.is_some(), "a superuser sees every session");
+        let them = probe_client(&format!(
+            "postgres://{role}:x@127.0.0.1:55432/pgman_test?sslmode=disable"
+        ))
+        .await;
+        let p = pgman::query::probe::run(&them, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(p.long_tx, None, "unknown, not 0");
+        assert!(p.sessions.is_some());
+    });
+}
+
+/// A connection the inventory calls direct but that is really a hot
+/// standby is refused before any patch runs: the server is asked.
+#[test]
+fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
+    let home = scratch_home("patch-standby", WRITABLE_PROFILE);
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        "INSERT INTO pgman_it_sb_v (id) VALUES (2);\n",
+    )
+    .unwrap();
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"sb\"\nsource = {{ kind = \"static\", connections = [\"s\"] }}\n\
+         version_table = {{ table = \"pgman_it_sb_v\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "standby".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(STANDBY_DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    let plan = pgman::inventory::patching::PatchPlan {
+        environment: "sb".into(),
+        server: "standby".into(),
+        database: "pgman_test".into(),
+        protected: false,
+        applied_max: None,
+        patches: Vec::new(),
+        stopped_at: None,
+        dir: dir.display().to_string(),
+        recorded: Vec::new(),
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let r = rt.block_on(pgman::inventory::patching::apply(
+        &env,
+        &target,
+        &writable,
+        &no_secrets,
+        &plan,
+    ));
+    let err = r.error.expect("refused");
+    assert!(err.contains("is a standby"), "{err}");
 }

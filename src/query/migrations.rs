@@ -69,7 +69,7 @@ impl Tool {
     pub fn sql(self) -> &'static str {
         match self {
             Tool::Flyway => {
-                "SELECT version, success::text FROM flyway_schema_history \
+                "SELECT version, success::text, type FROM flyway_schema_history \
                  WHERE version IS NOT NULL ORDER BY installed_rank"
             }
             Tool::Liquibase => "SELECT id, author FROM databasechangelog ORDER BY orderexecuted",
@@ -114,11 +114,17 @@ fn truthy(v: Option<&str>) -> bool {
     matches!(v, Some("t" | "true"))
 }
 
-/// `1.2.10` as numbers, for ordering versions. Pure.
+/// `1.2.10` as numbers, for ordering and comparing versions. Trailing
+/// zeros don't count: Flyway reads `1.0` and `1` as one version. Pure.
 fn version_key(v: &str) -> Vec<u64> {
-    v.split(['.', '_'])
+    let mut key: Vec<u64> = v
+        .split(['.', '_'])
         .map(|p| p.trim().parse().unwrap_or(0))
-        .collect()
+        .collect();
+    while key.len() > 1 && key.last() == Some(&0) {
+        key.pop();
+    }
+    key
 }
 
 /// A Flyway versioned-migration file's version: `V1_2__add.sql` → `1.2`.
@@ -145,9 +151,25 @@ pub fn parse(tool: Tool, rows: &TypedRows, files: Option<&[String]>) -> Migratio
     match tool {
         Tool::Flyway | Tool::Sqlx => {
             let mut ok: Vec<String> = Vec::new();
+            // Flyway: versions at or below a BASELINE never run, so their
+            // files aren't pending; a successful UNDO takes its version
+            // back out. (sqlx has no type column.)
+            let mut baseline: Option<Vec<u64>> = None;
             for r in &rows.rows {
                 let Some(v) = cell(r, 0) else { continue };
-                if truthy(cell(r, 1).as_deref()) {
+                let kind = cell(r, 2).unwrap_or_default();
+                let success = truthy(cell(r, 1).as_deref());
+                if kind.starts_with("UNDO") {
+                    if success {
+                        let key = version_key(&v);
+                        ok.retain(|o| version_key(o) != key);
+                    }
+                    continue;
+                }
+                if success {
+                    if kind == "BASELINE" {
+                        baseline = baseline.max(Some(version_key(&v)));
+                    }
                     ok.push(v);
                 } else {
                     m.failed = Some(v);
@@ -166,7 +188,9 @@ pub fn parse(tool: Tool, rows: &TypedRows, files: Option<&[String]>) -> Migratio
                     files
                         .iter()
                         .filter_map(|f| flyway_file_version(f))
-                        .filter(|v| !applied.contains(&version_key(v)))
+                        .map(|v| version_key(&v))
+                        .filter(|k| baseline.as_ref().is_none_or(|b| k > b))
+                        .filter(|k| !applied.contains(k))
                         .count(),
                 );
             }
@@ -313,6 +337,45 @@ mod tests {
             None,
             "no files, no count"
         );
+    }
+
+    #[test]
+    fn flyway_skips_versions_below_a_baseline_and_undone_ones() {
+        let files: Vec<String> = [
+            "V1__a.sql",
+            "V2__b.sql",
+            "V3__c.sql",
+            "V101__d.sql",
+            "V1_0__e.sql",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // baselineOnMigrate at 100: V1–V3 never run; only V101 is pending.
+        let baselined = rows(&[&[Some("100"), Some("true"), Some("BASELINE")]]);
+        let m = parse(Tool::Flyway, &baselined, Some(&files));
+        assert_eq!(m.pending, Some(1), "V101 only");
+        assert_eq!(m.version.as_deref(), Some("100"));
+        // 1.0 is version 1 to Flyway.
+        let applied = rows(&[
+            &[Some("1"), Some("true"), Some("SQL")],
+            &[Some("2"), Some("true"), Some("SQL")],
+            &[Some("3"), Some("true"), Some("SQL")],
+        ]);
+        let m = parse(Tool::Flyway, &applied, Some(&files));
+        assert_eq!(
+            m.pending,
+            Some(1),
+            "V1_0 is V1, already applied; V101 pending"
+        );
+        // An undo takes its version back out.
+        let undone = rows(&[
+            &[Some("1"), Some("true"), Some("SQL")],
+            &[Some("2"), Some("true"), Some("SQL")],
+            &[Some("2"), Some("true"), Some("UNDO_SQL")],
+        ]);
+        let m = parse(Tool::Flyway, &undone, None);
+        assert_eq!((m.version.as_deref(), m.applied), (Some("1"), 1));
     }
 
     #[test]

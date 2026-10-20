@@ -374,6 +374,26 @@ pub fn filter_saved_indices(
 /// (case-insensitively) contains `needle`. Row-major order; ties
 /// within a row are returned in column order. `needle` empty
 /// returns an empty vec — caller should treat as "find inactive".
+/// The match after (or before) `here`, wrapping; `None` when there are
+/// none. `matches` is in row-major order. Pure.
+pub fn next_match(
+    matches: &[(usize, usize)],
+    here: (usize, usize),
+    forward: bool,
+) -> Option<usize> {
+    if matches.is_empty() {
+        return None;
+    }
+    Some(if forward {
+        matches.iter().position(|m| *m > here).unwrap_or(0)
+    } else {
+        matches
+            .iter()
+            .rposition(|m| *m < here)
+            .unwrap_or(matches.len() - 1)
+    })
+}
+
 pub fn compute_grid_find_matches(
     grid: &crate::grid::Grid,
     visible_rows: &[usize],
@@ -1994,7 +2014,11 @@ impl App {
             self.open_command_bar();
             return;
         }
-        if ctrl && matches!(key.code, KeyCode::Char('t')) {
+        // A new tab or a cycle swaps the editor buffer: from a prompt
+        // (save-as, rename, param, filter) Enter would then act on the
+        // other tab's SQL. The editor and the panels are fine.
+        let tab_keys_ok = !typing_mode || self.mode == Mode::Editor;
+        if ctrl && matches!(key.code, KeyCode::Char('t')) && tab_keys_ok {
             self.new_tab();
             return;
         }
@@ -2006,11 +2030,11 @@ impl App {
             self.close_active_tab();
             return;
         }
-        if ctrl && matches!(key.code, KeyCode::Tab) {
+        if ctrl && matches!(key.code, KeyCode::Tab) && tab_keys_ok {
             self.cycle_tab(!shift);
             return;
         }
-        if ctrl && shift && matches!(key.code, KeyCode::BackTab) {
+        if ctrl && shift && matches!(key.code, KeyCode::BackTab) && tab_keys_ok {
             // Some terminals deliver Ctrl-Shift-Tab as BackTab.
             self.cycle_tab(false);
             return;
@@ -2157,28 +2181,28 @@ impl App {
         }
         let hint = match mode {
             Mode::SchemaBrowser => Some(
-                "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · F1 full keys",
+                "tip · / filter · [ ] jump schema · + / − expand-all/collapse-all · ? full keys",
             ),
             Mode::ExplainTree => {
-                Some("tip · j/k navigate · enter expand · hottest node is red · F1 full keys")
+                Some("tip · j/k navigate · enter expand · hottest node is red · ? full keys")
             }
             Mode::SlowQueries => Some(
-                "tip · enter copy SQL to editor · r refresh from pg_stat_statements · F1 full keys",
+                "tip · enter copy SQL to editor · r refresh from pg_stat_statements · ? full keys",
             ),
             Mode::Sessions => Some(
-                "tip · blocked sessions sort top in red · K terminate · r refresh · F1 full keys",
+                "tip · blocked sessions sort top in red · K terminate · r refresh · ? full keys",
             ),
             Mode::Environments => Some(
-                "tip · from environments.toml · replicas under their primary · r refresh · F1 full keys",
+                "tip · from environments.toml · replicas under their primary · r refresh · ? full keys",
             ),
             Mode::SchemaLint => {
-                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · F1 full keys")
+                Some("tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys")
             }
             Mode::LogPick => {
-                Some("tip · c toggles cluster view · enter loads selected · F1 full keys")
+                Some("tip · c toggles cluster view · enter loads selected · ? full keys")
             }
             Mode::RowDetail => {
-                Some("tip · J/K next/prev row · enter zooms a field · y yanks · F1 full keys")
+                Some("tip · J/K next/prev row · enter zooms a field · y yanks · ? full keys")
             }
             Mode::CellDetail => {
                 Some("tip · JSON cells render as a tree · y yanks the value (or jq path)")
@@ -2748,6 +2772,17 @@ impl App {
 
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
+    /// Ctrl-L / F8 outside the editor: reconstruct the log already in it,
+    /// or open it to paste one.
+    pub(super) fn log_import_from_normal(&mut self) {
+        if query::logdetect::detect_log(&self.editor.buffer).is_some() {
+            return self.start_log_import();
+        }
+        self.mode = Mode::Editor;
+        self.last_error = None;
+        self.last_status = Some("paste a Hibernate or Postgres log here, then ctrl-l".to_string());
+    }
+
     fn start_log_import(&mut self) {
         let log = &self.editor.buffer;
         let mut picks: Vec<ReconstructedQuery> = Vec::new();
@@ -3656,6 +3691,35 @@ impl App {
 
     /// `n` / `N` in Normal — step the row cursor to the next / prev
     /// matching row (only meaningful while a filter is active).
+    /// `n` / `N` in the grid: through the live filter, else the accepted
+    /// find, from the cursor on.
+    fn filter_or_find_step(&mut self, forward: bool) {
+        if self.grid_view.filter.is_some() {
+            return self.filter_step(forward);
+        }
+        let Some(pat) = self.grid_find.accepted.clone() else {
+            self.last_status = Some("nothing to step through · / filter or f find first".into());
+            return;
+        };
+        let matches = compute_grid_find_matches(&self.grid, &self.grid_view.visible_rows, &pat);
+        let here = (
+            self.grid_state.selected().unwrap_or(0),
+            self.grid_view.col_cursor,
+        );
+        let Some(i) = next_match(&matches, here, forward) else {
+            self.last_status = Some(format!("find: {pat} · no match in this result"));
+            return;
+        };
+        let (vi, ci) = matches[i];
+        self.grid_state.select(Some(vi));
+        self.grid_view.col_cursor = ci;
+        self.last_status = Some(format!(
+            "find: {pat} · {}/{} match · n/N step",
+            i + 1,
+            matches.len()
+        ));
+    }
+
     fn filter_step(&mut self, forward: bool) {
         if self.grid_view.filter.is_none() {
             // Make the no-op visible — vim muscle memory expects
@@ -3781,8 +3845,11 @@ impl App {
         self.mode = Mode::SchemaLint;
         // Kick off the live-query checks (LINT101+). Results land
         // via `AppMsg::LiveLintLoaded` and get merged into
-        // `schema_lint_findings` — see the handler.
-        if let Some(client) = self.client.clone() {
+        // `schema_lint_findings` — see the handler. `--demo` has no
+        // server to ask: its live checks find nothing more.
+        if self.demo {
+            self.on_live_lint_loaded(Ok(Vec::new()));
+        } else if let Some(client) = self.client.clone() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
             tokio::spawn(async move {
@@ -3809,6 +3876,12 @@ impl App {
 
     /// `T` from Normal — load + open the slow-queries panel.
     fn start_slow_queries(&mut self) {
+        if self.demo {
+            self.slow_queries.cursor = 0;
+            self.slow_queries.error = None;
+            self.mode = Mode::SlowQueries;
+            return self.on_slow_queries_loaded(Ok(crate::demo::slow_queries()));
+        }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -3822,6 +3895,9 @@ impl App {
 
     /// `r` inside the slow-queries panel — refresh in place.
     fn refresh_slow_queries(&mut self) {
+        if self.demo {
+            return self.start_slow_queries();
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -4299,11 +4375,16 @@ impl App {
                 ]);
                 continue;
             }
+            let last = &self.environments.last_probe;
             states.push(
                 plan(&r.targets)
                     .into_iter()
-                    .map(|s| match s {
-                        Step::Connect => ProbeState::Probing,
+                    .zip(&r.targets)
+                    .map(|(s, t)| match s {
+                        Step::Connect => last
+                            .get(&(r.name.clone(), t.server.clone(), t.database.clone()))
+                            .cloned()
+                            .unwrap_or(ProbeState::Probing),
                         Step::ViaReplica => ProbeState::ViaReplica,
                         // Nothing to read: the row's status says why.
                         Step::NotRunning => ProbeState::Off,
@@ -4372,6 +4453,10 @@ impl App {
                 }
             }
             *state = ProbeState::done(result);
+            self.environments.last_probe.insert(
+                (r.name.clone(), t.server.clone(), t.database.clone()),
+                state.clone(),
+            );
         }
     }
 
@@ -4421,6 +4506,11 @@ impl App {
 
     /// `L` from Normal — load + open the active-sessions panel.
     fn start_sessions(&mut self) {
+        if self.demo {
+            self.sessions.cursor = 0;
+            self.mode = Mode::Sessions;
+            return self.on_sessions_loaded(Ok(crate::demo::sessions()));
+        }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -4432,6 +4522,9 @@ impl App {
     }
 
     fn refresh_sessions(&mut self) {
+        if self.demo {
+            return self.start_sessions();
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -4504,7 +4597,7 @@ impl App {
         self.grid_find.matches.clear();
         self.grid_find.pos = 0;
         self.last_status =
-            Some("find:    · type to search · n/N jump · enter accept · esc cancel".into());
+            Some("find:    · type to search · ↑↓ jump · enter accept · esc cancel".into());
         self.mode = Mode::GridFind;
     }
 
@@ -4517,7 +4610,7 @@ impl App {
         }
         let pos = if n == 0 { 0 } else { self.grid_find.pos + 1 };
         self.last_status = Some(format!(
-            "find: {pat}  · {pos}/{n} match · n/N jump · enter accept · esc cancel"
+            "find: {pat}  · {pos}/{n} match · ↑↓ jump · enter accept · esc cancel"
         ));
     }
 

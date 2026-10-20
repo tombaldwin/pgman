@@ -137,13 +137,13 @@ pub fn parse_describe(json: &str) -> Result<Vec<RdsInstance>, String> {
                 status: s(i, "DBInstanceStatus").unwrap_or_default(),
                 class: s(i, "DBInstanceClass").unwrap_or_default(),
                 multi_az: i.get("MultiAZ").and_then(|m| m.as_bool()).unwrap_or(false),
-                source: s(i, "ReadReplicaSourceDBInstanceIdentifier"),
+                source: s(i, "ReadReplicaSourceDBInstanceIdentifier").map(|v| instance_id(&v)),
                 replicas: i
                     .get("ReadReplicaDBInstanceIdentifiers")
                     .and_then(|r| r.as_array())
                     .map(|r| {
                         r.iter()
-                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .filter_map(|x| x.as_str().map(instance_id))
                             .collect()
                     })
                     .unwrap_or_default(),
@@ -213,8 +213,37 @@ pub fn select<'a>(all: &'a [RdsInstance], patterns: &[String]) -> Vec<&'a RdsIns
     chosen
 }
 
+/// An instance identifier from what RDS lists: a replica in another
+/// region names its source (and a primary its replicas) by ARN,
+/// `arn:aws:rds:eu-west-1:123456789012:db:demo`. Pure.
+pub fn instance_id(v: &str) -> String {
+    match v.strip_prefix("arn:") {
+        Some(_) => v.rsplit(":db:").next().unwrap_or(v).to_string(),
+        None => v.to_string(),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[test]
+    fn a_cross_region_replica_names_its_primary_by_identifier() {
+        assert_eq!(
+            instance_id("arn:aws:rds:us-east-1:210987654321:db:demo"),
+            "demo"
+        );
+        assert_eq!(
+            instance_id("demo-read-only-replica"),
+            "demo-read-only-replica"
+        );
+        let all = parse_describe(
+            r#"{"DBInstances": [{"DBInstanceIdentifier": "demo-dr", "Engine": "postgres",
+              "ReadReplicaSourceDBInstanceIdentifier": "arn:aws:rds:us-west-1:210987654321:db:demo"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(all[0].source.as_deref(), Some("demo"));
+    }
+
     use super::*;
 
     /// The shape the CLI returned for examplecorp's account on 2026-10-19,

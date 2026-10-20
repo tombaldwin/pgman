@@ -25,7 +25,7 @@ cargo test                               # unit + render + subprocess + doctests
 For changes that touch live-database behaviour, also run the integration suite:
 
 ```sh
-docker compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d --wait
 cargo test --features integration
 docker compose -f docker-compose.test.yml down
 ```

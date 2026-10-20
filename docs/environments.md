@@ -7,7 +7,8 @@ through the `environments` tool ([MCP server](mcp.md)).
 
 It's pgman's home: with environments configured and no `--dsn`, pgman
 starts on it, on the row you used last, and it fills the screen. `q`
-goes to the editor and `E` comes back.
+goes back to where you opened it from (the results, or the connection
+picker), `E` comes back, and `Esc` from the results returns to it.
 
 By default the overview shows what the sources know without connecting
 to any database: role, server, status, engine version and endpoint.
@@ -144,7 +145,7 @@ can't silently widen what an environment covers.
 
 | `kind` | Rows | Needs |
 | --- | --- | --- |
-| `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases`. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
+| `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases` (default: the instance's `DBName`). Aurora instances carry no `DBName` — it's on the cluster — so give `databases`; Aurora readers aren't yet told apart from the writer. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
 | `static` | One row per named connection in `connections.toml`, with its role. There's no engine version or status yet. | Nothing. |
 | `docker` | Local containers that expose 5432 or run a `postgres` image, whose names match one of `containers` (globs; default all). One row per entry in `databases` (default `postgres`), reached on the port 5432 is published to. A stopped container, or one that doesn't publish 5432, is listed with the reason it can't connect. | The `docker` CLI on `PATH`. `user`, `password_env` and `sslmode` apply; `ssh_tunnel` and `secrets` don't. |
 
@@ -190,14 +191,19 @@ the MCP `environments` tool when called with `probe: true`):
   in yellow; it's the same matching as the MCP `pending_patches` tool.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
-  `▁▂▂▃▅▇ · 2s–30s over 12 probes`. Steady lag on an idle primary looks
-  flat; a real spike stands out. A replica that isn't in recovery
+  `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has
+  replayed all it received reads 0, however long its primary has been
+  quiet; one whose stream is down reads the age of its last replayed
+  change, so it grows. A replica that isn't in recovery
   shows `NOT IN RECOVERY` in red, because it's a primary posing as a
   replica.
 - **`SESSIONS`**: backends connected to the database (the probe's own
   included), with trouble after it: `21 (2 blocked · 1 long tx)`. A
   session waiting on another's lock turns the row red; a transaction
   open over five minutes (idle in transaction included) turns it yellow.
+  Long transactions need the probe user to see other sessions'
+  transactions (`pg_read_all_stats`, which RDS's master user has);
+  without it they aren't counted rather than shown as none.
 - **`SIZE`**: the database's size.
 
 Version, recovery, lag, sessions and size come back in one round trip.

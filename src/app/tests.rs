@@ -4920,29 +4920,64 @@ fn grid_find_f_key_opens_mode_and_jumps_on_match() {
 }
 
 #[test]
-fn grid_find_n_and_capital_n_step_through_matches() {
+fn grid_find_types_n_steps_with_arrows_and_keeps_stepping_after_enter() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["c".into()],
-        rows: vec![vec!["aa".into()], vec!["bb".into()], vec!["aa".into()]],
+        rows: vec![
+            vec!["linus".into()],
+            vec!["bb".into()],
+            vec!["linus".into()],
+            vec!["lius".into()],
+        ],
         truncated: false,
     };
-    a.grid_view.visible_rows = vec![0, 1, 2];
+    a.grid_view.visible_rows = vec![0, 1, 2, 3];
     a.grid_state.select(Some(0));
     a.on_key(KeyEvent::from(KeyCode::Char('f')));
-    // Type "a" — two matches (rows 0 and 2). Cursor jumps to first.
-    a.on_key(KeyEvent::from(KeyCode::Char('a')));
+    // `n` is a letter of the pattern, not a jump: "lin" skips "lius".
+    for c in "lin".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    assert_eq!(a.grid_find.needle.as_deref(), Some("lin"));
+    assert_eq!(a.grid_find.matches.len(), 2);
+    // Arrows step while typing, wrapping.
+    a.on_key(KeyEvent::from(KeyCode::Down));
+    assert_eq!(a.grid_state.selected(), Some(2));
+    a.on_key(KeyEvent::from(KeyCode::Down));
     assert_eq!(a.grid_state.selected(), Some(0));
-    // `n` cycles to second match.
+    a.on_key(KeyEvent::from(KeyCode::Up));
+    assert_eq!(a.grid_state.selected(), Some(2));
+    // Enter accepts; n / N from the grid keep stepping from the cursor.
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Normal);
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(a.grid_state.selected(), Some(0), "wraps past the last");
     a.on_key(KeyEvent::from(KeyCode::Char('n')));
     assert_eq!(a.grid_state.selected(), Some(2));
-    // `n` again wraps to first.
-    a.on_key(KeyEvent::from(KeyCode::Char('n')));
-    assert_eq!(a.grid_state.selected(), Some(0));
-    // `N` (capital) walks back.
     a.on_key(KeyEvent::from(KeyCode::Char('N')));
-    assert_eq!(a.grid_state.selected(), Some(2));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    // Esc in a new find forgets it.
+    a.on_key(KeyEvent::from(KeyCode::Char('f')));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("nothing to step through"));
+}
+
+#[test]
+fn next_match_wraps_both_ways() {
+    let m = [(0, 0), (2, 1), (5, 0)];
+    assert_eq!(crate::app::next_match(&m, (2, 1), true), Some(2));
+    assert_eq!(crate::app::next_match(&m, (5, 0), true), Some(0));
+    assert_eq!(crate::app::next_match(&m, (2, 1), false), Some(0));
+    assert_eq!(crate::app::next_match(&m, (0, 0), false), Some(2));
+    assert_eq!(crate::app::next_match(&[], (0, 0), true), None);
 }
 
 #[test]
@@ -7861,6 +7896,31 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     assert_eq!(a.editor.buffer, "select 1");
 }
 
+#[test]
+fn ctrl_t_and_ctrl_tab_do_not_switch_tabs_under_a_typing_prompt() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = temp_saved_path("ctrl-t-prompt");
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.new_tab();
+    a.editor.buffer = "select 2".into();
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    a.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
+    assert_eq!(
+        (a.tabs.len(), a.active_tab),
+        (2, 1),
+        "a tab key acted under the prompt"
+    );
+    assert_eq!(a.editor.buffer, "select 2");
+    // From the editor they still work.
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!(a.tabs.len(), 3);
+}
+
 // ----- A quiet server is "only this session", not "0 total" -----------
 
 #[test]
@@ -9724,10 +9784,13 @@ fn probes_mark_rows_then_fill_in_and_a_stale_answer_is_dropped() {
         ProbeState::ViaReplica
     ));
 
-    // r lists again: a new sequence, rows back to probing.
+    // r lists again: a new sequence (so the old round's answers are
+    // dropped), and the row keeps its last reading until the new one.
     press(&mut a, KeyCode::Char('r'));
     assert_ne!(a.environments.probe_seq, seq);
-    assert_eq!(a.environments.probes[0][1], ProbeState::Probing);
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Ok(p)) if p.server_version.as_deref() == Some("16.4"))
+    );
 }
 
 #[test]
@@ -10303,4 +10366,167 @@ fn a_late_plan_for_another_database_is_dropped() {
         a.environments.patch.as_ref().unwrap().stage,
         PatchStage::Applying(_)
     ));
+}
+
+/// `:connect <url>` connects to it, and the password it carries shows
+/// nowhere — not in the origin line, not in an error.
+#[tokio::test]
+async fn connect_to_a_typed_url_never_shows_its_password() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.dispatch_command("connect postgres://app:hunter2@db.internal:5432/shop");
+    assert_eq!(a.dsn.as_ref().map(|d| d.dbname.as_str()), Some("shop"));
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(
+        origin.starts_with("typed at :connect") && !origin.contains("hunter2"),
+        "{origin}"
+    );
+    let mut b = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    b.dispatch_command("connect postgres://app:hunter2@db.internal:notaport/shop");
+    let err = b.last_error.clone().unwrap();
+    assert!(
+        err.starts_with("can't connect to") && !err.contains("hunter2"),
+        "{err}"
+    );
+    assert!(b.dsn.is_none());
+}
+
+/// `:readonly` on a live session: the header follows what the server
+/// was told, and a SET that failed puts it back to what the server does.
+#[test]
+fn readonly_applied_to_the_live_session_keeps_the_header_true() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.read_only = false;
+    let generation = a.generation;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Ok(()),
+    });
+    assert!(a.read_only);
+    assert!(a.last_status.as_deref().unwrap().contains("this session"));
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Err("connection closed".into()),
+    });
+    assert!(!a.read_only, "not applied: the session is still writable");
+    assert!(a.last_error.as_deref().unwrap().contains("not applied"));
+}
+
+/// `r` keeps the cursor on the database it was on when the listing moves
+/// under it (a new instance sorting above, say), so Enter connects where
+/// the operator was looking.
+#[test]
+fn a_refresh_keeps_the_cursor_on_the_same_database() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('j'));
+    let before = a.environments.selection().unwrap();
+    let mut moved = crate::demo::environments();
+    let mut extra = moved[0].targets[0].clone();
+    extra.server = "aaa-new".into();
+    moved[0].targets.insert(0, extra);
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(moved)));
+    assert_eq!(a.environments.selection().unwrap(), before);
+}
+
+/// What the demo's start card offers works in the demo: slow queries,
+/// sessions and the wizard answer from fixtures instead of saying
+/// "not connected" or waiting on a server that isn't there.
+#[test]
+fn the_demo_answers_slow_queries_sessions_and_the_wizard() {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('T'));
+    assert_eq!(a.mode, Mode::SlowQueries, "{:?}", a.last_error);
+    assert!(!a.slow_queries.rows.is_empty());
+    press(&mut a, KeyCode::Char('q'));
+    press(&mut a, KeyCode::Char('L'));
+    assert_eq!(a.mode, Mode::Sessions, "{:?}", a.last_error);
+    assert!(a.sessions.rows.iter().any(|s| !s.blocked_by.is_empty()));
+    press(&mut a, KeyCode::Char('q'));
+    // Past its first-visit tip, which would replace the status line.
+    a.mode_seen.insert(Mode::SchemaLint);
+    press(&mut a, KeyCode::Char('W'));
+    assert_eq!(a.mode, Mode::SchemaLint);
+    assert!(
+        !a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("checking live"),
+        "{:?}",
+        a.last_status
+    );
+}
+
+#[test]
+fn the_demos_slow_queries_come_by_total_time_like_the_live_panel() {
+    let rows = crate::demo::slow_queries();
+    assert!(rows.windows(2).all(|w| w[0].total_ms >= w[1].total_ms));
+}
+
+/// The start card's `ctrl-l logs → SQL` works where the card is: with a
+/// log in the editor it reconstructs, without one it opens the editor
+/// to paste into. (It used to be F8, which the card's mode ignored.)
+#[test]
+fn ctrl_l_from_the_results_reconstructs_or_opens_the_editor() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("paste a Hibernate"));
+    a.mode = Mode::Normal;
+    a.editor.buffer =
+        "Hibernate: select 1 from users where id=?\nbinding parameter [1] as [BIGINT] - [7]\n"
+            .into();
+    a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert_eq!(a.log_pick.picks.len(), 1, "{:?}", a.last_error);
+    // Plain l still moves the column cursor.
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('l')));
+    assert_eq!(a.mode, Mode::Normal);
+}
+
+/// The drift matrix is a view over the list: q goes back to the list
+/// (not out of the panel), and the list's keys don't act unseen under it.
+#[test]
+fn q_in_the_drift_view_goes_back_to_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('v'));
+    assert!(a.environments.drift);
+    let cursor = a.environments.cursor;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.environments.cursor, cursor, "j acted on the hidden list");
+    press(&mut a, KeyCode::Char('q'));
+    assert!(!a.environments.drift);
+    assert_eq!(a.mode, Mode::Environments, "q left the panel");
+    press(&mut a, KeyCode::Char('q'));
+    assert_ne!(a.mode, Mode::Environments);
+}
+
+/// A second probe round shows the last reading while it runs, rather
+/// than blanking every row back to "probing…".
+#[test]
+fn a_new_probe_round_keeps_showing_the_last_reading() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(
+        crate::demo::environment_probes,
+    )));
+    press(&mut a, KeyCode::Char('E'));
+    let first = a.environments.probes[0][1].clone();
+    assert!(matches!(first, ProbeState::Done(Ok(_))), "{first:?}");
+    // Next round's answers held back.
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    a.start_env_probes();
+    assert_eq!(a.environments.probes[0][1], first, "blanked to probing");
 }

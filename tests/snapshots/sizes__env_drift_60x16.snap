@@ -5,7 +5,7 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+╭[ ◆ environments · schema drift ◆ ] v / q back ───────────╮
 │  schema version of each database, by environment — yellow│
 │                                                          │
 │    DATABASE  STAGING    QA  LOCAL                        │
@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                          │
 │                                                          │
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · F1 +5 more
+ RO   TAP   N+1 ×1   j/k navigate · ? +5 more

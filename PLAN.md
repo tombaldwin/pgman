@@ -283,194 +283,47 @@ six tolerate-level items — the final batch in flight. Lesson recorded
 in the memory note: a review that only reads code and snapshots misses
 the first five minutes against a real server.
 
-## Hands-on UX round — 2026-09-03 · **in progress**
+## Done since the release panel (2026-09-03 → 2026-10-20)
 
-Tom ran the binary in a real Spring project and the first
-minutes produced what no reviewer had: F5 is wrong on a Mac, the
-editor looked like a one-line prompt, tabs were invisible, there was
-no way to resize or maximise a pane, and formatting needed an external
-binary. Landed since: **Enter runs a `;`-terminated statement**
-(psql's rule) with Alt-Enter as the unterminated escape hatch; the
-editor **opens five lines** and grows to 40 % of the body; **zoom and
-manual sizing** per tab; an **always-visible tab bar** labelled by each
-tab's query; **built-in Ctrl-F formatting** (`sqlformat`, `pg_format`
-when installed, never on run or paste, and it refuses rather than
-mangle a dollar-quoted body) and **auto-indent**.
+Collapsed from their working notes; the detail is in git history and
+CHANGELOG.md.
 
-In flight: Alt chords are unusable in iTerm, so the primary bindings
-become plain keys outside typing modes — `] [` and digits for tabs,
-`z` / `Z` zoom, `+ - 0` size — with `ctrl-]` from the editor, on-screen
-hints for all of them, and `J` / `K` stepping rows in the row-detail
-view while keeping the highlighted field.
+- **Hands-on UX round** (2026-09-03): Enter runs a `;`-terminated
+  statement, a five-line editor, zoom and sizing, an always-visible tab
+  bar, built-in formatting, plain-key bindings for iTerm (`] [`, digits,
+  `z`, `+ - 0`) with on-screen hints.
+- **MCP server, Parts A and B** (2026-10-19): `doctor`, `connections`,
+  `query`, `sessions_locks`, `pending_patches`, Secrets Manager
+  credentials, `primary` / replica roles. Smoke-tested read-only against
+  examplecorp local and demo; Prod untouched.
+- **Environments** (2026-10-19): the `E` overview as home, `rds` /
+  `static` / `docker` sources, connect from a row, AWS discovery (TUI,
+  CLI, MCP), opt-in probes through replicas with one ssh per bastion,
+  the backlog batch (bold headers, tunnel cache, auto-probe, docker).
+- **Engineer batch** (PR #42, 2026-10-20): upgrade targets, migration
+  tools, blocked/long sessions, lag trend, drift (`v`), RDS log errors
+  (`l`), `schema_lint`, and applying patches (`P`, `apply_patches`)
+  after a Fable safety review whose eleven findings were each fixed in
+  their own commit.
 
-**The lesson, recorded in memory**: five reviewers and four rounds did
-not find any of this. Fifteen minutes of the maintainer using the tool
-for its actual purpose did.
+## Robustness pass — 2026-10-20 · review · **in review** (branch `robustness-pass`)
 
-## MCP server, Part A — 2026-10-19 · architecture · **in progress**
+Tom: "anything else you can do for a few hours to make things as useful
+and robust as possible. Maybe a review?" Four Fable reviewers, read-only,
+in parallel: a hand-driven tmux session (`--demo` and the test Postgres),
+MCP security, environments correctness, and robustness plus docs drift.
+Findings are verified, fixed one per commit with a CAUGHT where a guard
+is added, and anything deferred goes to BACKLOG.md with a reason.
 
-Tom wants examplecorp's database access to move to pgman the way it already
-uses ebman over MCP, so real use drives features. Part A is the
-read-only slice: `pgman mcp serve`, stdio JSON-RPC, porting ebman's
-patterns (stdout is protocol only; concurrent, time-bounded tool calls;
-`doctor` never cut; a CAVEATS paragraph per tool; `--read-only` /
-`--allow-writes`).
-
-Design note:
-
-- **Tools**: `doctor`, `connections`, `query`. No write verbs exist, so
-  `--allow-writes` with any value is a usage error rather than a flag
-  that silently grants nothing.
-- **Where connections come from** (Tom, 2026-10-19): connections that
-  tunnel or carry secrets live in the operator's own
-  `connections.toml` under `util::config_dir()`, never in the project
-  toml. Project files keep local-only connections. MCP has no keypress,
-  so a project connection is connectable only when the server was
-  started with `--project-connections` — the same deliberate act as
-  batch's `--discovered` — and one with a tunnel (field *or* URL param)
-  is never connectable.
-- **`query`**: one statement, connection forced read-only whatever
-  `safety.toml` says, the same `check_batch_safety` guards with no
-  `--yes` (a `Confirm` guard is a refusal — nobody is there to
-  confirm), a row cap with a `truncated` flag, the profile's
-  `statement_timeout`. Rows stream through a capped runner in
-  `conn.rs` so the `Db` effect stays in the data layer.
-- **Later** (BACKLOG.md, "MCP server — after Part A"): Part B
-  (`sessions_locks`, `pending_patches`, and a Secrets Manager credential
-  resolver — Tom dropped 1Password the same day — with reads routed to
-  the read-only replica), then a two-phase `apply_patches` with its own
-  safety review.
-
-Landed on branch `mcp-part-a`: the capped typed runner, the
-safety-config loader and discovery moved into the library (one commit
-each), then the server. Smoke-tested 2026-10-19 against examplecorp's local ledger-db
-from `~/git/examplecorp` with `--project-connections`: four Spring/IntelliJ
-connections listed with no password values and the two `ledger` entries
-linked; `t_schema_version` read back (latest scriptId 248);
-`default_transaction_read_only` = `on`. It found one defect: a refused
-write relayed batch's "re-run with --yes", which an MCP client cannot
-do (fixed, with a guard). Remaining: review and merge of `mcp-part-a`.
-
-## MCP server, Part B — 2026-10-19 · behaviour · **in review**
-
-Tom, relayed by the examplecorp Lead: "do pgman part B". Three stacked PRs,
-each based on the one before so each review stays small:
-
-- **B1 `sessions_locks`** (branch `mcp-b1-sessions-locks`): long
-  transactions, blockers and blocking sessions, and locks on named
-  tables, plus `server_is_replica` from `pg_is_in_recovery()`. Table
-  names must be plain identifiers.
-- **B2 `pending_patches`** (branch `mcp-b2-pending-patches`): a
-  `[patches]` block (dir, table, column). Each id is read from the
-  file's own version-row INSERT. Against examplecorp local it found 249–251
-  pending, plus 16 ids (225–232, 235–242) recorded while the file's
-  version row is commented out.
-- **B3 secrets and roles** (branch `mcp-b3-secrets-replica`): `secret`,
-  `aws_region`, `aws_profile`, `aws_account` and `role` in
-  `connections.toml`. The secret is read through the `aws` CLI, with
-  the account checked first. A `primary` connection serves only
-  `sessions_locks`.
-
-Demo smoke test, 2026-10-19, read-only, on Tom's go: the
-`connections.toml` entries `examplecorp-demo` (replica) and
-`examplecorp-demo-primary` go through the jumphost tunnel, which allows the
-port forward, with secrets read via the aws CLI and the account
-checked. The replica reported `pg_is_in_recovery` true and
-`default_transaction_read_only` on. `t_schema_version` is at 251 with
-nothing pending, and the same 16 ids are recorded while the file's
-version row is commented out. `sessions_locks` worked on both the
-replica and the primary; `query` on the primary was refused. Neither
-secret's password appears in the log or the tool output. Prod has not
-been touched.
-
-## Environments overview, step 1 — 2026-10-19 · behaviour · **in review**
-
-Tom: "something like ebman's main screen", every database in an
-environment with its replicas, configurable beyond RDS (local databases,
-hand-listed remote groups, other clouds). Step 1 (branch `envs-step1`):
-
-- `inventory`: environments of targets from pluggable sources. `rds`
-  runs `describe-db-instances` through the shared `aws_cli` (account
-  checked first; replicas of a match come along). `static` takes names
-  from `connections.toml`. Unknown config keys are errors.
-- An `E` screen that needs no connection: replicas sit under their
-  primary, columns are sized to the data and end in an ellipsis rather
-  than being cut, status sorts ahead of engine so a stopped instance
-  shows on a narrow terminal, and a detail line gives the focused
-  database's full endpoint, class and AZ. Plus an `environments` MCP
-  tool.
-- The loader is injected (`EnvironmentsLoader`) and `None` by default,
-  so no test can read the real config or run the aws CLI. `--demo` gets
-  a synthetic fixture.
-
-Checked live against examplecorp's account using a scratch config, with no
-database connections: demo, prod and dev+test, 10 databases. Demo's
-primary showed `backing-up` at the time. Driven by hand in tmux, which
-is what moved the endpoint out of the table and into the detail line.
-
-## Environments: connect and discovery — 2026-10-19 · behaviour · **in review**
-
-Tom: "a way of connecting to an environment in the ui", and tools to set
-environments up, including auto-discovery of AWS. Branch
-`env-connect-model`, one commit per step:
-
-- `environments.toml` carries `ssh_tunnel`, `sslmode`, `user` and
-  `[environments.secrets]` (per server or server/database); every row
-  gets a `ConnectSpec` or the reason it has none.
-- `Enter` in the overview connects. A replica opens read-only; a primary
-  gets its safety profile (Tom's choice). A secret is read from Secrets
-  Manager at that moment through an injected fetcher, `None` by default.
-- `pgman env discover [--save]`, `d` in the overview (choose, preview
-  what is appended, save) and the MCP tools `environments_discover` /
-  `environments_save` (refused under `--read-only`). Discovery groups
-  each primary with its replicas, matches secrets by name and leaves ties
-  as notes, and finds the bastion in the VPC. It reads names only, never
-  a secret's value. A save only appends, and the result must load.
-
-Run against examplecorp's account (print only, nothing saved): demo,
-development, production and test, with the right per-database secrets
-and the bastion. No database was connected to.
-
-Then the open items:
-
-- Saves take a lock file, so a TUI save and an MCP or CLI save in
-  another process can't lose one another's addition.
-- `p` in the discovery view tries the next AWS scope: the ambient
-  profile, the scopes environments.toml names, then CLI profiles.
-- Environments step 2: `probe = true` adds patch level, pending patches
-  and replica lag. It reads through replicas, uses one ssh per bastion
-  (`SshTunnel::open_many`, with `conn::connect_via` keeping the real
-  hostname for TLS), and every connection is read-only and bounded.
-  Tested against the local test Postgres only; no examplecorp database was
-  probed.
-- The candor `Unknown` on `on_msg` predates this branch (a fresh scan of
-  main shows it).
-
-## Backlog batch — 2026-10-19 · behaviour · **in review**
-
-Tom: "do the other items in the backlog". Branch `backlog-batch`, one
-commit per item:
-
-- Result headers are bold and underlined, never re-cased.
-- `--batch --discovered` counts one database declared twice as one
-  candidate.
-- Discovery proposals carry the project's `version_table`; `probe`
-  stays off, with a note.
-- MCP `environments` takes `probe: true` (opted-in environments only).
-- `R` in the overview probes again every 30 s while it's open (opt-in).
-- MCP keeps an ssh tunnel open between calls to the same database (5
-  minutes idle); every call still gets a fresh read-only session. It's
-  tested end to end with a fake `ssh` forwarding to the test Postgres.
-- A `docker` environment source, plus `password_env`. That fixed docs
-  that promised `~/.pgpass` and `PGPASSWORD`, which pgman never read for
-  environments.
-
-Skipped: two-phase `apply_patches`. It writes to databases (Prod
-included) through MCP, and needs its own safety review and Tom's design
-decisions first.
-
-ebman's switch to `tui_common::chrome` was handed to the ebman session
-(ebman-50), which is reconciling `tb-tui-common` (0.2.2) as it goes.
+Landed: two security HIGHs (`U&"…"` escaped names past the classifier,
+reproduced against a real server; MCP results without a byte budget),
+replica lag on a quiet primary, `--batch`'s silent 1000-row cap,
+`:connect` echoing a password, `:readonly` lying about the live session,
+conflicting `sslmode`s, a 10 s connect timeout, Hibernate `show_sql`
+lines, find eating `n`, Flyway baselines, cursor-by-name on refresh,
+probes keeping their last reading, the demo's dead panels, and more.
+A streaming standby now runs in the test compose (and CI uses it). The
+rest is under "From the robustness pass" in BACKLOG.md.
 
 ## Release day
 

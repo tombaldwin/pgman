@@ -26,4 +26,4 @@ expression: dump(&buf)
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   j/k navigate · y yank suggestion · r refresh · q / esc close · F1 help
+ RO   j/k navigate · y yank suggestion · r refresh · q / esc close · ? help

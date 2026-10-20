@@ -14,12 +14,12 @@ expression: dump(&buf)
 │  FROM users                                                                  │
 │  WHERE plan = 'pro'                                                          │
 │  ORDER BY ╭[ ◆ confirm ◆ ]───────────────────────────────────────╮           │
-╰───────────│run (DELETE without WHERE) · will be refused — this   │───────────╯
-╭[ ◆ result │session is read-only                                  │───────────╮
+╰───────────│run (DELETE without WHERE) · Postgres will refuse it —│───────────╯
+╭[ ◆ result │this session is read-only                             │───────────╮
 │id  email  │                                                      │           │
 │1   ada@exa│DELETE FROM orders                                    │           │
 │2   linus@e│                                                      │           │
-│3   grace@e│y = run · n / esc = cancel                            │           │
+│3   grace@e│y = send it anyway · n / esc = cancel                 │           │
 │4   alan@ex╰──────────────────────────────────────────────────────╯           │
 │5   edsger@example.com     free  2026-03-03 11:22:00+00                       │
 │6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │

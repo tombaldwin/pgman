@@ -64,6 +64,12 @@ pub fn check_patch(
         return Err("the patch has no statements".to_string());
     }
     for s in &statements {
+        if crate::safety::has_unicode_escape(s) {
+            return Err(
+                "the patch uses unicode-escaped names (U&\"…\"), which pgman can't check; apply it by hand"
+                    .into(),
+            );
+        }
         let tokens = crate::safety::code_tokens(s);
         if matches!(tokens.first().map(String::as_str), Some("set" | "reset"))
             || tokens.iter().any(|t| t == "set_config")
@@ -224,6 +230,10 @@ mod tests {
             ("DROP TABLE t;", "blocked"),
             ("SET lock_timeout = 0;", "session settings"),
             ("RESET lock_timeout;", "session settings"),
+            (
+                "SELECT U&\"set_\\0063onfig\"('lock_timeout', '0', true);",
+                "unicode-escaped",
+            ),
             ("SET LOCAL statement_timeout = 0;", "session settings"),
             ("set standard_conforming_strings = off;", "session settings"),
             (

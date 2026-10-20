@@ -19,11 +19,12 @@ expression: dump(&buf)
 ╭[ ◆ result · 6 ro│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)            │─────────────────╮
 │id  email        │                                                                                  │                 │
 │1   ada@example.c│   grid                                                                           │                 │
-│2   linus@example│     q             quit (esc here is a no-op so a reflex press doesn't lose the   │                 │
-│3   grace@example│                   session)                                                       │                 │
-│4   alan@example.│     ? / F1        toggle this help (both work from every non-typing mode)        │                 │
-│5   edsger@exampl│     :             command bar — see the ': commands' section                     │                 │
-│6   katherine@exa│     A             about pgman (version, credits)                                 │                 │
+│2   linus@example│     q             quit                                                           │                 │
+│3   grace@example│     esc           back to the environments overview, when environments are       │                 │
+│4   alan@example.│                   configured                                                     │                 │
+│5   edsger@exampl│     ? / F1        toggle this help (both work from every non-typing mode)        │                 │
+│6   katherine@exa│     :             command bar — see the ': commands' section                     │                 │
+│                 │     A             about pgman (version, credits)                                 │                 │
 │                 │     e / i / tab   focus editor                                                   │                 │
 │                 │     c             change connection (opens the picker mid-session)               │                 │
 │                 │     S             schema browser (psql `\d` equivalent)                          │                 │
@@ -33,8 +34,7 @@ expression: dump(&buf)
 │                 │     ] / [  1..9   next / prev tab · tab N — see the tabs section                 │                 │
 │                 │     T             slow queries (pg_stat_statements top-N)                        │                 │
 │                 │     L             active sessions + locks (pg_stat_activity)                     │                 │
-│                 │     E             environments overview (no connection needed)                   │                 │
-│                 │ ↓ 230 more below                                                                 │                 │
+│                 │ ↓ 231 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 ╰──────────────────────────────────────────────────────────────────────────────────╯                 │
 │                                                                                                                      │

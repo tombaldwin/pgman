@@ -156,11 +156,21 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
 /// transaction there was the wrong thing to confirm. Pure / testable.
 pub(crate) fn confirm_wrap_note(read_only: bool, wrap_in_tx: bool) -> &'static str {
     if read_only {
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     } else if wrap_in_tx {
         " · will wrap in transaction"
     } else {
         ""
+    }
+}
+
+/// The confirm card's keys: under a read-only session `y` sends a
+/// statement Postgres will refuse, and says so. Pure.
+pub(crate) fn confirm_action_line(read_only: bool) -> &'static str {
+    if read_only {
+        "y = send it anyway · n / esc = cancel"
+    } else {
+        "y = run · n / esc = cancel"
     }
 }
 
@@ -207,7 +217,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "y = run · n / esc = cancel",
+        confirm_action_line(app.read_only),
         Style::default().fg(theme.muted),
     )));
     // Size to the content — every line, not just the SQL: the
@@ -777,7 +787,13 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
 
 pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let popup = centered_pct(area, 70, 70);
+    // On a smaller terminal 70 % left a few lines of a several-hundred
+    // line sheet: there it takes the whole body.
+    let popup = if area.width < 120 || area.height < 30 {
+        area
+    } else {
+        centered_pct(area, 70, 70)
+    };
     // Body content width: popup minus borders (2) and the uniform(1)
     // padding (2) on the horizontal axis — the same budget `inner_height`
     // below uses on the vertical axis. Long descriptions get wrapped to
@@ -1591,6 +1607,48 @@ pub(crate) fn drift_matrix(
     (dbs, envs, cells)
 }
 
+/// The overview's title: which view is showing, and as many of its keys
+/// as fit in `width` columns, whole and most important first. Pure.
+pub(crate) fn environments_title(ui: &crate::app::EnvironmentsUi, width: usize) -> String {
+    let (name, keys): (&str, &[&str]) = if ui.patch.is_some() {
+        ("environments · patches", &["q back"])
+    } else if ui.logs.is_some() {
+        (
+            "environments · log errors",
+            &["q back", "j/k scroll", "r again"],
+        )
+    } else if ui.drift {
+        ("environments · schema drift", &["v / q back"])
+    } else {
+        (
+            "environments",
+            &[
+                "enter connect",
+                "q close",
+                "l logs",
+                "v drift",
+                "P patches",
+                "d discover",
+            ],
+        )
+    };
+    // The border's corners and the title chrome take a few columns.
+    let room = width.saturating_sub(8);
+    let mut title = format!(" {name} ");
+    for (i, k) in keys.iter().enumerate() {
+        let next = if i == 0 {
+            format!(" {name} — {k} ")
+        } else {
+            format!("{}· {k} ", title)
+        };
+        if crate::ui::display_width(&next) > room {
+            break;
+        }
+        title = next;
+    }
+    title
+}
+
 /// The log view's lines: one heading, then each distinct error. Pure.
 pub(crate) fn log_lines(v: &crate::app::LogsView) -> Vec<(String, bool)> {
     let mut out = vec![(
@@ -1988,7 +2046,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
             theme,
-            " environments — enter connect · d discover · q close ",
+            &environments_title(&app.environments, popup.width as usize),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -3079,6 +3137,23 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_overview_title_names_the_view_and_its_keys() {
+        let mut ui = crate::app::EnvironmentsUi::default();
+        assert_eq!(
+            environments_title(&ui, 200),
+            " environments — enter connect · q close · l logs · v drift · P patches · d discover "
+        );
+        // Narrow: whole keys only, the important ones kept.
+        let narrow = environments_title(&ui, 50);
+        assert_eq!(narrow, " environments — enter connect · q close ");
+        assert_eq!(environments_title(&ui, 10), " environments ");
+        ui.drift = true;
+        assert!(environments_title(&ui, 200).contains("schema drift — v / q back"));
+        ui.logs = Some(crate::app::LogsView::default());
+        assert!(environments_title(&ui, 200).contains("log errors — q back"));
     }
 
     #[test]

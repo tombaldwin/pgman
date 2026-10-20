@@ -16,7 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (public beta)",
-    after_help = "MCP server: `pgman mcp serve` runs a read-only stdio MCP server; see docs/mcp.md."
+    after_help = "MCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.

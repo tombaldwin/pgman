@@ -9,27 +9,27 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan =╭────────────────────────────────────────────────────────────────────╮              │
-│  ORDER BY cre│                                                                    │              │
-│              │ pgman — keys (? / F1 help · : commands · F2 error detail · F3      │              │
-╰──────────────│ notify)                                                            │──────────────╯
-╭[ ◆ result · 6│                                                                    │──────────────╮
-│id  email     │   grid                                                             │              │
-│1   ada@exampl│     q             quit (esc here is a no-op so a reflex press      │              │
-│2   linus@exam│                   doesn't lose the session)                        │              │
-│3   grace@exam│     ? / F1        toggle this help (both work from every           │              │
-│4   alan@examp│                   non-typing mode)                                 │              │
-│5   edsger@exa│     :             command bar — see the ': commands' section       │              │
-│6   katherine@│     A             about pgman (version, credits)                   │              │
-│              │     e / i / tab   focus editor                                     │              │
-│              │ ↓ 286 more below                                                   │              │
-│              │                                                                    │              │
-│              ╰────────────────────────────────────────────────────────────────────╯              │
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
+│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                            │
 │                                                                                                  │
+│   grid                                                                                           │
+│     q             quit                                                                           │
+│     esc           back to the environments overview, when environments are configured            │
+│     ? / F1        toggle this help (both work from every non-typing mode)                        │
+│     :             command bar — see the ': commands' section                                     │
+│     A             about pgman (version, credits)                                                 │
+│     e / i / tab   focus editor                                                                   │
+│     c             change connection (opens the picker mid-session)                               │
+│     S             schema browser (psql `\d` equivalent)                                          │
+│     W             schema wizard / lint (missing PK, mixed-case, reserved words …)                │
+│     Q             saved queries (named, persisted)                                               │
+│     ] / [  1..9   next / prev tab · tab N — see the tabs section                                 │
+│     T             slow queries (pg_stat_statements top-N)                                        │
+│     L             active sessions + locks (pg_stat_activity)                                     │
+│     E             environments overview (no connection needed)                                   │
+│     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)                    │
+│ ↓ 219 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help
