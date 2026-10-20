@@ -1555,10 +1555,51 @@ pub(crate) struct DriftCell {
     pub behind: bool,
 }
 
+/// How one probed version compares with the others in the drift matrix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DriftKey {
+    /// A version that sorts into apply order: a version table's id, or
+    /// Flyway's `1.2.10` as numbers.
+    Ordered(Vec<u64>),
+    /// A name (a Liquibase changeset, Django's `app.migration`, an
+    /// Alembic revision), which can only match or differ, and how many
+    /// migrations the tool records.
+    Named { applied: usize, name: String },
+}
+
+/// A probed row's [`DriftKey`], or `None` when it read no version. Pure.
+fn drift_key(p: &crate::query::probe::Probe) -> Option<DriftKey> {
+    use crate::query::migrations::{version_key, Tool};
+    if let Some(v) = p.schema_version {
+        return Some(DriftKey::Ordered(vec![v.max(0) as u64]));
+    }
+    let label = p.schema_label.as_ref()?;
+    let ordered = match &p.migration_tool {
+        // A version table's id as written.
+        None => true,
+        Some(t) => Tool::from_name(t).is_none_or(Tool::versions_ordered),
+    };
+    Some(if ordered {
+        DriftKey::Ordered(version_key(label))
+    } else {
+        DriftKey::Named {
+            applied: p.migrations_applied.unwrap_or(0),
+            name: label.clone(),
+        }
+    })
+}
+
 /// The schema-drift matrix: database names (rows) by environments
 /// (columns), each cell the database's schema version there, read from
-/// whichever of its rows the probe answered (a primary shows its
-/// replica's). `—` where nothing was read. Pure.
+/// every row of it the probe answered (a primary shows its replica's).
+/// `—` where nothing was read.
+///
+/// A cell is flagged when it has patches pending or is behind the newest
+/// version seen. Names that don't sort are behind when fewer migrations
+/// are recorded than the most anywhere, and all flagged when two
+/// databases with that most name different ones. An environment whose
+/// rows of one database disagree (two primaries, a replica behind) shows
+/// each version and is flagged. Pure.
 pub(crate) fn drift_matrix(
     reports: &[crate::inventory::EnvReport],
     probes: &[Vec<crate::app::ProbeState>],
@@ -1573,44 +1614,74 @@ pub(crate) fn drift_matrix(
             }
         }
     }
-    // The version a database shows in an environment: the first row of
-    // that database with a probed version, and its ordering key.
-    let read = |ri: usize, db: &str| -> Option<(String, Vec<u64>, bool)> {
-        reports[ri].targets.iter().enumerate().find_map(|(ti, t)| {
-            if t.database != db {
-                return None;
-            }
-            let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
-                return None;
-            };
-            let (text, _) = schema_cell(p);
-            let key: Vec<u64> = match (p.schema_version, &p.schema_label) {
-                (Some(v), _) => vec![v.max(0) as u64],
-                (None, Some(l)) => l
-                    .split(['.', '_'])
-                    .map(|x| x.parse().unwrap_or(0))
-                    .collect(),
-                (None, None) => return None,
-            };
-            Some((text, key, p.pending.unwrap_or(0) > 0))
-        })
+    // Every probed version of a database in an environment: its text,
+    // key and whether patches are pending, in row order.
+    let read = |ri: usize, db: &str| -> Vec<(String, DriftKey, bool)> {
+        reports[ri]
+            .targets
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.database == db)
+            .filter_map(|(ti, _)| {
+                let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
+                    return None;
+                };
+                let key = drift_key(p)?;
+                Some((schema_cell(p).0, key, p.pending.unwrap_or(0) > 0))
+            })
+            .collect()
     };
     let cells: Vec<Vec<DriftCell>> = dbs
         .iter()
         .map(|db| {
-            let row: Vec<Option<(String, Vec<u64>, bool)>> =
+            let row: Vec<Vec<(String, DriftKey, bool)>> =
                 (0..reports.len()).map(|ri| read(ri, db)).collect();
-            let newest = row.iter().flatten().map(|(_, k, _)| k.clone()).max();
-            row.into_iter()
-                .map(|c| match c {
-                    Some((text, key, pending)) => DriftCell {
-                        behind: pending || newest.as_ref().is_some_and(|n| &key < n),
-                        text,
-                    },
-                    None => DriftCell {
-                        text: "—".into(),
-                        behind: false,
-                    },
+            let keys = || row.iter().flatten().map(|(_, k, _)| k);
+            let newest = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Ordered(v) => Some(v),
+                    DriftKey::Named { .. } => None,
+                })
+                .max();
+            let most = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Named { applied, .. } => Some(*applied),
+                    DriftKey::Ordered(_) => None,
+                })
+                .max();
+            let mut names_at_most: Vec<&str> = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Named { applied, name } if Some(*applied) == most => {
+                        Some(name.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            names_at_most.sort_unstable();
+            names_at_most.dedup();
+            let behind = |k: &DriftKey| match k {
+                DriftKey::Ordered(v) => newest.is_some_and(|n| v < n),
+                DriftKey::Named { applied, .. } => Some(*applied) < most || names_at_most.len() > 1,
+            };
+            row.iter()
+                .map(|versions| {
+                    if versions.is_empty() {
+                        return DriftCell {
+                            text: "—".into(),
+                            behind: false,
+                        };
+                    }
+                    let mut texts: Vec<&str> = Vec::new();
+                    for (t, _, _) in versions {
+                        if !texts.contains(&t.as_str()) {
+                            texts.push(t);
+                        }
+                    }
+                    DriftCell {
+                        behind: texts.len() > 1
+                            || versions.iter().any(|(_, k, pending)| *pending || behind(k)),
+                        text: texts.join(" / "),
+                    }
                 })
                 .collect()
         })
@@ -2043,7 +2114,7 @@ fn draw_drift(f: &mut Frame, inner: Rect, app: &App) {
         )
     };
     let mut lines = vec![Line::from(Span::styled(
-        "  schema version of each database, by environment — yellow is behind the newest or has patches pending",
+        "  schema version by environment — yellow: behind, differs, or patches pending",
         Style::default().fg(theme.muted),
     ))];
     lines.push(Line::from(""));
@@ -3804,6 +3875,126 @@ mod tests {
         ];
         let (_, _, cells) = drift_matrix(&demo, &probes);
         assert!(cells[0][0].behind && cells[0][1].behind);
+    }
+
+    #[test]
+    fn drift_compares_named_versions_by_count_and_name_not_as_numbers() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let named = |tool: &str, name: &str, applied: usize| {
+            ProbeState::done(Ok(Probe {
+                migration_tool: Some(tool.into()),
+                schema_label: Some(name.into()),
+                migrations_applied: Some(applied),
+                ..Probe::default()
+            }))
+        };
+        let cells = |staging: ProbeState, qa: ProbeState| {
+            drift_matrix(&demo, &[vec![ProbeState::ViaReplica, staging], vec![qa]]).2[0]
+                .iter()
+                .map(|c| c.behind)
+                .collect::<Vec<_>>()
+        };
+        // Two changeset ids that read as no number at all: once both
+        // were 0, so neither was flagged.
+        assert_eq!(
+            cells(
+                named("liquibase", "add-orders", 12),
+                named("liquibase", "add-users", 12)
+            ),
+            [true, true],
+            "same count, different names: they differ, neither is known newer"
+        );
+        assert_eq!(
+            cells(
+                named("liquibase", "add-orders", 13),
+                named("liquibase", "add-users", 12)
+            ),
+            [false, true],
+            "fewer recorded is behind"
+        );
+        assert_eq!(
+            cells(
+                named("django", "shop.0007_orders", 9),
+                named("django", "shop.0007_orders", 9)
+            ),
+            [false, false]
+        );
+        // Django's `auth.0012_x` read as numbers was "newer" than
+        // `shop.0007_orders` whatever was applied.
+        assert_eq!(
+            cells(
+                named("django", "auth.0012_x", 8),
+                named("django", "shop.0007_orders", 9)
+            ),
+            [true, false]
+        );
+        // Flyway's still sort as versions: 1.10 is after 1.9.
+        assert_eq!(
+            cells(named("flyway", "1.10", 1), named("flyway", "1.9", 50)),
+            [false, true]
+        );
+    }
+
+    #[test]
+    fn drift_shows_every_version_of_a_database_in_an_environment() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let probe = |v: i64| {
+            ProbeState::done(Ok(Probe {
+                schema_version: Some(v),
+                pending: Some(0),
+                ..Probe::default()
+            }))
+        };
+        // Both of staging's rows answered, and disagree.
+        let (_, _, cells) = drift_matrix(&demo, &[vec![probe(251), probe(249)], vec![probe(251)]]);
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "v251 / v249".into(),
+                behind: true
+            },
+            "the second row isn't hidden behind the first"
+        );
+        assert!(!cells[0][1].behind);
+        let (_, _, cells) = drift_matrix(&demo, &[vec![probe(251), probe(251)], vec![probe(251)]]);
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "v251".into(),
+                behind: false
+            },
+            "agreeing rows show once"
+        );
+        // Rows whose versions don't compare (a different tool on each)
+        // are neither behind the other, but they still disagree.
+        let tool = |tool: &str, label: &str| {
+            ProbeState::done(Ok(Probe {
+                migration_tool: Some(tool.into()),
+                schema_label: Some(label.into()),
+                migrations_applied: Some(3),
+                ..Probe::default()
+            }))
+        };
+        let (_, _, cells) = drift_matrix(
+            &demo,
+            &[
+                vec![tool("flyway", "2"), tool("liquibase", "add-users")],
+                vec![ProbeState::Off],
+            ],
+        );
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "flyway 2 / liquibase add-users".into(),
+                behind: true
+            }
+        );
     }
 
     #[test]

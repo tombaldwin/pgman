@@ -6,7 +6,7 @@ expression: dump(&buf)
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭[ ◆ environments · schema drift ◆ ] v / q back ───────────╮
-│  schema version of each database, by environment — yellow│
+│  schema version by environment — yellow: behind, differs,│
 │                                                          │
 │    DATABASE  STAGING    QA  LOCAL                        │
 │    shop      v251 (+1)  —   —                            │

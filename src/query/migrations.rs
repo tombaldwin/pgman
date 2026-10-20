@@ -64,6 +64,24 @@ impl Tool {
         }
     }
 
+    /// Whether this tool's versions sort into apply order, so that one
+    /// environment's can be called behind another's. Liquibase changeset
+    /// ids, Django's `app.migration` and Alembic revisions are names: two
+    /// databases can only be the same or differ.
+    pub fn versions_ordered(self) -> bool {
+        match self {
+            Tool::Flyway | Tool::Sqlx | Tool::SchemaMigrations => true,
+            // Prisma names its migrations `<timestamp>_<name>`.
+            Tool::Prisma => true,
+            Tool::Liquibase | Tool::Django | Tool::Alembic => false,
+        }
+    }
+
+    /// The tool [`Tool::name`] names.
+    pub fn from_name(name: &str) -> Option<Tool> {
+        Tool::ALL.into_iter().find(|t| t.name() == name)
+    }
+
     /// The read for this tool's history. Each returns whole history in
     /// apply order (oldest first), capped by the caller.
     pub fn sql(self) -> &'static str {
@@ -390,6 +408,18 @@ mod tests {
         ]);
         let m = parse(Tool::Flyway, &undone, None);
         assert_eq!((m.version.as_deref(), m.applied), (Some("1"), 1));
+    }
+
+    #[test]
+    fn named_versions_arent_ordered_and_every_tool_is_found_by_name() {
+        for t in Tool::ALL {
+            assert_eq!(Tool::from_name(t.name()), Some(t));
+        }
+        assert_eq!(Tool::from_name("nope"), None);
+        assert!(Tool::Flyway.versions_ordered());
+        assert!(!Tool::Liquibase.versions_ordered());
+        assert!(!Tool::Django.versions_ordered());
+        assert!(!Tool::Alembic.versions_ordered());
     }
 
     #[test]

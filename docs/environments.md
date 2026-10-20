@@ -348,7 +348,7 @@ confirmed by typing its name; `protected = false` turns that off.
 | `Enter` | Connect to the database under the cursor. |
 | `P` | Apply the database's pending patches: a plan to confirm (`y`, or the environment's name when it's protected), then each patch in its own transaction. In the plan, `o` plans again letting patches that can't run in a transaction run outside one. See [applying patches](#applying-patches). |
 | `l` | Recent errors from the focused server's RDS log (ERROR, FATAL, PANIC from the newest files, grouped with a count). `STATEMENT` lines are left out. |
-| `v` | Schema drift: each database's version by environment, behind or pending in yellow. `v` again for the list. |
+| `v` | Schema drift: each database's version by environment, behind or pending in yellow. Versions that are names (Liquibase, Django, Alembic) can't be ordered: fewer migrations recorded is behind, and two different names at the same count are both yellow. An environment with several rows of one database (two primaries, a lagging replica) shows each version that differs. `v` again for the list. |
 | `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |
 | `d` | Discover environments from AWS (`space` choose, `s` save, `p` next profile/scope, `q` back). |
 | `r` | List again. |

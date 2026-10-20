@@ -2679,8 +2679,11 @@ fn probes_recognise_common_migration_tools() {
         Some("flyway migration 1.2 failed")
     );
     assert_eq!(
-        results["django"].schema_label.as_deref(),
-        Some("shop.0007_orders")
+        (
+            results["django"].schema_label.as_deref(),
+            results["django"].migrations_applied
+        ),
+        (Some("shop.0007_orders"), Some(2))
     );
     assert_eq!(
         results["prisma"].schema_label.as_deref(),

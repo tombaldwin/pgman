@@ -75,6 +75,8 @@ pub struct Probe {
     /// version table, the highest id as written when none of its ids is
     /// an integer (`schema_version` is then `None`).
     pub schema_label: Option<String>,
+    /// How many migrations that tool records as applied.
+    pub migrations_applied: Option<usize>,
 }
 
 /// Where a probe reads the schema version from.
@@ -149,6 +151,7 @@ pub async fn run(
                 Ok(Some(m)) => {
                     probe.migration_tool = Some(m.tool.to_string());
                     probe.schema_label = m.version;
+                    probe.migrations_applied = Some(m.applied);
                     probe.pending = m.pending;
                     // `migrations migration 12 failed` reads as a typo: name
                     // the shared table instead.
