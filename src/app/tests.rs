@@ -11194,3 +11194,16 @@ fn c_with_only_a_dsn_points_at_connect_not_at_dsn() {
     press(&mut a, KeyCode::Char('c'));
     assert!(a.last_status.as_deref().unwrap().contains("pass --dsn"));
 }
+
+#[test]
+fn closing_the_popup_by_typing_takes_its_status_with_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from orders");
+    assert!(a.completion.is_some());
+    assert!(a.last_status.as_deref().unwrap().starts_with("completion"));
+    type_str(&mut a, ";");
+    assert!(a.completion.is_none());
+    assert_eq!(a.last_status, None, "the popup's status left with it");
+}

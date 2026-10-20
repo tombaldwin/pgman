@@ -2778,6 +2778,15 @@ impl App {
         }
         let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
+            // The popup closed (a `;`, a `(`): its `completion: 1 match
+            // · Tab to pick` would otherwise outlive it.
+            if self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("completion"))
+            {
+                self.last_status = None;
+            }
             return;
         };
         // Empty prefix is fine — the candidate set falls back to "all
