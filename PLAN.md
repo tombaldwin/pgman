@@ -306,7 +306,7 @@ CHANGELOG.md.
   after a Fable safety review whose eleven findings were each fixed in
   their own commit.
 
-## Robustness pass — 2026-10-20 · review · **in progress**
+## Robustness pass — 2026-10-20 · review · **in review** (branch `robustness-pass`)
 
 Tom: "anything else you can do for a few hours to make things as useful
 and robust as possible. Maybe a review?" Four Fable reviewers, read-only,
@@ -314,6 +314,16 @@ in parallel: a hand-driven tmux session (`--demo` and the test Postgres),
 MCP security, environments correctness, and robustness plus docs drift.
 Findings are verified, fixed one per commit with a CAUGHT where a guard
 is added, and anything deferred goes to BACKLOG.md with a reason.
+
+Landed: two security HIGHs (`U&"…"` escaped names past the classifier,
+reproduced against a real server; MCP results without a byte budget),
+replica lag on a quiet primary, `--batch`'s silent 1000-row cap,
+`:connect` echoing a password, `:readonly` lying about the live session,
+conflicting `sslmode`s, a 10 s connect timeout, Hibernate `show_sql`
+lines, find eating `n`, Flyway baselines, cursor-by-name on refresh,
+probes keeping their last reading, the demo's dead panels, and more.
+A streaming standby now runs in the test compose (and CI uses it). The
+rest is under "From the robustness pass" in BACKLOG.md.
 
 ## Release day
 

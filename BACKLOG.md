@@ -54,6 +54,53 @@ and Tom's decisions that day:
   the real thing, on the same server, so it wants its own decision —
   probably only where the profile isn't protected.
 
+### From the robustness pass (2026-10-20) — not yet done
+Four Fable reviewers (hands-on tmux, MCP security, environments
+correctness, robustness + docs). Fixed on branch `robustness-pass`;
+these remain, each verified by the reviewer unless marked:
+- **UX, keys**: F2 (error detail), F3, F4 have no plain-key alternative
+  shown (every error ends `· F2 detail`). `ctrl-w` is close-tab in the
+  grid and `\watch` in the editor, and `\watch` shows no running
+  indicator. `ctrl-c` in the grid quits with no confirm.
+- **UX, status line**: a stale error survives a later success; the
+  completion status replaces the confirm modal's own `y/n` hint;
+  `schema cache empty — connect first` while connected (no refresh key,
+  tables made by other sessions never appear); `\d` with nothing to show
+  is silent.
+- **UX, completion**: Esc after Tab loses the typed prefix (help says it
+  restores it); Enter on a `;`-terminated line accepts an open popup
+  instead of running.
+- **UX, small things**: mid-token ellipsis (environments endpoint at
+  120 cols, the patch reason, `:report`'s path); `running run…`; a
+  cancel reads as the server's error; error detail's
+  `(no extended detail — non-server error …)`; `:readonly off` on a
+  read-only profile; `c` with `--dsn` says to pass `--dsn`; no grid
+  cursor after a run until Esc; `(filtered)` with no way-out hint; the
+  log-pick popup isn't centred; `TAP N+1 ×1` on the first screen is
+  unexplained; the demo's `item` table and canned EXPLAIN; `--demo`
+  ignores `--log`.
+- **`--log -`** is documented but refused (stdin isn't a terminal):
+  read stdin before the terminal probe and use `/dev/tty`, or drop it.
+- **`\i <path>`** has no size cap and reads on the UI thread (`--log`
+  caps at 64 MB).
+- **Bracketed IPv6 DSN hosts** (`postgres://u@[::1]/db`) don't parse and
+  the error blames DNS.
+- **Environments**: `l` / `P` re-list the whole RDS account (sts,
+  describe, one engine-versions call per version) just to validate a
+  name; Aurora readers aren't told apart from the writer
+  (`describe-db-clusters`); drift compares Django / Liquibase labels as
+  numbers and reads one row per database per environment; docker misses
+  `postgis/postgis` and `docker.io/library/postgres` images, `:::5432`
+  and port ranges; a non-integer id in a text version column fails the
+  whole cell; golang-migrate's `dirty` isn't flagged; Flyway's pending
+  count reads one directory, not its locations or `.java` migrations.
+- **MCP, informational**: on a read-only session `pg_advisory_lock`,
+  `pg_notify`, `pg_logical_emit_message` and `txid_current` still run
+  (no data changes; transient). Left off the denylist deliberately.
+- **README vs CHANGELOG**: the CHANGELOG's [Unreleased] intro already
+  says `brew install`, which the README says doesn't exist yet. Release
+  day text — flip both together.
+
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
   300+ lines at 80 columns (needs sections that collapse or a topic

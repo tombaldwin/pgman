@@ -127,6 +127,17 @@ and breaking changes.
   elicitation), each runs in its own transaction with a 5 s
   `lock_timeout`, stopping at the first failure. Never on a replica, and
   only on a database `safety.toml` lets write.
+- **Safer and more honest, from a four-reviewer robustness pass.** A
+  unicode-escaped name (`U&"pg_\0072ead_file"`) no longer slips past the
+  safety classifier; MCP `query` results are capped at 16 KiB a value
+  and 1 MiB in all; a DSN with two different `sslmode`s is refused;
+  connects give up after 10 s; `:connect` takes a URL and never echoes
+  its password; `:readonly` applies to the live session, so the header
+  tells the truth. `--batch` says when a CSV/TSV export stopped at 1000
+  rows (exit 3). A caught-up replica of a quiet primary shows no lag.
+  Hibernate's `show_sql` console lines reconstruct. Find no longer eats
+  `n`. `ctrl-l` works from the start card. `--demo`'s slow queries,
+  sessions and wizard work. The help fits small terminals.
 - **`schema_lint` over MCP** — the schema wizard's findings (missing
   primary keys, unindexed foreign keys, unused indexes, bloat, …) for an
   agent to work through.
