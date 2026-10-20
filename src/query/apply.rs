@@ -211,6 +211,12 @@ pub async fn apply(
 /// read the version table again. A failure part-way leaves the earlier
 /// statements applied — and, when the version row came first, the patch
 /// recorded — so the error says exactly where it stopped.
+///
+/// No statement timeout: a `VACUUM` or a concurrent build on a large
+/// table can outlast any limit, and a concurrent build cut short is left
+/// `INVALID`. The operator cancels instead (the caller holds the
+/// connection's cancel token). The session's own timeout is restored
+/// afterwards, for the patches after this one.
 pub async fn apply_outside(
     client: &tokio_postgres::Client,
     cfg: &PatchesConfig,
@@ -218,11 +224,59 @@ pub async fn apply_outside(
     statements: &[String],
 ) -> Result<Applied, String> {
     let id = patch.version_id.or(patch.filename_number);
+    let saved: String = client
+        .query_one("SHOW statement_timeout", &[])
+        .await
+        .map(|r| r.get(0))
+        .map_err(|e| format!("could not read statement_timeout, nothing applied: {e}"))?;
+    let ran = run_without_timeout(client, statements).await;
+    // Restored whatever happened: the next patch runs on this session.
+    let restored = client
+        .execute(
+            "SELECT set_config('statement_timeout', $1, false)",
+            &[&saved],
+        )
+        .await;
+    if let Err((i, msg)) = ran {
+        let stmt = &statements[i];
+        let recorded = match (applied_ids(client, cfg).await, id) {
+            (Ok(ids), Some(id)) if ids.contains(&id) => {
+                format!("version {id} IS recorded, so it reads as applied")
+            }
+            (Ok(_), Some(id)) => format!("version {id} is not recorded"),
+            _ => "the version table couldn't be read".to_string(),
+        };
+        return Err(outside_failure(i, statements.len(), stmt, &msg, &recorded));
+    }
+    if let Err(e) = restored {
+        return Err(format!(
+            "ran, but statement_timeout couldn't be restored to {saved}; stopping: {e}"
+        ));
+    }
+    let applied = applied_ids(client, cfg)
+        .await
+        .map_err(|e| format!("ran, but the version table couldn't be read afterwards: {e}"))?;
+    Ok(Applied {
+        file: patch.file.clone(),
+        statements: statements.len(),
+        recorded: id.is_some_and(|id| applied.contains(&id)),
+    })
+}
+
+/// [`apply_outside`]'s statements, each with the lock timeout and no
+/// statement timeout; the index and server message of the first that
+/// fails.
+async fn run_without_timeout(
+    client: &tokio_postgres::Client,
+    statements: &[String],
+) -> Result<(), (usize, String)> {
     for (i, stmt) in statements.iter().enumerate() {
-        // Session-wide, there being no transaction to scope it; again
+        // Session-wide, there being no transaction to scope them; again
         // before each statement, as in `apply`.
         let reset = client
-            .batch_execute(&format!("SET lock_timeout = '{LOCK_TIMEOUT}'"))
+            .batch_execute(&format!(
+                "SET lock_timeout = '{LOCK_TIMEOUT}'; SET statement_timeout = 0"
+            ))
             .await;
         let run = match reset {
             Ok(()) => client.execute(stmt.as_str(), &[]).await.map(drop),
@@ -233,24 +287,10 @@ pub async fn apply_outside(
                 .as_db_error()
                 .map(|d| d.message().to_string())
                 .unwrap_or_else(|| e.to_string());
-            let recorded = match (applied_ids(client, cfg).await, id) {
-                (Ok(ids), Some(id)) if ids.contains(&id) => {
-                    format!("version {id} IS recorded, so it reads as applied")
-                }
-                (Ok(_), Some(id)) => format!("version {id} is not recorded"),
-                _ => "the version table couldn't be read".to_string(),
-            };
-            return Err(outside_failure(i, statements.len(), stmt, &msg, &recorded));
+            return Err((i, msg));
         }
     }
-    let applied = applied_ids(client, cfg)
-        .await
-        .map_err(|e| format!("ran, but the version table couldn't be read afterwards: {e}"))?;
-    Ok(Applied {
-        file: patch.file.clone(),
-        statements: statements.len(),
-        recorded: id.is_some_and(|id| applied.contains(&id)),
-    })
+    Ok(())
 }
 
 /// What [`apply_outside`] says when statement `i` (of `n`) failed with

@@ -3359,6 +3359,78 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
     });
 }
 
+/// Outside a transaction a statement runs with no statement timeout —
+/// a long concurrent build cut short is left INVALID — and the session's
+/// own timeout is back afterwards, for the patches after it.
+#[test]
+fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
+    let home = scratch_home("apply-outside-timeout", WRITABLE_PROFILE);
+    let vt = format!("pgman_it_otv_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let text = format!("INSERT INTO {vt} (id) VALUES (2);\nSELECT pg_sleep(1.5);");
+    let file = pgman::query::patches::patch_file("002-x.sql", &text, &cfg);
+    let statements = vec![
+        format!("INSERT INTO {vt} (id) VALUES (2)"),
+        "SELECT pg_sleep(1.5)".to_string(),
+    ];
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (notice_tx, _n) = tokio::sync::mpsc::unbounded_channel();
+        let (notification_tx, _m) = tokio::sync::mpsc::unbounded_channel();
+        // The session's own limit is shorter than the statement.
+        let client = pgman::conn::connect_only(
+            pgman::conn::Dsn::parse(DSN).unwrap(),
+            false,
+            500,
+            notice_tx,
+            notification_tx,
+        )
+        .await
+        .unwrap()
+        .0;
+        let done = pgman::query::apply::apply_outside(&client, &cfg, &file, &statements)
+            .await
+            .expect("ran past the session's 500 ms");
+        assert!(done.recorded);
+        let timeout: String = client
+            .query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(timeout, "500ms", "restored for the next patch");
+        // And restored after a failure too.
+        let bad = vec!["SELECT * FROM pgman_it_no_such_table".to_string()];
+        assert!(
+            pgman::query::apply::apply_outside(&client, &cfg, &file, &bad)
+                .await
+                .is_err()
+        );
+        let timeout: String = client
+            .query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(timeout, "500ms");
+    });
+}
+
 /// `apply_patches` end to end over stdio: the operator is asked, a wrong
 /// name applies nothing, the right one applies the pending patch.
 #[test]
