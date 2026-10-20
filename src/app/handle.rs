@@ -404,6 +404,24 @@ impl App {
                     }
                 }
             }
+            AppMsg::ReadOnlyApplied { want, result, .. } => {
+                let state = if want { "on" } else { "off" };
+                match result {
+                    Ok(()) => {
+                        self.read_only = want;
+                        self.last_status = Some(format!(
+                            "read-only {state} · this session from its next statement, and every later connect"
+                        ));
+                    }
+                    Err(e) => {
+                        // The header must say what the server will do.
+                        self.read_only = !want;
+                        self.last_error = Some(format!(
+                            "read-only {state} not applied to this session ({e}) · it applies at the next connect"
+                        ));
+                    }
+                }
+            }
             AppMsg::SchemaRefreshed { schema_cache, .. } => {
                 // Post-DDL re-fetch landed (generation already checked above) —
                 // swap in the fresh cache so completion / browser / lint /

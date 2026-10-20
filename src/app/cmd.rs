@@ -347,16 +347,45 @@ impl App {
             );
             return;
         }
-        self.read_only = want;
+        let state = if want { "on" } else { "off" };
+        let live = match (&self.conn_state, self.client.clone()) {
+            (ConnState::Connected { .. }, Some(client)) => Some(client),
+            _ => None,
+        };
+        if live.is_some() && self.tx_open {
+            // The open transaction would keep what it began with, so the
+            // header would say one thing and the server do another.
+            self.last_error = Some(format!(
+                "a transaction is open — commit (y) or roll back (n) first, then :readonly {state}"
+            ));
+            return;
+        }
         // Sticky: `connect_to_pick` recomputes `read_only` from the
         // picked database's profile, which used to discard this the
         // moment the operator reconnected.
         self.read_only_override = Some(want);
-        let state = if want { "on" } else { "off" };
-        self.last_status = Some(if matches!(self.conn_state, ConnState::Connected { .. }) {
-            format!("read-only {state} · applies at the next connect (:connect); this session keeps what it opened with")
-        } else {
-            format!("read-only {state} · the next connection opens with it {state}")
+        let Some(client) = live else {
+            self.read_only = want;
+            self.last_status = Some(format!(
+                "read-only {state} · the next connection opens with it {state}"
+            ));
+            return;
+        };
+        // The live session too: the header has to be the truth. Turning
+        // it on tightens at once; off waits for the server to agree.
+        if want {
+            self.read_only = true;
+        }
+        self.last_status = Some(format!("read-only {state} · applying to this session…"));
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            let result = crate::conn::set_session_read_only(&client, want).await;
+            let _ = tx.send(AppMsg::ReadOnlyApplied {
+                generation,
+                want,
+                result,
+            });
         });
     }
 

@@ -767,6 +767,26 @@ pub async fn connect_only(
 /// (`tunnel::SshTunnel::open_many`): TCP goes to `127.0.0.1:<via>`,
 /// while `dsn.host` stays the name TLS checks. `dsn.ssh_tunnel` must be
 /// unset — the caller owns the tunnel. Notices are dropped.
+/// Set the live session's `default_transaction_read_only`: every
+/// transaction from the next one on opens read-only (or not). The one in
+/// progress, if any, keeps what it began with — callers refuse while one
+/// is open.
+pub async fn set_session_read_only(
+    client: &tokio_postgres::Client,
+    on: bool,
+) -> Result<(), String> {
+    let sql = if on {
+        "SET default_transaction_read_only = on"
+    } else {
+        "SET default_transaction_read_only = off"
+    };
+    client.batch_execute(sql).await.map_err(|e| {
+        e.as_db_error()
+            .map(|d| d.message().to_string())
+            .unwrap_or_else(|| e.to_string())
+    })
+}
+
 pub async fn connect_via(
     dsn: Dsn,
     via: Option<u16>,

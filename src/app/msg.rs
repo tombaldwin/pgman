@@ -155,6 +155,12 @@ pub enum AppMsg {
     /// so tap events are NOT generation-tagged — they always
     /// process. `generation()` returns 0 for this variant.
     TapEvent { event: crate::tap::TapEvent },
+    /// `:readonly on|off` was applied to the live session (or wasn't).
+    ReadOnlyApplied {
+        generation: u64,
+        want: bool,
+        result: Result<(), String>,
+    },
     /// The crates.io update check finished — `Some` only when a
     /// strictly-newer release than the running binary exists.
     /// Fired at most once per session, independent of the DB
@@ -180,7 +186,8 @@ impl AppMsg {
             | AppMsg::SessionsLoaded { generation, .. }
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
-            | AppMsg::LiveLintLoaded { generation, .. } => *generation,
+            | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::TapEvent { .. }
             | AppMsg::UpdateCheck(_)
             | AppMsg::EnvironmentsLoaded(_)

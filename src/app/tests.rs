@@ -10326,3 +10326,26 @@ async fn connect_to_a_typed_url_never_shows_its_password() {
     );
     assert!(b.dsn.is_none());
 }
+
+/// `:readonly` on a live session: the header follows what the server
+/// was told, and a SET that failed puts it back to what the server does.
+#[test]
+fn readonly_applied_to_the_live_session_keeps_the_header_true() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.read_only = false;
+    let generation = a.generation;
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Ok(()),
+    });
+    assert!(a.read_only);
+    assert!(a.last_status.as_deref().unwrap().contains("this session"));
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Err("connection closed".into()),
+    });
+    assert!(!a.read_only, "not applied: the session is still writable");
+    assert!(a.last_error.as_deref().unwrap().contains("not applied"));
+}
