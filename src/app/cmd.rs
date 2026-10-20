@@ -9,6 +9,11 @@ pub const COMMAND_NAMES: &[&str] = &[
     "readonly", "report", "tap", "timing", "update", "x",
 ];
 
+/// `\i`'s ceiling. The file becomes one editor buffer, drawn and
+/// highlighted on every frame, so this is far below `--log`'s 64 MB:
+/// 8 MB is a schema dump of a few thousand tables.
+pub(crate) const INCLUDE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Help topics `:help <topic>` accepts, paired with the mode whose
 /// help anchor they scroll to. Reuses `App::help_anchor_for` rather
 /// than naming heading strings twice — a renamed heading can't leave
@@ -521,12 +526,17 @@ impl App {
     /// `\i <path>` handler. Reads the whole file and replaces the
     /// editor buffer with it — the operator reviews before running,
     /// same as pasting it in by hand. Never runs anything itself.
+    ///
+    /// The read is on the UI thread, so it is capped at
+    /// [`INCLUDE_MAX_BYTES`] and refuses anything but a regular file:
+    /// `\i` on a FIFO used to hang the TUI, and a huge dump froze it
+    /// and then had to be drawn as one editor buffer.
     fn dispatch_include(&mut self, target: Option<String>) {
         let Some(path) = target else {
             self.last_error = Some("\\i requires a file path".into());
             return;
         };
-        match std::fs::read_to_string(&path) {
+        match crate::util::read_text_capped(std::path::Path::new(&path), INCLUDE_MAX_BYTES) {
             Ok(contents) => {
                 let n = contents.lines().count();
                 self.editor.buffer = contents;
@@ -535,6 +545,12 @@ impl App {
                 self.history_pos = None;
                 self.draft_dirty = true;
                 self.last_status = Some(format!("loaded {n} lines from {path}"));
+            }
+            Err(e @ crate::util::CappedReadError::TooBig { .. }) => {
+                self.last_error = Some(format!(
+                    "\\i {path}: {e}; \\i loads up to {} into the editor — run a bigger script with psql -f",
+                    crate::util::human_bytes(INCLUDE_MAX_BYTES)
+                ));
             }
             Err(e) => {
                 self.last_error = Some(format!("\\i {path} failed: {e}"));

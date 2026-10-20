@@ -5684,6 +5684,36 @@ fn backslash_i_loads_file_into_editor_buffer() {
 }
 
 #[test]
+fn backslash_i_refuses_a_file_over_the_cap() {
+    let mut a = app_with_schemas();
+    let tmp = std::env::temp_dir().join(format!("pgman-include-big-{}.sql", std::process::id()));
+    // Sparse: the size is what's checked, so nothing is written.
+    let f = std::fs::File::create(&tmp).unwrap();
+    f.set_len(super::cmd::INCLUDE_MAX_BYTES + 1).unwrap();
+    drop(f);
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("\\i {}", tmp.display());
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("loads up to 8 MB"), "got: {err}");
+    assert!(err.contains("psql -f"), "got: {err}");
+    assert!(a.editor.buffer.is_empty(), "nothing loaded");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn backslash_i_refuses_a_directory() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("\\i {}", std::env::temp_dir().display());
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("isn't a regular file"), "got: {err}");
+}
+
+#[test]
 fn backslash_i_missing_file_is_actionable_error() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;

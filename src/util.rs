@@ -232,9 +232,133 @@ pub fn write_private(path: &Path, contents: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Why [`read_text_capped`] refused or failed.
+#[derive(Debug)]
+pub enum CappedReadError {
+    /// Bigger than the cap, by its size on disk or by what it held
+    /// when read (a file that grew after the size check).
+    TooBig {
+        bytes: u64,
+    },
+    /// A FIFO, a device or a directory: a read could block the caller
+    /// for good or never end.
+    NotAFile,
+    Io(io::Error),
+}
+
+impl std::fmt::Display for CappedReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CappedReadError::TooBig { bytes } => write!(f, "it is {}", human_bytes(*bytes)),
+            CappedReadError::NotAFile => f.write_str("it isn't a regular file"),
+            CappedReadError::Io(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// `n` bytes as `12 MB` / `340 KB` / `17 bytes`, for a size refusal.
+pub fn human_bytes(n: u64) -> String {
+    const MB: u64 = 1024 * 1024;
+    if n >= MB {
+        format!("{} MB", n / MB)
+    } else if n >= 1024 {
+        format!("{} KB", n / 1024)
+    } else {
+        format!("{n} bytes")
+    }
+}
+
+/// Read a regular file as UTF-8 text, refusing one over `max` bytes
+/// before reading it. The size is checked on disk first and the read
+/// itself stops at `max + 1` bytes, so a file that grows in between
+/// is refused rather than read without bound.
+pub fn read_text_capped(path: &Path, max: u64) -> Result<String, CappedReadError> {
+    let meta = std::fs::metadata(path).map_err(CappedReadError::Io)?;
+    if !meta.is_file() {
+        return Err(CappedReadError::NotAFile);
+    }
+    if meta.len() > max {
+        return Err(CappedReadError::TooBig { bytes: meta.len() });
+    }
+    let file = std::fs::File::open(path).map_err(CappedReadError::Io)?;
+    read_to_string_bounded(file, max)
+}
+
+/// Read `r` to the end as UTF-8, stopping at `max + 1` bytes and
+/// refusing if it got that far.
+fn read_to_string_bounded(r: impl io::Read, max: u64) -> Result<String, CappedReadError> {
+    use std::io::Read;
+    let mut buf = String::new();
+    r.take(max + 1)
+        .read_to_string(&mut buf)
+        .map_err(CappedReadError::Io)?;
+    if buf.len() as u64 > max {
+        return Err(CappedReadError::TooBig {
+            bytes: buf.len() as u64,
+        });
+    }
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_capped_read_reads_up_to_the_cap_and_refuses_beyond_it() {
+        let dir = std::env::temp_dir().join(format!("pgman-util-capped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("q.sql");
+        std::fs::write(&path, "select 1;\n").unwrap();
+
+        assert_eq!(read_text_capped(&path, 10).unwrap(), "select 1;\n");
+        assert!(matches!(
+            read_text_capped(&path, 9),
+            Err(CappedReadError::TooBig { bytes: 10 })
+        ));
+        assert!(matches!(
+            read_text_capped(&dir, 1 << 20),
+            Err(CappedReadError::NotAFile)
+        ));
+        assert!(matches!(
+            read_text_capped(&dir.join("missing.sql"), 10),
+            Err(CappedReadError::Io(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_size_refusal_reports_the_size_on_disk_before_reading() {
+        // The read alone would stop at max + 1 and report 11.
+        let path = std::env::temp_dir().join(format!("pgman-util-sparse-{}", std::process::id()));
+        std::fs::File::create(&path).unwrap().set_len(1000).unwrap();
+        assert!(matches!(
+            read_text_capped(&path, 10),
+            Err(CappedReadError::TooBig { bytes: 1000 })
+        ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_bounded_read_stops_one_past_the_cap() {
+        // What guards a file that grew after its size was checked.
+        assert!(matches!(
+            read_to_string_bounded(io::repeat(b'x'), 10),
+            Err(CappedReadError::TooBig { bytes: 11 })
+        ));
+        assert_eq!(
+            read_to_string_bounded(&b"0123456789"[..], 10).unwrap(),
+            "0123456789"
+        );
+    }
+
+    #[test]
+    fn sizes_read_in_the_largest_whole_unit() {
+        assert_eq!(human_bytes(17), "17 bytes");
+        assert_eq!(human_bytes(2048), "2 KB");
+        assert_eq!(human_bytes(65 * 1024 * 1024), "65 MB");
+    }
 
     #[cfg(unix)]
     #[test]
