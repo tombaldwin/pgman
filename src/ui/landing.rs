@@ -57,17 +57,49 @@ impl Hint {
 /// `inner_height` content area. Pure — no rendering, so it's directly
 /// unit-testable.
 ///
+/// The start card's line about the footer's tap badges, for `nplus1`
+/// repeated-query findings, in the longest wording that fits `width`
+/// columns — whole wordings, never one cut mid-phrase, so the `F4` at
+/// the end always survives. Pure.
+pub(crate) fn tap_badges_line(nplus1: usize, width: usize) -> String {
+    let n = nplus1;
+    let found = match n {
+        0 => None,
+        1 => Some("one query it runs once per row".to_string()),
+        n => Some(format!("{n} queries it runs once per row")),
+    };
+    let wordings: Vec<String> = match &found {
+        None => vec![
+            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch".into(),
+            "TAP below: your app's queries, over the JDBC tap · F4".into(),
+        ],
+        Some(found) => vec![
+            format!("TAP below: your app's queries are arriving over the JDBC tap · N+1 ×{n}: {found} · F4 to look"),
+            format!("TAP below: your app's queries, over the JDBC tap · N+1 ×{n}: {found} · F4"),
+            format!("TAP: your app's queries via the JDBC tap · N+1 ×{n}: repeated per row · F4"),
+        ],
+    };
+    let last = wordings.last().cloned().unwrap_or_default();
+    wordings
+        .into_iter()
+        .find(|w| display_width(w) <= width)
+        .unwrap_or(last)
+}
+
 /// Layout, top to bottom: a one-line connection summary; a `databases`
 /// line (current database first, then the rest as returned — omitted
 /// while `app.databases` is empty, i.e. the bootstrap hasn't answered
 /// yet); a blank line; six core key hints (two columns when
 /// `inner_width >= 64`, one otherwise); the F8/F4 differentiator row; a
 /// `?  all keys` line, sharing its row with `ctrl-t  new tab` in two
-/// columns (its own line in one); then (if there's room and history
-/// isn't empty) a blank line, a `recent` label, and up to five of the
-/// most recent history entries.
+/// columns (its own line in one); then, once the JDBC tap has heard
+/// from the app, a blank line and what the footer's `TAP` / `N+1`
+/// badges mean; then (if there's room and history isn't empty) a blank
+/// line, a `recent` label, and up to five of the most recent history
+/// entries.
 ///
 /// Under height pressure, sections drop in this order: `recent` first,
+/// then the tap line,
 /// then the one-column `ctrl-t` line, then `databases`, then the `?`
 /// line, then the F8/F4 row — so the connection line and the six core
 /// keys always survive down to 8 rows.
@@ -125,6 +157,10 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     let has_databases = !app.databases.is_empty();
     let db_len = if has_databases { 1 } else { 0 }; // the `databases` line itself
     const HEADER_LINES: usize = 2; // connection line + blank
+                                   // What the footer's TAP / N+1 badges mean, once the tap has heard
+                                   // from the app: on the first screen they were unexplained.
+    let tap_seen = app.tap_health.query_count > 0;
+    let tap_len = if tap_seen { 2 } else { 0 }; // blank + the line
 
     let h = inner_height as usize;
     let (include_recent, include_new_tab, include_databases, include_help, include_f8f4) =
@@ -143,6 +179,10 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         };
     let include_recent = include_recent && !app.history.is_empty();
     let include_databases = include_databases && has_databases;
+    // Dropped before `recent` goes: it rides on the room left over.
+    let used = HEADER_LINES + db_len + key_lines_with_new_tab;
+    let include_tap = tap_seen && include_new_tab && used + tap_len <= h;
+    let include_recent = include_recent && (!include_tap || used + tap_len + recent_len <= h);
 
     // --- assemble ------------------------------------------------------
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -218,6 +258,17 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
         if include_new_tab {
             lines.push(single_line(&new_tab, key_style, desc_style));
         }
+    }
+
+    if include_tap {
+        let room = width.saturating_sub(display_width(HINT_INDENT));
+        let text = tap_badges_line(app.current_nplus1().len(), room);
+        let fitted = crate::grid::truncate_cell(&text, room);
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::raw(HINT_INDENT),
+            Span::styled(fitted, muted_style),
+        ]));
     }
 
     if include_recent {
@@ -988,5 +1039,50 @@ mod tests {
             "`?` line should survive databases being dropped: {text7:?}"
         );
         assert!(text7.iter().any(|l| l.contains("ctrl-l")));
+    }
+
+    #[test]
+    fn the_tap_badges_are_explained_once_the_tap_has_heard_from_the_app() {
+        assert_eq!(
+            tap_badges_line(0, 200),
+            "TAP below: your app's queries are arriving over the JDBC tap · F4 to watch"
+        );
+        assert!(tap_badges_line(1, 200).contains("N+1 ×1: one query it runs once per row"));
+        assert!(tap_badges_line(3, 200).contains("N+1 ×3: 3 queries it runs once per row"));
+        // Narrower: a shorter whole wording, still ending on F4, never
+        // one cut mid-phrase.
+        for width in [75, 95, 115] {
+            let line = tap_badges_line(1, width);
+            assert!(display_width(&line) <= width, "{width}: {line}");
+            assert!(
+                line.contains("F4") && line.contains("N+1 ×1"),
+                "{width}: {line}"
+            );
+        }
+        assert!(display_width(&tap_badges_line(0, 60)) <= 60);
+
+        let mut a = app();
+        let quiet = plain(&landing_lines(&a, 120, 30));
+        assert!(!quiet.iter().any(|l| l.contains("TAP below")), "{quiet:?}");
+        a.tap_health.query_count = 1;
+        a.history = vec!["select 1;".into()];
+        let heard = plain(&landing_lines(&a, 120, 30));
+        let tap = heard
+            .iter()
+            .position(|l| l.contains("TAP below"))
+            .expect("tap line");
+        let recent = heard
+            .iter()
+            .position(|l| l.contains("recent"))
+            .expect("recent");
+        assert!(tap < recent, "{heard:?}");
+        // Short of room, it goes with `recent`, before the keys do.
+        let short = plain(&landing_lines(&a, 120, 8));
+        assert!(!short.iter().any(|l| l.contains("TAP below")), "{short:?}");
+        assert!(short.iter().any(|l| l.contains("all keys")), "{short:?}");
+        // Room for it but not `recent` as well: the tap line stays.
+        let mid = plain(&landing_lines(&a, 120, 9));
+        assert!(mid.iter().any(|l| l.contains("TAP below")), "{mid:?}");
+        assert!(!mid.iter().any(|l| l.contains("recent")), "{mid:?}");
     }
 }
