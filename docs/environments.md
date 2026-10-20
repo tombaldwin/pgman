@@ -219,7 +219,7 @@ tools by the table each keeps, and `SCHEMA` shows that tool's version:
 | sqlx | `_sqlx_migrations` | the highest version; a failed one shows `✗` |
 | Django | `django_migrations` | the last `app.migration` applied |
 | Alembic | `alembic_version` | the current revision |
-| Rails, golang-migrate | `schema_migrations` | the highest version |
+| Rails, golang-migrate | `schema_migrations` | the highest version; golang-migrate's `dirty` (a migration that failed part way) shows `✗` |
 
 ```toml
 [[environments]]

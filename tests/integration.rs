@@ -2518,7 +2518,7 @@ fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
 fn probes_recognise_common_migration_tools() {
     let home = scratch_home("migtools", WRITABLE_PROFILE);
     let pid = std::process::id();
-    let tools: [(&str, &str); 4] = [
+    let tools: [(&str, &str); 5] = [
         (
             "flyway",
             "CREATE TABLE flyway_schema_history (installed_rank int PRIMARY KEY, version varchar(50), \
@@ -2546,6 +2546,11 @@ fn probes_recognise_common_migration_tools() {
             "rails",
             "CREATE TABLE schema_migrations (version varchar PRIMARY KEY); \
              INSERT INTO schema_migrations VALUES ('20231231000000'), ('20240101120000')",
+        ),
+        (
+            "golang",
+            "CREATE TABLE schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL); \
+             INSERT INTO schema_migrations VALUES (12, true)",
         ),
     ];
     let migdir = home.join("db-migration");
@@ -2672,6 +2677,15 @@ fn probes_recognise_common_migration_tools() {
     assert_eq!(
         (r.migration_tool.as_deref(), r.schema_label.as_deref()),
         (Some("migrations"), Some("20240101120000"))
+    );
+    assert_eq!(r.schema_error, None, "Rails has no dirty column");
+    let g = &results["golang"];
+    assert_eq!(
+        (g.schema_label.as_deref(), g.schema_error.as_deref()),
+        (
+            Some("12"),
+            Some("schema_migrations: migration 12 (dirty) failed")
+        )
     );
 }
 

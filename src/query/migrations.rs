@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | Flyway | `flyway_schema_history` | newest successful version; failures flagged |
 //! | Liquibase | `databasechangelog` | the last changeset run |
-//! | Rails, golang-migrate | `schema_migrations` | the highest version |
+//! | Rails, golang-migrate | `schema_migrations` | the highest version; golang-migrate's `dirty` flagged |
 //! | sqlx | `_sqlx_migrations` | the highest version; failures flagged |
 //! | Django | `django_migrations` | the last migration applied |
 //! | Alembic | `alembic_version` | the current revision |
@@ -82,7 +82,13 @@ impl Tool {
             }
             Tool::Django => "SELECT app, name FROM django_migrations ORDER BY applied, id",
             Tool::Alembic => "SELECT version_num FROM alembic_version",
-            Tool::SchemaMigrations => "SELECT version::text FROM schema_migrations",
+            // Rails keeps only `version`; golang-migrate adds `dirty`, set
+            // while a migration is half applied. A row as JSON reads the
+            // column where there is one and NULL where there isn't, so one
+            // fixed statement serves both.
+            Tool::SchemaMigrations => {
+                "SELECT to_jsonb(m)->>'version', to_jsonb(m)->>'dirty' FROM schema_migrations m"
+            }
         }
     }
 }
@@ -231,6 +237,14 @@ pub fn parse(tool: Tool, rows: &TypedRows, files: Option<&[String]>) -> Migratio
                 .iter()
                 .filter_map(|r| cell(r, 0))
                 .max_by_key(|v| version_key(v));
+            // golang-migrate: a dirty row is a migration that failed part
+            // way, and migrate refuses to run until it's forced.
+            m.failed = rows
+                .rows
+                .iter()
+                .find(|r| truthy(cell(r, 1).as_deref()))
+                .and_then(|r| cell(r, 0))
+                .map(|v| format!("{v} (dirty)"));
         }
     }
     m
@@ -422,6 +436,23 @@ mod tests {
             None,
         );
         assert_eq!(rails.version.as_deref(), Some("20240101120000"));
+        assert_eq!(rails.failed, None, "Rails has no dirty column");
+
+        let golang = parse(
+            Tool::SchemaMigrations,
+            &rows(&[&[Some("12"), Some("true")]]),
+            None,
+        );
+        assert_eq!(
+            (golang.version.as_deref(), golang.failed.as_deref()),
+            (Some("12"), Some("12 (dirty)"))
+        );
+        let clean = parse(
+            Tool::SchemaMigrations,
+            &rows(&[&[Some("12"), Some("false")]]),
+            None,
+        );
+        assert_eq!(clean.failed, None);
 
         let prisma = parse(
             Tool::Prisma,

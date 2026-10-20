@@ -127,8 +127,13 @@ pub async fn run(
                     probe.migration_tool = Some(m.tool.to_string());
                     probe.schema_label = m.version;
                     probe.pending = m.pending;
-                    probe.schema_error =
-                        m.failed.map(|f| format!("{} migration {f} failed", m.tool));
+                    // `migrations migration 12 failed` reads as a typo: name
+                    // the shared table instead.
+                    let who = match m.tool {
+                        "migrations" => "schema_migrations:",
+                        tool => tool,
+                    };
+                    probe.schema_error = m.failed.map(|f| format!("{who} migration {f} failed"));
                 }
                 Ok(None) => {}
                 Err(e) => probe.schema_error = Some(e),
