@@ -166,21 +166,18 @@ async fn main() -> anyhow::Result<()> {
     // `--log`'s size ceiling is a plain argument-validation error —
     // independent of whether a terminal is attached — so it's checked
     // ahead of the terminal probe below rather than deep in the
-    // preload path where it used to live. Skipped under `--demo`,
-    // which never reads `--log` at all (same as before this change).
-    if !cli.demo {
-        if let Some(path) = cli.log.as_deref() {
-            if let Err(msg) = check_log_max_size(path) {
-                eprintln!("--log: {msg}");
-                std::process::exit(2);
-            }
+    // preload path where it used to live. `--demo` reads `--log` too.
+    if let Some(path) = cli.log.as_deref() {
+        if let Err(msg) = check_log_max_size(path) {
+            eprintln!("--log: {msg}");
+            std::process::exit(2);
         }
     }
 
     // `--log -`: read the piped log now, before the terminal check, so
     // stdin is free to be a pipe. The TUI then takes its keys from
     // /dev/tty — crossterm opens it whenever stdin isn't a terminal.
-    let log_stdin = if !cli.demo && cli.log.as_deref().is_some_and(is_stdin_marker) {
+    let log_stdin = if cli.log.as_deref().is_some_and(is_stdin_marker) {
         if std::io::stdin().is_terminal() {
             eprintln!(
                 "--log -: stdin is a terminal, not a log. Pipe one in \
@@ -241,6 +238,11 @@ async fn main() -> anyhow::Result<()> {
     if cli.demo {
         tracing::info!("starting in --demo mode (synthetic data, no database)");
         let mut application = pgman::demo::launch_app(theme);
+        // `--demo --log` opens on the log's queries, as without `--demo`;
+        // the demo used to ignore it and land on the start card.
+        if let Some(text) = read_log_arg(cli.log.as_deref(), log_stdin) {
+            application.preload_log(text);
+        }
         let mut term = tui::Tui::enter()?;
         let result = application.run(&mut term).await;
         drop(term);
@@ -410,16 +412,8 @@ async fn main() -> anyhow::Result<()> {
     // of whether the connection (if any) has resolved yet — and
     // overrides the just-restored draft above, since an explicit --log
     // is a stronger signal of intent than a leftover editor session.
-    if let Some(text) = log_stdin {
+    if let Some(text) = read_log_arg(cli.log.as_deref(), log_stdin) {
         application.preload_log(text);
-    } else if let Some(path) = cli.log.as_ref() {
-        match std::fs::read_to_string(path) {
-            Ok(text) => application.preload_log(text),
-            Err(e) => {
-                eprintln!("--log {}: {e}", path.display());
-                std::process::exit(2);
-            }
-        }
     }
     // Restore query history (Ctrl-R, Ctrl-P/N) from the last session.
     // Best-effort: a missing or unreadable file means we start with
@@ -816,6 +810,23 @@ fn parse_tap_addr(raw: &str) -> Result<std::net::SocketAddr, String> {
     }
     raw.parse::<SocketAddr>()
         .map_err(|e| format!("expected host:port or :port, got {raw:?}: {e}"))
+}
+
+/// The log `--log` names: what was already read from stdin for
+/// `--log -`, else the file. A file that can't be read ends the run
+/// (exit 2) — before the TUI is up, so the message is seen.
+fn read_log_arg(path: Option<&std::path::Path>, from_stdin: Option<String>) -> Option<String> {
+    if from_stdin.is_some() {
+        return from_stdin;
+    }
+    let path = path?;
+    match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(e) => {
+            eprintln!("--log {}: {e}", path.display());
+            std::process::exit(2);
+        }
+    }
 }
 
 /// Send `tracing` output to `~/.cache/pgman/pgman.log`. Level via `RUST_LOG`,
@@ -2405,6 +2416,21 @@ mod main_tests {
     #[test]
     fn check_log_max_size_allows_the_stdin_marker() {
         assert!(check_log_max_size(std::path::Path::new("-")).is_ok());
+    }
+
+    #[test]
+    fn read_log_arg_takes_stdin_first_then_the_file() {
+        assert_eq!(read_log_arg(None, None), None);
+        assert_eq!(
+            read_log_arg(Some(std::path::Path::new("-")), Some("piped".into())),
+            Some("piped".into())
+        );
+        let dir = std::env::temp_dir().join(format!("pgman-log-arg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.log");
+        std::fs::write(&path, "select 1").unwrap();
+        assert_eq!(read_log_arg(Some(&path), None), Some("select 1".into()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
