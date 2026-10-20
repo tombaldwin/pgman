@@ -61,10 +61,14 @@ pub fn plan(targets: &[Target]) -> Vec<Step> {
     targets
         .iter()
         .map(|t| {
+            // Only a running replica stands in for its primary: one that
+            // is stopped, or still being created (no endpoint yet), leaves
+            // the primary as the only source.
             let has_replica = targets.iter().any(|r| {
                 r.role == Role::Replica
                     && r.replica_of.as_deref() == Some(t.server.as_str())
                     && r.database == t.database
+                    && is_running(r.status.as_deref())
             });
             if !is_running(t.status.as_deref()) {
                 Step::NotRunning
@@ -278,6 +282,18 @@ mod tests {
             multi_az: None,
             connect: Err("not in a test".into()),
         }
+    }
+
+    #[test]
+    fn a_replica_that_isnt_running_doesnt_stand_in_for_its_primary() {
+        let mut stopped = t("demo-r", "ledger", Role::Replica, Some("demo"));
+        stopped.status = Some("stopped".into());
+        let rows = [t("demo", "ledger", Role::Primary, None), stopped];
+        assert_eq!(plan(&rows), [Step::Connect, Step::NotRunning]);
+        let mut creating = t("demo-r", "ledger", Role::Replica, Some("demo"));
+        creating.status = Some("creating".into());
+        let rows = [t("demo", "ledger", Role::Primary, None), creating];
+        assert_eq!(plan(&rows)[0], Step::Connect);
     }
 
     #[test]
