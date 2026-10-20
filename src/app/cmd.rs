@@ -109,8 +109,7 @@ impl App {
         match cmd {
             BackslashCmd::Describe(target) => {
                 if self.schema_cache.is_empty() {
-                    self.last_status =
-                        Some("schema cache empty — connect to a database first".into());
+                    self.schema_cache_missing();
                     return;
                 }
                 // `\d <name>` → open browser with the name as
@@ -127,8 +126,7 @@ impl App {
             }
             BackslashCmd::ListTables | BackslashCmd::ListSchemas => {
                 if self.schema_cache.is_empty() {
-                    self.last_status =
-                        Some("schema cache empty — connect to a database first".into());
+                    self.schema_cache_missing();
                     return;
                 }
                 self.schema_browser.filter = None;

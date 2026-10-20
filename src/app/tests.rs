@@ -10880,3 +10880,73 @@ fn a_patch_run_that_succeeds_takes_down_an_earlier_failure() {
     assert!(a.last_error.is_none(), "{:?}", a.last_error);
     assert!(a.last_status.is_some());
 }
+
+fn two_table_cache() -> crate::query::schema::SchemaCache {
+    crate::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "events".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_schema_reload_says_what_it_found() {
+    use crate::query::schema::SchemaCache;
+    let empty = SchemaCache::default();
+    assert_eq!(
+        crate::app::schema_reloaded_status(&empty),
+        "schema reloaded — still no tables this role can see"
+    );
+    let mut some = two_table_cache();
+    some.schemas.push("audit".into());
+    assert_eq!(
+        crate::app::schema_reloaded_status(&some),
+        "schema reloaded · 2 table(s) in 2 schema(s)"
+    );
+
+    // Only a reload the operator asked for is announced; the silent
+    // post-DDL refresh isn't.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let generation = a.generation;
+    a.last_status = None;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: some.clone(),
+    });
+    assert!(a.last_status.is_none(), "post-DDL refresh stays quiet");
+    a.schema_reload_announce = true;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: some,
+    });
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("schema reloaded ·"));
+    assert!(!a.schema_reload_announce, "announced once");
+}
+
+#[test]
+fn r_in_the_schema_browser_reloads_and_says_so_when_it_cant() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    press(&mut a, KeyCode::Char('r'));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("not connected — nothing to reload")
+    );
+    assert!(!a.schema_reload_announce);
+}

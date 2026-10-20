@@ -92,6 +92,17 @@ pub fn sessions_status(total: usize, blocked: usize) -> String {
     }
 }
 
+/// What a reload the operator asked for found. Pure / testable.
+pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> String {
+    match cache.tables.len() {
+        0 => "schema reloaded — still no tables this role can see".to_string(),
+        n => format!(
+            "schema reloaded · {n} table(s) in {} schema(s)",
+            cache.schemas.len()
+        ),
+    }
+}
+
 /// The environments panel's status line. Pure / testable.
 pub fn environments_status(envs: usize, dbs: usize, failed: usize) -> String {
     if envs == 0 {
@@ -1221,6 +1232,8 @@ pub struct App {
     /// A chord that acts on its second press (Ctrl-C quit, Ctrl-W
     /// close a tab with SQL in it); any other key disarms it.
     pub armed_chord: Option<ArmedChord>,
+    /// A reload the operator asked for is in flight: say what landed.
+    pub schema_reload_announce: bool,
     /// Mirror of `pending_mark_set` for `'<x>` jumps.
     pub pending_mark_jump: bool,
     /// When the current query started — captured in `spawn_run`
@@ -1496,6 +1509,7 @@ impl App {
             body_rows: 0,
             pending_mark_set: false,
             armed_chord: None,
+            schema_reload_announce: false,
             pending_mark_jump: false,
             query_started: None,
             row_detail: RowDetailUi::default(),
@@ -3876,12 +3890,38 @@ impl App {
         }
     }
 
+    /// The schema cache has no tables. Disconnected, that is the
+    /// answer; connected, the cache is stale (tables another session
+    /// made never appeared) or the database is empty, so reload it.
+    pub(super) fn schema_cache_missing(&mut self) {
+        if self.client.is_some() {
+            self.reload_schema();
+            self.last_status = Some(
+                "no tables in the schema cache — reloading it from the server; try again once it lands".into(),
+            );
+        } else {
+            self.last_status = Some("schema cache empty — connect to a database first".into());
+        }
+    }
+
+    /// Re-read the catalog (`r` in the schema browser): picks up tables
+    /// other sessions made since connect. The result is announced.
+    pub(super) fn reload_schema(&mut self) {
+        if self.client.is_none() {
+            self.last_status = Some("not connected — nothing to reload".into());
+            return;
+        }
+        self.schema_reload_announce = true;
+        self.spawn_schema_refresh();
+        self.last_status = Some("reloading the schema…".into());
+    }
+
     /// `S` from Normal — opens the schema browser. No-op when the
     /// cache is empty (disconnected / permission failure on the
     /// `pg_catalog` fetch).
     fn start_schema_browser(&mut self) {
         if self.schema_cache.is_empty() {
-            self.last_status = Some("schema cache empty — connect to a database first".into());
+            self.schema_cache_missing();
             return;
         }
         self.schema_browser.cursor = 0;
@@ -3902,7 +3942,7 @@ impl App {
     /// catalog so there's no async hop.
     fn start_schema_lint(&mut self) {
         if self.schema_cache.is_empty() {
-            self.last_status = Some("schema cache empty — connect to a database first".into());
+            self.schema_cache_missing();
             return;
         }
         let findings = crate::query::lint::run_all(&self.schema_cache);

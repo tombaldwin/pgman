@@ -316,6 +316,9 @@ impl App {
                 self.schema_cache = schema_cache;
                 // Recompute editor highlighting against the new schema.
                 self.editor_highlight_cache = None;
+                if std::mem::take(&mut self.schema_reload_announce) {
+                    self.last_status = Some(schema_reloaded_status(&self.schema_cache));
+                }
             }
             AppMsg::CostPreviewLoaded {
                 sql,
