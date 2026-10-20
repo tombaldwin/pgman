@@ -306,7 +306,7 @@ CHANGELOG.md.
   after a Fable safety review whose eleven findings were each fixed in
   their own commit.
 
-## Robustness pass — 2026-10-20 · review · **in review** (branch `robustness-pass`)
+## Robustness pass — 2026-10-20 · review · **done** (`robustness-pass`, then `robustness-ux`)
 
 Tom: "anything else you can do for a few hours to make things as useful
 and robust as possible. Maybe a review?" Four Fable reviewers, read-only,
@@ -322,8 +322,18 @@ replica lag on a quiet primary, `--batch`'s silent 1000-row cap,
 conflicting `sslmode`s, a 10 s connect timeout, Hibernate `show_sql`
 lines, find eating `n`, Flyway baselines, cursor-by-name on refresh,
 probes keeping their last reading, the demo's dead panels, and more.
-A streaming standby now runs in the test compose (and CI uses it). The
-rest is under "From the robustness pass" in BACKLOG.md.
+A streaming standby now runs in the test compose (and CI uses it).
+
+Then the backlog it left (Tom: "do 1-6", branch `robustness-ux`): plain
+keys for F2–F4 and a second press for `ctrl-c` / `ctrl-w`, a `WATCH`
+badge, stale errors cleared by later successes, a schema reload, `\d`
+that says when nothing matches, the two completion bugs, the small-UX
+list, IPv6 DSN hosts, a capped `\i`, a working `--log -`, and the seven
+environments findings (two forks in worktrees took the last two).
+Killed by evidence: "no grid cursor after a run until Esc" — the row
+highlight and the header's column cursor are there in the editor and
+after Esc alike (checked in tmux against `--demo`). The few that
+remain are under "From the robustness pass" in BACKLOG.md.
 
 ## Release day
 
