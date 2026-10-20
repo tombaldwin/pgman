@@ -316,6 +316,7 @@ impl App {
                 // `:error` is the one command about the error itself.
                 if !line.eq_ignore_ascii_case("error") {
                     self.last_error = None;
+                    self.last_error_detail = None;
                 }
                 self.dispatch_command(&line);
             }

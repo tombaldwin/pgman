@@ -216,6 +216,10 @@ impl App {
                         self.last_error_detail = None;
                     }
                     None => {
+                        // The footer shows an error over a status; the
+                        // statement before this one's failure is old news.
+                        self.last_error = None;
+                        self.last_error_detail = None;
                         self.last_status = Some(
                             if committed {
                                 "committed"
@@ -290,6 +294,8 @@ impl App {
                 match result {
                     Ok(()) => {
                         self.read_only = want;
+                        self.last_error = None;
+                        self.last_error_detail = None;
                         self.last_status = Some(format!(
                             "read-only {state} · this session from its next statement, and every later connect"
                         ));

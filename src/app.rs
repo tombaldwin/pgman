@@ -1854,9 +1854,28 @@ impl App {
     /// overlay headed by the previous query's `SQLSTATE 42P01`.
     pub fn on_key(&mut self, key: KeyEvent) {
         let error_before = self.last_error.clone();
+        let status_before = self.last_status.clone();
         let mode_before = self.mode;
         self.on_key_inner(key);
         if self.last_error.is_some() && self.last_error != error_before {
+            self.last_error_detail = None;
+        }
+        // The footer shows an error over a status, so an error the key
+        // left alone outlived every later success: `s` sorted, `y`
+        // yanked, `:timing on` answered, all under the old red line.
+        // A status this key set is newer news. A second-press prompt
+        // (Ctrl-C, Ctrl-W) is a question, not news, and a panel's
+        // first-visit tip is about the keys; both leave it.
+        if self.last_error.is_some()
+            && self.last_error == error_before
+            && self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| !s.starts_with("tip · "))
+            && self.last_status != status_before
+            && self.armed_chord.is_none()
+        {
+            self.last_error = None;
             self.last_error_detail = None;
         }
         // Opening or closing a panel changes the subject: a failed `T`
@@ -4256,6 +4275,9 @@ impl App {
         if report.failed().is_some() || report.error.is_some() {
             self.last_error = Some(summary);
         } else {
+            // An earlier run's failure would otherwise sit over this one.
+            self.last_error = None;
+            self.last_error_detail = None;
             self.last_status = Some(summary);
         }
         // The pending counts moved.

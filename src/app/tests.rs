@@ -10808,3 +10808,75 @@ fn ctrl_w_closes_a_tab_holding_sql_on_the_second_press() {
     a.on_key(ctrl_w);
     assert_eq!(a.tabs.len(), 1);
 }
+
+/// The footer shows an error over a status, so a success that came
+/// later has to take the error down or it reads as the latest news.
+#[test]
+fn a_later_success_replaces_a_stale_error() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let stale = |a: &mut App| {
+        a.last_error = Some("relation \"t\" does not exist".into());
+        a.last_error_detail = Some(crate::conn::QueryErrDetail::default());
+    };
+    // A key whose own status is the news: `:timing on`, `Y`.
+    stale(&mut a);
+    run_command(&mut a, "timing on");
+    assert!(a.last_status.is_some());
+    assert!(a.last_error.is_none() && a.last_error_detail.is_none());
+    stale(&mut a);
+    a.mode = Mode::Normal;
+    a.last_status = None;
+    press(&mut a, KeyCode::Char('Y'));
+    assert!(a.last_status.is_some(), "Y always says something");
+    assert!(a.last_error.is_none() && a.last_error_detail.is_none());
+    // A key that says nothing leaves it.
+    stale(&mut a);
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('j'));
+    assert!(a.last_error.is_some(), "a cursor move isn't news");
+    // A second-press prompt is a question: the error stays.
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(a.last_error.is_some(), "ctrl-c's prompt isn't news");
+    press(&mut a, KeyCode::Esc);
+    // Async successes.
+    let generation = a.generation;
+    stale(&mut a);
+    a.on_msg(AppMsg::TxClosed {
+        generation,
+        committed: true,
+        error: None,
+    });
+    assert!(a.last_error.is_none(), "committed");
+    stale(&mut a);
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Ok(()),
+    });
+    assert!(a.last_error.is_none(), "read-only applied");
+}
+
+#[test]
+fn a_patch_run_that_succeeds_takes_down_an_earlier_failure() {
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    press(&mut a, KeyCode::Char('P'));
+    let PatchStage::Plan(Ok(plan)) = a.environments.patch.as_ref().unwrap().stage.clone() else {
+        panic!("a plan");
+    };
+    // As the real (async) run lands: after the key, not inside it.
+    a.last_error = Some("an earlier run failed".into());
+    a.on_msg(AppMsg::EnvPatched {
+        report: crate::inventory::patching::ApplyReport {
+            results: vec![],
+            error: None,
+            recorded_after: None,
+            mode: crate::inventory::patching::RunMode::Apply,
+            copy: None,
+        },
+        plan,
+    });
+    assert!(applied.lock().unwrap().is_empty());
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert!(a.last_status.is_some());
+}
