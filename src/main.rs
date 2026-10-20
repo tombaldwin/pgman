@@ -334,8 +334,8 @@ async fn main() -> anyhow::Result<()> {
                 outside,
             ))
         }),
-        apply: std::sync::Arc::new(|plan, cancel| {
-            Box::pin(pgman::inventory::patching::apply_for(plan, cancel))
+        apply: std::sync::Arc::new(|plan, mode, cancel| {
+            Box::pin(pgman::inventory::patching::apply_for(plan, mode, cancel))
         }),
         immediate: false,
     });

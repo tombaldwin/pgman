@@ -10246,11 +10246,16 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
                 &e, &s, &d, outside,
             ))))
         }),
-        apply: std::sync::Arc::new(move |p, _cancel| {
-            applied
-                .lock()
-                .unwrap()
-                .push(format!("{}/{}/{}", p.environment, p.server, p.database));
+        apply: std::sync::Arc::new(move |p, mode, _cancel| {
+            // The mode is named when it isn't the real thing.
+            let how = match mode {
+                crate::inventory::patching::RunMode::Apply => String::new(),
+                m => format!(" ({})", m.name()),
+            };
+            applied.lock().unwrap().push(format!(
+                "{}/{}/{}{how}",
+                p.environment, p.server, p.database
+            ));
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
                     results: vec![crate::inventory::patching::PatchResult {
@@ -10259,6 +10264,8 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
                     }],
                     error: None,
                     recorded_after: None,
+                    mode,
+                    copy: None,
                 },
             ))
         }),
@@ -10298,6 +10305,49 @@ fn p_plans_patches_and_y_applies_them() {
     press(&mut a, KeyCode::Char('q'));
     assert!(a.environments.patch.is_none());
     assert_eq!(a.mode, Mode::Environments);
+}
+
+#[test]
+fn tab_picks_a_dry_run_or_a_copy_and_confirming_runs_that() {
+    use crate::inventory::patching::RunMode;
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    press(&mut a, KeyCode::Char('P'));
+    let mode = |a: &App| a.environments.patch.as_ref().unwrap().mode;
+    assert_eq!(mode(&a), RunMode::Apply);
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(mode(&a), RunMode::DryRun);
+    assert!(a.last_status.as_deref().unwrap().contains("same locks"));
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(mode(&a), RunMode::Copy);
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(mode(&a), RunMode::Apply, "round again");
+    press(&mut a, KeyCode::Tab);
+    press(&mut a, KeyCode::Char('y'));
+    assert_eq!(*applied.lock().unwrap(), ["staging/staging/shop (dry_run)"]);
+    // Done: Tab changes nothing any more.
+    press(&mut a, KeyCode::Tab);
+    assert_eq!(mode(&a), RunMode::DryRun);
+    // A protected one: Tab works while the name is typed, and isn't typed.
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
+        p.protected = true;
+        Box::pin(std::future::ready(Ok(p)))
+    });
+    press(&mut a, KeyCode::Char('P'));
+    let env = a.environments.patch.as_ref().unwrap().environment.clone();
+    press(&mut a, KeyCode::Tab);
+    press(&mut a, KeyCode::Tab);
+    for c in env.chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(
+        *applied.lock().unwrap(),
+        [format!("{env}/staging/shop (copy)")]
+    );
 }
 
 #[test]
@@ -10413,6 +10463,7 @@ fn esc_twice_while_applying_cancels_the_running_statement() {
         scroll: 0,
         cancel: slot.clone(),
         cancel_armed: false,
+        mode: Default::default(),
     });
     // Not connected yet: nothing to send, but the run won't start.
     press(&mut a, KeyCode::Esc);
@@ -10459,6 +10510,7 @@ fn a_late_plan_for_another_database_is_dropped() {
         scroll: 0,
         cancel: Default::default(),
         cancel_armed: false,
+        mode: Default::default(),
     });
     a.on_msg(AppMsg::EnvPatchPlanned {
         environment: "staging".into(),

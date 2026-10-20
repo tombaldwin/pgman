@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use super::connections::{self, Entry};
 use super::Server;
 use crate::conn;
+use crate::inventory::patching::RunMode;
 use crate::query::{patches, preflight};
 
 /// Rows `query` returns when the client doesn't say.
@@ -122,13 +123,14 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "apply_patches",
-            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (a read-only profile, a blocked statement, its own BEGIN/COMMIT, CONCURRENTLY). Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica, and on a database safety.toml keeps read-only (the default); only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
+            "description": "Apply an environment database's pending schema patches, after the OPERATOR confirms through an elicitation prompt (a protected environment — `protected = true`, or a name containing \"prod\" — by typing its name). Plans first, read-only: the pending patches in order, each checked against safety.toml, stopping before the first that can't run here (a read-only profile, a blocked statement, its own BEGIN/COMMIT, CONCURRENTLY). Then each runs in its own transaction with a 5s lock_timeout, re-reading the version table before each, and it stops at the first failure. `mode`: \"apply\" (the default) for real; \"dry_run\" runs them all in ONE transaction and rolls it back — nothing kept, but the same locks and work as applying, on the same server, so it is confirmed like a real run; \"copy\" applies them for real to a copy of the database made on the same server (CREATE DATABASE … TEMPLATE, which needs nobody else connected to it: an idle local or dev database), then drops the copy. CAVEATS: refused under --read-only, by a client that can't elicit, on a replica, and on a database safety.toml keeps read-only (the default); only an environment with a version_table naming its patches directory. Never call it to 'see' what is pending: use `environments` with probe, or `pending_patches`. If the call times out, a patch may have committed: check before calling again.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "environment": {"type": "string"},
                     "server": {"type": "string"},
-                    "database": {"type": "string"}
+                    "database": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["apply", "dry_run", "copy"]}
                 },
                 "required": ["environment", "server", "database"],
                 "additionalProperties": false
@@ -233,6 +235,12 @@ impl Server {
         let environment = arg_str(args, "environment")?.to_string();
         let server = arg_str(args, "server")?.to_string();
         let database = arg_str(args, "database")?.to_string();
+        let mode = match args.get("mode") {
+            None | Some(Value::Null) => RunMode::Apply,
+            Some(m) => m.as_str().and_then(RunMode::parse).ok_or_else(|| {
+                format!("mode must be \"apply\", \"dry_run\" or \"copy\", not {m}")
+            })?,
+        };
         if self.declined(&environment, &server, &database) {
             return Err(format!(
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
@@ -249,7 +257,7 @@ impl Server {
         if plan.patches.is_empty() {
             return Ok(render_apply(&plan, None, "nothing to apply"));
         }
-        let (message, schema) = confirm_request(&plan);
+        let (message, schema) = confirm_request(&plan, mode);
         let answer = self.elicit(&message, schema).await?;
         if answer.get("action").and_then(Value::as_str) != Some("accept") {
             self.remember_decline(&environment, &server, &database);
@@ -260,18 +268,19 @@ impl Server {
                 "nothing applied: {why}. That answer is final: don't call apply_patches again unless the operator asks"
             ));
         }
-        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), "apply_patches confirmed");
+        tracing::info!(target: "pgman::mcp", environment = %environment, server = %server, database = %database, patches = plan.patches.len(), mode = mode.name(), "apply_patches confirmed");
         // Its own task: if this call times out, the run still finishes
         // (and logs each patch) rather than being dropped mid-patch.
         let report = tokio::spawn(crate::inventory::patching::apply_for(
             plan.clone(),
+            mode,
             Default::default(),
         ))
         .await
         .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
-            results: Vec::new(),
             error: Some(format!("the apply task failed: {e}")),
-            recorded_after: None,
+            mode,
+            ..Default::default()
         });
         Ok(render_apply(&plan, Some(&report), &report.summary()))
     }
@@ -800,15 +809,36 @@ async fn tool_environment_logs(args: &Value) -> Result<String, String> {
 /// The question `apply_patches` puts to the operator, and the answer's
 /// schema: a typed name for a protected environment, a yes otherwise.
 /// Pure.
-pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String, Value) {
+pub fn confirm_request(
+    plan: &crate::inventory::patching::PatchPlan,
+    mode: RunMode,
+) -> (String, Value) {
     let files: Vec<&str> = plan.patches.iter().map(|p| p.file.file.as_str()).collect();
+    let (verb, onto, how) = match mode {
+        RunMode::Apply => (
+            "Apply",
+            "",
+            "Each runs in its own transaction; it stops at the first failure.",
+        ),
+        RunMode::DryRun => (
+            "DRY RUN",
+            "",
+            "All run in ONE transaction that is rolled back at the end, so nothing is kept — but it takes the same locks and does the same work as applying them, on that server, and holds the locks until the last patch is done. It stops at the first failure.",
+        ),
+        RunMode::Copy => (
+            "Apply",
+            "a COPY of ",
+            "The database is copied on the same server first (CREATE DATABASE … TEMPLATE: it needs nobody else connected to it, and copies all of it), the patches applied to the copy each in its own transaction, then the copy dropped.",
+        ),
+    };
     let mut message = format!(
-        "Apply {} patch(es) to {} {}/{} (recorded up to {}): {}. Each runs in its own transaction; it stops at the first failure.",
+        "{verb} {} patch(es) to {onto}{} {}/{} (recorded up to {}): {}. {how}",
         files.len(),
         plan.environment,
         plan.server,
         plan.database,
-        plan.applied_max.map_or("none".to_string(), |m| m.to_string()),
+        plan.applied_max
+            .map_or("none".to_string(), |m| m.to_string()),
         files.join(", ")
     );
     if let Some((file, why)) = &plan.stopped_at {
@@ -846,9 +876,14 @@ pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String,
             "required": ["environment"]
         })
     } else {
+        let title = match mode {
+            RunMode::Apply => "Apply these patches",
+            RunMode::DryRun => "Dry-run these patches (rolled back)",
+            RunMode::Copy => "Apply these patches to a copy",
+        };
         json!({
             "type": "object",
-            "properties": {"apply": {"type": "boolean", "title": "Apply these patches"}},
+            "properties": {"apply": {"type": "boolean", "title": title}},
             "required": ["apply"]
         })
     };
@@ -916,6 +951,12 @@ pub fn render_apply(
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
         "recorded_after": report.and_then(|r| r.recorded_after),
+        "mode": report.map(|r| r.mode.name()),
+        "copy": report.and_then(|r| r.copy.as_ref()).map(|c| json!({
+            "name": c.name,
+            "dropped": c.dropped.is_ok(),
+            "drop_error": c.dropped.as_ref().err(),
+        })),
         "summary": summary,
     })
     .to_string()

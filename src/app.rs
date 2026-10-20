@@ -13,6 +13,7 @@ mod yank;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
 use crate::grid::Grid;
+use crate::inventory::patching::RunMode;
 use crate::query::complete::{self as complete_q, Candidate};
 use crate::query::schema::SchemaCache;
 use crate::query::{self, reconstruct::ReconstructedQuery};
@@ -4073,6 +4074,7 @@ impl App {
             scroll: 0,
             cancel: Default::default(),
             cancel_armed: false,
+            mode: Default::default(),
         });
         self.last_status = Some(format!("planning {server}/{database}'s patches…"));
         let fut = (patcher.plan)(
@@ -4148,15 +4150,20 @@ impl App {
         v.stage = PatchStage::Applying(plan.clone());
         v.cancel = crate::inventory::patching::CancelSlot::default();
         v.cancel_armed = false;
-        let cancel = v.cancel.clone();
+        let (cancel, mode) = (v.cancel.clone(), v.mode);
+        let doing = match mode {
+            RunMode::Apply => "applying",
+            RunMode::DryRun => "dry-running",
+            RunMode::Copy => "copying the database, then applying",
+        };
         self.last_status = Some(format!(
-            "applying {} patch(es) to {}/{}… · Esc twice cancels",
+            "{doing} {} patch(es) to {}/{}… · Esc twice cancels",
             plan.patches.len(),
             plan.server,
             plan.database
         ));
-        tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), "patches confirmed");
-        let fut = (patcher.apply)(plan.clone(), cancel);
+        tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = mode.name(), "patches confirmed");
+        let fut = (patcher.apply)(plan.clone(), mode, cancel);
         if patcher.immediate {
             let report = futures::executor::block_on(fut);
             self.on_env_patched(plan, report);
@@ -4166,9 +4173,9 @@ impl App {
                 // A panic in the run still ends the Applying stage.
                 let report = tokio::spawn(fut).await.unwrap_or_else(|e| {
                     crate::inventory::patching::ApplyReport {
-                        results: Vec::new(),
                         error: Some(format!("the apply task failed: {e}")),
-                        recorded_after: None,
+                        mode,
+                        ..Default::default()
                     }
                 });
                 let _ = tx.send(AppMsg::EnvPatched { plan, report });
@@ -4248,6 +4255,10 @@ impl App {
             // While a name is typed, `o` is a letter of it: ctrl-o then.
             KeyCode::Char('o') if outside_helps && (ctrl || !typing) => {
                 self.replan_env_patch_outside()
+            }
+            KeyCode::Tab if confirmable => {
+                v.mode = v.mode.next();
+                self.last_status = Some(mode_hint(v.mode).into());
             }
             KeyCode::Backspace if typing => {
                 v.typed.pop();
@@ -5417,6 +5428,17 @@ impl App {
 
 #[cfg(test)]
 mod tests;
+
+/// The status-bar line for a run mode Tab chose. Pure.
+fn mode_hint(mode: RunMode) -> &'static str {
+    match mode {
+        RunMode::Apply => "for real: each patch committed in turn · Tab dry run",
+        RunMode::DryRun => {
+            "dry run: one transaction, rolled back — same locks as the real run · Tab copy"
+        }
+        RunMode::Copy => "on a copy: the database copied, patched, dropped · Tab for real",
+    }
+}
 
 /// The status-bar hint for a plan: what to press. Pure.
 fn patch_hint(plan: &Result<crate::inventory::patching::PatchPlan, String>) -> String {
