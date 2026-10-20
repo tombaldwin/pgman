@@ -266,6 +266,7 @@ impl Server {
             .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
                 results: Vec::new(),
                 error: Some(format!("the apply task failed: {e}")),
+                recorded_after: None,
             });
         Ok(render_apply(&plan, Some(&report), &report.summary()))
     }
@@ -909,6 +910,7 @@ pub fn render_apply(
         "below_recorded": plan.below_recorded,
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
+        "recorded_after": report.and_then(|r| r.recorded_after),
         "summary": summary,
     })
     .to_string()

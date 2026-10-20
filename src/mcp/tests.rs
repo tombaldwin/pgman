@@ -321,6 +321,13 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
     let result: Value =
         serde_json::from_str(&tools::render_apply(&plan, None, "applied 0 patch(es)")).unwrap();
     assert_eq!(result["below_recorded"], json!(["7-old.sql"]));
+    let report = crate::inventory::patching::ApplyReport {
+        recorded_after: Some(252),
+        ..Default::default()
+    };
+    let result: Value =
+        serde_json::from_str(&tools::render_apply(&plan, Some(&report), "")).unwrap();
+    assert_eq!(result["recorded_after"], json!(252));
     plan.patches[0].statements = vec!["x".repeat(7000)];
     assert!(tools::confirm_request(&plan)
         .0

@@ -89,6 +89,9 @@ pub struct ApplyReport {
     pub results: Vec<PatchResult>,
     /// Set when it couldn't start (connect, re-check).
     pub error: Option<String>,
+    /// The highest id recorded after the run, read again at the end;
+    /// `None` when it couldn't be read (or the run never connected).
+    pub recorded_after: Option<i64>,
 }
 
 impl ApplyReport {
@@ -105,6 +108,14 @@ impl ApplyReport {
         if let Some(e) = &self.error {
             return format!("nothing applied: {e}");
         }
+        let ran = self.ran();
+        match self.recorded_after {
+            Some(v) => format!("{ran} · recorded up to {v} now"),
+            None => ran,
+        }
+    }
+
+    fn ran(&self) -> String {
         match self.failed() {
             None => format!("applied {} patch(es)", self.applied()),
             Some(f) => format!(
@@ -446,6 +457,13 @@ pub async fn apply(
             break;
         }
     }
+    report.recorded_after = match crate::query::apply::applied_ids(&client, &cfg).await {
+        Ok(ids) => ids.into_iter().max(),
+        Err(e) => {
+            tracing::warn!(target: "pgman::patching", error = %e, "couldn't re-read the version table");
+            None
+        }
+    };
     report
 }
 
@@ -480,6 +498,7 @@ pub async fn apply_for(p: PatchPlan) -> ApplyReport {
         Err(e) => ApplyReport {
             results: Vec::new(),
             error: Some(e),
+            recorded_after: None,
         },
     }
 }
@@ -627,8 +646,17 @@ mod tests {
                 },
             ],
             error: None,
+            recorded_after: None,
         };
         assert_eq!(r.summary(), "applied 1, then 3-x.sql failed: lock timeout");
+        let read = ApplyReport {
+            recorded_after: Some(2),
+            ..r.clone()
+        };
+        assert_eq!(
+            read.summary(),
+            "applied 1, then 3-x.sql failed: lock timeout · recorded up to 2 now"
+        );
         assert_eq!(
             ApplyReport {
                 error: Some("no route".into()),

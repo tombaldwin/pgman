@@ -3071,6 +3071,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             "{}",
             r.summary()
         );
+        assert_eq!(r.recorded_after, Some(2), "002 recorded, 003 rolled back");
 
         // Fix 003 on disk and plan again.
         std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();

@@ -1721,6 +1721,9 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         for p in plan.patches.iter().skip(ran) {
             out.push((format!("  · {} — not run", p.file.file), false));
         }
+        if let Some(v) = report.recorded_after {
+            out.push((format!("  recorded up to {v} now (was {recorded})"), false));
+        }
         if let Some((file, why)) = &plan.stopped_at {
             out.push((format!("  still pending: {file} — {why}"), true));
         }
@@ -3215,6 +3218,7 @@ mod tests {
                     },
                 ],
                 error: None,
+                recorded_after: Some(42),
             },
         );
         let done = patch_lines(&v);
@@ -3226,7 +3230,8 @@ mod tests {
             done[2],
             ("  ✗ 43-customer-tier.sql — lock timeout".into(), true)
         );
-        assert!(done[3]
+        assert_eq!(done[3], ("  recorded up to 42 now (was 41)".into(), false));
+        assert!(done[4]
             .0
             .starts_with("  still pending: 44-orders-created-idx.sql"));
         let mut long = crate::demo::patch_plan("staging", "staging", "shop");

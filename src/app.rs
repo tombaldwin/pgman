@@ -4135,6 +4135,7 @@ impl App {
                     crate::inventory::patching::ApplyReport {
                         results: Vec::new(),
                         error: Some(format!("the apply task failed: {e}")),
+                        recorded_after: None,
                     }
                 });
                 let _ = tx.send(AppMsg::EnvPatched { plan, report });

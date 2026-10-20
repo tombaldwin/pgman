@@ -58,6 +58,13 @@ pub fn app(theme: Theme) -> App {
                         })
                         .collect(),
                     error: None,
+                    // Every planned patch ran and recorded its own id.
+                    recorded_after: p
+                        .patches
+                        .iter()
+                        .filter_map(|x| x.file.version_id)
+                        .max()
+                        .or(p.applied_max),
                 },
             ))
         }),

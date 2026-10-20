@@ -10256,6 +10256,7 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
                         outcome: Ok(2),
                     }],
                     error: None,
+                    recorded_after: None,
                 },
             ))
         }),
