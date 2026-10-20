@@ -70,6 +70,21 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     }
 }
 
+/// `:readonly off` refused by the profile: where the setting lives and
+/// what to change. `safety.toml` is read at start, so the next step
+/// ends in a restart. Pure.
+pub fn readonly_off_refusal(db: &str, own_entry: bool, safety_toml_exists: bool) -> String {
+    match (safety_toml_exists, own_entry) {
+        (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
+        (true, true) => format!(
+            "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
+        ),
+        (true, false) => format!(
+            "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
+        ),
+    }
+}
+
 /// The status line when the query Enter loaded from the log picker
 /// still has `?` / `$N` placeholders: the log carried no bound values
 /// for it (Hibernate's bind logging is `TRACE`, usually off), so what

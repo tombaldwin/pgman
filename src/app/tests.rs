@@ -7074,7 +7074,8 @@ fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     assert!(a.read_only, "the flag must not move");
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        err == readonly_off_refusal("default", false, true)
+            || err == readonly_off_refusal("default", false, false),
         "{err}"
     );
 }
@@ -8048,10 +8049,45 @@ fn readonly_off_under_a_read_only_profile_is_refused_with_a_next_step() {
     a.on_key(KeyEvent::from(KeyCode::Enter));
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        err == readonly_off_refusal("default", false, true)
+            || err == readonly_off_refusal("default", false, false),
         "{err}"
     );
     assert!(a.read_only, "the setting did not change");
+}
+
+#[test]
+fn readonly_off_refusal_names_the_entry_to_change() {
+    assert_eq!(
+        readonly_off_refusal("ledger", true, true),
+        "ledger is read-only in safety.toml ([databases.ledger]) · set read_only = false there and restart pgman to write"
+    );
+    assert_eq!(
+        readonly_off_refusal("ledger", false, true),
+        "read-only is safety.toml's [default] · add [databases.ledger] with read_only = false and restart pgman to write"
+    );
+    assert_eq!(
+        readonly_off_refusal("ledger", true, false),
+        crate::conn::READ_ONLY_DEFAULT_HINT
+    );
+}
+
+#[test]
+fn readonly_off_on_a_pinned_database_names_its_entry() {
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let mut pinned = cfg.default.clone();
+    pinned.read_only = true;
+    cfg.databases.insert("ledger".into(), pinned);
+    let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+    a.dsn = Some(crate::conn::Dsn::parse("postgres://app@db.internal/ledger").unwrap());
+    run_command(&mut a, "readonly off");
+    let err = a.last_error.clone().unwrap_or_default();
+    assert!(
+        err == readonly_off_refusal("ledger", true, true)
+            || err == readonly_off_refusal("ledger", true, false),
+        "{err}"
+    );
 }
 
 // ----- F2 error detail returns to where it was opened -----------------
