@@ -82,7 +82,7 @@ pub fn tool_table() -> Value {
         },
         {
             "name": "environments",
-            "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. With `probe: true`, environments that opted in (`probe = true` in environments.toml) also report each database's server version, recovery state, replica lag and — with a `version_table` — patch level and pending patches, read over read-only connections; a primary with a replica of the same database is read through the replica (`via_replica`). CAVEATS: without `probe` nothing connects to a database, and `status` is RDS's view of the instance, not proof that Postgres answers. An environment that didn't opt in is never probed, whatever the argument says. Lag is the age of the last replayed change: an idle primary makes it grow too. Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
+            "description": "Every database in each configured environment, replicas included: server, role (primary, replica, direct), which primary a replica follows, endpoint, engine version, instance status (e.g. stopped), class and multi-AZ. Environments come from environments.toml in pgman's config dir. An `rds` source lists instances through the aws CLI (account checked first when configured) and includes the replicas of every matched instance; a `static` source names connections from connections.toml. With `probe: true`, environments that opted in (`probe = true` in environments.toml) also report each database's server version, recovery state, replica lag and — with a `version_table` — patch level and pending patches, read over read-only connections; a primary with a replica of the same database is read through the replica (`via_replica`). CAVEATS: without `probe` nothing connects to a database, and `status` is RDS's view of the instance, not proof that Postgres answers. An environment that didn't opt in is never probed, whatever the argument says. Lag is 0 on a replica that is streaming and has replayed all it received; otherwise it is the age of the last replayed change (a stream that is down makes it grow). Static entries carry no engine version or status. An environment whose source failed lists no databases and says why in `error`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1175,9 +1175,9 @@ pub fn replica_note(s: &ReplicaState) -> Option<String> {
                 .to_string(),
         ),
         (Some(true), Some(lag)) if lag > REPLICA_LAG_NOTE_SECS => Some(format!(
-            "the replica's last replayed change is {lag:.0}s old: a change made on the \
-             primary in that time may not show here yet (an idle primary also grows this \
-             number). To check a patch landed, run pending_patches on the primary connection."
+            "the replica is {lag:.0}s behind (or its stream is down): a change made on the \
+             primary in that time may not show here yet. To check a patch landed, run \
+             pending_patches on the primary connection."
         )),
         (Some(true), None) => {
             Some("the replica has not replayed any change yet, so its lag is unknown".to_string())
@@ -1857,7 +1857,7 @@ mod tests {
         assert_eq!(replica_note(&st(Some(true), Some(0.4))), None);
         assert!(replica_note(&st(Some(true), Some(43.0)))
             .unwrap()
-            .contains("43s old"));
+            .contains("43s behind"));
         assert!(replica_note(&st(Some(false), None))
             .unwrap()
             .contains("NOT in recovery"));

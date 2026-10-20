@@ -190,8 +190,10 @@ the MCP `environments` tool when called with `probe: true`):
   in yellow; it's the same matching as the MCP `pending_patches` tool.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
-  `▁▂▂▃▅▇ · 2s–30s over 12 probes`. Steady lag on an idle primary looks
-  flat; a real spike stands out. A replica that isn't in recovery
+  `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has
+  replayed all it received reads 0, however long its primary has been
+  quiet; one whose stream is down reads the age of its last replayed
+  change, so it grows. A replica that isn't in recovery
   shows `NOT IN RECOVERY` in red, because it's a primary posing as a
   replica.
 - **`SESSIONS`**: backends connected to the database (the probe's own

@@ -113,12 +113,12 @@ ORDER BY a.xact_start NULLS LAST"
 /// the replica's own, not the primary's — the caller says so.
 pub const IS_REPLICA_SQL: &str = "SELECT pg_is_in_recovery() AS is_replica";
 
-/// Whether the server is a standby, and how old its last replayed change
-/// is. `lag_secs` is NULL on a primary and on a standby that has replayed
-/// nothing yet. An idle primary makes it grow too: it is the age of the
-/// last replayed change, not proof of lag.
-pub const REPLICA_LAG_SQL: &str = "SELECT pg_is_in_recovery() AS in_recovery, \
-  EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())::float8 AS lag_secs";
+/// Whether the server is a standby, and its lag (`lag_secs_sql!`).
+pub const REPLICA_LAG_SQL: &str = concat!(
+    "SELECT pg_is_in_recovery() AS in_recovery, ",
+    super::probe::lag_secs_sql!(),
+    " AS lag_secs"
+);
 
 #[cfg(test)]
 mod tests {

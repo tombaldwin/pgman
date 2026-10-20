@@ -2,7 +2,7 @@
 //! `--features integration` so plain `cargo test` doesn't try to
 //! reach a server that isn't there. Bring the DB up with:
 //!
-//!   docker compose -f docker-compose.test.yml up -d
+//!   docker compose -f docker-compose.test.yml up -d --wait
 //!   cargo test --features integration
 //!   docker compose -f docker-compose.test.yml down
 //!
@@ -16,6 +16,17 @@ use std::process::Command;
 
 /// DSN of the docker-compose postgres. Matches docker-compose.test.yml.
 const DSN: &str = "postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
+
+/// DSN of the compose file's streaming standby of [`DSN`].
+const STANDBY_DSN: &str =
+    "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+
+/// A read-only probe connection to `dsn`.
+async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
+    pgman::conn::connect_via(pgman::conn::Dsn::parse(dsn).unwrap(), None, 10_000)
+        .await
+        .unwrap_or_else(|e| panic!("{dsn}: {e} (is the compose file's standby up?)"))
+}
 
 /// Path to the freshly-built `pgman` binary. Cargo sets this env var
 /// when compiling integration tests so we don't have to guess the
@@ -3310,4 +3321,62 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
     });
     assert!(table_exists(&home, &victim), "the hidden DROP never ran");
     assert!(!table_has_id(&home, &vt, 2), "and the patch rolled back");
+}
+
+/// A standby of a primary that has gone quiet has no lag: it has
+/// replayed everything it received. It used to read "time since the last
+/// write", growing (and turning yellow) on every idle replica.
+#[test]
+fn a_caught_up_standby_of_an_idle_primary_has_no_lag() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let primary = probe_client(DSN).await;
+        let standby = probe_client(STANDBY_DSN).await;
+        // A write the standby replays, then nothing for a while.
+        let home = scratch_home("lag-idle", WRITABLE_PROFILE);
+        let t = format!("pgman_it_lag_{}", std::process::id());
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("CREATE TABLE {t} (id int)")],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let lsn: String = primary
+            .query_one("SELECT pg_current_wal_lsn()::text", &[])
+            .await
+            .unwrap()
+            .get(0);
+        for _ in 0..100 {
+            let caught: bool = standby
+                .query_one(
+                    &format!("SELECT pg_last_wal_replay_lsn() >= '{lsn}'::pg_lsn"),
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            if caught {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        let p = pgman::query::probe::run(&standby, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(p.in_recovery, Some(true));
+        let lag = p.lag_secs.expect("a standby reports lag");
+        assert!(lag < 1.0, "caught up, so no lag — got {lag}s");
+        let p = pgman::query::probe::run(&primary, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(
+            (p.in_recovery, p.lag_secs),
+            (Some(false), None),
+            "a primary has none"
+        );
+    });
 }

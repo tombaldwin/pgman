@@ -9,25 +9,45 @@
 use super::patches::{self, PatchFile, PatchesConfig};
 use crate::conn::{self, TypedRows};
 
+/// A standby's replication lag in seconds, as SQL: 0 when it is
+/// streaming and has replayed all it has received (a quiet primary
+/// doesn't make it grow), otherwise the age of the last replayed change
+/// (so a standby whose stream is down shows how stale it is); NULL on a
+/// primary. Shared by the probe and MCP's replica check.
+macro_rules! lag_secs_sql {
+    () => {
+        "(CASE WHEN NOT pg_is_in_recovery() THEN NULL \
+           WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() \
+             AND EXISTS (SELECT 1 FROM pg_stat_wal_receiver WHERE status = 'streaming') THEN 0 \
+           ELSE EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp()) END)::float8"
+    };
+}
+pub(crate) use lag_secs_sql;
+
 /// One round trip for everything that needs no configuration.
-pub const STATUS_SQL: &str = "SELECT current_setting('server_version') AS server_version, \
-  pg_is_in_recovery() AS in_recovery, \
-  EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())::float8 AS lag_secs, \
-  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \
-  pg_size_pretty(pg_database_size(current_database())) AS size, \
-  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-     AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked, \
-  (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-     AND pid <> pg_backend_pid() AND xact_start < now() - interval '5 minutes') AS long_tx";
+pub const STATUS_SQL: &str = concat!(
+    "SELECT current_setting('server_version') AS server_version, \
+     pg_is_in_recovery() AS in_recovery, ",
+    lag_secs_sql!(),
+    " AS lag_secs, \
+     (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS sessions, \
+     pg_size_pretty(pg_database_size(current_database())) AS size, \
+     (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+        AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked, \
+     (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+        AND pid <> pg_backend_pid() AND xact_start < now() - interval '5 minutes') AS long_tx"
+);
 
 /// A probe's findings. `None` is "not known", never "zero".
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Probe {
     pub server_version: Option<String>,
     pub in_recovery: Option<bool>,
-    /// Age of the last replayed change, in seconds. NULL on a primary and
-    /// on a standby that has replayed nothing yet; an idle primary makes
-    /// it grow too, so it is an upper bound on lag, not proof of it.
+    /// Replication lag, in seconds. 0 when the standby is streaming and has
+    /// replayed all it has received (a quiet primary doesn't make it
+    /// grow); otherwise the age of the last replayed change, so a standby
+    /// whose stream is down shows how stale it is. NULL on a primary and on
+    /// a standby that has replayed nothing yet.
     pub lag_secs: Option<f64>,
     /// Highest id in the version table.
     pub schema_version: Option<i64>,
