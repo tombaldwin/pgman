@@ -3834,8 +3834,14 @@ impl App {
         self.mode = Mode::SchemaLint;
         // Kick off the live-query checks (LINT101+). Results land
         // via `AppMsg::LiveLintLoaded` and get merged into
-        // `schema_lint_findings` — see the handler.
-        if let Some(client) = self.client.clone() {
+        // `schema_lint_findings` — see the handler. `--demo` has no
+        // server to ask: its live checks find nothing more.
+        if self.demo {
+            self.on_msg(AppMsg::LiveLintLoaded {
+                generation: self.generation,
+                result: Ok(Vec::new()),
+            });
+        } else if let Some(client) = self.client.clone() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
             tokio::spawn(async move {
@@ -3862,6 +3868,15 @@ impl App {
 
     /// `T` from Normal — load + open the slow-queries panel.
     fn start_slow_queries(&mut self) {
+        if self.demo {
+            self.slow_queries.cursor = 0;
+            self.slow_queries.error = None;
+            self.mode = Mode::SlowQueries;
+            return self.on_msg(AppMsg::SlowQueriesLoaded {
+                generation: self.generation,
+                result: Ok(crate::demo::slow_queries()),
+            });
+        }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -3875,6 +3890,9 @@ impl App {
 
     /// `r` inside the slow-queries panel — refresh in place.
     fn refresh_slow_queries(&mut self) {
+        if self.demo {
+            return self.start_slow_queries();
+        }
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -4474,6 +4492,14 @@ impl App {
 
     /// `L` from Normal — load + open the active-sessions panel.
     fn start_sessions(&mut self) {
+        if self.demo {
+            self.sessions.cursor = 0;
+            self.mode = Mode::Sessions;
+            return self.on_msg(AppMsg::SessionsLoaded {
+                generation: self.generation,
+                result: Ok(crate::demo::sessions()),
+            });
+        }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());
             return;
@@ -4485,6 +4511,9 @@ impl App {
     }
 
     fn refresh_sessions(&mut self) {
+        if self.demo {
+            return self.start_sessions();
+        }
         let Some(client) = self.client.clone() else {
             return;
         };

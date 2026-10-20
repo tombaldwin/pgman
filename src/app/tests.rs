@@ -10427,3 +10427,38 @@ fn a_refresh_keeps_the_cursor_on_the_same_database() {
     a.on_msg(AppMsg::EnvironmentsLoaded(Ok(moved)));
     assert_eq!(a.environments.selection().unwrap(), before);
 }
+
+/// What the demo's start card offers works in the demo: slow queries,
+/// sessions and the wizard answer from fixtures instead of saying
+/// "not connected" or waiting on a server that isn't there.
+#[test]
+fn the_demo_answers_slow_queries_sessions_and_the_wizard() {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('T'));
+    assert_eq!(a.mode, Mode::SlowQueries, "{:?}", a.last_error);
+    assert!(!a.slow_queries.rows.is_empty());
+    press(&mut a, KeyCode::Char('q'));
+    press(&mut a, KeyCode::Char('L'));
+    assert_eq!(a.mode, Mode::Sessions, "{:?}", a.last_error);
+    assert!(a.sessions.rows.iter().any(|s| !s.blocked_by.is_empty()));
+    press(&mut a, KeyCode::Char('q'));
+    // Past its first-visit tip, which would replace the status line.
+    a.mode_seen.insert(Mode::SchemaLint);
+    press(&mut a, KeyCode::Char('W'));
+    assert_eq!(a.mode, Mode::SchemaLint);
+    assert!(
+        !a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .contains("checking live"),
+        "{:?}",
+        a.last_status
+    );
+}
+
+#[test]
+fn the_demos_slow_queries_come_by_total_time_like_the_live_panel() {
+    let rows = crate::demo::slow_queries();
+    assert!(rows.windows(2).all(|w| w[0].total_ms >= w[1].total_ms));
+}
