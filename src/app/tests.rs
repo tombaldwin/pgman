@@ -9784,10 +9784,13 @@ fn probes_mark_rows_then_fill_in_and_a_stale_answer_is_dropped() {
         ProbeState::ViaReplica
     ));
 
-    // r lists again: a new sequence, rows back to probing.
+    // r lists again: a new sequence (so the old round's answers are
+    // dropped), and the row keeps its last reading until the new one.
     press(&mut a, KeyCode::Char('r'));
     assert_ne!(a.environments.probe_seq, seq);
-    assert_eq!(a.environments.probes[0][1], ProbeState::Probing);
+    assert!(
+        matches!(&a.environments.probes[0][1], ProbeState::Done(Ok(p)) if p.server_version.as_deref() == Some("16.4"))
+    );
 }
 
 #[test]
@@ -10506,4 +10509,24 @@ fn q_in_the_drift_view_goes_back_to_the_list() {
     assert_eq!(a.mode, Mode::Environments, "q left the panel");
     press(&mut a, KeyCode::Char('q'));
     assert_ne!(a.mode, Mode::Environments);
+}
+
+/// A second probe round shows the last reading while it runs, rather
+/// than blanking every row back to "probing…".
+#[test]
+fn a_new_probe_round_keeps_showing_the_last_reading() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(
+        crate::demo::environment_probes,
+    )));
+    press(&mut a, KeyCode::Char('E'));
+    let first = a.environments.probes[0][1].clone();
+    assert!(matches!(first, ProbeState::Done(Ok(_))), "{first:?}");
+    // Next round's answers held back.
+    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(|r| {
+        vec![None; r.targets.len()]
+    })));
+    a.start_env_probes();
+    assert_eq!(a.environments.probes[0][1], first, "blanked to probing");
 }

@@ -1006,6 +1006,10 @@ pub struct EnvironmentsUi {
     /// Each replica row's recent lag readings, oldest first, keyed by
     /// (environment, server, database). Grows with each probe.
     pub lag_history: std::collections::HashMap<(String, String, String), Vec<f64>>,
+    /// Each database's last probe answer, keyed like `lag_history`: shown
+    /// while the next probe runs, so a refresh (or `R` every 30 s)
+    /// doesn't blank the rows to "probing…".
+    pub last_probe: std::collections::HashMap<(String, String, String), ProbeState>,
     /// `l`: recent errors from the focused server's RDS log.
     pub logs: Option<LogsView>,
     /// `P`: applying the focused database's pending patches.

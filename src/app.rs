@@ -4381,11 +4381,16 @@ impl App {
                 ]);
                 continue;
             }
+            let last = &self.environments.last_probe;
             states.push(
                 plan(&r.targets)
                     .into_iter()
-                    .map(|s| match s {
-                        Step::Connect => ProbeState::Probing,
+                    .zip(&r.targets)
+                    .map(|(s, t)| match s {
+                        Step::Connect => last
+                            .get(&(r.name.clone(), t.server.clone(), t.database.clone()))
+                            .cloned()
+                            .unwrap_or(ProbeState::Probing),
                         Step::ViaReplica => ProbeState::ViaReplica,
                         // Nothing to read: the row's status says why.
                         Step::NotRunning => ProbeState::Off,
@@ -4454,6 +4459,10 @@ impl App {
                 }
             }
             *state = ProbeState::done(result);
+            self.environments.last_probe.insert(
+                (r.name.clone(), t.server.clone(), t.database.clone()),
+                state.clone(),
+            );
         }
     }
 
