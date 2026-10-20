@@ -439,6 +439,9 @@
         "docker",
         "ssh"
       ],
+      "tables": [
+        "pg_stat_activity"
+      ],
       "calls": [
         "apply_pgpassword",
         "check_log_max_size",
