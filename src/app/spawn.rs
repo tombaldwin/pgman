@@ -329,10 +329,7 @@ impl App {
     /// the actual reconnect.
     pub(super) fn start_connection_change(&mut self) {
         if self.conn_pick.picks.is_empty() {
-            self.last_status = Some(
-                "no data sources to pick — pass --dsn or add `[[connections]]` to pgman.toml"
-                    .into(),
-            );
+            self.last_status = Some(no_picks_hint(self.dsn.is_some()).into());
             return;
         }
         if self.query_running {

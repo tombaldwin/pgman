@@ -122,6 +122,17 @@ pub fn running_status(kind: RunKind) -> String {
     }
 }
 
+/// `c` with nothing to pick from. Started with `--dsn`, telling the
+/// operator to pass `--dsn` was no help: `:connect` takes another one.
+/// Pure.
+pub fn no_picks_hint(have_dsn: bool) -> &'static str {
+    if have_dsn {
+        "only the --dsn connection here · :connect postgres://… opens another; [[connections]] in pgman.toml lists more for c"
+    } else {
+        "no data sources to pick — pass --dsn, :connect postgres://…, or add `[[connections]]` to pgman.toml"
+    }
+}
+
 /// What a reload the operator asked for found. Pure / testable.
 pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> String {
     match cache.tables.len() {

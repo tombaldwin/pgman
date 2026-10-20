@@ -11176,3 +11176,21 @@ fn a_cancel_ctrl_c_asked_for_is_a_status_not_an_error() {
     assert!(a.last_error.is_some());
     assert!(!a.cancel_requested, "the request is spent");
 }
+
+#[test]
+fn c_with_only_a_dsn_points_at_connect_not_at_dsn() {
+    let mut a = App::new(
+        Theme::default(),
+        Some(Dsn::parse("postgres://app@db.internal/ledger").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('c'));
+    let s = a.last_status.clone().unwrap_or_default();
+    assert!(s.contains(":connect") && !s.contains("pass --dsn"), "{s}");
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('c'));
+    assert!(a.last_status.as_deref().unwrap().contains("pass --dsn"));
+}
