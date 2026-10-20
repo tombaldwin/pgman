@@ -1224,7 +1224,17 @@ pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<Pro
         (_, _, Some(_)) => ("version ✗".to_string(), Some(ProbeAlert::Warn)),
         (Some(v), Some(n), None) if n > 0 => (format!("v{v} (+{n})"), Some(ProbeAlert::Warn)),
         (Some(v), _, None) => (format!("v{v}"), None),
-        (None, _, None) => ("—".to_string(), None),
+        // A version column with no integer ids: its highest as written.
+        (None, pending, None) => match &p.schema_label {
+            Some(l) => {
+                let l = crate::grid::truncate_cell(l, 24);
+                match pending {
+                    Some(n) if n > 0 => (format!("{l} (+{n})"), Some(ProbeAlert::Warn)),
+                    _ => (l, None),
+                }
+            }
+            None => ("—".to_string(), None),
+        },
     }
 }
 
@@ -3794,6 +3804,22 @@ mod tests {
         ];
         let (_, _, cells) = drift_matrix(&demo, &probes);
         assert!(cells[0][0].behind && cells[0][1].behind);
+    }
+
+    #[test]
+    fn a_version_table_of_text_ids_shows_the_id_as_written() {
+        use crate::query::probe::Probe;
+        let p = |pending| Probe {
+            schema_label: Some("1.10".into()),
+            pending,
+            ..Probe::default()
+        };
+        assert_eq!(schema_cell(&p(Some(0))), ("1.10".into(), None));
+        assert_eq!(
+            schema_cell(&p(Some(2))),
+            ("1.10 (+2)".into(), Some(ProbeAlert::Warn))
+        );
+        assert_eq!(schema_cell(&Probe::default()), ("—".into(), None));
     }
 
     #[test]

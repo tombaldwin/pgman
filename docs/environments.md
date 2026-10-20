@@ -189,6 +189,9 @@ the MCP `environments` tool when called with `probe: true`):
 - **`SCHEMA`**: the patch level, the highest id in `version_table`,
   as `v251`. Patch files the table hasn't recorded show as `v251 (+2)`
   in yellow; it's the same matching as the MCP `pending_patches` tool.
+  A text column holding no integer ids at all (`1.2`, `1.10`) shows
+  its highest as written instead of failing; applying patches still
+  refuses such a table.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
   `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has

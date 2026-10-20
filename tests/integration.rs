@@ -2117,7 +2117,11 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         &[
             "--yes",
             "--sql",
-            &format!("CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3)"),
+            &format!(
+                "CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3); \
+                 CREATE TABLE {table}_text (id text); \
+                 INSERT INTO {table}_text (id) VALUES ('1.2'), ('1.10'), (NULL)"
+            ),
         ],
     );
     assert!(
@@ -2201,6 +2205,15 @@ fn environment_probe_reads_version_patch_level_and_pending() {
     assert!(p.server_version.is_some());
     let p = probe(&table, &["pgman_test"]);
     assert_eq!(p.schema_version, Some(3), "named: read");
+
+    // A text column of ids that aren't integers: the highest shown as
+    // written, not an error.
+    let p = probe(&format!("{table}_text"), &[]);
+    assert_eq!(
+        (p.schema_version, p.schema_label.as_deref(), &p.schema_error),
+        (None, Some("1.10"), &None),
+        "{p:?}"
+    );
 }
 
 /// Over MCP, `probe: true` reads the databases of environments that

@@ -122,7 +122,7 @@ fn truthy(v: Option<&str>) -> bool {
 
 /// `1.2.10` as numbers, for ordering and comparing versions. Trailing
 /// zeros don't count: Flyway reads `1.0` and `1` as one version. Pure.
-fn version_key(v: &str) -> Vec<u64> {
+pub(crate) fn version_key(v: &str) -> Vec<u64> {
     let mut key: Vec<u64> = v
         .split(['.', '_'])
         .map(|p| p.trim().parse().unwrap_or(0))
