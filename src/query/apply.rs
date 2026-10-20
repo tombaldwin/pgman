@@ -240,13 +240,7 @@ pub async fn apply_outside(
                 (Ok(_), Some(id)) => format!("version {id} is not recorded"),
                 _ => "the version table couldn't be read".to_string(),
             };
-            return Err(format!(
-                "statement {} of {} failed outside a transaction: {msg}. {} \
-                 earlier statement(s) stay applied and {recorded}; finish the patch by hand",
-                i + 1,
-                statements.len(),
-                i
-            ));
+            return Err(outside_failure(i, statements.len(), stmt, &msg, &recorded));
         }
     }
     let applied = applied_ids(client, cfg)
@@ -257,6 +251,23 @@ pub async fn apply_outside(
         statements: statements.len(),
         recorded: id.is_some_and(|id| applied.contains(&id)),
     })
+}
+
+/// What [`apply_outside`] says when statement `i` (of `n`) failed with
+/// `msg`. Pure.
+fn outside_failure(i: usize, n: usize, stmt: &str, msg: &str, recorded: &str) -> String {
+    let mut out = format!(
+        "statement {} of {n} failed outside a transaction: {msg}. {i} earlier statement(s) \
+         stay applied and {recorded}; finish the patch by hand",
+        i + 1
+    );
+    let tokens = crate::safety::code_tokens(stmt);
+    if tokens.first().is_some_and(|t| t == "create") && tokens.iter().any(|t| t == "concurrently") {
+        out.push_str(
+            " (a failed CREATE INDEX CONCURRENTLY leaves an INVALID index: drop it before trying again)",
+        );
+    }
+    out
 }
 
 /// Whether `client`'s server is a standby.
@@ -397,6 +408,24 @@ mod tests {
                 .unwrap_err()
                 .contains("read-only")
         );
+    }
+
+    #[test]
+    fn a_failure_outside_a_transaction_says_what_stayed_and_what_to_drop() {
+        assert_eq!(
+            outside_failure(1, 3, "VACUUM t", "canceled", "version 4 IS recorded"),
+            "statement 2 of 3 failed outside a transaction: canceled. 1 earlier statement(s) \
+             stay applied and version 4 IS recorded; finish the patch by hand"
+        );
+        assert!(outside_failure(
+            0,
+            1,
+            "CREATE UNIQUE INDEX CONCURRENTLY i ON t (c)",
+            "canceling statement due to statement timeout",
+            "x"
+        )
+        .ends_with("leaves an INVALID index: drop it before trying again)"));
+        assert!(!outside_failure(0, 1, "DROP INDEX CONCURRENTLY i", "m", "x").contains("INVALID"));
     }
 
     #[test]

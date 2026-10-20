@@ -3201,7 +3201,7 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         &[
             "--yes",
             "--sql",
-            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int); INSERT INTO {tbl} VALUES (1), (1)"),
         ],
     );
     assert!(
@@ -3226,7 +3226,9 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         (
             "004-idx.sql",
             format!(
-                "{}CREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\nSELECT * FROM pgman_it_no_such_table;\n",
+                // The unique one fails on the duplicate ids, leaving it INVALID.
+                "{}CREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\n\
+                 CREATE UNIQUE INDEX CONCURRENTLY {tbl}_u ON {tbl} (id);\n",
                 row(4)
             ),
         ),
@@ -3331,7 +3333,8 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         assert!(
             err.starts_with("statement 3 of 3 failed outside a transaction")
                 && err.contains("2 earlier statement(s) stay applied")
-                && err.contains("version 4 IS recorded"),
+                && err.contains("version 4 IS recorded")
+                && err.contains("leaves an INVALID index"),
             "{err}"
         );
         assert_eq!(r.recorded_after, Some(4));
@@ -3341,13 +3344,17 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
                 "--format",
                 "csv",
                 "--sql",
-                &format!("SELECT indexname FROM pg_indexes WHERE tablename = '{tbl}'"),
+                &format!(
+                    "SELECT c.relname, i.indisvalid FROM pg_index i \
+                     JOIN pg_class c ON c.oid = i.indexrelid \
+                     WHERE i.indrelid = '{tbl}'::regclass ORDER BY 1"
+                ),
             ],
         );
+        let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
-            String::from_utf8_lossy(&out.stdout).contains(&format!("{tbl}_c")),
-            "the CONCURRENTLY index stayed: {}",
-            String::from_utf8_lossy(&out.stdout)
+            stdout.contains(&format!("{tbl}_c,t")) && stdout.contains(&format!("{tbl}_u,f")),
+            "the first index stayed, the failed one is INVALID: {stdout}"
         );
     });
 }
