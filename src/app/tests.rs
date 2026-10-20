@@ -11074,3 +11074,66 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
     assert!(!reached_request_run(&a));
 }
+
+#[test]
+fn the_running_status_names_the_kind_and_the_cancel_key() {
+    assert_eq!(
+        crate::app::running_status(RunKind::Run),
+        "running… · ctrl-c cancels"
+    );
+    assert_eq!(
+        crate::app::running_status(RunKind::ExplainAnalyze),
+        "running EXPLAIN ANALYZE… · ctrl-c cancels"
+    );
+}
+
+#[test]
+fn a_cancel_ctrl_c_asked_for_is_a_status_not_an_error() {
+    let failed = |code: &str, error: &str| AppMsg::QueryFailed {
+        generation: 0,
+        error: error.into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some(code.into()),
+            ..Default::default()
+        }),
+    };
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+        calls: calls.clone(),
+    }));
+    a.query_running = true;
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let mut msg = failed("57014", "canceling statement due to user request");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert_eq!(a.last_status.as_deref(), Some("cancelled"));
+    assert!(!a.query_running);
+
+    // A statement timeout is the same SQLSTATE, unasked: an error.
+    let mut msg = failed("57014", "canceling statement due to statement timeout");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("statement timeout")));
+
+    // Asked, but the statement failed for another reason first.
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let mut msg = failed("23505", "duplicate key value");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a.last_error.is_some());
+    assert!(!a.cancel_requested, "the request is spent");
+}

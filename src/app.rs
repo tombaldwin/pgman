@@ -92,6 +92,16 @@ pub fn sessions_status(total: usize, blocked: usize) -> String {
     }
 }
 
+/// The status line while a statement runs. It hides the editor's
+/// `ctrl-c cancel running query` hint, so it carries the key itself;
+/// a plain run is just "running" (it read `running run…`). Pure.
+pub fn running_status(kind: RunKind) -> String {
+    match kind {
+        RunKind::Run => "running… · ctrl-c cancels".to_string(),
+        other => format!("running {}… · ctrl-c cancels", other.label()),
+    }
+}
+
 /// What a reload the operator asked for found. Pure / testable.
 pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> String {
     match cache.tables.len() {
@@ -1234,6 +1244,10 @@ pub struct App {
     pub armed_chord: Option<ArmedChord>,
     /// A reload the operator asked for is in flight: say what landed.
     pub schema_reload_announce: bool,
+    /// Ctrl-C sent a cancel for the running statement: the
+    /// `57014 query_canceled` that comes back is the answer to it, not
+    /// a failure.
+    pub cancel_requested: bool,
     /// Mirror of `pending_mark_set` for `'<x>` jumps.
     pub pending_mark_jump: bool,
     /// When the current query started — captured in `spawn_run`
@@ -1510,6 +1524,7 @@ impl App {
             pending_mark_set: false,
             armed_chord: None,
             schema_reload_announce: false,
+            cancel_requested: false,
             pending_mark_jump: false,
             query_started: None,
             row_detail: RowDetailUi::default(),
@@ -3200,6 +3215,7 @@ impl App {
             return;
         };
         self.last_status = Some("cancelling query…".to_string());
+        self.cancel_requested = true;
         dispatcher.dispatch();
     }
 

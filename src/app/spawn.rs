@@ -421,7 +421,7 @@ impl App {
         self.query_running = true;
         self.query_started = Some(Instant::now());
         self.last_error = None;
-        self.last_status = Some(format!("running {}…", kind.label()));
+        self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
             let result = execute(&client, &sql, kind, &decision, is_batch).await;
             // Run + wrap_in_tx leaves the transaction open on success — the
