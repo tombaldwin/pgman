@@ -1084,5 +1084,10 @@ mod tests {
         let mid = plain(&landing_lines(&a, 120, 9));
         assert!(mid.iter().any(|l| l.contains("TAP below")), "{mid:?}");
         assert!(!mid.iter().any(|l| l.contains("recent")), "{mid:?}");
+        // Room for `recent` alone (it would show without a tap), not
+        // for both: the card still fits its height.
+        let both = plain(&landing_lines(&a, 120, 10));
+        assert!(both.len() <= 10, "{both:?}");
+        assert!(both.iter().any(|l| l.contains("TAP below")), "{both:?}");
     }
 }
