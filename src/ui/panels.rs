@@ -1712,7 +1712,15 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
             out.push((format!("  ✗ nothing applied: {e}"), true));
         }
         for r in &report.results {
+            let outside = plan
+                .patches
+                .iter()
+                .any(|p| p.file.file == r.file && p.outside.is_some());
             match &r.outcome {
+                Ok(n) if outside => out.push((
+                    format!("  ✓ {} — {n} statement(s), outside a transaction", r.file),
+                    false,
+                )),
                 Ok(n) => out.push((format!("  ✓ {} — {n} statement(s)", r.file), false)),
                 Err(e) => out.push((format!("  ✗ {} — {e}", r.file), true)),
             }
@@ -1736,25 +1744,34 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
             false,
         ));
     } else {
+        let outside = plan.patches.iter().filter(|p| p.outside.is_some()).count();
+        let how = match outside {
+            0 => "each in its own transaction".to_string(),
+            n if n == plan.patches.len() => "each OUTSIDE a transaction".to_string(),
+            n => format!("{n} OUTSIDE a transaction, the rest each in its own"),
+        };
         out.push((
             format!(
-                "  {} to apply, in order, each in its own transaction · recorded up to {recorded}",
+                "  {} to apply, in order, {how} · recorded up to {recorded}",
                 plan.patches.len()
             ),
-            false,
+            outside > 0,
         ));
     }
     for p in &plan.patches {
         match p.outside {
             None => out.push((format!("  {}", p.file.file), false)),
-            Some(what) => out.push((
-                format!(
-                    "  ⚠ {} — OUTSIDE a transaction ({what}): each statement commits as it \
-                     runs, so a failure leaves the ones before it applied",
-                    p.file.file
-                ),
-                true,
-            )),
+            Some(what) => {
+                out.push((
+                    format!("  ⚠ {} — OUTSIDE a transaction ({what})", p.file.file),
+                    true,
+                ));
+                out.push((
+                    "    each statement commits as it runs: a failure leaves the ones before it applied"
+                        .into(),
+                    true,
+                ));
+            }
         }
         // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
@@ -1793,10 +1810,26 @@ pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> 
     use crate::app::PatchStage;
     match &v.stage {
         PatchStage::Applying(_) => Some(("  applying…".into(), false)),
+        PatchStage::Plan(Ok(p)) if p.patches.is_empty() && p.outside_would_help => {
+            Some(("  o plan it outside a transaction · q back".into(), false))
+        }
         PatchStage::Plan(Ok(p)) if p.patches.is_empty() => None,
         PatchStage::Plan(Ok(p)) if p.needs_typed() => Some((
-            format!("  type {} to apply: {}▏", p.environment, v.typed),
+            format!(
+                "  type {} to apply: {}▏{}",
+                p.environment,
+                v.typed,
+                if p.outside_would_help {
+                    "   (ctrl-o: plan the rest outside a transaction)"
+                } else {
+                    ""
+                }
+            ),
             true,
+        )),
+        PatchStage::Plan(Ok(p)) if p.outside_would_help => Some((
+            "  y apply · o plan the rest outside a transaction · q cancel".into(),
+            false,
         )),
         PatchStage::Plan(Ok(_)) => Some(("  y apply · q cancel".into(), false)),
         _ => None,
@@ -3212,7 +3245,11 @@ mod tests {
         assert_eq!(text.len(), 9, "the prompt is pinned, not in the list");
         assert_eq!(
             patch_prompt(&v),
-            Some(("  type production to apply: prod▏".into(), true))
+            Some((
+                "  type production to apply: prod▏   (ctrl-o: plan the rest outside a transaction)"
+                    .into(),
+                true
+            ))
         );
         v.stage = PatchStage::Done(
             plan,
@@ -3270,21 +3307,82 @@ mod tests {
             scroll: 0,
         };
         let lines = patch_lines(&v);
-        assert!(
-            lines.contains(&(
-                "  ⚠ 44-orders-created-idx.sql — OUTSIDE a transaction (CONCURRENTLY): each \
-                 statement commits as it runs, so a failure leaves the ones before it applied"
+        assert_eq!(
+            lines[1],
+            (
+                "  3 to apply, in order, 1 OUTSIDE a transaction, the rest each in its own \
+                 · recorded up to 41"
                     .into(),
                 true
-            )),
-            "{lines:?}"
+            )
         );
+        let at = lines
+            .iter()
+            .position(|l| {
+                l.0 == "  ⚠ 44-orders-created-idx.sql — OUTSIDE a transaction (CONCURRENTLY)"
+            })
+            .expect("marked");
+        assert!(lines[at].1 && lines[at + 1].1, "both lines loud");
+        assert!(lines[at + 1]
+            .0
+            .starts_with("    each statement commits as it runs"));
         assert!(lines.contains(&("  42-order-notes.sql".into(), false)));
         assert_eq!(
             patch_prompt(&v),
             Some(("  type staging to apply: sta▏".into(), true)),
             "unprotected, but typed"
         );
+        let mut v = v;
+        let PatchStage::Plan(Ok(plan)) = v.stage.clone() else {
+            unreachable!()
+        };
+        v.stage = PatchStage::Done(
+            plan,
+            crate::inventory::patching::ApplyReport {
+                results: vec![crate::inventory::patching::PatchResult {
+                    file: "44-orders-created-idx.sql".into(),
+                    outcome: Ok(2),
+                }],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            patch_lines(&v)[1].0,
+            "  ✓ 44-orders-created-idx.sql — 2 statement(s), outside a transaction"
+        );
+    }
+
+    #[test]
+    fn the_pinned_prompt_offers_o_when_it_would_get_further() {
+        use crate::app::{PatchStage, PatchView};
+        let mut plan = crate::demo::patch_plan("staging", "staging", "shop", false);
+        let mut v = PatchView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan.clone())),
+            typed: String::new(),
+            scroll: 0,
+        };
+        assert_eq!(
+            patch_prompt(&v).unwrap().0,
+            "  y apply · o plan the rest outside a transaction · q cancel"
+        );
+        plan.protected = true;
+        v.stage = PatchStage::Plan(Ok(plan.clone()));
+        assert!(patch_prompt(&v)
+            .unwrap()
+            .0
+            .ends_with("(ctrl-o: plan the rest outside a transaction)"));
+        plan.patches.clear();
+        v.stage = PatchStage::Plan(Ok(plan.clone()));
+        assert_eq!(
+            patch_prompt(&v).unwrap().0,
+            "  o plan it outside a transaction · q back"
+        );
+        plan.outside_would_help = false;
+        v.stage = PatchStage::Plan(Ok(plan));
+        assert_eq!(patch_prompt(&v), None);
     }
 
     #[test]

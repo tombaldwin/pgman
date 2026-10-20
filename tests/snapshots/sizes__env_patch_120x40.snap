@@ -40,6 +40,6 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│  type production to apply: produc▏                                                                                   │
+│  type production to apply: produc▏   (ctrl-o: plan the rest outside a transaction)                                   │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · r refresh · q / esc close · ? help
