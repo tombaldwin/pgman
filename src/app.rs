@@ -2772,6 +2772,17 @@ impl App {
 
     /// F8 in editor mode — parse the editor buffer through `hibernate::parse`
     /// and `pglog::parse`, then enter `Mode::LogPick` if anything was found.
+    /// Ctrl-L / F8 outside the editor: reconstruct the log already in it,
+    /// or open it to paste one.
+    pub(super) fn log_import_from_normal(&mut self) {
+        if query::logdetect::detect_log(&self.editor.buffer).is_some() {
+            return self.start_log_import();
+        }
+        self.mode = Mode::Editor;
+        self.last_error = None;
+        self.last_status = Some("paste a Hibernate or Postgres log here, then ctrl-l".to_string());
+    }
+
     fn start_log_import(&mut self) {
         let log = &self.editor.buffer;
         let mut picks: Vec<ReconstructedQuery> = Vec::new();

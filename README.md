@@ -18,7 +18,7 @@ application changes — with N+1 detection built in. Sibling project to
 > without reviewing your `safety.toml` first. Bug reports and feedback very
 > welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
 
-![pgman demo — paste a Hibernate log, F8 to reconstruct queries, N+1 clusters, load + run](demo.gif)
+![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](demo.gif)
 
 > Captured from `pgman --demo`, the synthetic-data mode baked into the binary
 > (no database needed). Regenerate after a code change with `vhs demo.tape`.
@@ -59,7 +59,7 @@ Point it at a Postgres database, then turn logs and pasted code into runnable SQ
 - **N+1 detection.** Cluster reconstructed queries by shape to surface
   loop-driven selects.
 
-Three ways in: paste a log into the editor, press F8 (or `ctrl-l`), pick a
+Three ways in: paste a log into the editor, press `ctrl-l` (or F8), pick a
 query — `Enter` loads it terminated with `;`, and a second `Enter` runs it; skip
 the paste and launch straight into the reconstructed queries with
 `pgman --log app.log`; or, with no log at all, paste a `?`-placeholder

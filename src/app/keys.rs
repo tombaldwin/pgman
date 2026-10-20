@@ -844,6 +844,13 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.scroll(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll(-1),
             KeyCode::Char('h') | KeyCode::Left => self.move_col_cursor(-1),
+            // Before the plain `l` below (house rule: a guarded Ctrl arm
+            // precedes the unguarded one for the same char). Logs → SQL
+            // from the start card and the results, as from the editor.
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.log_import_from_normal()
+            }
+            KeyCode::F(8) => self.log_import_from_normal(),
             KeyCode::Char('l') | KeyCode::Right => self.move_col_cursor(1),
             KeyCode::Char('s') => self.cycle_sort(),
             KeyCode::Char('Y') => self.export_grid_to_clipboard(),

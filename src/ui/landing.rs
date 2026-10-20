@@ -102,7 +102,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
     // it (plus, in two-column mode, F4's cell and the gap) wouldn't
     // fit at the current width.
     let f8_desc = pick_f8_desc(two_col, width);
-    let f8 = Hint::new("F8", f8_desc);
+    let f8 = Hint::new("ctrl-l", f8_desc);
     let f4 = Hint::new("F4", F4_DESC);
 
     // --- height budget: decide what survives -------------------------
@@ -495,7 +495,8 @@ mod tests {
         let lines = landing_lines(&a, 80, 30);
         let text = plain(&lines);
         assert!(
-            text.iter().any(|l| l.contains("F8") && l.contains("logs")),
+            text.iter()
+                .any(|l| l.contains("ctrl-l") && l.contains("logs")),
             "expected an F8 row at 80 columns: {text:?}"
         );
         assert!(
@@ -527,7 +528,7 @@ mod tests {
         assert!(text
             .iter()
             .any(|l| l.contains('?') && l.contains("all keys")));
-        assert!(text.iter().any(|l| l.contains("F8")));
+        assert!(text.iter().any(|l| l.contains("ctrl-l")));
     }
 
     #[test]
@@ -546,7 +547,7 @@ mod tests {
             "`?` line should be dropped before F8/F4: {text:?}"
         );
         assert!(
-            text.iter().any(|l| l.contains("F8")),
+            text.iter().any(|l| l.contains("ctrl-l")),
             "F8/F4 row should still be present at height 6: {text:?}"
         );
     }
@@ -570,7 +571,7 @@ mod tests {
         assert!(
             !text
                 .iter()
-                .any(|l| l.contains("F8") || l.contains("JDBC tap")),
+                .any(|l| l.contains("ctrl-l") || l.contains("JDBC tap")),
             "F8/F4 should be dropped at the 8-row floor: {text:?}"
         );
         for key in [
@@ -600,7 +601,7 @@ mod tests {
         for h in [10u16, 11, 12] {
             let lines = landing_lines(&a, 58, h);
             let text = plain(&lines);
-            let has_f8 = text.iter().any(|l| l.contains("F8"));
+            let has_f8 = text.iter().any(|l| l.contains("ctrl-l"));
             let has_f4 = text.iter().any(|l| l.contains("F4"));
             assert_eq!(
                 has_f8, has_f4,
@@ -614,7 +615,7 @@ mod tests {
         }
         // One row short of the pair, both go.
         let text = plain(&landing_lines(&a, 58, 9));
-        assert!(!text.iter().any(|l| l.contains("F8")), "{text:?}");
+        assert!(!text.iter().any(|l| l.contains("ctrl-l")), "{text:?}");
         assert!(!text.iter().any(|l| l.contains("F4")), "{text:?}");
     }
 
@@ -986,6 +987,6 @@ mod tests {
                 .any(|l| l.contains('?') && l.contains("all keys")),
             "`?` line should survive databases being dropped: {text7:?}"
         );
-        assert!(text7.iter().any(|l| l.contains("F8")));
+        assert!(text7.iter().any(|l| l.contains("ctrl-l")));
     }
 }

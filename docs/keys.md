@@ -91,7 +91,7 @@ diff, all of which are also dispatched from this mode.
 | `Ctrl-S` | Save the current buffer as a named saved query |
 | `Ctrl-O` | Open the saved-queries panel |
 | `Ctrl-F` | Format the buffer (built-in; `pg_format` if installed) |
-| `Ctrl-L` / `F8` | Parse the buffer as a log → pick a reconstructed query |
+| `Ctrl-L` / `F8` | Parse the buffer as a log → pick a reconstructed query. From the results or the start card too: with a log in the editor it reconstructs, otherwise it opens the editor to paste one |
 | `Ctrl-D` / `F9` | Read the buffer as a DBUnit fixture path → load the apply script |
 | `Ctrl-/` (or `Ctrl-_`) | Toggle a `-- ` line comment on the current line |
 | `Ctrl-P` / `Ctrl-N` | Previous / next history entry (history persists across restarts) |

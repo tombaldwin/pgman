@@ -10462,3 +10462,29 @@ fn the_demos_slow_queries_come_by_total_time_like_the_live_panel() {
     let rows = crate::demo::slow_queries();
     assert!(rows.windows(2).all(|w| w[0].total_ms >= w[1].total_ms));
 }
+
+/// The start card's `ctrl-l logs → SQL` works where the card is: with a
+/// log in the editor it reconstructs, without one it opens the editor
+/// to paste into. (It used to be F8, which the card's mode ignored.)
+#[test]
+fn ctrl_l_from_the_results_reconstructs_or_opens_the_editor() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::Editor);
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("paste a Hibernate"));
+    a.mode = Mode::Normal;
+    a.editor.buffer =
+        "Hibernate: select 1 from users where id=?\nbinding parameter [1] as [BIGINT] - [7]\n"
+            .into();
+    a.on_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    assert_eq!(a.log_pick.picks.len(), 1, "{:?}", a.last_error);
+    // Plain l still moves the column cursor.
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::Char('l')));
+    assert_eq!(a.mode, Mode::Normal);
+}
