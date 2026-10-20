@@ -109,8 +109,11 @@ pub fn source_twins(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// Deepest a migration directory is read, and most entries.
+/// How many directories deep a migration location is read.
 const MIGRATION_DEPTH: usize = 16;
+
+/// Most entries read across all of an environment's migration
+/// locations; past it the pending count is left out, with the reason.
 const MIGRATION_ENTRIES: usize = 50_000;
 
 /// File names under Flyway's directories, read recursively as Flyway
@@ -119,6 +122,15 @@ const MIGRATION_ENTRIES: usize = 50_000;
 /// can't be listed is an error; a twin that doesn't exist isn't.
 /// Blocking.
 fn flyway_files_in(dirs: &[std::path::PathBuf]) -> Result<Vec<String>, String> {
+    flyway_files_within(dirs, MIGRATION_DEPTH, MIGRATION_ENTRIES)
+}
+
+/// [`flyway_files_in`] with its limits given. Blocking.
+fn flyway_files_within(
+    dirs: &[std::path::PathBuf],
+    max_depth: usize,
+    max_entries: usize,
+) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
     let mut seen = 0usize;
     let mut walk = |root: &std::path::Path, required: bool| -> Result<(), String> {
@@ -133,9 +145,9 @@ fn flyway_files_in(dirs: &[std::path::PathBuf]) -> Result<Vec<String>, String> {
             };
             for entry in entries.flatten() {
                 seen += 1;
-                if seen > MIGRATION_ENTRIES {
+                if seen > max_entries {
                     return Err(format!(
-                        "more than {MIGRATION_ENTRIES} entries under {}; not counted",
+                        "more than {max_entries} entries under {}; not counted",
                         root.display()
                     ));
                 }
@@ -144,7 +156,7 @@ fn flyway_files_in(dirs: &[std::path::PathBuf]) -> Result<Vec<String>, String> {
                     continue;
                 };
                 if kind.is_dir() {
-                    if depth < MIGRATION_DEPTH {
+                    if depth < max_depth {
                         stack.push((entry.path(), depth + 1));
                     }
                 } else if let Some(n) = entry.file_name().to_str() {
@@ -430,6 +442,17 @@ mod tests {
         assert!(flyway_files_in(&[missing])
             .unwrap_err()
             .starts_with("cannot list "));
+        // The limits: V2 sits one directory down, and res and its java
+        // twin hold four entries together (2024, V1, V2, V3).
+        assert_eq!(
+            flyway_files_within(std::slice::from_ref(&res), 0, 100).unwrap(),
+            ["V1__init.sql", "V3__Backfill.java"],
+            "not below the depth"
+        );
+        assert!(flyway_files_within(std::slice::from_ref(&res), 16, 4).is_ok());
+        assert!(flyway_files_within(std::slice::from_ref(&res), 16, 3)
+            .unwrap_err()
+            .contains("more than 3 entries"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
