@@ -3091,6 +3091,17 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             "{err}"
         );
 
+        // Now 003 is a gap below the recorded 4: planned again, it's left
+        // out and named, not run after 004.
+        let gap = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        assert!(gap.patches.is_empty(), "{:?}", gap.patches);
+        assert_eq!(gap.below_recorded, ["003-bad.sql"]);
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("DELETE FROM {vt} WHERE id = 4")],
+        );
+        assert!(out.status.success());
+
         // A replica is refused outright.
         let mut replica = target.clone();
         replica.role = pgman::mcp::connections::Role::Replica;
@@ -3123,6 +3134,12 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("recorded no version row 3"), "{err}");
         assert_eq!(r.results.len(), 1, "and nothing after it runs");
+        // (It did record 33, which would make every file a gap below it.)
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("DELETE FROM {vt} WHERE id = 33")],
+        );
+        assert!(out.status.success());
 
         // Two files with one id, or a name that disagrees with its id: fix the files first.
         std::fs::write(dir.join("003-dup.sql"), row(3)).unwrap();
@@ -3616,6 +3633,7 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         stopped_at: None,
         dir: dir.display().to_string(),
         recorded: Vec::new(),
+        below_recorded: Vec::new(),
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(

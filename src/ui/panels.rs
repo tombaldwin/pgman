@@ -1724,6 +1724,7 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
         if let Some((file, why)) = &plan.stopped_at {
             out.push((format!("  still pending: {file} — {why}"), true));
         }
+        below_recorded_lines(plan, &mut out);
         return out;
     }
     if plan.patches.is_empty() {
@@ -1752,7 +1753,26 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     if let Some((file, why)) = &plan.stopped_at {
         out.push((format!("  not included: {file} — {why}"), true));
     }
+    below_recorded_lines(plan, &mut out);
     out
+}
+
+/// The plan's skipped gaps, loud: each is a patch the database never ran
+/// although later ones did.
+fn below_recorded_lines(
+    plan: &crate::inventory::patching::PatchPlan,
+    out: &mut Vec<(String, bool)>,
+) {
+    for file in &plan.below_recorded {
+        out.push((
+            format!(
+                "  ⚠ not included: {file} — pending, but numbered below the recorded {}; \
+                 it would run out of order, so apply it by hand if it's needed",
+                plan.applied_max.unwrap_or_default()
+            ),
+            true,
+        ));
+    }
 }
 
 /// The line pinned under the plan: what to do next, or `None`. Pure.
@@ -3220,6 +3240,30 @@ mod tests {
         );
         v.stage = PatchStage::Plan(Err("no version_table".into()));
         assert_eq!(patch_lines(&v)[1], ("  ✗ no version_table".into(), true));
+    }
+
+    #[test]
+    fn a_patch_below_the_recorded_version_is_called_out_before_and_after() {
+        use crate::app::{PatchStage, PatchView};
+        let mut plan = crate::demo::patch_plan("staging", "staging", "shop");
+        plan.below_recorded = vec!["7-old.sql".into()];
+        let warning = (
+            "  ⚠ not included: 7-old.sql — pending, but numbered below the recorded 41; \
+             it would run out of order, so apply it by hand if it's needed"
+                .to_string(),
+            true,
+        );
+        let mut v = PatchView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            database: "shop".into(),
+            stage: PatchStage::Plan(Ok(plan.clone())),
+            typed: String::new(),
+            scroll: 0,
+        };
+        assert_eq!(patch_lines(&v).last(), Some(&warning));
+        v.stage = PatchStage::Done(plan, Default::default());
+        assert_eq!(patch_lines(&v).last(), Some(&warning));
     }
 
     #[test]

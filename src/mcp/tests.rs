@@ -298,6 +298,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
         dir: "/src/patches".into(),
         recorded: (1..=251).collect(),
+        below_recorded: Vec::new(),
     };
     let (message, schema) = tools::confirm_request(&plan);
     assert!(message.contains("recorded up to 251"), "{message}");
@@ -310,6 +311,16 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         message.contains("files in /src/patches") && message.contains("\n  DROP COLUMN notes;"),
         "every line that will run is shown: {message}"
     );
+    plan.below_recorded = vec!["7-old.sql".into()];
+    assert!(
+        tools::confirm_request(&plan)
+            .0
+            .contains("WARNING, not included: 7-old.sql — pending but numbered below"),
+        "a skipped gap is put to the operator"
+    );
+    let result: Value =
+        serde_json::from_str(&tools::render_apply(&plan, None, "applied 0 patch(es)")).unwrap();
+    assert_eq!(result["below_recorded"], json!(["7-old.sql"]));
     plan.patches[0].statements = vec!["x".repeat(7000)];
     assert!(tools::confirm_request(&plan)
         .0

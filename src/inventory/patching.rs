@@ -8,6 +8,9 @@
 //!    each checked by [`query::apply::check_patch`] against safety.toml.
 //!    It stops at the first patch that can't be applied here (a read-only
 //!    profile, a blocked statement, its own `BEGIN`, `CONCURRENTLY`).
+//!    A pending file numbered below the highest recorded id is left out
+//!    and named: the database skipped it, and running it now would put it
+//!    after patches numbered above it.
 //! 2. After the confirmation, [`apply`] connects writable and runs the
 //!    planned patches in order — the text that was shown, not a fresh
 //!    read of the file — each in its own transaction, re-reading the
@@ -60,6 +63,9 @@ pub struct PatchPlan {
     /// Every id recorded when planned, sorted: the run checks the
     /// database is still exactly here (plus what it has applied).
     pub recorded: Vec<i64>,
+    /// Pending files numbered below the highest recorded id, left out:
+    /// running one now would put it after patches numbered above it.
+    pub below_recorded: Vec<String>,
 }
 
 impl PatchPlan {
@@ -215,6 +221,18 @@ async fn dsn_for(target: &Target, fetch_secret: &FetchSecret) -> Result<crate::c
     Ok(dsn)
 }
 
+/// `pending` (in id order) split at `applied_max`: those above it, which
+/// the plan runs, and those below it — a gap the database skipped, which
+/// the plan leaves out. Pure.
+pub fn split_at_recorded(
+    pending: Vec<PatchFile>,
+    applied_max: Option<i64>,
+) -> (Vec<PatchFile>, Vec<PatchFile>) {
+    pending
+        .into_iter()
+        .partition(|f| applied_max.is_none_or(|max| PatchPlan::id(f).is_none_or(|id| id > max)))
+}
+
 /// The pending patches of `target`, checked, for the operator to confirm.
 pub async fn plan(
     env: &Environment,
@@ -246,6 +264,7 @@ pub async fn plan(
         applied_max: report.applied_max,
         patches: Vec::new(),
         stopped_at: None,
+        below_recorded: Vec::new(),
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -256,7 +275,9 @@ pub async fn plan(
     };
     let duplicated: std::collections::BTreeSet<i64> =
         report.duplicate_ids.iter().map(|(id, _)| *id).collect();
-    for file in report.pending {
+    let (pending, below) = split_at_recorded(report.pending, report.applied_max);
+    plan.below_recorded = below.into_iter().map(|f| f.file).collect();
+    for file in pending {
         let id = PatchPlan::id(&file).unwrap_or_default();
         if duplicated.contains(&id) {
             plan.stopped_at = Some((
@@ -503,7 +524,29 @@ mod tests {
             stopped_at: None,
             dir: "/p".into(),
             recorded: vec![1],
+            below_recorded: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_pending_patch_below_the_recorded_version_is_left_out() {
+        let f = |id: i64| PatchFile {
+            file: format!("{id}-x.sql"),
+            filename_number: Some(id),
+            version_id: Some(id),
+        };
+        let names = |v: Vec<PatchFile>| v.into_iter().map(|f| f.file).collect::<Vec<_>>();
+        let (run, below) = split_at_recorded(vec![f(7), f(249), f(250)], Some(248));
+        assert_eq!(names(run), ["249-x.sql", "250-x.sql"]);
+        assert_eq!(names(below), ["7-x.sql"]);
+        // The recorded id itself isn't pending; one equal to it would be a
+        // second file claiming it, which isn't "above".
+        let (run, below) = split_at_recorded(vec![f(248)], Some(248));
+        assert!(run.is_empty());
+        assert_eq!(names(below), ["248-x.sql"]);
+        let (run, below) = split_at_recorded(vec![f(1), f(2)], None);
+        assert_eq!(names(run), ["1-x.sql", "2-x.sql"], "nothing recorded yet");
+        assert!(below.is_empty());
     }
 
     #[test]

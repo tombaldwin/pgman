@@ -960,6 +960,7 @@ pub fn patch_plan(
         ],
         dir: "~/src/shop/db/patches".into(),
         recorded: (1..=41).collect(),
+        below_recorded: Vec::new(),
         stopped_at: Some((
             "44-orders-created-idx.sql".into(),
             "the patch builds or drops an index CONCURRENTLY, which can't run in a transaction; apply it by hand".into(),

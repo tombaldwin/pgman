@@ -808,6 +808,12 @@ pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String,
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
+    if !plan.below_recorded.is_empty() {
+        message.push_str(&format!(
+            " WARNING, not included: {} — pending but numbered below the recorded version, so they would run out of order.",
+            plan.below_recorded.join(", ")
+        ));
+    }
     message.push_str(&format!("\n\nWhat will run (files in {}):", plan.dir));
     let mut shown = 0usize;
     'files: for p in &plan.patches {
@@ -900,6 +906,7 @@ pub fn render_apply(
         "recorded_up_to": plan.applied_max,
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
+        "below_recorded": plan.below_recorded,
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
         "summary": summary,
