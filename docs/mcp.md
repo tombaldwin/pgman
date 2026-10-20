@@ -40,7 +40,7 @@ startup, not accepted and ignored.
 | `environment_logs` | Recent errors from an RDS server's Postgres log, for a server an `rds` environment lists: ERROR, FATAL and PANIC lines grouped by message, with a count, who last hit it and when. `STATEMENT` and `DETAIL` lines are left out. |
 | `schema_lint` | The schema wizard's findings for a connection (tables without a primary key, unindexed foreign keys, unused or overlapping indexes, bloat, and more), each with a severity, why it matters, and a suggested fix. On a replica it warns that unused-index and bloat figures are the replica's own. |
 | `environments_discover` | Proposals for `environments.toml` from an AWS account (optional `region`, `profile`, `account`): per primary, its replicas, matching secret names, the bastion, and exactly the TOML a save appends, with notes to check. Reads names only, never a secret's value. |
-| `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It's the only tool that writes anything, and it writes a config file, not a database. |
+| `environments_save` | Appends the named proposals (`names`) from a fresh discovery to `environments.toml`. Only proposals can be saved, never free-form values. What's already in the file is never rewritten, and a primary already covered is refused. Refused under `--read-only`. It's the only tool that writes a file; `apply_patches` is the only one that writes a database. |
 
 Each tool's description ends in a CAVEATS paragraph that says what the
 tool cannot see.

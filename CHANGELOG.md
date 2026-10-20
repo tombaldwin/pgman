@@ -110,7 +110,8 @@ and breaking changes.
 - **More at a glance in the overview.** RDS rows show the minor and
   major upgrades available (`↑16.15 · 18.6`). Without a `version_table`,
   a probe recognises Flyway, Liquibase, Prisma, sqlx, Django, Alembic,
-  Rails and golang-migrate by their own tables (and counts pending Flyway files
+  and Rails / golang-migrate (their shared `schema_migrations`) by their
+  own tables (and counts pending Flyway files
   from `migrations_dir`). `SESSIONS` adds blocked sessions and
   transactions open over 5 minutes. A replica's detail line sketches its
   recent lag. `v` shows schema drift: each database's version by

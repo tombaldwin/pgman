@@ -116,7 +116,7 @@ surface.
 | `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. `F6` / `F7` answer with a canned plan, so the EXPLAIN tree opens in the demo the same way it does live. |
 | `--init-config` | Write a commented default `safety.toml` under the config dir (honouring `XDG_CONFIG_HOME`), `0600`, then exit. Refuses to overwrite an existing file (exit `1`, says so on stderr) rather than clobbering your edits. |
 | `--log <PATH>` | Preload the editor with a Hibernate or Postgres server log from `PATH` (`-` for stdin) and open straight into the reconstructed-query picker — same as pasting the log and pressing `Ctrl-L` / `F8`. Refused past 64 MB (`-` / stdin is exempt — its size isn't known ahead of reading it) — trim the file first (`grep` for `org.hibernate.SQL` or `LOG:`). |
-| `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. `csv`, `tsv` and `expanded` stop at 1000 rows: past that, stderr says so and the exit status is `3`, so a partial export can't pass for a whole one. `--format json` (one statement) returns every row. |
+| `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. `csv`, `tsv` and `expanded` stop at 1000 rows: past that, stderr says so and the exit status is `3`, so a partial export can't pass for a whole one. `--format json` (one statement) returns every row. A script of several statements runs in one transaction and prints only its status, not their rows: run one statement per call to get rows. |
 | `--sql <SQL>` | The statement to run in `--batch` mode; omit to read stdin until EOF. |
 | `--format <FORMAT>` | `--batch` output format: `csv` (default) \| `tsv` \| `json` \| `expanded`. `json` is typed: SQL `NULL` → JSON `null` (never confused with an empty string), `int2`/`int4`/`int8`/`float4`/`float8`/`numeric` → a JSON number (numeric falls back to a quoted string only for the non-numeric spellings `NaN`/`Infinity`/`-Infinity`), `bool` → JSON `true`/`false`, everything else → a string. `csv`/`tsv`/`expanded` render every value as text, unchanged. |
 | `--discovered` | In `--batch` mode with no `--dsn`, accept the single data source discovered in this checkout. Without it a lone discovered candidate is refused — nothing found in the working tree connects without a deliberate act, and batch has no keypress to offer. Entries that are the same connection (one database declared twice, such as `dataSource` and `replicaDataSource` with identical URLs and credentials) count once. Zero or several distinct candidates still need `--dsn`. |
@@ -126,11 +126,13 @@ surface.
 | `--tap-udp <ADDR>` | Bind a UDP listener for fire-and-forget tap events (one tap event as JSON per datagram, no framing). Lossy — dropped events are silently gone. |
 | `--tap-replay <PATH>` | Replay a captured JSONL tap event stream through the same pipeline the live listeners use. |
 | `--tap-record <PATH>` | Append every incoming tap event (from any active transport) to `PATH` as JSONL, for later `--tap-replay`. Opened append-only; warns at startup if set with no transport active. |
-| `--upgrade` | Upgrade this install in place, then exit: `git pull` + `cargo install --path .` for a git checkout, `cargo install` for a crates.io install, or the Homebrew formula; prints the GitHub releases page for anything else. |
+| `--upgrade` | Upgrade this install in place, then exit: `git pull` + `cargo install --path .` for a git checkout, `cargo install` for a crates.io install, or the Homebrew formula; prints the GitHub releases page for anything else. An install made with `cargo install --git …` isn't one of these: re-run that command to upgrade it. |
+| `--no-tap` | Don't start the JDBC tap listener, not even the one a Java project in the working directory turns on by default. |
 | `--no-update-check` | Skip the startup check for a newer release on crates.io (same effect as the `PGMAN_NO_UPDATE_CHECK` env var). Without either, pgman makes at most one crates.io request every six hours, sending only the running version and a user-agent string. |
 
-`pgman mcp serve [--read-only] [--project-connections]` runs the read-only
-stdio MCP server instead of the TUI; see [MCP server](mcp.md).
+`pgman mcp serve [--read-only] [--project-connections]` runs the stdio
+MCP server instead of the TUI — read-only queries, plus `apply_patches`
+once you confirm it; see [MCP server](mcp.md).
 
 A `--batch --dsn` connect failure prints the driver/server message, then a
 `hint: …` line when pgman recognises the cause (wrong password, nothing

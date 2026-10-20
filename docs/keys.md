@@ -7,7 +7,10 @@ back to the environments overview when environments are configured, and
 does nothing otherwise (a reflex press can't drop the session). `F1` (help), `F2` (error
 detail), `F3` (notifications) and `F4` (JDBC tap monitor) work from **any**
 mode, as do `?` (help) and `:` (the command bar) — except while a text input
-has focus, where both are characters you meant to type. `]` / `[` (next /
+has focus, where both are characters you meant to type — and except in
+the y/n prompts (confirm a statement, commit or roll back, terminate a
+session), which keep the keyboard until answered; help still opens
+from them. `]` / `[` (next /
 previous tab) and `1`..`9` (jump to tab) work from the grid and every panel
 but not while typing; `Ctrl-]` (next tab) and `Ctrl-T` (new tab) work from
 the editor too; `Ctrl-W` closes the current tab from any mode *except* while
@@ -34,7 +37,7 @@ Shown at startup when more than one data source was discovered, and via `c`
 | `q` | Quit (`Esc` is a no-op — a reflex press can't abandon the picker) |
 
 On a failed connection (Normal mode, "connection failed" screen): `r` retries
-the same DSN; `p` re-opens the picker (only shown when ≥2 candidates exist).
+the same DSN; `p` re-opens the picker (shown when there are candidates to pick).
 
 ## Start card / grid (Normal mode)
 
@@ -43,7 +46,7 @@ once a query has run share one key map.
 
 | Key | Action |
 |---|---|
-| `q` | Quit (`Ctrl-C` also quits, except mid-query in the editor) |
+| `q` | Quit (`Ctrl-C` also quits, except from the editor, where it cancels a running query) |
 | `?` / `F1` | Toggle help (both work from every non-typing mode) |
 | `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |

@@ -7,7 +7,8 @@ through the `environments` tool ([MCP server](mcp.md)).
 
 It's pgman's home: with environments configured and no `--dsn`, pgman
 starts on it, on the row you used last, and it fills the screen. `q`
-goes to the editor and `E` comes back.
+goes back to where you opened it from (the results, or the connection
+picker), `E` comes back, and `Esc` from the results returns to it.
 
 By default the overview shows what the sources know without connecting
 to any database: role, server, status, engine version and endpoint.
