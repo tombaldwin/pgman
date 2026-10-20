@@ -285,8 +285,9 @@ pub fn read_text_capped(path: &Path, max: u64) -> Result<String, CappedReadError
 }
 
 /// Read `r` to the end as UTF-8, stopping at `max + 1` bytes and
-/// refusing if it got that far.
-fn read_to_string_bounded(r: impl io::Read, max: u64) -> Result<String, CappedReadError> {
+/// refusing if it got that far. For a stream with no size to check
+/// first — `--log -`'s stdin.
+pub fn read_to_string_bounded(r: impl io::Read, max: u64) -> Result<String, CappedReadError> {
     use std::io::Read;
     let mut buf = String::new();
     r.take(max + 1)

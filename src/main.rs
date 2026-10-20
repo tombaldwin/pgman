@@ -177,12 +177,46 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // `--log -`: read the piped log now, before the terminal check, so
+    // stdin is free to be a pipe. The TUI then takes its keys from
+    // /dev/tty — crossterm opens it whenever stdin isn't a terminal.
+    let log_stdin = if !cli.demo && cli.log.as_deref().is_some_and(is_stdin_marker) {
+        if std::io::stdin().is_terminal() {
+            eprintln!(
+                "--log -: stdin is a terminal, not a log. Pipe one in \
+                 (tail -c 2M app.log | pgman --log -) or pass --log PATH."
+            );
+            std::process::exit(2);
+        }
+        match util::read_to_string_bounded(std::io::stdin().lock(), LOG_MAX_BYTES) {
+            Ok(text) => Some(text),
+            Err(util::CappedReadError::TooBig { .. }) => {
+                eprintln!(
+                    "--log -: stdin carried more than 64 MB; pgman reconstructs logs up to 64 MB \
+                     — trim it first (tail -c, or grep for org.hibernate.SQL or LOG:)"
+                );
+                std::process::exit(2);
+            }
+            Err(e) => {
+                eprintln!("--log -: couldn't read stdin: {e}");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
+
     // Every remaining path enters the alternate screen (--demo included).
     // A launch with no terminal on either end used to die with a raw
     // `Error: Device not configured (os error 6)` from inside crossterm —
     // point at `--batch` instead, before anything touches the terminal.
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
-        eprintln!("pgman needs a terminal. For pipes and scripts use --batch (see pgman --help).");
+    if let Some(msg) = terminal_refusal(
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+        log_stdin.is_some(),
+        log_stdin.is_some() && dev_tty_opens(),
+    ) {
+        eprintln!("{msg}");
         std::process::exit(2);
     }
 
@@ -376,8 +410,10 @@ async fn main() -> anyhow::Result<()> {
     // of whether the connection (if any) has resolved yet — and
     // overrides the just-restored draft above, since an explicit --log
     // is a stronger signal of intent than a leftover editor session.
-    if let Some(path) = cli.log.as_ref() {
-        match read_log_source(path) {
+    if let Some(text) = log_stdin {
+        application.preload_log(text);
+    } else if let Some(path) = cli.log.as_ref() {
+        match std::fs::read_to_string(path) {
             Ok(text) => application.preload_log(text),
             Err(e) => {
                 eprintln!("--log {}: {e}", path.display());
@@ -1051,13 +1087,18 @@ fn init_config_cli() -> i32 {
 /// isn't meant to carry tens of megabytes of raw log text either.
 const LOG_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
+/// `--log -`: the log comes from stdin.
+fn is_stdin_marker(path: &std::path::Path) -> bool {
+    path.as_os_str() == "-"
+}
+
 /// Refuse a `--log PATH` bigger than [`LOG_MAX_BYTES`] before reading
 /// it. `-` (stdin) has no knowable size ahead of reading it, so it's
-/// exempt. A `path` that doesn't exist / can't be stat'd is let
-/// through here — `read_log_source` produces the real (not-found /
-/// permission) error for that case.
+/// exempt here and capped as it is read instead. A `path` that doesn't
+/// exist / can't be stat'd is let through here — the read produces the
+/// real (not-found / permission) error for that case.
 fn check_log_max_size(path: &std::path::Path) -> Result<(), String> {
-    if path.as_os_str() == "-" {
+    if is_stdin_marker(path) {
         return Ok(());
     }
     let Ok(meta) = std::fs::metadata(path) else {
@@ -1074,17 +1115,43 @@ fn check_log_max_size(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Read `--log PATH`'s target: `-` reads stdin to EOF, otherwise the file
-/// at `path`.
-fn read_log_source(path: &std::path::Path) -> std::io::Result<String> {
-    if path.as_os_str() == "-" {
-        use std::io::Read;
-        let mut buf = String::new();
-        std::io::stdin().read_to_string(&mut buf)?;
-        Ok(buf)
-    } else {
-        std::fs::read_to_string(path)
+/// Why the TUI can't start on these streams, or `None` when it can.
+/// The screen goes to stdout, so that must be a terminal. Keys come
+/// from stdin — or, once `--log -` has read a piped log from it, from
+/// /dev/tty, which crossterm opens itself when stdin isn't a terminal.
+fn terminal_refusal(
+    stdin_tty: bool,
+    stdout_tty: bool,
+    stdin_was_the_log: bool,
+    dev_tty: bool,
+) -> Option<&'static str> {
+    const NEEDS_TERMINAL: &str =
+        "pgman needs a terminal. For pipes and scripts use --batch (see pgman --help).";
+    if !stdout_tty {
+        return Some(NEEDS_TERMINAL);
     }
+    if stdin_tty {
+        return None;
+    }
+    if !stdin_was_the_log {
+        return Some(NEEDS_TERMINAL);
+    }
+    if !dev_tty {
+        return Some(
+            "--log -: read the log, but there's no terminal (/dev/tty) to take keys from. \
+             Save it to a file and pass --log PATH.",
+        );
+    }
+    None
+}
+
+/// Whether the controlling terminal can be opened for keys.
+fn dev_tty_opens() -> bool {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .is_ok()
 }
 
 fn init_logging() {
@@ -2313,6 +2380,29 @@ mod main_tests {
     // --- check_log_max_size: the --log 64 MiB ceiling -------------------
 
     #[test]
+    fn the_tui_starts_on_a_piped_log_only_when_keys_can_come_from_dev_tty() {
+        // A terminal on both ends, whatever --log is.
+        assert_eq!(terminal_refusal(true, true, false, false), None);
+        // `--log -` read stdin; keys come from /dev/tty.
+        assert_eq!(terminal_refusal(false, true, true, true), None);
+        // A pipe on stdin that isn't the log: --batch, as before.
+        assert!(terminal_refusal(false, true, false, true)
+            .unwrap()
+            .contains("--batch"));
+        // The log was piped but there's no controlling terminal.
+        assert!(terminal_refusal(false, true, true, false)
+            .unwrap()
+            .contains("/dev/tty"));
+        // No screen to draw on, however the keys would arrive.
+        assert!(terminal_refusal(true, false, false, true)
+            .unwrap()
+            .contains("--batch"));
+        assert!(terminal_refusal(false, false, true, true)
+            .unwrap()
+            .contains("--batch"));
+    }
+
+    #[test]
     fn check_log_max_size_allows_the_stdin_marker() {
         assert!(check_log_max_size(std::path::Path::new("-")).is_ok());
     }
@@ -2349,7 +2439,7 @@ mod main_tests {
 
     #[test]
     fn check_log_max_size_lets_a_missing_file_through() {
-        // `read_log_source` produces the real not-found error; this
+        // The read produces the real not-found error; this
         // check must not shadow it with a misleading size message.
         let path =
             std::env::temp_dir().join(format!("pgman-log-size-missing-{}", std::process::id()));

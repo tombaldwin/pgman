@@ -167,11 +167,14 @@ pgman --log app.log
 
 Opens pgman with the editor preloaded from `app.log` and drops straight into
 the reconstructed-query picker (`Enter` loads the selected query). Pipe a
-live tail instead of a file with `-`:
+log in instead of a file with `-`:
 
 ```
 tail -c 2M myapp-hibernate.log | pgman --log -
 ```
+
+pgman reads the pipe to its end (up to 64 MB) before the TUI starts, so
+`tail -f` won't open; keys then come from the terminal (`/dev/tty`).
 
 ### `--init-config` example
 
