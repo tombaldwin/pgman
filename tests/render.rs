@@ -668,8 +668,8 @@ fn grid_render_shows_filtered_count_in_title() {
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
-        rendered.contains("2/3 row(s) (filtered)"),
-        "expected `2/3 row(s) (filtered)` in title; full render:\n{rendered}"
+        rendered.contains("2/3 row(s) (filtered · / esc clears)"),
+        "expected `2/3 row(s) (filtered · / esc clears)` in title; full render:\n{rendered}"
     );
 }
 
