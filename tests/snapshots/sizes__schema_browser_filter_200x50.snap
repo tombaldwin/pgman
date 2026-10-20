@@ -14,9 +14,9 @@ expression: dump(&buf)
 │  FROM users                                                                                                                                                                                          │
 │  WHERE plan = 'pro'                                                                                                                                                                                  │
 │  ORDER BY ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-│           │▼ public  (4)                                                        schema: public                                                                                           │           │
+│           │▼ public  (3)                                                        schema: public                                                                                           │           │
 ╰───────────│  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │───────────╯
-╭[ ◆ result │      · user_id : bigint NOT NULL                                    4 table(s)                                                                                               │───────────╮
+╭[ ◆ result │      · user_id : bigint NOT NULL                                    3 table(s)                                                                                               │───────────╮
 │id  email  │      · status : varchar(20) NOT NULL                                                                                                                                         │           │
 │1   ada@exa│  ▼ users  (4 col, 1 cons)                                           enter to expand — then arrow / j/k into the tables                                                       │           │
 │2   linus@e│      ◆ users_pkey                                                                                                                                                            │           │

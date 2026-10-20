@@ -436,12 +436,12 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
         rendered.contains("ada@example.com"),
         "grid data missing:\n{rendered}"
     );
-    // Schema browser opens against the fixture cache (4 tables,
+    // Schema browser opens against the fixture cache (3 tables,
     // collapsed under the public schema node).
     a.mode = Mode::SchemaBrowser;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("public") && rendered.contains("4 table(s)"),
+        rendered.contains("public") && rendered.contains("3 table(s)"),
         "schema browser missing:\n{rendered}"
     );
     // Tap monitor shows the synthetic events.

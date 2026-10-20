@@ -12,17 +12,17 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT id, email, plan, created_at                                          │
 │  FR╭[ ◆ schema browser ◆ ] q / esc close ───────────────────────────────╮    │
-│  WH│▼ public  (4)               public.item                             │    │
-│  OR│  ▼ item  (4 col, 1 cons)                                           │    │
-╰────│      · id : bigint NOT NU… columns (4)                             │────╯
+│  WH│▼ public  (3)               public.order_items                      │    │
+│  OR│  ▼ order_items  (5 col, 1…                                         │    │
+╰────│      · id : bigint NOT NU… columns (5)                             │────╯
 ╭[ ◆ │      · order_id : bigint …   · id                                  │────╮
 │id  │      · sku : varchar(40) …   · order_id                            │    │
 │1   │      · qty : integer NOT …   · sku                                 │    │
-│2   │      ◆ item_pkey             · qty                                 │    │
-│3   │  ▼ order_items  (5 col, 1…                                         │    │
-│4   │      · id : bigint NOT NU… constraints (1)                         │    │
-│5   │      · order_id : bigint …   · item_pkey                           │    │
-│6   │      · sku : varchar(40) …                                         │    │
+│2   │      · price_cents : inte…   · qty                                 │    │
+│3   │      ◆ order_items_pkey      · price_cents                         │    │
+│4   │  ▼ orders  (5 col, 1 cons)                                         │    │
+│5   │      · id : bigint NOT NU… constraints (1)                         │    │
+│6   │      · user_id : bigint N…   · order_items_pkey                    │    │
 │    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

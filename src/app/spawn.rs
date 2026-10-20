@@ -488,8 +488,10 @@ impl App {
         // returns, so `AppMsg::QueryOk`'s handler opens
         // `Mode::ExplainTree` through the identical path.
         let grid = match kind {
-            RunKind::Explain => crate::demo::explain_plan_grid(false),
-            RunKind::ExplainAnalyze => crate::demo::explain_plan_grid(true),
+            RunKind::Explain => crate::demo::explain_plan_grid(false, &sql, &self.schema_cache),
+            RunKind::ExplainAnalyze => {
+                crate::demo::explain_plan_grid(true, &sql, &self.schema_cache)
+            }
             RunKind::Run => crate::demo::answer(&sql, &self.schema_cache),
         };
         let msg = AppMsg::QueryOk {
