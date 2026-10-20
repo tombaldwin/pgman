@@ -817,17 +817,23 @@ fn confirm_wrap_note_says_refused_under_read_only_instead_of_wrapping() {
     use super::panels::confirm_wrap_note;
     assert_eq!(
         confirm_wrap_note(true, true),
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     );
     assert_eq!(
         confirm_wrap_note(true, false),
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     );
     assert_eq!(
         confirm_wrap_note(false, true),
         " · will wrap in transaction"
     );
     assert_eq!(confirm_wrap_note(false, false), "");
+    use super::panels::confirm_action_line;
+    assert_eq!(
+        confirm_action_line(true),
+        "y = send it anyway · n / esc = cancel"
+    );
+    assert_eq!(confirm_action_line(false), "y = run · n / esc = cancel");
 }
 
 // ----- Fitter termination (the read-only refusal hang) -------------------

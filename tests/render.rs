@@ -1135,7 +1135,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
     assert!(
-        text.contains("y = run"),
+        text.contains("n / esc = cancel"),
         "the modal's y/n line fell off the bottom:\n{text}"
     );
 }

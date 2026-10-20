@@ -156,11 +156,21 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
 /// transaction there was the wrong thing to confirm. Pure / testable.
 pub(crate) fn confirm_wrap_note(read_only: bool, wrap_in_tx: bool) -> &'static str {
     if read_only {
-        " · will be refused — this session is read-only"
+        " · Postgres will refuse it — this session is read-only"
     } else if wrap_in_tx {
         " · will wrap in transaction"
     } else {
         ""
+    }
+}
+
+/// The confirm card's keys: under a read-only session `y` sends a
+/// statement Postgres will refuse, and says so. Pure.
+pub(crate) fn confirm_action_line(read_only: bool) -> &'static str {
+    if read_only {
+        "y = send it anyway · n / esc = cancel"
+    } else {
+        "y = run · n / esc = cancel"
     }
 }
 
@@ -207,7 +217,7 @@ pub(super) fn draw_confirm(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "y = run · n / esc = cancel",
+        confirm_action_line(app.read_only),
         Style::default().fg(theme.muted),
     )));
     // Size to the content — every line, not just the SQL: the
