@@ -1,5 +1,9 @@
 //! Reconstruct runnable SQL from application-side Hibernate logs.
 //!
+//! Also `hibernate.show_sql=true`'s console form, `Hibernate: select …`,
+//! the one Spring Boot prints by default: it carries no thread, and its
+//! binds (when TRACE binding is on) attach to it.
+//!
 //! Pairs SQL statements (logger `org.hibernate.SQL`) with the bind parameters
 //! logged separately. Both Hibernate generations are supported:
 //!   - Hibernate 5: `binding parameter [1] as [INTEGER] - [42]`
@@ -47,7 +51,12 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
         let line_no = idx + 1;
 
         if let Some(bind_pos) = line.find("binding parameter") {
-            let thread = extract_thread(&line[..bind_pos]);
+            let mut thread = extract_thread(&line[..bind_pos]);
+            // A `show_sql` statement has no thread, while its binds,
+            // logged through the logger, do: they belong to it.
+            if !current.contains_key(&thread) && current.contains_key("") {
+                thread = String::new();
+            }
             // Orphan binds (no open statement on the thread) are ignored.
             if current.contains_key(&thread) {
                 if let Some(bp) = parse_bind(&line[bind_pos..]) {
@@ -153,8 +162,17 @@ fn extract_thread(prefix: &str) -> String {
     String::new()
 }
 
-/// If `line` is a `org.hibernate.SQL` line, return `(logger_position, message)`.
+/// `hibernate.show_sql=true` writes `Hibernate: select …` straight to
+/// stdout — no logger, no thread. The prefix, if `line` carries one.
+const SHOW_SQL_PREFIX: &str = "Hibernate:";
+
+/// If `line` is a `org.hibernate.SQL` line (or a `show_sql` one), return
+/// `(logger_position, message)`.
 fn sql_message(line: &str) -> Option<(usize, &str)> {
+    if let Some(msg) = line.trim_start().strip_prefix(SHOW_SQL_PREFIX) {
+        // Position 0: no prefix, so no thread.
+        return Some((0, msg.trim()));
+    }
     const MARKERS: &[&str] = &["org.hibernate.SQL", "o.h.SQL"];
     let (marker_pos, marker_len) = MARKERS.iter().find_map(|m| {
         let i = line.find(m)?;
@@ -217,6 +235,37 @@ fn bracketed_value(s: &str) -> Option<ParamValue> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Spring Boot's default `show_sql` console lines, as the UX review
+    /// pasted them: detected, but reconstructed as nothing.
+    #[test]
+    fn show_sql_console_lines_reconstruct_with_their_binds() {
+        let log = "\
+Hibernate: select u1_0.id,u1_0.email from users u1_0 where u1_0.id=?
+2024-01-15 10:00:00.124 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [BIGINT] - [42]
+Hibernate: 
+    select
+        o1_0.id 
+    from
+        orders o1_0 
+    where
+        o1_0.user_id=?
+binding parameter [1] as [BIGINT] - [7]
+";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:#?}");
+        assert_eq!(
+            q[0].runnable_sql,
+            "select u1_0.id,u1_0.email from users u1_0 where u1_0.id=42"
+        );
+        assert!(
+            q[1].runnable_sql.contains("o1_0.user_id=7"),
+            "{}",
+            q[1].runnable_sql
+        );
+        assert!(crate::query::logdetect::detect_log("Hibernate: select 1").is_some());
+    }
+
     use super::*;
 
     #[test]
