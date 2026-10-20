@@ -3380,3 +3380,45 @@ fn a_caught_up_standby_of_an_idle_primary_has_no_lag() {
         );
     });
 }
+
+/// A unicode-escaped function name doesn't get past `query`'s guards:
+/// `U&"pg_\0072ead_file"` is `pg_read_file` to Postgres.
+#[test]
+fn mcp_query_refuses_unicode_escaped_function_names() {
+    let home = scratch_home("mcp-uescape", "");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[
+            tool_call(
+                1,
+                "query",
+                serde_json::json!({"connection": "local", "sql": r#"SELECT U&"pg_\0072ead_file"('PG_VERSION')"#}),
+            ),
+            tool_call(
+                2,
+                "query",
+                serde_json::json!({"connection": "local", "sql": r#"SELECT U&"set_\0063onfig"('default_transaction_read_only', 'off', false)"#}),
+            ),
+            tool_call(
+                3,
+                "query",
+                serde_json::json!({"connection": "local", "sql": "SELECT 1 AS one"}),
+            ),
+        ],
+    );
+    for id in [1, 2] {
+        let (text, is_error) = reply(&frames, id);
+        assert!(is_error, "call {id} ran: {text}");
+        assert!(!text.contains("16"), "no file contents: {text}");
+    }
+    let (text, is_error) = reply(&frames, 3);
+    assert!(!is_error && text.contains("\"one\""), "{text}");
+}

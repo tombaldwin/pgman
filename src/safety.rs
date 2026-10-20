@@ -324,8 +324,25 @@ pub fn classify(sql: &str) -> StatementKind {
         if mentions_destructive_function(&stripped) {
             return StatementKind::Other;
         }
+        // A unicode-escaped name could be any function: unreadable here.
+        if has_unicode_escape(&stripped) {
+            return StatementKind::Other;
+        }
     }
     kind
+}
+
+/// `true` if `sql` has a `U&"…"` identifier or a `U&'…'` string. Postgres
+/// decodes their escapes (`U&"pg_\0074erminate_backend"` is
+/// `pg_terminate_backend`, `UESCAPE` picks another escape character) and
+/// this classifier has no decoder, so what they name can't be read: like
+/// an `E'…'` string with backslashes, opaque is not safe. Pure.
+pub(crate) fn has_unicode_escape(sql: &str) -> bool {
+    scan(sql).iter().any(|s| {
+        matches!(s.kind, SpanKind::Ident | SpanKind::String)
+            && s.start >= 2
+            && sql.as_bytes()[s.start - 2..s.start].eq_ignore_ascii_case(b"u&")
+    })
 }
 
 /// Server-side functions whose *call* is the destructive act, so a statement
@@ -398,7 +415,9 @@ const READ_ONLY_GUCS: &[&str] = &["default_transaction_read_only", "transaction_
 /// attempt outright. Opaque is not the same as safe.
 pub fn attempts_read_only_escape(sql: &str) -> bool {
     let stripped = strip_sql_comments(sql);
-    if set_config_names_read_only_guc(&stripped) {
+    // `SET U&"default_transaction_read_\006Fnly" = off`,
+    // `SELECT U&"set_\0063onfig"(…)`: names this can't read.
+    if set_config_names_read_only_guc(&stripped) || has_unicode_escape(&stripped) {
         return true;
     }
     let toks = code_tokens(&stripped);
@@ -1523,6 +1542,32 @@ fn strip_explain_prefix(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+
+    /// `U&"…"` names a function or GUC with unicode escapes that Postgres
+    /// decodes and this classifier doesn't: `U&"pg_\0074erminate_backend"`
+    /// is `pg_terminate_backend`. Found by the 2026-10-20 MCP review, which
+    /// ran it through `query` against a real server.
+    #[test]
+    fn unicode_escaped_names_are_opaque_not_safe() {
+        for sql in [
+            r#"SELECT U&"pg_\0074erminate_backend"(pg_backend_pid())"#,
+            r#"select u&"pg_\0072ead_file"('/etc/hostname')"#,
+            r#"SELECT U&"pg_!0072ead_file" UESCAPE '!' ('/etc/hostname')"#,
+            r#"SELECT U&'\0041' AS a"#,
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+        }
+        for sql in [
+            r#"SELECT U&"set_\0063onfig"('default_transaction_read_only', 'off', false)"#,
+            r#"SET U&"default_transaction_read_\006Fnly" = off"#,
+        ] {
+            assert!(attempts_read_only_escape(sql), "{sql}");
+        }
+        // Plain spellings are unaffected; `&` alone is an operator.
+        assert_eq!(classify("SELECT 1 & 3, 'U&x'"), StatementKind::Select);
+        assert!(!attempts_read_only_escape("SELECT a FROM \"U&t\""));
+    }
+
     use super::*;
 
     #[test]

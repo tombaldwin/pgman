@@ -20,7 +20,11 @@
   and a `set_config` whose first argument pgman cannot read as a plain
   name — an expression, a nested call, an `E'…'` string with
   backslashes — is refused too: a name that cannot be read is not one
-  that can be vouched for. **`DO` and `CALL` are refused outright on a
+  that can be vouched for. The same goes for any unicode-escaped name or
+  string (`U&"…"`, `U&'…'`): Postgres decodes `U&"pg_\0074erminate_backend"`
+  to `pg_terminate_backend` and pgman has no decoder, so a statement
+  carrying one is refused on a read-only profile and needs confirming
+  otherwise. **`DO` and `CALL` are refused outright on a
   read-only profile.** Their bodies are procedural code (plpgsql) that
   is a dollar-quoted string to pgman's lexer, so a `SET` inside is
   invisible; opaque is not the same as safe. And a `--batch` script
