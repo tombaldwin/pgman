@@ -3002,7 +3002,7 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
     if app.last_error_detail.is_none() && app.last_error.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "(no extended detail — non-server error or DbError fields empty)",
+            "(nothing more to show: the server sent no detail with this one, or it came from pgman)",
             Style::default().fg(theme.muted),
         )));
     }

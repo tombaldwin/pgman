@@ -1392,3 +1392,26 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
         .collect();
     assert!(footer.contains("y run · n / esc cancel"), "{footer}");
 }
+
+/// An error with no server detail says so in words, not type names.
+#[test]
+fn the_error_overlay_without_detail_speaks_plainly() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.last_error = Some("not connected".into());
+    app.mode = crate::app::Mode::ErrorDetail;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let text: String = (0..buf.area.height)
+        .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+        .map(|(x, y)| buf[(x, y)].symbol().to_string())
+        .collect();
+    assert!(text.contains("nothing more to show"), "{text}");
+    assert!(!text.contains("DbError"));
+}
