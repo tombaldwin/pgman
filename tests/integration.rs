@@ -3452,3 +3452,31 @@ fn batch_says_when_a_csv_export_is_truncated() {
     let out = batch_with_home(&home, &["--sql", "SELECT generate_series(1, 10) AS n"]);
     assert!(out.status.success() && out.stderr.is_empty());
 }
+
+/// One huge value doesn't come back whole over MCP: `max_rows` counts
+/// rows, and a single cell could be hundreds of megabytes.
+#[test]
+fn mcp_query_cuts_a_huge_cell() {
+    let home = scratch_home("mcp-bigcell", "");
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    let frames = mcp_session_env(
+        &home,
+        &home,
+        &[],
+        &[],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "local", "sql": "SELECT repeat('x', 20000000) AS big"}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error);
+    assert!(text.len() < 64 * 1024, "{} bytes came back", text.len());
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["cells_cut"], 1);
+}
