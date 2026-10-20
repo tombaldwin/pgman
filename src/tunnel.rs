@@ -193,7 +193,9 @@ impl SshTunnel {
         let forwards: Vec<String> = remotes
             .iter()
             .zip(&ports)
-            .map(|((host, port), local)| format!("127.0.0.1:{local}:{host}:{port}"))
+            .map(|((host, port), local)| {
+                format!("127.0.0.1:{local}:{}", crate::conn::host_port(host, *port))
+            })
             .collect();
         let local_port = ports[0];
         let bastion = match &spec.user {
