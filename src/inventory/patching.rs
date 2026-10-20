@@ -148,6 +148,106 @@ impl ApplyReport {
     }
 }
 
+/// Where a running [`apply`] leaves the means to cancel its statement:
+/// shared between the run, which fills it once connected, and whoever
+/// may want to stop it (the TUI's Esc).
+#[derive(Clone, Default)]
+pub struct CancelSlot(
+    std::sync::Arc<std::sync::Mutex<Option<CancelFn>>>,
+    /// Set by [`CancelSlot::cancel`]: the run starts no further patch,
+    /// so a cancel between statements, or before connecting, still holds.
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+
+/// Sends a cancel request for the run's statement. Fire and forget.
+pub type CancelFn = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+impl CancelSlot {
+    pub fn set(&self, cancel: CancelFn) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(cancel);
+        }
+    }
+
+    /// Stop the run: no further patch starts, and the server is asked to
+    /// cancel the running statement. `false` when the run hasn't
+    /// connected yet (or has finished), so no request was sent.
+    pub fn cancel(&self) -> bool {
+        self.1.store(true, std::sync::atomic::Ordering::SeqCst);
+        let cancel = self.0.lock().ok().and_then(|s| s.clone());
+        match cancel {
+            Some(f) => {
+                f();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether [`CancelSlot::cancel`] was called.
+    pub fn requested(&self) -> bool {
+        self.1.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn clear(&self) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = None;
+        }
+    }
+}
+
+impl std::fmt::Debug for CancelSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CancelSlot").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for CancelSlot {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(test)]
+mod cancel_slot_tests {
+    use super::*;
+
+    #[test]
+    fn a_cancel_is_remembered_whether_or_not_anything_was_sent() {
+        let slot = CancelSlot::default();
+        assert!(!slot.requested());
+        assert!(!slot.cancel(), "nothing to send before connecting");
+        assert!(slot.requested(), "but the run won't start another patch");
+        let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = sent.clone();
+        let slot = CancelSlot::default();
+        slot.set(std::sync::Arc::new(move || {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        assert!(slot.cancel());
+        assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 1);
+        slot.clear();
+        assert!(!slot.cancel(), "emptied: nothing more is sent");
+        assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+/// A [`CancelFn`] for `client`: a Postgres cancel request, through the
+/// same tunnel as the connection.
+fn canceller(client: &tokio_postgres::Client) -> CancelFn {
+    let token = client.cancel_token();
+    std::sync::Arc::new(move || {
+        let token = token.clone();
+        tokio::spawn(async move {
+            // The cancel packet is unauthenticated and servers take it
+            // plaintext, as the editor's ctrl-c does.
+            if let Err(e) = token.cancel_query(tokio_postgres::NoTls).await {
+                tracing::warn!(target: "pgman::patching", "cancel request failed: {e}");
+            }
+        });
+    })
+}
+
 /// Whether `env` is confirmed by typing its name. Pure.
 pub fn is_protected(env: &Environment) -> bool {
     env.protected
@@ -412,13 +512,15 @@ pub fn still_as_planned(plan: &PatchPlan, done: usize, applied: &[i64]) -> Resul
 }
 
 /// Run `plan` on `target`: each patch in its own transaction, in order,
-/// stopping at the first failure.
+/// stopping at the first failure. Once connected, `cancel` can stop the
+/// running statement; that fails the patch like any other error.
 pub async fn apply(
     env: &Environment,
     target: &Target,
     safety: &crate::safety::SafetyConfig,
     fetch_secret: &FetchSecret,
     plan: &PatchPlan,
+    cancel: &CancelSlot,
 ) -> ApplyReport {
     let mut report = ApplyReport::default();
     let start = async {
@@ -448,7 +550,15 @@ pub async fn apply(
             return report;
         }
     };
+    cancel.set(canceller(&client));
     for (i, p) in plan.patches.iter().enumerate() {
+        if cancel.requested() {
+            report.results.push(PatchResult {
+                file: p.file.file.clone(),
+                outcome: Err("cancelled before it started; nothing applied".to_string()),
+            });
+            break;
+        }
         let outcome = async {
             let applied = crate::query::apply::applied_ids(&client, &cfg).await?;
             still_as_planned(plan, i, &applied)?;
@@ -504,6 +614,9 @@ pub async fn apply(
             break;
         }
     }
+    // Nothing to cancel from here on, and a late cancel mustn't hit the
+    // re-read below.
+    cancel.clear();
     report.recorded_after = match crate::query::apply::applied_ids(&client, &cfg).await {
         Ok(ids) => ids.into_iter().max(),
         Err(e) => {
@@ -532,7 +645,7 @@ pub async fn plan_for(
 }
 
 /// [`apply`] for a plan from [`plan_for`], resolving its database again.
-pub async fn apply_for(p: PatchPlan) -> ApplyReport {
+pub async fn apply_for(p: PatchPlan, cancel: CancelSlot) -> ApplyReport {
     let (e, s, d) = (p.environment.clone(), p.server.clone(), p.database.clone());
     let resolved = tokio::task::spawn_blocking(move || resolve(&e, &s, &d))
         .await
@@ -541,7 +654,7 @@ pub async fn apply_for(p: PatchPlan) -> ApplyReport {
     match resolved {
         Ok((env, target)) => {
             let safety = crate::safety::SafetyConfig::load_personal().0;
-            apply(&env, &target, &safety, &aws_secrets(), &p).await
+            apply(&env, &target, &safety, &aws_secrets(), &p, &cancel).await
         }
         Err(e) => ApplyReport {
             results: Vec::new(),

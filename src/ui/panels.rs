@@ -1809,7 +1809,14 @@ fn below_recorded_lines(
 pub(crate) fn patch_prompt(v: &crate::app::PatchView) -> Option<(String, bool)> {
     use crate::app::PatchStage;
     match &v.stage {
-        PatchStage::Applying(_) => Some(("  applying…".into(), false)),
+        PatchStage::Applying(_) if v.cancel_armed => Some((
+            "  applying… · Esc again cancels the running statement".into(),
+            true,
+        )),
+        PatchStage::Applying(_) => Some((
+            "  applying… · Esc twice cancels the running statement".into(),
+            false,
+        )),
         PatchStage::Plan(Ok(p)) if p.patches.is_empty() && p.outside_would_help => {
             Some(("  o plan it outside a transaction · q back".into(), false))
         }
@@ -3233,6 +3240,8 @@ mod tests {
             stage: PatchStage::Plan(Ok(plan.clone())),
             typed: "prod".into(),
             scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
         };
         let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
         assert_eq!(
@@ -3305,6 +3314,8 @@ mod tests {
             stage: PatchStage::Plan(Ok(plan)),
             typed: "sta".into(),
             scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
         };
         let lines = patch_lines(&v);
         assert_eq!(
@@ -3353,6 +3364,38 @@ mod tests {
     }
 
     #[test]
+    fn a_running_apply_says_how_to_cancel_it() {
+        use crate::app::{PatchStage, PatchView};
+        let mut v = PatchView {
+            environment: "staging".into(),
+            server: "staging".into(),
+            database: "shop".into(),
+            stage: PatchStage::Applying(crate::demo::patch_plan(
+                "staging", "staging", "shop", false,
+            )),
+            typed: String::new(),
+            scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
+        };
+        assert_eq!(
+            patch_prompt(&v),
+            Some((
+                "  applying… · Esc twice cancels the running statement".into(),
+                false
+            ))
+        );
+        v.cancel_armed = true;
+        assert_eq!(
+            patch_prompt(&v),
+            Some((
+                "  applying… · Esc again cancels the running statement".into(),
+                true
+            ))
+        );
+    }
+
+    #[test]
     fn the_pinned_prompt_offers_o_when_it_would_get_further() {
         use crate::app::{PatchStage, PatchView};
         let mut plan = crate::demo::patch_plan("staging", "staging", "shop", false);
@@ -3363,6 +3406,8 @@ mod tests {
             stage: PatchStage::Plan(Ok(plan.clone())),
             typed: String::new(),
             scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
         };
         assert_eq!(
             patch_prompt(&v).unwrap().0,
@@ -3403,6 +3448,8 @@ mod tests {
             stage: PatchStage::Plan(Ok(plan.clone())),
             typed: String::new(),
             scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
         };
         assert_eq!(patch_lines(&v).last(), Some(&warning));
         v.stage = PatchStage::Done(plan, Default::default());

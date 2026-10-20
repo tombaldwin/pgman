@@ -10246,7 +10246,7 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
                 &e, &s, &d, outside,
             ))))
         }),
-        apply: std::sync::Arc::new(move |p| {
+        apply: std::sync::Arc::new(move |p, _cancel| {
             applied
                 .lock()
                 .unwrap()
@@ -10399,6 +10399,55 @@ fn while_a_name_is_typed_o_is_a_letter_and_ctrl_o_plans_outside() {
 }
 
 #[test]
+fn esc_twice_while_applying_cancels_the_running_statement() {
+    let mut a = patching_app(Default::default());
+    let plan = crate::demo::patch_plan("staging", "staging", "shop", false);
+    let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let slot = crate::inventory::patching::CancelSlot::default();
+    a.environments.patch = Some(PatchView {
+        environment: "staging".into(),
+        server: "staging".into(),
+        database: "shop".into(),
+        stage: PatchStage::Applying(plan),
+        typed: String::new(),
+        scroll: 0,
+        cancel: slot.clone(),
+        cancel_armed: false,
+    });
+    // Not connected yet: nothing to send, but the run won't start.
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("cancel requested — the run stops before its first patch")
+    );
+    assert!(slot.requested());
+    let slot = crate::inventory::patching::CancelSlot::default();
+    a.environments.patch.as_mut().unwrap().cancel = slot.clone();
+    let count = sent.clone();
+    slot.set(std::sync::Arc::new(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    // Esc, another key, Esc: disarmed in between, nothing sent.
+    press(&mut a, KeyCode::Esc);
+    assert!(a.environments.patch.as_ref().unwrap().cancel_armed);
+    press(&mut a, KeyCode::Char('x'));
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(
+        a.environments.patch.is_some(),
+        "Esc doesn't close a running apply"
+    );
+    press(&mut a, KeyCode::Esc);
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(a.last_status.as_deref().unwrap().starts_with("cancel sent"));
+    assert!(matches!(
+        a.environments.patch.as_ref().unwrap().stage,
+        PatchStage::Applying(_)
+    ));
+}
+
+#[test]
 fn a_late_plan_for_another_database_is_dropped() {
     let mut a = patching_app(Default::default());
     a.environments.patch = Some(PatchView {
@@ -10408,6 +10457,8 @@ fn a_late_plan_for_another_database_is_dropped() {
         stage: PatchStage::Planning,
         typed: String::new(),
         scroll: 0,
+        cancel: Default::default(),
+        cancel_armed: false,
     });
     a.on_msg(AppMsg::EnvPatchPlanned {
         environment: "staging".into(),

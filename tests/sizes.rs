@@ -937,6 +937,8 @@ fn scr_env_patch() -> App {
         ))),
         typed: "produc".into(),
         scroll: 0,
+        cancel: Default::default(),
+        cancel_armed: false,
     });
     a
 }

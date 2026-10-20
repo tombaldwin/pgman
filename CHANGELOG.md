@@ -130,7 +130,8 @@ and breaking changes.
   below the recorded version is left out and named, not run out of
   order. A patch that can't run in a transaction (`VACUUM`,
   `CONCURRENTLY`, …) is refused up front; in the TUI, `o` plans it to
-  run outside one, statement by statement, behind a typed confirm.
+  run outside one, statement by statement and with no statement
+  timeout, behind a typed confirm. Esc twice cancels a running patch.
   Never on a replica, and only on a database `safety.toml` lets write.
 - **Safer and more honest, from a four-reviewer robustness pass.** A
   unicode-escaped name (`U&"pg_\0072ead_file"`) no longer slips past the
