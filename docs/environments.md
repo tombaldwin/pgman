@@ -253,19 +253,55 @@ environment's pending patches can be applied — `P` on a database in the
 overview, or `apply_patches` over [MCP](mcp.md). Either way it is two
 steps:
 
-1. **A plan, read-only.** The patches the database hasn't recorded, in
-   order, each checked against `safety.toml` like a `--batch` script.
-   The plan stops before the first patch that can't run here: the
-   database's profile is read-only (the default — set
-   `read_only = false` for it), a guard blocks a statement, the patch
-   has its own `BEGIN`/`COMMIT`, or it builds an index `CONCURRENTLY`.
-   Those you apply by hand.
+1. **A plan, read-only.** The patches the database hasn't recorded and
+   that are numbered above the highest version it has, in order, each
+   checked against `safety.toml` like a `--batch` script. The plan stops
+   before the first patch that can't run here: the database's profile
+   is read-only (the default — set `read_only = false` for it), a guard
+   blocks a statement, the patch has its own `BEGIN`/`COMMIT` or changes
+   session settings, or it holds a statement no transaction can run
+   (`VACUUM`, `CREATE INDEX CONCURRENTLY`, `CREATE DATABASE`, …; see
+   below). A pending file numbered *below* the highest recorded version
+   is a gap the database skipped: it's left out and named in red, since
+   running it now would put it after patches numbered above it. Apply
+   it by hand if it's needed.
 2. **Your confirmation, then the patches.** Each runs in its own
    transaction with `lock_timeout = 5s`, so a busy table fails fast
    instead of queueing behind live traffic. Before each one the version
    table is read again; a patch someone else applied since the plan
    stops the run. The first failure rolls that patch back and stops.
    What runs is the text you were shown, not a fresh read of the file.
+   Afterwards the version table is read once more, and the result says
+   which version the database records now.
+
+Patches are all or nothing *each*, not as a batch: when the third of
+three fails, the first two stay applied and recorded, and the database
+reads as two patches further on. Each patch records its own version, so
+that's a true state to resume from, and no patch's locks are held while
+the next one runs.
+
+### Patches that can't run in a transaction
+
+Postgres refuses `VACUUM`, `CREATE`/`DROP INDEX CONCURRENTLY`,
+`REINDEX … CONCURRENTLY`, `CREATE`/`DROP DATABASE` or `TABLESPACE`,
+`ALTER SYSTEM` and `REINDEX SYSTEM`/`DATABASE` inside a transaction, so
+such a patch can't be all or nothing. When the plan stops at one, `o`
+(`ctrl-o` while you're typing a name) plans again letting such patches
+run **outside a transaction**:
+
+- each one is marked in red in the plan, with what needs it;
+- confirming takes typing the environment's name, protected or not;
+- its statements run one at a time, each committing as it goes, with
+  the 5 s lock timeout set before each;
+- a failure part-way says how many statements stayed applied, whether
+  the version row is recorded (the row usually comes first, so the
+  patch can read as applied when it isn't), and, for a failed
+  `CREATE INDEX CONCURRENTLY`, that it left an `INVALID` index to drop
+  before trying again.
+
+Ordinary patches in the same plan still run in their own transactions,
+and every other refusal stands. MCP's `apply_patches` never plans this
+way: run those patches from the TUI.
 
 A replica is never patched: its primary is. An environment is
 **protected** when it says `protected = true`, or — when it says
@@ -279,7 +315,7 @@ confirmed by typing its name; `protected = false` turns that off.
 | `E` | Open from the grid or the connection picker. No connection is needed. |
 | `j` / `k`, `g` / `G` | Move between databases. |
 | `Enter` | Connect to the database under the cursor. |
-| `P` | Apply the database's pending patches: a plan to confirm (`y`, or the environment's name when it's protected), then each patch in its own transaction. See [applying patches](#applying-patches). |
+| `P` | Apply the database's pending patches: a plan to confirm (`y`, or the environment's name when it's protected), then each patch in its own transaction. In the plan, `o` plans again letting patches that can't run in a transaction run outside one. See [applying patches](#applying-patches). |
 | `l` | Recent errors from the focused server's RDS log (ERROR, FATAL, PANIC from the newest files, grouped with a count). `STATEMENT` lines are left out. |
 | `v` | Schema drift: each database's version by environment, behind or pending in yellow. `v` again for the list. |
 | `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |

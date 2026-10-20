@@ -125,8 +125,13 @@ and breaking changes.
   `safety.toml`; after you confirm (a protected environment — `prod` in
   its name, or `protected = true` — by typing its name; over MCP through
   elicitation), each runs in its own transaction with a 5 s
-  `lock_timeout`, stopping at the first failure. Never on a replica, and
-  only on a database `safety.toml` lets write.
+  `lock_timeout`, stopping at the first failure; the result says which
+  version the database records afterwards. A pending file numbered
+  below the recorded version is left out and named, not run out of
+  order. A patch that can't run in a transaction (`VACUUM`,
+  `CONCURRENTLY`, …) is refused up front; in the TUI, `o` plans it to
+  run outside one, statement by statement, behind a typed confirm.
+  Never on a replica, and only on a database `safety.toml` lets write.
 - **Safer and more honest, from a four-reviewer robustness pass.** A
   unicode-escaped name (`U&"pg_\0072ead_file"`) no longer slips past the
   safety classifier; MCP `query` results are capped at 16 KiB a value

@@ -42,7 +42,7 @@ expression: dump(&buf)
 │                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
-│                             │ ↓ 211 more below                                                                                                                         │                             │
+│                             │ ↓ 212 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │

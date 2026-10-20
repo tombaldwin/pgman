@@ -2203,7 +2203,11 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    P             apply the database's pending patches (plan, confirm, run)"),
+        row("    P             apply the database's pending patches (plan, confirm, run;"),
+        &mut lines,
+    );
+    push(
+        row("                  o in the plan: patches needing no transaction, outside one)"),
         &mut lines,
     );
     push(
