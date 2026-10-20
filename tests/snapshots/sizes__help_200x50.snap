@@ -20,10 +20,11 @@ expression: dump(&buf)
 │id  email                  pl│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                                                                    │                             │
 │1   ada@example.com        pr│                                                                                                                                          │                             │
 │2   linus@example.com      fr│   grid                                                                                                                                   │                             │
-│3   grace@example.com      pr│     q             quit (esc here is a no-op so a reflex press doesn't lose the session)                                                  │                             │
-│4   alan@example.com       te│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
-│5   edsger@example.com     fr│     :             command bar — see the ': commands' section                                                                             │                             │
-│6   katherine@example.com  pr│     A             about pgman (version, credits)                                                                                         │                             │
+│3   grace@example.com      pr│     q             quit                                                                                                                   │                             │
+│4   alan@example.com       te│     esc           back to the environments overview, when environments are configured                                                    │                             │
+│5   edsger@example.com     fr│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
+│6   katherine@example.com  pr│     :             command bar — see the ': commands' section                                                                             │                             │
+│                             │     A             about pgman (version, credits)                                                                                         │                             │
 │                             │     e / i / tab   focus editor                                                                                                           │                             │
 │                             │     c             change connection (opens the picker mid-session)                                                                       │                             │
 │                             │     S             schema browser (psql `\d` equivalent)                                                                                  │                             │
@@ -41,8 +42,7 @@ expression: dump(&buf)
 │                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
-│                             │     D             pin result as A · run another query, D again to diff as B                                                              │                             │
-│                             │ ↓ 210 more below                                                                                                                         │                             │
+│                             │ ↓ 211 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │

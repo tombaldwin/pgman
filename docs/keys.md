@@ -2,8 +2,9 @@
 
 Press `?` (or `F1`, which also works while typing) for the in-app cheat sheet — it auto-scrolls to the section
 for whatever mode you opened it from. `q` closes most panels and quits from
-the grid / connection picker; `Esc` closes overlays but is a no-op in Normal
-mode (a reflex press can't drop the session). `F1` (help), `F2` (error
+the grid / connection picker; `Esc` closes overlays; in Normal mode it goes
+back to the environments overview when environments are configured, and
+does nothing otherwise (a reflex press can't drop the session). `F1` (help), `F2` (error
 detail), `F3` (notifications) and `F4` (JDBC tap monitor) work from **any**
 mode, as do `?` (help) and `:` (the command bar) — except while a text input
 has focus, where both are characters you meant to type. `]` / `[` (next /

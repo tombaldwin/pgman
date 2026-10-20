@@ -1271,3 +1271,37 @@ fn the_help_pointer_names_the_key_that_works_in_this_mode() {
     );
     assert!(!app.mode.is_text_input());
 }
+
+/// With environments listed, the grid's hints say Esc goes back to them.
+#[test]
+fn the_grid_hints_say_esc_goes_back_to_the_environments() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let footer = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(220, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect::<String>()
+    };
+    app.last_status = None;
+    assert!(
+        !footer(&mut app).contains("esc / E envs"),
+        "no environments, no claim"
+    );
+    app.environments_loader = Some(crate::app::EnvironmentsLoader::Immediate(
+        crate::demo::environments(),
+    ));
+    app.on_key(KeyEvent::new(KeyCode::Char('E'), KeyModifiers::NONE));
+    app.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    app.last_status = None;
+    assert_eq!(app.mode, crate::app::Mode::Normal);
+    let f = footer(&mut app);
+    assert!(f.contains("esc / E envs"), "{f}");
+}

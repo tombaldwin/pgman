@@ -18,8 +18,8 @@ expression: dump(&buf)
 ╭[ ◆ result │ detail · F3 notify)                                  │───────────╮
 │id  email  │                                                      │           │
 │1   ada@exa│   grid                                               │           │
-│2   linus@e│     q             quit (esc here is a no-op so a     │           │
-│3   grace@e│                   reflex press doesn't lose the      │           │
+│2   linus@e│     q             quit                               │           │
+│3   grace@e│     esc           back to the environments overview, │           │
 │4   alan@ex│ ↓ 361 more below                                     │           │
 │5   edsger@│                                                      │           │
 │6   katheri╰──────────────────────────────────────────────────────╯           │

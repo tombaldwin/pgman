@@ -30,8 +30,9 @@ expression: dump(&buf)
 │              │ notify)                                                            │              │
 │              │                                                                    │              │
 │              │   grid                                                             │              │
-│              │     q             quit (esc here is a no-op so a reflex press      │              │
-│              │                   doesn't lose the session)                        │              │
+│              │     q             quit                                             │              │
+│              │     esc           back to the environments overview, when          │              │
+│              │                   environments are configured                      │              │
 │              │     ? / F1        toggle this help (both work from every           │              │
 │              │                   non-typing mode)                                 │              │
 │              │     :             command bar — see the ': commands' section       │              │
@@ -92,8 +93,7 @@ expression: dump(&buf)
 │              │     ctrl-l / F8   parse buffer as log → pick a reconstructed query │              │
 │              │     ctrl-d / F9   read buffer as DBUnit fixture path → load apply  │              │
 │              │                   script                                           │              │
-│              │     tab / ctrl-spc identifier completion (cycles on repeat tab)    │              │
-│              │ ↓ 230 more below                                                   │              │
+│              │ ↓ 231 more below                                                   │              │
 │              │                                                                    │              │
 │              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │

@@ -1441,6 +1441,15 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // modes where the user is typing literal characters, and
         // in the y/n prompts (TxDecision returns early upstream;
         // Confirm + Help are noisy with extra hints).
+        // With environments listed, Esc from the results goes back to
+        // the overview: say so where the overview's key is.
+        let normal_with_envs;
+        let hints: &str = if app.mode == Mode::Normal && !app.environments.reports.is_empty() {
+            normal_with_envs = hints.replacen("E envs", "esc / E envs", 1);
+            &normal_with_envs
+        } else {
+            hints
+        };
         // `?` opens help everywhere except where it's a character being
         // typed; there only F1 does (fn-F1 on a Mac keyboard).
         let help_key = if app.mode.is_text_input() { "F1" } else { "?" };
@@ -1798,7 +1807,13 @@ pub(crate) fn help_body(
     push(Line::from(""), &mut lines);
 
     heading("grid", &mut lines, &mut anchors);
-    push(row("    q             quit (esc here is a no-op so a reflex press doesn't lose the session)"), &mut lines);
+    push(row("    q             quit"), &mut lines);
+    push(
+        row(
+            "    esc           back to the environments overview, when environments are configured",
+        ),
+        &mut lines,
+    );
     push(
         row("    ? / F1        toggle this help (both work from every non-typing mode)"),
         &mut lines,
