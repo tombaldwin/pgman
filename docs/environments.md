@@ -200,6 +200,9 @@ the MCP `environments` tool when called with `probe: true`):
   included), with trouble after it: `21 (2 blocked · 1 long tx)`. A
   session waiting on another's lock turns the row red; a transaction
   open over five minutes (idle in transaction included) turns it yellow.
+  Long transactions need the probe user to see other sessions'
+  transactions (`pg_read_all_stats`, which RDS's master user has);
+  without it they aren't counted rather than shown as none.
 - **`SIZE`**: the database's size.
 
 Version, recovery, lag, sessions and size come back in one round trip.

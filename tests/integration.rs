@@ -3506,3 +3506,41 @@ fn a_host_that_never_answers_fails_within_the_connect_timeout() {
     assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
     eprintln!("{}", String::from_utf8_lossy(&out.stderr));
 }
+
+/// A probe user that can't see other sessions' transactions (no
+/// pg_read_all_stats) reports long transactions as unknown, not zero.
+#[test]
+fn a_probe_without_read_all_stats_doesnt_report_zero_long_transactions() {
+    let home = scratch_home("probe-unpriv", WRITABLE_PROFILE);
+    let role = format!("pgman_it_ro_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE ROLE {role} LOGIN PASSWORD 'x' NOSUPERUSER"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let me = probe_client(DSN).await;
+        let p = pgman::query::probe::run(&me, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert!(p.long_tx.is_some(), "a superuser sees every session");
+        let them = probe_client(&format!(
+            "postgres://{role}:x@127.0.0.1:55432/pgman_test?sslmode=disable"
+        ))
+        .await;
+        let p = pgman::query::probe::run(&them, pgman::query::probe::SchemaSource::None)
+            .await
+            .unwrap();
+        assert_eq!(p.long_tx, None, "unknown, not 0");
+        assert!(p.sessions.is_some());
+    });
+}

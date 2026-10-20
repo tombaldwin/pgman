@@ -34,8 +34,10 @@ pub const STATUS_SQL: &str = concat!(
      pg_size_pretty(pg_database_size(current_database())) AS size, \
      (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
         AND cardinality(pg_blocking_pids(pid)) > 0) AS blocked, \
-     (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-        AND pid <> pg_backend_pid() AND xact_start < now() - interval '5 minutes') AS long_tx"
+     CASE WHEN pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') THEN \
+       (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+          AND pid <> pg_backend_pid() AND xact_start < now() - interval '5 minutes') \
+     END AS long_tx"
 );
 
 /// A probe's findings. `None` is "not known", never "zero".
@@ -63,6 +65,8 @@ pub struct Probe {
     pub blocked: Option<i64>,
     /// Transactions open more than five minutes (idle in transaction
     /// included): what holds locks and blocks vacuum and migrations.
+    /// `None` when the probe user can't see other sessions' transactions
+    /// (it needs `pg_read_all_stats`): unknown, not zero.
     pub long_tx: Option<i64>,
     /// The migration tool found keeping this database's history, when
     /// the version isn't read from a configured version table.
