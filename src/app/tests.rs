@@ -10409,3 +10409,21 @@ fn readonly_applied_to_the_live_session_keeps_the_header_true() {
     assert!(!a.read_only, "not applied: the session is still writable");
     assert!(a.last_error.as_deref().unwrap().contains("not applied"));
 }
+
+/// `r` keeps the cursor on the database it was on when the listing moves
+/// under it (a new instance sorting above, say), so Enter connects where
+/// the operator was looking.
+#[test]
+fn a_refresh_keeps_the_cursor_on_the_same_database() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('j'));
+    let before = a.environments.selection().unwrap();
+    let mut moved = crate::demo::environments();
+    let mut extra = moved[0].targets[0].clone();
+    extra.server = "aaa-new".into();
+    moved[0].targets.insert(0, extra);
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(moved)));
+    assert_eq!(a.environments.selection().unwrap(), before);
+}

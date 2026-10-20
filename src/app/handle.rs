@@ -283,6 +283,9 @@ impl App {
                     Ok(reports) => {
                         let dbs: usize = reports.iter().map(|r| r.targets.len()).sum();
                         let failed = reports.iter().filter(|r| r.error.is_some()).count();
+                        // A refresh keeps the cursor on the same database,
+                        // not the same row number: listings reorder.
+                        let here = self.environments.selection();
                         self.environments.reports = reports;
                         self.environments.error = None;
                         self.start_env_probes();
@@ -290,6 +293,7 @@ impl App {
                             .environments
                             .restore
                             .take()
+                            .or(here)
                             .and_then(|sel| self.environments.index_of(&sel));
                         self.environments.cursor = restored
                             .unwrap_or(self.environments.cursor)
