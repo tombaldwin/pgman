@@ -3848,10 +3848,7 @@ impl App {
         // `schema_lint_findings` — see the handler. `--demo` has no
         // server to ask: its live checks find nothing more.
         if self.demo {
-            self.on_msg(AppMsg::LiveLintLoaded {
-                generation: self.generation,
-                result: Ok(Vec::new()),
-            });
+            self.on_live_lint_loaded(Ok(Vec::new()));
         } else if let Some(client) = self.client.clone() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;
@@ -3883,10 +3880,7 @@ impl App {
             self.slow_queries.cursor = 0;
             self.slow_queries.error = None;
             self.mode = Mode::SlowQueries;
-            return self.on_msg(AppMsg::SlowQueriesLoaded {
-                generation: self.generation,
-                result: Ok(crate::demo::slow_queries()),
-            });
+            return self.on_slow_queries_loaded(Ok(crate::demo::slow_queries()));
         }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());
@@ -4515,10 +4509,7 @@ impl App {
         if self.demo {
             self.sessions.cursor = 0;
             self.mode = Mode::Sessions;
-            return self.on_msg(AppMsg::SessionsLoaded {
-                generation: self.generation,
-                result: Ok(crate::demo::sessions()),
-            });
+            return self.on_sessions_loaded(Ok(crate::demo::sessions()));
         }
         let Some(client) = self.client.clone() else {
             self.last_error = Some(self.not_connected_message());

@@ -227,56 +227,7 @@ impl App {
                     }
                 }
             }
-            AppMsg::SlowQueriesLoaded { result, .. } => match result {
-                Ok(rows) => {
-                    // A load that worked supersedes whatever failed
-                    // before it (the previous `T`, a refresh) — the
-                    // footer shows this panel now, not that error.
-                    self.last_error = None;
-                    self.last_error_detail = None;
-                    self.slow_queries.error = None;
-                    self.slow_queries.rows = rows;
-                    // Preserve the operator's selection across an auto-refresh
-                    // tick (R) — clamp to the new length rather than zeroing,
-                    // which would yank the cursor to the top every 5s. Fresh
-                    // opens reset to 0 separately in start_slow_queries.
-                    self.slow_queries.cursor = self
-                        .slow_queries
-                        .cursor
-                        .min(self.slow_queries.rows.len().saturating_sub(1));
-                    self.last_status = Some(format!(
-                        "slow queries · {} row(s)",
-                        self.slow_queries.rows.len()
-                    ));
-                }
-                Err(e) => {
-                    // pg_stat_statements not installed is the most
-                    // common failure — point the operator at the
-                    // `CREATE EXTENSION` they need. The server says
-                    // `relation "pg_stat_statements" does not exist`
-                    // (SQLSTATE 42P01); the message has to be the
-                    // server's for this to fire — a bare `db error`
-                    // named nothing, hinted nothing, and F2 had no
-                    // detail to show.
-                    // `CREATE EXTENSION` alone is not enough: the
-                    // module has to be preloaded, and the session
-                    // pgman opened is read-only by default.
-                    let hint = slow_queries_hint(&e.msg);
-                    tracing::warn!(
-                        code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
-                        "slow queries load failed: {}",
-                        e.msg
-                    );
-                    // The panel stays open and says why it's empty: it
-                    // used to close at once, flashing past before the
-                    // footer's message could be read.
-                    self.last_status = None;
-                    self.slow_queries.rows.clear();
-                    self.slow_queries.error = Some(format!("{}{hint}", e.msg));
-                    self.last_error = Some(format!("slow queries load failed: {}", e.msg));
-                    self.last_error_detail = e.detail;
-                }
-            },
+            AppMsg::SlowQueriesLoaded { result, .. } => self.on_slow_queries_loaded(result),
             AppMsg::EnvironmentsLoaded(result) => {
                 self.environments.loading = false;
                 match result {
@@ -332,82 +283,8 @@ impl App {
                 report,
                 outcomes,
             } => self.on_env_probed(seq, report, outcomes),
-            AppMsg::SessionsLoaded { result, .. } => match result {
-                Ok(rows) => {
-                    self.last_error = None;
-                    self.last_error_detail = None;
-                    let blocked = rows.iter().filter(|r| r.is_blocked()).count();
-                    self.sessions.rows = rows;
-                    // Preserve selection across auto-refresh (R) — clamp, don't
-                    // zero (see SlowQueriesLoaded). Fresh opens reset in
-                    // start_sessions.
-                    self.sessions.cursor = self
-                        .sessions
-                        .cursor
-                        .min(self.sessions.rows.len().saturating_sub(1));
-                    self.last_status = Some(sessions_status(self.sessions.rows.len(), blocked));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
-                        "sessions load failed: {}",
-                        e.msg
-                    );
-                    self.last_error = Some(format!("sessions load failed: {}", e.msg));
-                    self.last_error_detail = e.detail;
-                    self.mode = Mode::Normal;
-                }
-            },
-            AppMsg::LiveLintLoaded { result, .. } => {
-                // Merge live findings into the existing pure list.
-                // If the operator already left the lint panel,
-                // silently drop — a fresh open re-fires the fetch.
-                if self.mode != Mode::SchemaLint {
-                    return;
-                }
-                match result {
-                    Ok(live) => {
-                        self.last_error = None;
-                        self.last_error_detail = None;
-                        let added = live.len();
-                        self.schema_lint.findings.extend(live);
-                        // Re-sort to keep severity ordering after
-                        // merge. Same sort as `lint::run_all`.
-                        self.schema_lint.findings.sort_by(|a, b| {
-                            a.severity
-                                .cmp(&b.severity)
-                                .then_with(|| a.code.cmp(b.code))
-                                .then_with(|| a.object.cmp(&b.object))
-                        });
-                        // Clamp the cursor — re-sort may have moved
-                        // the focused row's index.
-                        let last = self.schema_lint.findings.len().saturating_sub(1);
-                        if self.schema_lint.cursor > last {
-                            self.schema_lint.cursor = last;
-                        }
-                        let total = self.schema_lint.findings.len();
-                        let high = self
-                            .schema_lint
-                            .findings
-                            .iter()
-                            .filter(|f| f.severity == crate::query::lint::Severity::High)
-                            .count();
-                        self.last_status = Some(format!(
-                            "schema lint · {total} finding(s) · {high} high · live: +{added}"
-                        ));
-                    }
-                    Err(e) => {
-                        // Live check failed — leave the pure
-                        // findings in place. Surface the failure
-                        // so the operator knows the FK-index
-                        // check didn't run.
-                        tracing::warn!("schema lint live check failed: {e}");
-                        self.last_status = Some(format!(
-                            "schema lint · live check failed: {e} (showing cached-only)"
-                        ));
-                    }
-                }
-            }
+            AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
+            AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
             AppMsg::ReadOnlyApplied { want, result, .. } => {
                 let state = if want { "on" } else { "off" };
                 match result {
@@ -570,5 +447,150 @@ pub(crate) fn slow_queries_hint(msg: &str) -> &'static str {
          replication."
     } else {
         ""
+    }
+}
+
+/// Handlers a demo fixture also calls directly.
+impl App {
+    pub(super) fn on_slow_queries_loaded(
+        &mut self,
+        result: Result<Vec<crate::query::slow_queries::SlowQueryRow>, crate::conn::QueryErr>,
+    ) {
+        match result {
+            Ok(rows) => {
+                // A load that worked supersedes whatever failed
+                // before it (the previous `T`, a refresh) — the
+                // footer shows this panel now, not that error.
+                self.last_error = None;
+                self.last_error_detail = None;
+                self.slow_queries.error = None;
+                self.slow_queries.rows = rows;
+                // Preserve the operator's selection across an auto-refresh
+                // tick (R) — clamp to the new length rather than zeroing,
+                // which would yank the cursor to the top every 5s. Fresh
+                // opens reset to 0 separately in start_slow_queries.
+                self.slow_queries.cursor = self
+                    .slow_queries
+                    .cursor
+                    .min(self.slow_queries.rows.len().saturating_sub(1));
+                self.last_status = Some(format!(
+                    "slow queries · {} row(s)",
+                    self.slow_queries.rows.len()
+                ));
+            }
+            Err(e) => {
+                // pg_stat_statements not installed is the most
+                // common failure — point the operator at the
+                // `CREATE EXTENSION` they need. The server says
+                // `relation "pg_stat_statements" does not exist`
+                // (SQLSTATE 42P01); the message has to be the
+                // server's for this to fire — a bare `db error`
+                // named nothing, hinted nothing, and F2 had no
+                // detail to show.
+                // `CREATE EXTENSION` alone is not enough: the
+                // module has to be preloaded, and the session
+                // pgman opened is read-only by default.
+                let hint = slow_queries_hint(&e.msg);
+                tracing::warn!(
+                    code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
+                    "slow queries load failed: {}",
+                    e.msg
+                );
+                // The panel stays open and says why it's empty: it
+                // used to close at once, flashing past before the
+                // footer's message could be read.
+                self.last_status = None;
+                self.slow_queries.rows.clear();
+                self.slow_queries.error = Some(format!("{}{hint}", e.msg));
+                self.last_error = Some(format!("slow queries load failed: {}", e.msg));
+                self.last_error_detail = e.detail;
+            }
+        }
+    }
+
+    pub(super) fn on_sessions_loaded(
+        &mut self,
+        result: Result<Vec<crate::query::sessions::SessionRow>, crate::conn::QueryErr>,
+    ) {
+        match result {
+            Ok(rows) => {
+                self.last_error = None;
+                self.last_error_detail = None;
+                let blocked = rows.iter().filter(|r| r.is_blocked()).count();
+                self.sessions.rows = rows;
+                // Preserve selection across auto-refresh (R) — clamp, don't
+                // zero (see SlowQueriesLoaded). Fresh opens reset in
+                // start_sessions.
+                self.sessions.cursor = self
+                    .sessions
+                    .cursor
+                    .min(self.sessions.rows.len().saturating_sub(1));
+                self.last_status = Some(sessions_status(self.sessions.rows.len(), blocked));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    code = e.detail.as_ref().and_then(|d| d.code.as_deref()),
+                    "sessions load failed: {}",
+                    e.msg
+                );
+                self.last_error = Some(format!("sessions load failed: {}", e.msg));
+                self.last_error_detail = e.detail;
+                self.mode = Mode::Normal;
+            }
+        }
+    }
+
+    pub(super) fn on_live_lint_loaded(
+        &mut self,
+        result: Result<Vec<crate::query::lint::Finding>, String>,
+    ) {
+        // Merge live findings into the existing pure list.
+        // If the operator already left the lint panel,
+        // silently drop — a fresh open re-fires the fetch.
+        if self.mode != Mode::SchemaLint {
+            return;
+        }
+        match result {
+            Ok(live) => {
+                self.last_error = None;
+                self.last_error_detail = None;
+                let added = live.len();
+                self.schema_lint.findings.extend(live);
+                // Re-sort to keep severity ordering after
+                // merge. Same sort as `lint::run_all`.
+                self.schema_lint.findings.sort_by(|a, b| {
+                    a.severity
+                        .cmp(&b.severity)
+                        .then_with(|| a.code.cmp(b.code))
+                        .then_with(|| a.object.cmp(&b.object))
+                });
+                // Clamp the cursor — re-sort may have moved
+                // the focused row's index.
+                let last = self.schema_lint.findings.len().saturating_sub(1);
+                if self.schema_lint.cursor > last {
+                    self.schema_lint.cursor = last;
+                }
+                let total = self.schema_lint.findings.len();
+                let high = self
+                    .schema_lint
+                    .findings
+                    .iter()
+                    .filter(|f| f.severity == crate::query::lint::Severity::High)
+                    .count();
+                self.last_status = Some(format!(
+                    "schema lint · {total} finding(s) · {high} high · live: +{added}"
+                ));
+            }
+            Err(e) => {
+                // Live check failed — leave the pure
+                // findings in place. Surface the failure
+                // so the operator knows the FK-index
+                // check didn't run.
+                tracing::warn!("schema lint live check failed: {e}");
+                self.last_status = Some(format!(
+                    "schema lint · live check failed: {e} (showing cached-only)"
+                ));
+            }
+        }
     }
 }
