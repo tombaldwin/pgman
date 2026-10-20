@@ -1601,6 +1601,48 @@ pub(crate) fn drift_matrix(
     (dbs, envs, cells)
 }
 
+/// The overview's title: which view is showing, and as many of its keys
+/// as fit in `width` columns, whole and most important first. Pure.
+pub(crate) fn environments_title(ui: &crate::app::EnvironmentsUi, width: usize) -> String {
+    let (name, keys): (&str, &[&str]) = if ui.patch.is_some() {
+        ("environments · patches", &["q back"])
+    } else if ui.logs.is_some() {
+        (
+            "environments · log errors",
+            &["q back", "j/k scroll", "r again"],
+        )
+    } else if ui.drift {
+        ("environments · schema drift", &["v / q back"])
+    } else {
+        (
+            "environments",
+            &[
+                "enter connect",
+                "q close",
+                "l logs",
+                "v drift",
+                "P patches",
+                "d discover",
+            ],
+        )
+    };
+    // The border's corners and the title chrome take a few columns.
+    let room = width.saturating_sub(8);
+    let mut title = format!(" {name} ");
+    for (i, k) in keys.iter().enumerate() {
+        let next = if i == 0 {
+            format!(" {name} — {k} ")
+        } else {
+            format!("{}· {k} ", title)
+        };
+        if crate::ui::display_width(&next) > room {
+            break;
+        }
+        title = next;
+    }
+    title
+}
+
 /// The log view's lines: one heading, then each distinct error. Pure.
 pub(crate) fn log_lines(v: &crate::app::LogsView) -> Vec<(String, bool)> {
     let mut out = vec![(
@@ -1998,7 +2040,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
         .border_style(Style::default().fg(theme.border_active))
         .title(crate::ui::chrome::panel_title(
             theme,
-            " environments — enter connect · d discover · q close ",
+            &environments_title(&app.environments, popup.width as usize),
         ));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -3089,6 +3131,23 @@ mod tests {
         );
         assert_eq!(lag_text(42.0), "lag 42s");
         assert_eq!(lag_text(10800.0), "lag 3h");
+    }
+
+    #[test]
+    fn the_overview_title_names_the_view_and_its_keys() {
+        let mut ui = crate::app::EnvironmentsUi::default();
+        assert_eq!(
+            environments_title(&ui, 200),
+            " environments — enter connect · q close · l logs · v drift · P patches · d discover "
+        );
+        // Narrow: whole keys only, the important ones kept.
+        let narrow = environments_title(&ui, 50);
+        assert_eq!(narrow, " environments — enter connect · q close ");
+        assert_eq!(environments_title(&ui, 10), " environments ");
+        ui.drift = true;
+        assert!(environments_title(&ui, 200).contains("schema drift — v / q back"));
+        ui.logs = Some(crate::app::LogsView::default());
+        assert!(environments_title(&ui, 200).contains("log errors — q back"));
     }
 
     #[test]

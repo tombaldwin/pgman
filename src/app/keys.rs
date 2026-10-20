@@ -1360,6 +1360,18 @@ impl App {
             self.on_env_discovery_key(key);
             return;
         }
+        // The drift matrix is a view of its own: q / Esc go back to the
+        // list, and the list's keys don't act unseen under it.
+        if self.environments.drift {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v')
+            ) {
+                self.environments.drift = false;
+                self.last_status = Some("environments".into());
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 self.remember_env_selection();

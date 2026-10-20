@@ -10488,3 +10488,22 @@ fn ctrl_l_from_the_results_reconstructs_or_opens_the_editor() {
     a.on_key(KeyEvent::from(KeyCode::Char('l')));
     assert_eq!(a.mode, Mode::Normal);
 }
+
+/// The drift matrix is a view over the list: q goes back to the list
+/// (not out of the panel), and the list's keys don't act unseen under it.
+#[test]
+fn q_in_the_drift_view_goes_back_to_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('v'));
+    assert!(a.environments.drift);
+    let cursor = a.environments.cursor;
+    press(&mut a, KeyCode::Char('j'));
+    assert_eq!(a.environments.cursor, cursor, "j acted on the hidden list");
+    press(&mut a, KeyCode::Char('q'));
+    assert!(!a.environments.drift);
+    assert_eq!(a.mode, Mode::Environments, "q left the panel");
+    press(&mut a, KeyCode::Char('q'));
+    assert_ne!(a.mode, Mode::Environments);
+}

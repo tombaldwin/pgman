@@ -9,7 +9,7 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────────────────────────╮
+╭[ ◆ environments · log errors ◆ ] q back · j/k scroll · r again ──────────────────────────────────╮
 │  staging · staging — recent errors from its RDS log                                              │
 │                                                                                                  │
 │  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]                                   │

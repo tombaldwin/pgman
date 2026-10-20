@@ -9,7 +9,7 @@ expression: dump(&buf)
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ────────────────────╮
+╭[ ◆ environments · patches ◆ ] q back ────────────────────────────────────────╮
 │  production · production/shop — pending patches                              │
 │                                                                              │
 │  2 to apply, in order, each in its own transaction · recorded up to 41       │

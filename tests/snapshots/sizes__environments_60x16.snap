@@ -5,7 +5,7 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-╭[ ◆ environments ◆ ] enter connect · d discover · q close ╮
+╭[ ◆ environments ◆ ] enter connect · q close · l logs ────╮
 │  staging · RDS 123456789012 eu-west-2                    │
 │    DATABASE  ROLE     SERVER             STATUS     SCHE…│
 │    shop      primary  staging            available  v251…│
