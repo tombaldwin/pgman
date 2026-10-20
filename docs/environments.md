@@ -272,7 +272,9 @@ steps:
    stops the run. The first failure rolls that patch back and stops.
    What runs is the text you were shown, not a fresh read of the file.
    Afterwards the version table is read once more, and the result says
-   which version the database records now.
+   which version the database records now. **Esc twice** while it runs
+   cancels the running statement on the server: a patch in its
+   transaction rolls back; outside one, what ran stays.
 
 Patches are all or nothing *each*, not as a batch: when the third of
 three fails, the first two stay applied and recorded, and the database
@@ -292,7 +294,10 @@ run **outside a transaction**:
 - each one is marked in red in the plan, with what needs it;
 - confirming takes typing the environment's name, protected or not;
 - its statements run one at a time, each committing as it goes, with
-  the 5 s lock timeout set before each;
+  the 5 s lock timeout set before each and **no statement timeout** (a
+  concurrent build on a big table can take hours, and one cut short is
+  left `INVALID`); Esc twice cancels one instead, and the session's own
+  timeout is back for the patches after it;
 - a failure part-way says how many statements stayed applied, whether
   the version row is recorded (the row usually comes first, so the
   patch can read as applied when it isn't), and, for a failed
