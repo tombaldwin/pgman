@@ -15,3 +15,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      # Its refs name a Rust toolchain (stable, 1.94.1 = the MSRV),
+      # not a version of the action. Dependabot reads them as versions
+      # and proposes toolchains that don't exist; bump these by hand.
+      - dependency-name: dtolnay/rust-toolchain
