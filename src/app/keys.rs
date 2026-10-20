@@ -313,7 +313,10 @@ impl App {
                 // Set BEFORE dispatch so a command with something to
                 // say still overwrites it.
                 self.last_status = self.command_bar_close_status(&bar);
-                self.last_error = None;
+                // `:error` is the one command about the error itself.
+                if !line.eq_ignore_ascii_case("error") {
+                    self.last_error = None;
+                }
                 self.dispatch_command(&line);
             }
             KeyCode::Tab => {
@@ -520,7 +523,10 @@ impl App {
     }
 
     pub(super) fn on_error_detail_key(&mut self, key: KeyEvent) {
-        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(2)) {
+        if matches!(
+            key.code,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('!') | KeyCode::F(2)
+        ) {
             // Back to the mode F2 was pressed in (the editor, usually),
             // not Normal — same contract as closing help.
             self.mode = self.error_detail_return_to.take().unwrap_or(Mode::Normal);

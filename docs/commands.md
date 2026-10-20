@@ -82,6 +82,9 @@ the buffer. Opening the bar over a guarded-run confirmation cancels that run
 | `:update` | — | The About card, plus a footer line saying where the release check got to. "Up to date" is only claimed once a check has landed. |
 | `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`, `wizard`. The topic picks the section to show, not where you end up: closing help returns to the mode the `:` bar was opened from. |
 | `:quit`, `:q` | `\q` | Quit pgman. |
+| `:error` | — | The last error in full — what `F2` (or `!` outside the editor) opens. |
+| `:notify` | — | The `LISTEN`/`NOTIFY` arrivals panel, as `F3`. |
+| `:tap` | — | The JDBC tap monitor, as `F4`. |
 | `:readonly on\|off` | — | Set the read-only flag: on the live session at once (`SET default_transaction_read_only`, from its next statement; refused while a transaction is open) and on every later connect. `:readonly on` is sticky for the rest of the session: it survives every later `:connect` / `\c`, and can only ever tighten what the next database's safety profile already asks for. **Refused** when `safety.toml` pins the current database read-only — a session cannot vote itself out of that file. |
 | `:connect [NAME\|URL]` | `\c [NAME\|URL]` | The picker, the named data source, or a `postgres://` URL. Same quoting and unique-prefix matching as `\c`. A URL's password is never shown: the origin line and any error carry it redacted. |
 | `:l` | `\l` | List databases (name + size). |

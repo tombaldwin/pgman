@@ -1305,3 +1305,32 @@ fn the_grid_hints_say_esc_goes_back_to_the_environments() {
     let f = footer(&mut app);
     assert!(f.contains("esc / E envs"), "{f}");
 }
+
+/// The error pointer names the key that works where the operator is:
+/// `!` outside a text input, F2 in the editor where `!` is typed.
+#[test]
+fn the_error_pointer_names_the_key_that_works_here() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let footer = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect::<String>()
+    };
+    app.splash_visible = false;
+    app.last_error = Some("duplicate key".into());
+    app.last_error_detail = Some(crate::conn::QueryErrDetail::default());
+    app.mode = crate::app::Mode::Normal;
+    let f = footer(&mut app);
+    assert!(f.contains("· ! detail"), "{f}");
+    app.mode = crate::app::Mode::Editor;
+    let f = footer(&mut app);
+    assert!(f.contains("· F2 detail") && !f.contains("! detail"), "{f}");
+}

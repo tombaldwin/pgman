@@ -273,7 +273,9 @@ fn ctrl_c_quits_in_normal_mode_but_not_in_editor() {
     let mut a = settle_app();
     a.mode = Mode::Normal;
     drive(&mut a, &[ctrl('c')]);
-    assert!(a.should_quit, "Ctrl-C in Normal should quit");
+    assert!(!a.should_quit, "one Ctrl-C only arms the quit");
+    drive(&mut a, &[ctrl('c')]);
+    assert!(a.should_quit, "Ctrl-C twice in Normal should quit");
 
     let mut a = settle_app();
     a.mode = Mode::Editor;

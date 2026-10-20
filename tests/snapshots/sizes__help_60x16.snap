@@ -7,15 +7,15 @@ expression: dump(&buf)
  1 SELECT id, email,…               ] [ switch · ctrl-t new
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
-│ pgman — keys (? / F1 help · : commands · F2 error detail │
-│ · F3 notify)                                             │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error    │
+│ detail · F3 notify)                                      │
 │                                                          │
 │   grid                                                   │
 │     q             quit                                   │
 │     esc           back to the environments overview,     │
 │                   when environments are configured       │
 │     ? / F1        toggle this help (both work from every │
-│ ↓ 344 more below                                         │
+│ ↓ 348 more below                                         │
 │                                                          │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

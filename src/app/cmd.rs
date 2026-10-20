@@ -5,8 +5,8 @@ use super::*;
 /// psql muscle memory (`:q`) are deliberately absent — Tab on `:q`
 /// completes to `:quit`, which is the same command spelled in full.
 pub const COMMAND_NAMES: &[&str] = &[
-    "about", "connect", "d", "dn", "dt", "fixture", "help", "i", "l", "quit", "readonly", "report",
-    "timing", "update", "x",
+    "about", "connect", "d", "dn", "dt", "error", "fixture", "help", "i", "l", "notify", "quit",
+    "readonly", "report", "tap", "timing", "update", "x",
 ];
 
 /// Help topics `:help <topic>` accepts, paired with the mode whose
@@ -230,6 +230,11 @@ impl App {
             "update" => self.show_update_status(),
             "help" => self.dispatch_help_topic(arg),
             "readonly" => self.dispatch_read_only(arg),
+            // The command-bar spellings of F2 / F3 / F4, for keyboards
+            // where those take fn.
+            "error" => self.open_error_detail(),
+            "notify" => self.start_notifications(),
+            "tap" => self.start_tap_monitor(),
             other => {
                 // Rebuild from the LOWERCASED name, not the raw line:
                 // the four commands handled above matched on the

@@ -1218,6 +1218,9 @@ pub struct App {
     /// is interpreted as the bookmark letter. Cleared after one
     /// dispatch (success or not).
     pub pending_mark_set: bool,
+    /// A chord that acts on its second press (Ctrl-C quit, Ctrl-W
+    /// close a tab with SQL in it); any other key disarms it.
+    pub armed_chord: Option<ArmedChord>,
     /// Mirror of `pending_mark_set` for `'<x>` jumps.
     pub pending_mark_jump: bool,
     /// When the current query started — captured in `spawn_run`
@@ -1492,6 +1495,7 @@ impl App {
             zoomed: false,
             body_rows: 0,
             pending_mark_set: false,
+            armed_chord: None,
             pending_mark_jump: false,
             query_started: None,
             row_detail: RowDetailUi::default(),
@@ -1807,6 +1811,21 @@ impl App {
         self.tap_generation = self.tap_generation.wrapping_add(1);
     }
 
+    /// The error overlay over the most recent failure (F2, `!`,
+    /// `:error`). No-op with a status when there's nothing to show.
+    pub(super) fn open_error_detail(&mut self) {
+        if self.last_error_detail.is_some() || self.last_error.is_some() {
+            // Remember where it was opened so closing the overlay
+            // lands back there — the way help does. Landing in
+            // Normal from the editor turned the next keys typed
+            // into hotkeys.
+            self.error_detail_return_to = Some(self.mode);
+            self.mode = Mode::ErrorDetail;
+        } else {
+            self.last_status = Some("no error to expand".into());
+        }
+    }
+
     /// True while a prompt inside a non-typing mode owns every
     /// character, so the global plain keys (`?`, `:`, `!`, the tab
     /// digits and brackets) step aside and the key reaches it:
@@ -1873,12 +1892,31 @@ impl App {
         // reflex Ctrl-C in mid-typing shouldn't lose the buffer.
         // If we were watching, the key already served its purpose
         // (stopping the loop) — don't quit on it.
+        //
+        // It takes a second press: one reflex Ctrl-C (meant for a
+        // query, or for the shell) used to drop the session with no
+        // word. Ctrl-W's close-tab arms the same way below; any other
+        // key disarms both.
+        let armed = self.armed_chord.take();
+        if armed.is_some()
+            && self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("ctrl-c again") || s.starts_with("ctrl-w again"))
+        {
+            self.last_status = None;
+        }
         if !was_watching
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
             && self.mode != Mode::Editor
         {
-            self.should_quit = true;
+            if armed == Some(ArmedChord::Quit) {
+                self.should_quit = true;
+            } else {
+                self.armed_chord = Some(ArmedChord::Quit);
+                self.last_status = Some("ctrl-c again to quit".into());
+            }
             return;
         }
         // Fall through to the editor's on_editor_key for the
@@ -1968,19 +2006,17 @@ impl App {
         }
         // F2 expands the most-recent query failure into the rich
         // error overlay (severity / code / detail / hint / affected
-        // schema/table/column/constraint). No-op when there's
-        // nothing to show.
-        if matches!(key.code, KeyCode::F(2)) && self.mode != Mode::ErrorDetail {
-            if self.last_error_detail.is_some() || self.last_error.is_some() {
-                // Remember where F2 was pressed so closing the overlay
-                // lands back there — the way help does. Landing in
-                // Normal from the editor turned the next keys typed
-                // into hotkeys.
-                self.error_detail_return_to = Some(self.mode);
-                self.mode = Mode::ErrorDetail;
-            } else {
-                self.last_status = Some("no error to expand".into());
-            }
+        // schema/table/column/constraint). `!` is its plain-key twin
+        // wherever a character isn't being typed — F2 takes fn on a
+        // Mac keyboard — and `:error` the command-bar spelling.
+        let bang = matches!(key.code, KeyCode::Char('!'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && !self.mode.is_text_input()
+            && !self.prompt_owns_keys();
+        if (matches!(key.code, KeyCode::F(2)) || bang) && self.mode != Mode::ErrorDetail {
+            self.open_error_detail();
             return;
         }
         // F3 opens the NOTIFY arrivals panel from anywhere — the
@@ -2036,8 +2072,19 @@ impl App {
             // `w` conflicts with `\watch` in editor mode — gate
             // close-tab to non-editor modes. Operators close tabs
             // from Normal (most common) or from any non-typing
-            // panel.
-            self.close_active_tab();
+            // panel. A tab holding SQL takes a second press: the
+            // chord is `\watch` in the editor, and reaching for that
+            // from the grid used to throw the buffer away.
+            let holds_sql = !self.editor.buffer.trim().is_empty();
+            if holds_sql && self.tabs.len() > 1 && armed != Some(ArmedChord::CloseTab) {
+                self.armed_chord = Some(ArmedChord::CloseTab);
+                self.last_status = Some(format!(
+                    "ctrl-w again to close tab {} and its SQL",
+                    self.active_tab + 1
+                ));
+            } else {
+                self.close_active_tab();
+            }
             return;
         }
         if ctrl && matches!(key.code, KeyCode::Tab) && tab_keys_ok {

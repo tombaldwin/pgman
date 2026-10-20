@@ -222,6 +222,15 @@ impl Mode {
     }
 }
 
+/// A chord that only acts on its second press in a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmedChord {
+    /// Ctrl-C outside the editor: quit.
+    Quit,
+    /// Ctrl-W over a tab with SQL in it: close the tab.
+    CloseTab,
+}
+
 /// Connection lifecycle state.
 #[derive(Debug, Clone)]
 pub enum ConnState {

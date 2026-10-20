@@ -17,7 +17,7 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 ╰─────────────────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮─────────────────────────────╯
 ╭[ ◆ result · 6 row(s) ◆ ]────│                                                                                                                                          │─────────────────────────────╮
-│id  email                  pl│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                                                                    │                             │
+│id  email                  pl│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
 │1   ada@example.com        pr│                                                                                                                                          │                             │
 │2   linus@example.com      fr│   grid                                                                                                                                   │                             │
 │3   grace@example.com      pr│     q             quit                                                                                                                   │                             │
@@ -34,7 +34,7 @@ expression: dump(&buf)
 │                             │     T             slow queries (pg_stat_statements top-N)                                                                                │                             │
 │                             │     L             active sessions + locks (pg_stat_activity)                                                                             │                             │
 │                             │     E             environments overview (no connection needed)                                                                           │                             │
-│                             │     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                                            │                             │
+│                             │     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                                                            │                             │
 │                             │     h / l  ← →    move column cursor                                                                                                     │                             │
 │                             │     s             cycle sort on focused column (off → ASC → DESC)                                                                        │                             │
 │                             │     /             live row filter (HIDES non-matching rows)                                                                              │                             │
@@ -42,7 +42,7 @@ expression: dump(&buf)
 │                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
-│                             │ ↓ 213 more below                                                                                                                         │                             │
+│                             │ ↓ 215 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │

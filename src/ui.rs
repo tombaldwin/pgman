@@ -1295,10 +1295,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // segment (joined with the same " · " it uses to split on)
         // rather than as a separate span that could get truncated away
         // by a raw cell-width clip.
-        let pointer = if app.last_error_detail.is_some() {
-            " · F2 detail"
-        } else {
-            ""
+        // `!` where no character is being typed; F2 (fn-F2 on a Mac)
+        // in the editor and the prompts, where `!` is a character.
+        let pointer = match app.last_error_detail {
+            Some(_) if app.mode.is_text_input() => " · F2 detail",
+            Some(_) => " · ! detail",
+            None => "",
         };
         // One row: a multi-line server error (message + `hint:`
         // continuation) is folded into ` · ` segments here; F2 keeps
@@ -1418,7 +1420,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 }
                 Mode::Environments => "j/k navigate · enter connect · d discover · r refresh · q / esc close",
                 Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
-                Mode::ErrorDetail => "esc / q / F2 close",
+                Mode::ErrorDetail => "esc / q / ! close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
                 Mode::TapMonitor => "j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close",
@@ -1797,7 +1799,7 @@ pub(crate) fn help_body(
 
     push(
         Line::from(Span::styled(
-            "pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)",
+            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
@@ -1860,7 +1862,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
+        row("    F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
         &mut lines,
     );
     push(row("    h / l  ← →    move column cursor"), &mut lines);
@@ -2313,6 +2315,14 @@ pub(crate) fn help_body(
     );
     push(row("    :quit  /  :q    quit pgman"), &mut lines);
     push(
+        row("    :error          the last error in full (= F2, or ! outside the editor)"),
+        &mut lines,
+    );
+    push(
+        row("    :notify  :tap   the NOTIFY panel (= F3), the JDBC tap monitor (= F4)"),
+        &mut lines,
+    );
+    push(
         row("    :readonly on|off  the read-only flag pgman opens connections with; applies"),
         &mut lines,
     );
@@ -2400,7 +2410,7 @@ pub(crate) fn help_body(
 
     heading("notifications", &mut lines, &mut anchors);
     push(
-        row("    F3            open the NOTIFY arrivals panel (works from any mode)"),
+        row("    F3 / :notify  open the NOTIFY arrivals panel (works from any mode)"),
         &mut lines,
     );
     push(
@@ -2421,7 +2431,7 @@ pub(crate) fn help_body(
 
     heading("jdbc tap", &mut lines, &mut anchors);
     push(
-        row("    F4            open the JDBC tap monitor (live stream, works from any mode)"),
+        row("    F4 / :tap     open the JDBC tap monitor (live stream, works from any mode)"),
         &mut lines,
     );
     push(

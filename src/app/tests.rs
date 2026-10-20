@@ -6477,8 +6477,8 @@ async fn update_check_spawns_after_the_first_draw_never_before() {
     // Quit immediately after the first iteration so the loop runs
     // exactly one draw.
     tx.send(Event::Key(KeyEvent::new(
-        KeyCode::Char('c'),
-        KeyModifiers::CONTROL,
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
     )))
     .unwrap();
     drop(tx);
@@ -10727,4 +10727,84 @@ fn a_protected_name_types_digits_brackets_and_punctuation() {
     assert_eq!(a.mode, Mode::Environments);
     assert_eq!(a.active_tab, tab, "a digit or bracket switched tabs");
     assert_eq!(a.environments.patch.as_ref().unwrap().typed, "1[]?:");
+}
+
+#[test]
+fn bang_opens_the_error_detail_where_nothing_is_typed() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status.as_deref(), Some("no error to expand"));
+    a.last_error = Some("relation \"nope\" does not exist".into());
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Normal, "`!` closes it again");
+    // In the editor `!` is a character.
+    a.mode = Mode::Editor;
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "!");
+}
+
+#[test]
+fn the_command_bar_spells_f2_f3_and_f4() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.last_error = Some("boom".into());
+    run_command(&mut a, "error");
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    assert_eq!(a.error_detail_return_to, Some(Mode::Normal));
+    run_command(&mut a, "notify");
+    assert_eq!(a.mode, Mode::Notifications);
+    run_command(&mut a, "tap");
+    assert_eq!(a.mode, Mode::TapMonitor);
+    for name in ["error", "notify", "tap"] {
+        assert!(
+            crate::app::cmd::COMMAND_NAMES.contains(&name),
+            "{name} completes"
+        );
+    }
+}
+
+#[test]
+fn ctrl_c_outside_the_editor_quits_on_the_second_press() {
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(ctrl_c);
+    assert!(!a.should_quit, "one reflex press doesn't drop the session");
+    assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
+    // Anything between disarms it, and takes the prompt away.
+    press(&mut a, KeyCode::Char('j'));
+    assert!(a.last_status.is_none());
+    a.on_key(ctrl_c);
+    assert!(!a.should_quit);
+    a.on_key(ctrl_c);
+    assert!(a.should_quit);
+}
+
+#[test]
+fn ctrl_w_closes_a_tab_holding_sql_on_the_second_press() {
+    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.new_tab();
+    a.mode = Mode::Normal;
+    a.editor.buffer = "select 1".into();
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 2, "armed, not closed");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("ctrl-w again to close tab 2 and its SQL")
+    );
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 1);
+    // An empty tab closes at once.
+    a.new_tab();
+    a.mode = Mode::Normal;
+    a.editor.buffer.clear();
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 1);
 }
