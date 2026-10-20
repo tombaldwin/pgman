@@ -1781,14 +1781,22 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     } else {
         let outside = plan.patches.iter().filter(|p| p.outside.is_some()).count();
         let how = match outside {
+            _ if v.mode == RunMode::DryRun => {
+                "all in one transaction, rolled back at the end".to_string()
+            }
             0 => "each in its own transaction".to_string(),
             n if n == plan.patches.len() => "each OUTSIDE a transaction".to_string(),
             n => format!("{n} OUTSIDE a transaction, the rest each in its own"),
         };
         out.push((
             format!(
-                "  {} to apply, in order, {how} · recorded up to {recorded}",
-                plan.patches.len()
+                "  {} to {}, in order, {how} · recorded up to {recorded}",
+                plan.patches.len(),
+                if v.mode == RunMode::DryRun {
+                    "try"
+                } else {
+                    "apply"
+                }
             ),
             outside > 0,
         ));
@@ -1842,10 +1850,13 @@ fn mode_lines(
             ));
             out.push((
                 format!(
-                    "    nothing is kept, but it takes the same locks and does the same work on {}, \
-                     holding the locks until the last patch",
+                    "    nothing is kept, but it takes the same locks and does the same work on {}",
                     plan.server
                 ),
+                true,
+            ));
+            out.push((
+                "    as the real run, and holds every lock until the last patch is done".into(),
                 true,
             ));
             if let Some(p) = plan.patches.iter().find(|p| p.outside.is_some()) {
@@ -1866,10 +1877,13 @@ fn mode_lines(
             ));
             out.push((
                 format!(
-                    "    CREATE DATABASE … TEMPLATE {} on {}: it needs nobody else connected, \
-                     and copies all of it",
+                    "    CREATE DATABASE … TEMPLATE {} on {}: copies all of it to disk,",
                     plan.database, plan.server
                 ),
+                true,
+            ));
+            out.push((
+                format!("    and needs nobody else connected to {}", plan.database),
                 true,
             ));
         }
@@ -3533,7 +3547,12 @@ mod tests {
             .0
             .contains("the same locks and does the same work on staging"));
         assert_eq!(
-            lines[4].0,
+            lines[1].0,
+            "  3 to try, in order, all in one transaction, rolled back at the end · recorded up to 41"
+        );
+        assert!(lines[4].0.contains("holds every lock until the last patch"));
+        assert_eq!(
+            lines[5].0,
             "    it stops at 44-orders-created-idx.sql: CONCURRENTLY can't run in a transaction"
         );
         assert!(patch_prompt(&v).unwrap().0.contains("to dry-run: "));
@@ -3541,6 +3560,7 @@ mod tests {
         let lines = patch_lines(&v);
         assert!(lines[2].0.starts_with("  mode: ON A COPY"));
         assert!(lines[3].0.contains("TEMPLATE shop on staging"));
+        assert_eq!(lines[4].0, "    and needs nobody else connected to shop");
         assert!(patch_prompt(&v).unwrap().0.contains("to apply to a copy: "));
         let done = |mode, copy| ApplyReport {
             results: vec![PatchResult {

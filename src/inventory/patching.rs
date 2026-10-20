@@ -189,7 +189,8 @@ impl ApplyReport {
         let copy = match &self.copy {
             None => String::new(),
             Some(c) => match &c.dropped {
-                Ok(()) => format!(" · copy {} dropped", c.name),
+                // Named in the patch view; the status bar has no room.
+                Ok(()) => " · copy dropped".to_string(),
                 Err(e) => format!(" · copy {} NOT dropped ({e}): drop it by hand", c.name),
             },
         };
@@ -1102,7 +1103,7 @@ mod tests {
         };
         assert_eq!(
             copy.summary(),
-            "on a copy: applied 1 patch(es) · the copy recorded up to 2 · copy d_pgman_copy_7 dropped"
+            "on a copy: applied 1 patch(es) · the copy recorded up to 2 · copy dropped"
         );
         let stuck = ApplyReport {
             error: Some("could not connect to the copy".into()),
