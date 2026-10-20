@@ -5,17 +5,17 @@ expression: dump(&buf)
 ---
  pgman X.X.X │ shop  connected · pg 16.2
  1 SELECT id, email,…               ] [ switch · ctrl-t new
-╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
-│  WHERE ╭────────────────────────────────────────╮        │
-│  ORDER │                                        │        │
-╰────────│ pgman — keys (? / F1 help · : commands │────────╯
-╭[ ◆ resu│ · F2 error detail · F3 notify)         │────────╮
-│id  emai│                                        │        │
-│1   ada@│   grid                                 │00+00   │
-│2   linu│ ↓ 513 more below                       │00+00   │
-│3   grac│                                        │00+00   │
-│4   alan╰────────────────────────────────────────╯00+00   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+╭──────────────────────────────────────────────────────────╮
+│                                                          │
+│ pgman — keys (? / F1 help · : commands · F2 error detail │
+│ · F3 notify)                                             │
+│                                                          │
+│   grid                                                   │
+│     q             quit                                   │
+│     esc           back to the environments overview,     │
+│                   when environments are configured       │
+│     ? / F1        toggle this help (both work from every │
+│ ↓ 341 more below                                         │
+│                                                          │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

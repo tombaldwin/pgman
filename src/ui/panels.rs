@@ -787,7 +787,13 @@ pub(super) fn draw_conn_pick(f: &mut Frame, area: Rect, app: &App) {
 
 pub(super) fn draw_help(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = &app.theme;
-    let popup = centered_pct(area, 70, 70);
+    // On a smaller terminal 70 % left a few lines of a several-hundred
+    // line sheet: there it takes the whole body.
+    let popup = if area.width < 120 || area.height < 30 {
+        area
+    } else {
+        centered_pct(area, 70, 70)
+    };
     // Body content width: popup minus borders (2) and the uniform(1)
     // padding (2) on the horizontal axis — the same budget `inner_height`
     // below uses on the vertical axis. Long descriptions get wrapped to
