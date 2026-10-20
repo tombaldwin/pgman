@@ -10,8 +10,9 @@
 //!
 //! What is refused before anything runs: a database the profile keeps
 //! read-only; a statement a `Block` guard stops; a patch that manages its
-//! own transaction (`BEGIN`/`COMMIT`) or builds an index `CONCURRENTLY`,
-//! neither of which can run inside pgman's transaction; and a patch that
+//! own transaction (`BEGIN`/`COMMIT`), or holds a statement that can't
+//! run inside one ([`needs_no_transaction`]: `VACUUM`, `CONCURRENTLY`…),
+//! since pgman's transaction is what makes it all or nothing; and a patch that
 //! changes session settings (`SET`, `RESET`, `set_config`) — it could lift
 //! the lock timeout, or change how the server reads the next statement
 //! (`standard_conforming_strings`) so that it isn't the statement pgman
@@ -27,6 +28,26 @@ use crate::conn;
 
 /// How long a patch statement waits for a lock before failing.
 pub const LOCK_TIMEOUT: &str = "5s";
+
+/// What makes `stmt` unable to run inside a transaction block, if
+/// anything: the server refuses these there, so a patch holding one
+/// can't be all or nothing. Reads code tokens only — `concurrently` in a
+/// string or comment isn't one. Pure.
+pub fn needs_no_transaction(stmt: &str) -> Option<&'static str> {
+    let tokens = crate::safety::code_tokens(stmt);
+    let t = |i: usize| tokens.get(i).map(String::as_str);
+    if tokens.iter().any(|t| t == "concurrently") {
+        return Some("CONCURRENTLY");
+    }
+    match (t(0), t(1)) {
+        (Some("vacuum"), _) => Some("VACUUM"),
+        (Some("create" | "drop"), Some("database")) => Some("CREATE or DROP DATABASE"),
+        (Some("create" | "drop"), Some("tablespace")) => Some("CREATE or DROP TABLESPACE"),
+        (Some("alter"), Some("system")) => Some("ALTER SYSTEM"),
+        (Some("reindex"), Some("system" | "database")) => Some("REINDEX SYSTEM or DATABASE"),
+        _ => None,
+    }
+}
 
 /// The next patch to apply: the lowest-id pending one, if any. Pure.
 pub fn next_patch(files: &[PatchFile], applied: &[i64]) -> Option<PatchFile> {
@@ -84,12 +105,10 @@ pub fn check_patch(
                 "the patch manages its own transaction (BEGIN/COMMIT); apply it by hand".into(),
             );
         }
-        if tokens.iter().any(|t| t == "concurrently") {
-            return Err(
-                "the patch builds or drops an index CONCURRENTLY, which can't run in a \
-                 transaction; apply it by hand"
-                    .into(),
-            );
+        if let Some(what) = needs_no_transaction(s) {
+            return Err(format!(
+                "the patch uses {what}, which can't run in a transaction; apply it by hand"
+            ));
         }
     }
     Ok(statements)
@@ -226,6 +245,10 @@ mod tests {
         for (bad, why) in [
             ("BEGIN; ALTER TABLE t ADD c int; COMMIT;", "own transaction"),
             ("CREATE INDEX CONCURRENTLY i ON t (c);", "CONCURRENTLY"),
+            (
+                "VACUUM ANALYZE t;",
+                "VACUUM, which can't run in a transaction",
+            ),
             ("", "no statements"),
             ("DROP TABLE t;", "blocked"),
             ("SET lock_timeout = 0;", "session settings"),
@@ -243,6 +266,41 @@ mod tests {
         ] {
             let e = check_patch(&writable(), "ledger", bad).unwrap_err();
             assert!(e.contains(why), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn statements_the_server_refuses_in_a_transaction_are_named() {
+        for (stmt, what) in [
+            ("VACUUM t", "VACUUM"),
+            ("vacuum (verbose, analyze) t", "VACUUM"),
+            ("CREATE INDEX CONCURRENTLY i ON t (c)", "CONCURRENTLY"),
+            ("DROP INDEX CONCURRENTLY IF EXISTS i", "CONCURRENTLY"),
+            ("REINDEX INDEX CONCURRENTLY i", "CONCURRENTLY"),
+            (
+                "ALTER TABLE p DETACH PARTITION c CONCURRENTLY",
+                "CONCURRENTLY",
+            ),
+            ("CREATE DATABASE d", "CREATE or DROP DATABASE"),
+            ("DROP DATABASE d", "CREATE or DROP DATABASE"),
+            (
+                "CREATE TABLESPACE s LOCATION '/x'",
+                "CREATE or DROP TABLESPACE",
+            ),
+            ("ALTER SYSTEM SET work_mem = '8MB'", "ALTER SYSTEM"),
+            ("REINDEX DATABASE d", "REINDEX SYSTEM or DATABASE"),
+        ] {
+            assert_eq!(needs_no_transaction(stmt), Some(what), "{stmt}");
+        }
+        for stmt in [
+            "CREATE INDEX i ON t (c)",
+            "REINDEX INDEX i",
+            "ALTER DATABASE d SET work_mem = '8MB'",
+            "UPDATE t SET note = 'vacuum concurrently' -- concurrently",
+            "SELECT 1 /* VACUUM */",
+            "CREATE TABLE vacuum_log (id int)",
+        ] {
+            assert_eq!(needs_no_transaction(stmt), None, "{stmt}");
         }
     }
 }
