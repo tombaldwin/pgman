@@ -7074,8 +7074,8 @@ fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     assert!(a.read_only, "the flag must not move");
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == readonly_off_refusal("default", false, true)
-            || err == readonly_off_refusal("default", false, false),
+        err == readonly_off_refusal(&SafetyConfig::default(), "default", true)
+            || err == readonly_off_refusal(&SafetyConfig::default(), "default", false),
         "{err}"
     );
 }
@@ -8049,8 +8049,8 @@ fn readonly_off_under_a_read_only_profile_is_refused_with_a_next_step() {
     a.on_key(KeyEvent::from(KeyCode::Enter));
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == readonly_off_refusal("default", false, true)
-            || err == readonly_off_refusal("default", false, false),
+        err == readonly_off_refusal(&SafetyConfig::default(), "default", true)
+            || err == readonly_off_refusal(&SafetyConfig::default(), "default", false),
         "{err}"
     );
     assert!(a.read_only, "the setting did not change");
@@ -8058,16 +8058,19 @@ fn readonly_off_under_a_read_only_profile_is_refused_with_a_next_step() {
 
 #[test]
 fn readonly_off_refusal_names_the_entry_to_change() {
+    let mut cfg = SafetyConfig::default();
+    let pinned = cfg.default.clone();
+    cfg.databases.insert("ledger".into(), pinned);
     assert_eq!(
-        readonly_off_refusal("ledger", true, true),
+        readonly_off_refusal(&cfg, "ledger", true),
         "ledger is read-only in safety.toml ([databases.ledger]) · set read_only = false there and restart pgman to write"
     );
     assert_eq!(
-        readonly_off_refusal("ledger", false, true),
-        "read-only is safety.toml's [default] · add [databases.ledger] with read_only = false and restart pgman to write"
+        readonly_off_refusal(&cfg, "ledgerlog", true),
+        "read-only is safety.toml's [default] · add [databases.ledgerlog] with read_only = false and restart pgman to write"
     );
     assert_eq!(
-        readonly_off_refusal("ledger", true, false),
+        readonly_off_refusal(&cfg, "ledger", false),
         crate::conn::READ_ONLY_DEFAULT_HINT
     );
 }
@@ -8084,8 +8087,8 @@ fn readonly_off_on_a_pinned_database_names_its_entry() {
     run_command(&mut a, "readonly off");
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == readonly_off_refusal("ledger", true, true)
-            || err == readonly_off_refusal("ledger", true, false),
+        err == readonly_off_refusal(&a.safety_config, "ledger", true)
+            || err == readonly_off_refusal(&a.safety_config, "ledger", false),
         "{err}"
     );
 }

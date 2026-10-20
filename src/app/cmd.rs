@@ -357,8 +357,11 @@ impl App {
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
         if !want && self.safety_config.profile_for(db).read_only {
-            let own_entry = self.safety_config.databases.contains_key(db);
-            self.last_error = Some(readonly_off_refusal(db, own_entry, safety_toml_exists()));
+            self.last_error = Some(readonly_off_refusal(
+                &self.safety_config,
+                db,
+                safety_toml_exists(),
+            ));
             return;
         }
         if !want && self.replica_pin {

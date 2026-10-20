@@ -73,7 +73,12 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
 /// `:readonly off` refused by the profile: where the setting lives and
 /// what to change. `safety.toml` is read at start, so the next step
 /// ends in a restart. Pure.
-pub fn readonly_off_refusal(db: &str, own_entry: bool, safety_toml_exists: bool) -> String {
+pub fn readonly_off_refusal(
+    cfg: &safety::SafetyConfig,
+    db: &str,
+    safety_toml_exists: bool,
+) -> String {
+    let own_entry = cfg.databases.contains_key(db);
     match (safety_toml_exists, own_entry) {
         (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
         (true, true) => format!(
