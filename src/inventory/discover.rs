@@ -1005,7 +1005,10 @@ mod tests {
         );
         let s = |k: &str| demo.env.secrets.get(k).map(String::as_str);
         assert_eq!(s("demo/ledger"), Some("demo/database/ledger/credentials"));
-        assert_eq!(s("demo/ledgerlog"), Some("demo/database/ledgerlog/credentials"));
+        assert_eq!(
+            s("demo/ledgerlog"),
+            Some("demo/database/ledgerlog/credentials")
+        );
         assert_eq!(
             s("demo-read-only-replica/ledger"),
             Some("demo/database/ledger_replica/credentials")
@@ -1036,13 +1039,19 @@ mod tests {
         let ps = propose(&all(), &secrets(), &[], &scope(), &[]);
         let dev = by_name(&ps, "development");
         assert_eq!(
-            dev.env.secrets.get("development/ledger").map(String::as_str),
+            dev.env
+                .secrets
+                .get("development/ledger")
+                .map(String::as_str),
             Some("development/database/ledger/credentials"),
             "beats dev/database/ledger"
         );
         let prod = by_name(&ps, "production");
         assert_eq!(
-            prod.env.secrets.get("production/ledger").map(String::as_str),
+            prod.env
+                .secrets
+                .get("production/ledger")
+                .map(String::as_str),
             Some("production/database/ledger/credentials"),
             "/credentials beats the bare production/database/ledger"
         );

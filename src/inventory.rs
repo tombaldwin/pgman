@@ -888,7 +888,11 @@ source = { kind = "static", connections = ["ledger-local"] }
         assert_eq!(calls, 1, "demo and prod share a scope");
         assert_eq!(reports[0].targets.len(), 4);
         assert_eq!(reports[1].targets.len(), 2);
-        assert!(reports[2].error.as_deref().unwrap().contains("ledger-local"));
+        assert!(reports[2]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("ledger-local"));
 
         let reports = gather(
             &envs[..1],

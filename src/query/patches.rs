@@ -505,18 +505,13 @@ mod tests {
             version_id_in(sql, "t_schema_version", "schema_version_id"),
             Some(200)
         );
-        let qualified =
-            "INSERT INTO public.t_schema_version (schema_version_id) VALUES (7);";
+        let qualified = "INSERT INTO public.t_schema_version (schema_version_id) VALUES (7);";
         assert_eq!(
             version_id_in(qualified, "t_schema_version", "schema_version_id"),
             Some(7)
         );
         assert_eq!(
-            version_id_in(
-                qualified,
-                "public.t_schema_version",
-                "schema_version_id"
-            ),
+            version_id_in(qualified, "public.t_schema_version", "schema_version_id"),
             Some(7)
         );
     }
