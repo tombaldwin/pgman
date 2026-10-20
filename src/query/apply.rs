@@ -43,7 +43,8 @@ pub const LOCK_TIMEOUT: &str = "5s";
 pub fn needs_no_transaction(stmt: &str) -> Option<&'static str> {
     let tokens = crate::safety::code_tokens(stmt);
     let t = |i: usize| tokens.get(i).map(String::as_str);
-    if tokens.iter().any(|t| t == "concurrently") {
+    // REFRESH MATERIALIZED VIEW CONCURRENTLY runs in a transaction fine.
+    if t(0) != Some("refresh") && tokens.iter().any(|t| t == "concurrently") {
         return Some("CONCURRENTLY");
     }
     match (t(0), t(1)) {
@@ -428,6 +429,7 @@ mod tests {
             "UPDATE t SET note = 'vacuum concurrently' -- concurrently",
             "SELECT 1 /* VACUUM */",
             "CREATE TABLE vacuum_log (id int)",
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
         ] {
             assert_eq!(needs_no_transaction(stmt), None, "{stmt}");
         }
