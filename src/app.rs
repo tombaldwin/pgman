@@ -374,6 +374,26 @@ pub fn filter_saved_indices(
 /// (case-insensitively) contains `needle`. Row-major order; ties
 /// within a row are returned in column order. `needle` empty
 /// returns an empty vec — caller should treat as "find inactive".
+/// The match after (or before) `here`, wrapping; `None` when there are
+/// none. `matches` is in row-major order. Pure.
+pub fn next_match(
+    matches: &[(usize, usize)],
+    here: (usize, usize),
+    forward: bool,
+) -> Option<usize> {
+    if matches.is_empty() {
+        return None;
+    }
+    Some(if forward {
+        matches.iter().position(|m| *m > here).unwrap_or(0)
+    } else {
+        matches
+            .iter()
+            .rposition(|m| *m < here)
+            .unwrap_or(matches.len() - 1)
+    })
+}
+
 pub fn compute_grid_find_matches(
     grid: &crate::grid::Grid,
     visible_rows: &[usize],
@@ -3656,6 +3676,35 @@ impl App {
 
     /// `n` / `N` in Normal — step the row cursor to the next / prev
     /// matching row (only meaningful while a filter is active).
+    /// `n` / `N` in the grid: through the live filter, else the accepted
+    /// find, from the cursor on.
+    fn filter_or_find_step(&mut self, forward: bool) {
+        if self.grid_view.filter.is_some() {
+            return self.filter_step(forward);
+        }
+        let Some(pat) = self.grid_find.accepted.clone() else {
+            self.last_status = Some("nothing to step through · / filter or f find first".into());
+            return;
+        };
+        let matches = compute_grid_find_matches(&self.grid, &self.grid_view.visible_rows, &pat);
+        let here = (
+            self.grid_state.selected().unwrap_or(0),
+            self.grid_view.col_cursor,
+        );
+        let Some(i) = next_match(&matches, here, forward) else {
+            self.last_status = Some(format!("find: {pat} · no match in this result"));
+            return;
+        };
+        let (vi, ci) = matches[i];
+        self.grid_state.select(Some(vi));
+        self.grid_view.col_cursor = ci;
+        self.last_status = Some(format!(
+            "find: {pat} · {}/{} match · n/N step",
+            i + 1,
+            matches.len()
+        ));
+    }
+
     fn filter_step(&mut self, forward: bool) {
         if self.grid_view.filter.is_none() {
             // Make the no-op visible — vim muscle memory expects
@@ -4504,7 +4553,7 @@ impl App {
         self.grid_find.matches.clear();
         self.grid_find.pos = 0;
         self.last_status =
-            Some("find:    · type to search · n/N jump · enter accept · esc cancel".into());
+            Some("find:    · type to search · ↑↓ jump · enter accept · esc cancel".into());
         self.mode = Mode::GridFind;
     }
 
@@ -4517,7 +4566,7 @@ impl App {
         }
         let pos = if n == 0 { 0 } else { self.grid_find.pos + 1 };
         self.last_status = Some(format!(
-            "find: {pat}  · {pos}/{n} match · n/N jump · enter accept · esc cancel"
+            "find: {pat}  · {pos}/{n} match · ↑↓ jump · enter accept · esc cancel"
         ));
     }
 

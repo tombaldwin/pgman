@@ -378,6 +378,10 @@ pub struct GridFind {
     /// Current position in `matches` — `n` advances, `N`
     /// retreats; both wrap.
     pub pos: usize,
+    /// The pattern Enter accepted: `n` / `N` from the grid keep stepping
+    /// through it (matched afresh each time, so a sort or a new result
+    /// can't leave a stale position). Esc in the find clears it.
+    pub accepted: Option<String>,
 }
 
 /// Per-tab snapshot of the editor + result-grid state. The

@@ -1407,7 +1407,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::Confirm => "y run · n / esc cancel",
                 Mode::Normal => "q quit · ? help · e editor · S schema · W wizard · Q saved · T slow · L sessions · E envs · D diff · / filter · f find · ] [ tabs · z zoom · Z zoom editor",
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
-                Mode::GridFind => "type to find · n/N jump · enter accept · esc clear",
+                Mode::GridFind => "type to find · ↑↓ jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
                 Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · q close",
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
@@ -1873,7 +1873,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    f             find within grid (HIGHLIGHTS / jumps; n/N step matches)"),
+        row("    f             find within grid (↑↓ step while typing; n/N after enter)"),
         &mut lines,
     );
     push(row("    F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value"), &mut lines);

@@ -147,7 +147,9 @@ mode on the grid; row/cell detail and the diff view are their own modes.
 
 `GridFilter` (`/`) and `GridFind` (`f`) share one shape: type to
 narrow/search live, `Backspace` edits, `Enter` accepts (find keeps stepping
-with `n`/`N` from Normal mode afterward), `Esc` clears and cancels.
+with `n`/`N` from Normal mode afterward), `Esc` clears and cancels. While
+typing a find, `n` and `N` are letters of the pattern; `↓`/`↑` (or
+`Ctrl-N`/`Ctrl-P`) step through the matches.
 
 ### Row detail (`Enter` on a row)
 

@@ -4920,29 +4920,64 @@ fn grid_find_f_key_opens_mode_and_jumps_on_match() {
 }
 
 #[test]
-fn grid_find_n_and_capital_n_step_through_matches() {
+fn grid_find_types_n_steps_with_arrows_and_keeps_stepping_after_enter() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["c".into()],
-        rows: vec![vec!["aa".into()], vec!["bb".into()], vec!["aa".into()]],
+        rows: vec![
+            vec!["linus".into()],
+            vec!["bb".into()],
+            vec!["linus".into()],
+            vec!["lius".into()],
+        ],
         truncated: false,
     };
-    a.grid_view.visible_rows = vec![0, 1, 2];
+    a.grid_view.visible_rows = vec![0, 1, 2, 3];
     a.grid_state.select(Some(0));
     a.on_key(KeyEvent::from(KeyCode::Char('f')));
-    // Type "a" — two matches (rows 0 and 2). Cursor jumps to first.
-    a.on_key(KeyEvent::from(KeyCode::Char('a')));
+    // `n` is a letter of the pattern, not a jump: "lin" skips "lius".
+    for c in "lin".chars() {
+        a.on_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+    assert_eq!(a.grid_find.needle.as_deref(), Some("lin"));
+    assert_eq!(a.grid_find.matches.len(), 2);
+    // Arrows step while typing, wrapping.
+    a.on_key(KeyEvent::from(KeyCode::Down));
+    assert_eq!(a.grid_state.selected(), Some(2));
+    a.on_key(KeyEvent::from(KeyCode::Down));
     assert_eq!(a.grid_state.selected(), Some(0));
-    // `n` cycles to second match.
+    a.on_key(KeyEvent::from(KeyCode::Up));
+    assert_eq!(a.grid_state.selected(), Some(2));
+    // Enter accepts; n / N from the grid keep stepping from the cursor.
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Normal);
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(a.grid_state.selected(), Some(0), "wraps past the last");
     a.on_key(KeyEvent::from(KeyCode::Char('n')));
     assert_eq!(a.grid_state.selected(), Some(2));
-    // `n` again wraps to first.
-    a.on_key(KeyEvent::from(KeyCode::Char('n')));
-    assert_eq!(a.grid_state.selected(), Some(0));
-    // `N` (capital) walks back.
     a.on_key(KeyEvent::from(KeyCode::Char('N')));
-    assert_eq!(a.grid_state.selected(), Some(2));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    // Esc in a new find forgets it.
+    a.on_key(KeyEvent::from(KeyCode::Char('f')));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    a.on_key(KeyEvent::from(KeyCode::Char('n')));
+    assert_eq!(a.grid_state.selected(), Some(0));
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("nothing to step through"));
+}
+
+#[test]
+fn next_match_wraps_both_ways() {
+    let m = [(0, 0), (2, 1), (5, 0)];
+    assert_eq!(crate::app::next_match(&m, (2, 1), true), Some(2));
+    assert_eq!(crate::app::next_match(&m, (5, 0), true), Some(0));
+    assert_eq!(crate::app::next_match(&m, (2, 1), false), Some(0));
+    assert_eq!(crate::app::next_match(&m, (0, 0), false), Some(2));
+    assert_eq!(crate::app::next_match(&[], (0, 0), true), None);
 }
 
 #[test]
