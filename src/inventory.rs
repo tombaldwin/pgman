@@ -475,6 +475,27 @@ pub struct EnvReport {
     pub probe: Option<ProbeSettings>,
 }
 
+/// Why instances matched but gave no rows: none names a database
+/// (Aurora keeps it on the cluster; an instance can be created without
+/// one). `None` when nothing matched at all. Pure.
+pub fn rds_no_rows_reason(env: &Environment, all: &[rds::RdsInstance]) -> Option<String> {
+    let Source::Rds { instances, .. } = &env.source else {
+        return None;
+    };
+    let matched: Vec<&str> = rds::select(all, instances)
+        .iter()
+        .map(|i| i.id.as_str())
+        .collect();
+    if matched.is_empty() || !env.databases.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} matched, but no instance names a database (Aurora keeps it on the cluster) — set databases = [\"…\"] for {}",
+        matched.join(", "),
+        env.name
+    ))
+}
+
 /// RDS rows for one environment from an already-fetched instance list.
 pub fn rds_targets(env: &Environment, all: &[rds::RdsInstance]) -> Vec<Target> {
     let Source::Rds { instances, .. } = &env.source else {
@@ -610,7 +631,17 @@ pub fn gather(
                         .entry(scope.clone())
                         .or_insert_with(|| fetch_rds(&scope));
                     match listed {
-                        Ok(all) => Ok(rds_targets(env, all)),
+                        Ok(all) => {
+                            let rows = rds_targets(env, all);
+                            match rows
+                                .is_empty()
+                                .then(|| rds_no_rows_reason(env, all))
+                                .flatten()
+                            {
+                                Some(why) => Err(why),
+                                None => Ok(rows),
+                            }
+                        }
                         Err(e) => Err(e.clone()),
                     }
                 }
@@ -701,6 +732,33 @@ pub fn load_and_gather() -> Result<Vec<EnvReport>, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Aurora instances carry no DBName: an environment over them used to
+    /// say "matched nothing" although two instances matched.
+    #[test]
+    fn instances_without_a_database_say_so_and_how_to_fix_it() {
+        let envs = parse_config(
+            "[[environments]]\nname = \"app\"\nsource = { kind = \"rds\", instances = [\"app-*\"] }\n",
+        )
+        .unwrap();
+        let aurora = rds::parse_describe(
+            r#"{"DBInstances": [
+              {"DBInstanceIdentifier": "app-writer", "Engine": "aurora-postgresql", "DBClusterIdentifier": "app"},
+              {"DBInstanceIdentifier": "app-reader", "Engine": "aurora-postgresql", "DBClusterIdentifier": "app"}]}"#,
+        )
+        .unwrap();
+        let r = gather(&envs, &[], |_| Ok(aurora.clone()), || Ok(Vec::new()));
+        let e = r[0].error.clone().unwrap();
+        assert!(
+            e.starts_with("app-reader, app-writer matched, but no instance names a database"),
+            "{e}"
+        );
+        assert!(e.contains("set databases"), "{e}");
+        // Nothing matching at all still says so.
+        let r = gather(&envs, &[], |_| Ok(Vec::new()), || Ok(Vec::new()));
+        assert_eq!(r[0].error.as_deref(), Some("matched nothing"));
+    }
+
     use super::*;
 
     const CONFIG: &str = r#"
