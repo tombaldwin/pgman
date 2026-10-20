@@ -88,6 +88,11 @@ pub fn parse_download(json: &str) -> Result<String, String> {
 /// One log line's (time, who, level, message), if it has RDS's prefix.
 /// Pure.
 fn parse_line(line: &str) -> Option<(String, String, String, String)> {
+    // A record starts with its timestamp; a statement's continuation
+    // line doesn't, however much it looks like a prefix (`arr[12]:ERROR:`).
+    if !starts_with_timestamp(line) {
+        return None;
+    }
     // The prefix ends at `[<pid>]:` — the first bracketed run of digits;
     // an unknown user prints as `[unknown]`, which isn't one.
     let end = line.match_indices("]:").find_map(|(i, _)| {
@@ -107,6 +112,18 @@ fn parse_line(line: &str) -> Option<(String, String, String, String)> {
         who.to_string()
     };
     Some((time, who, level.to_string(), message.trim().to_string()))
+}
+
+/// `YYYY-MM-DD HH:MM:SS` at the start of `line`. Pure.
+fn starts_with_timestamp(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() >= 19
+        && b[..19].iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            10 => *c == b' ',
+            13 | 16 => *c == b':',
+            _ => c.is_ascii_digit(),
+        })
 }
 
 /// The errors in some log text, grouped by level and message, the most
@@ -207,6 +224,7 @@ mod tests {
 2026-10-19 22:04:49 UTC::@:[1354]:LOG:  checkpoint starting: time
 2026-10-19 22:05:00 UTC:10.0.1.25(43120):app@ledger:[16900]:ERROR:  permission denied for database rdsadmin
 2026-10-19 22:06:00 UTC:10.0.0.9(5000):[unknown]@[unknown]:[17000]:FATAL:  password authentication failed for user \"app\"
+	  AND orders.customer_reference_code = tags[12]:ERROR:  a continuation line, not a record
 not a log line at all
 ";
 
