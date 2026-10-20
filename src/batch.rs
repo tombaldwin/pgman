@@ -36,6 +36,17 @@ impl Format {
 }
 
 /// CLI-shaped options for batch mode. Parsed in `main.rs`.
+/// `--batch`'s exit status when the result stopped at `grid::MAX_ROWS`.
+pub const EXIT_TRUNCATED: i32 = 3;
+
+/// What stderr says when it did. Pure.
+pub fn truncated_warning() -> String {
+    format!(
+        "warning: output stopped at {} rows — this format is capped; `--format json` returns every row (exit {EXIT_TRUNCATED})",
+        crate::grid::MAX_ROWS
+    )
+}
+
 pub struct Opts {
     pub dsn: Dsn,
     pub sql: String,
@@ -335,7 +346,13 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 if !text.ends_with('\n') {
                     println!();
                 }
-                0
+                // A partial export must not pass for a whole one.
+                if grid.truncated {
+                    eprintln!("{}", truncated_warning());
+                    EXIT_TRUNCATED
+                } else {
+                    0
+                }
             }
             Err(QueryErr { msg, .. }) => {
                 eprintln!("error: {}", terminal_safe(&msg));

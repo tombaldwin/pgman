@@ -3422,3 +3422,33 @@ fn mcp_query_refuses_unicode_escaped_function_names() {
     let (text, is_error) = reply(&frames, 3);
     assert!(!is_error && text.contains("\"one\""), "{text}");
 }
+
+/// A batch export past the row cap says so and fails, instead of
+/// handing back 1000 rows as if they were all of them; json returns all.
+#[test]
+fn batch_says_when_a_csv_export_is_truncated() {
+    let home = scratch_home("batch-cap", "");
+    let out = batch_with_home(&home, &["--sql", "SELECT generate_series(1, 1500) AS n"]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("output stopped at 1000 rows"));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).lines().count(), 1001);
+    let out = batch_with_home(
+        &home,
+        &[
+            "--format",
+            "json",
+            "--sql",
+            "SELECT generate_series(1, 1500) AS n",
+        ],
+    );
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 1500);
+    let out = batch_with_home(&home, &["--sql", "SELECT generate_series(1, 10) AS n"]);
+    assert!(out.status.success() && out.stderr.is_empty());
+}
