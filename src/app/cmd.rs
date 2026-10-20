@@ -409,6 +409,20 @@ impl App {
             self.start_connection_change();
             return;
         };
+        // A URL connects to it. Whatever happens, the text is never shown
+        // as typed: it can carry a password.
+        if name.starts_with("postgres://") || name.starts_with("postgresql://") {
+            let shown = crate::conn::redact_url(&name);
+            match crate::conn::Dsn::parse(&name) {
+                Ok(dsn) => {
+                    self.connect_to_target(dsn, format!("typed at :connect ({shown})"), false)
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("can't connect to {shown}: {e}"));
+                }
+            }
+            return;
+        }
         use crate::query::backslash::{match_pick_name, NameMatch};
         let names: Vec<&str> = self
             .conn_pick

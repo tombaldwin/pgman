@@ -10304,3 +10304,25 @@ fn a_late_plan_for_another_database_is_dropped() {
         PatchStage::Applying(_)
     ));
 }
+
+/// `:connect <url>` connects to it, and the password it carries shows
+/// nowhere — not in the origin line, not in an error.
+#[tokio::test]
+async fn connect_to_a_typed_url_never_shows_its_password() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.dispatch_command("connect postgres://app:hunter2@db.internal:5432/shop");
+    assert_eq!(a.dsn.as_ref().map(|d| d.dbname.as_str()), Some("shop"));
+    let origin = a.dsn_origin.clone().unwrap();
+    assert!(
+        origin.starts_with("typed at :connect") && !origin.contains("hunter2"),
+        "{origin}"
+    );
+    let mut b = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    b.dispatch_command("connect postgres://app:hunter2@db.internal:notaport/shop");
+    let err = b.last_error.clone().unwrap();
+    assert!(
+        err.starts_with("can't connect to") && !err.contains("hunter2"),
+        "{err}"
+    );
+    assert!(b.dsn.is_none());
+}
