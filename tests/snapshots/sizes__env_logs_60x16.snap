@@ -8,12 +8,12 @@ expression: dump(&buf)
 ╭[ ◆ environments · log errors ◆ ] q back · j/k scroll ────╮
 │  staging · staging — recent errors from its RDS log      │
 │                                                          │
-│  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[un…│
+│  FATAL ×1 · last 2026-03-02 09:31:12 UTC ·               │
+│    [unknown]@[unknown]                                   │
 │      password authentication failed for user "report"    │
 │  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop     │
-│      duplicate key value violates unique constraint "ord…│
-│                                                          │
-│                                                          │
+│      duplicate key value violates unique constraint      │
+│        "orders_pkey"                                     │
 │                                                          │
 │                                                          │
 │                                                          │

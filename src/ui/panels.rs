@@ -2042,6 +2042,26 @@ fn verb(mode: RunMode) -> &'static str {
     }
 }
 
+/// `text` as rows of at most `width` columns: unchanged when it fits;
+/// otherwise wrapped on words, its leading indent kept on the first
+/// row and two more on the rest so a continuation reads as one. Pure.
+pub(crate) fn wrap_indented(text: &str, width: usize) -> Vec<String> {
+    if crate::ui::display_width(text) <= width {
+        return vec![text.to_string()];
+    }
+    let indent = text.len() - text.trim_start_matches(' ').len();
+    let rest = text.trim_start_matches(' ');
+    let wrap_at = width.saturating_sub(indent + 2).max(10);
+    super::wrap_words(rest, wrap_at)
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let pad = if i == 0 { indent } else { indent + 2 };
+            format!("{}{row}", " ".repeat(pad))
+        })
+        .collect()
+}
+
 fn draw_env_lines(
     f: &mut Frame,
     inner: Rect,
@@ -2063,11 +2083,25 @@ fn draw_env_lines(
         Line::from(""),
     ];
     let room = (inner.height as usize).saturating_sub(2 + usize::from(footer.is_some()));
+    // Wrapped, not cut: a confirmation covers every statement it shows,
+    // and a reason or a log line cut mid-word lost its end. Scrolling
+    // counts screen rows.
+    // Each row keeps its line's colour; a continuation's extra indent
+    // must not make a note read as SQL.
+    let body: Vec<(String, bool, bool)> = body
+        .iter()
+        .flat_map(|(text, loud)| {
+            let sql = text.starts_with("      ");
+            wrap_indented(text, width)
+                .into_iter()
+                .map(move |row| (row, *loud, sql))
+        })
+        .collect();
     let scroll = scroll.min(body.len().saturating_sub(room));
-    for (text, loud) in body.iter().skip(scroll).take(room) {
+    for (text, loud, sql) in body.iter().skip(scroll).take(room) {
         let colour = if *loud {
             theme.health_red
-        } else if text.starts_with("      ") {
+        } else if *sql {
             theme.text
         } else {
             theme.health_yellow
@@ -4718,5 +4752,26 @@ mod tests {
             discovery_heading(&d, "AWS account 1"),
             "  AWS account 1 · profile staging · p scope 2/2"
         );
+    }
+
+    #[test]
+    fn a_long_line_wraps_under_its_indent_rather_than_being_cut() {
+        assert_eq!(wrap_indented("  fits", 10), vec!["  fits"]);
+        let reason =
+            "  not included: V7__orders.sql — it has no statements a version table could record";
+        let rows = wrap_indented(reason, 40);
+        assert!(rows.len() > 1, "{rows:?}");
+        assert!(
+            rows.iter().all(|r| crate::ui::display_width(r) <= 40),
+            "{rows:?}"
+        );
+        assert!(rows[0].starts_with("  not included"));
+        assert!(rows[1..]
+            .iter()
+            .all(|r| r.starts_with("    ") && !r.starts_with("     ")));
+        // Nothing lost: every word is still there, in order.
+        let back: Vec<&str> = rows.iter().flat_map(|r| r.split_whitespace()).collect();
+        let want: Vec<&str> = reason.split_whitespace().collect();
+        assert_eq!(back, want);
     }
 }
