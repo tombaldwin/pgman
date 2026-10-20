@@ -1,6 +1,7 @@
 //! The `docker` inventory source: local Postgres containers, from
-//! `docker ps --all`. A container counts when it exposes 5432/tcp or
-//! runs a `postgres` image; it is reached on the host port that 5432 is
+//! `docker ps --all`. A container counts when it exposes 5432/tcp (alone
+//! or in a range) or runs a Postgres image (`postgres`, `postgis/postgis`,
+//! … from any registry); it is reached on the host port that 5432 is
 //! published to.
 
 use super::{ConnectSpec, Environment, Source, Target};
@@ -27,23 +28,89 @@ pub fn ps_args() -> Vec<String> {
         .collect()
 }
 
+/// The host port a mapping sends 5432/tcp to: `5432` itself for a
+/// `5432/tcp` container side, and by offset for a range (`5430-5439/tcp`
+/// published from `55430-55439` gives 55432). `None` when the container
+/// side doesn't cover 5432/tcp. Pure.
+fn maps_5432(host: &str, container: &str) -> Option<u16> {
+    let range = container.strip_suffix("/tcp")?;
+    let (lo, hi) = match range.split_once('-') {
+        Some((a, b)) => (a.parse::<u16>().ok()?, b.parse::<u16>().ok()?),
+        None => {
+            let p = range.parse::<u16>().ok()?;
+            (p, p)
+        }
+    };
+    if !(lo..=hi).contains(&5432) {
+        return None;
+    }
+    let start: u16 = host.split_once('-').map_or(host, |(a, _)| a).parse().ok()?;
+    start.checked_add(5432 - lo)
+}
+
+/// Whether a `Ports` string covers 5432/tcp at all, published or only
+/// exposed, as one port or inside a range. Pure.
+fn covers_5432(ports: &str) -> bool {
+    ports.split(',').map(str::trim).any(|m| {
+        let container = m.split_once("->").map_or(m, |(_, c)| c);
+        maps_5432("5432", container).is_some()
+    })
+}
+
 /// Where `5432/tcp` is published in a `Ports` string such as
 /// `0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp`: the first IPv4 (or
-/// hostname) mapping, a wildcard address read as `127.0.0.1`. Pure.
+/// hostname) mapping, a wildcard address read as `127.0.0.1`. A range
+/// covering 5432 maps by offset. Published only on the IPv6 wildcard or
+/// loopback (`[::]:5432`, older docker's `:::5432`, `[::1]:5432`), it's
+/// reached as `localhost`, which resolves to either family; any other
+/// IPv6 address is skipped. Pure.
 pub fn published_5432(ports: &str) -> Option<(String, u16)> {
-    ports.split(',').map(str::trim).find_map(|m| {
-        let (host_side, container) = m.split_once("->")?;
-        if container != "5432/tcp" || host_side.starts_with('[') {
-            return None;
-        }
-        let (addr, port) = host_side.rsplit_once(':')?;
-        let port: u16 = port.parse().ok()?;
+    let mut v6 = None;
+    for m in ports.split(',').map(str::trim) {
+        let Some((host_side, container)) = m.split_once("->") else {
+            continue;
+        };
+        let Some((addr, port)) = host_side.rsplit_once(':') else {
+            continue;
+        };
+        let Some(port) = maps_5432(port, container) else {
+            continue;
+        };
         let addr = match addr {
             "" | "0.0.0.0" => "127.0.0.1",
+            "[::]" | "::" | "[::1]" | "::1" => {
+                v6.get_or_insert(port);
+                continue;
+            }
+            a if a.contains(':') || a.starts_with('[') => continue,
             a => a,
         };
-        Some((addr.to_string(), port))
-    })
+        return Some((addr.to_string(), port));
+    }
+    v6.map(|port| ("localhost".to_string(), port))
+}
+
+/// Whether an image is a Postgres server: `postgres`, `postgis/postgis`,
+/// `bitnami/postgresql`, `timescale/timescaledb`, from any registry
+/// (`docker.io/library/postgres`, `localhost:5000/postgres`), with any
+/// tag or digest. Pure.
+fn postgres_image(image: &str) -> bool {
+    matches!(
+        repo_and_tag(image).0,
+        "postgres" | "postgis" | "postgresql" | "timescaledb" | "timescaledb-ha"
+    )
+}
+
+/// An image's last path segment and its tag: `postgres` and `16` from
+/// `docker.io/library/postgres:16`. A registry's port isn't a tag, and
+/// a digest is dropped. Pure.
+fn repo_and_tag(image: &str) -> (&str, Option<&str>) {
+    let image = image.split_once('@').map_or(image, |(i, _)| i);
+    let last = image.rsplit_once('/').map_or(image, |(_, l)| l);
+    match last.split_once(':') {
+        Some((repo, tag)) => (repo, Some(tag)),
+        None => (last, None),
+    }
 }
 
 /// `docker ps` lines to containers that look like Postgres. A line that
@@ -61,9 +128,8 @@ pub fn parse_ps(out: &str) -> Result<Vec<Container>, String> {
         };
         let ports = s("Ports");
         let image = s("Image");
-        let exposes = ports.contains("5432/tcp");
-        let postgres_image = image == "postgres" || image.starts_with("postgres:");
-        if !exposes && !postgres_image {
+        let exposes = covers_5432(&ports);
+        if !exposes && !postgres_image(&image) {
             continue;
         }
         all.push(Container {
@@ -77,10 +143,11 @@ pub fn parse_ps(out: &str) -> Result<Vec<Container>, String> {
     Ok(all)
 }
 
-/// `postgres:16.4` reads as `postgres 16.4`; any other image as itself.
+/// `postgres:16.4` reads as `postgres 16.4`, `postgis/postgis:16-3.4` as
+/// `postgis 16-3.4`; any other image as itself.
 fn engine(image: &str) -> String {
-    match image.split_once(':') {
-        Some(("postgres", tag)) => format!("postgres {tag}"),
+    match repo_and_tag(image) {
+        (repo, Some(tag)) if postgres_image(image) => format!("{repo} {tag}"),
         _ => image.to_string(),
     }
 }
@@ -175,6 +242,10 @@ mod tests {
 {"Names":"redis","Image":"redis:7.0-alpine","Ports":"0.0.0.0:6379->6379/tcp","State":"running"}
 {"Names":"old-pg","Image":"postgres:15","Ports":"","State":"exited"}
 {"Names":"internal-pg","Image":"custom","Ports":"5432/tcp","State":"running"}
+{"Names":"gis","Image":"postgis/postgis:16-3.4","Ports":"","State":"exited"}
+{"Names":"hub-pg","Image":"docker.io/library/postgres:17","Ports":"","State":"exited"}
+{"Names":"ranged","Image":"custom","Ports":"5430-5439/tcp","State":"running"}
+{"Names":"exporter","Image":"prometheuscommunity/postgres-exporter","Ports":"9187/tcp","State":"running"}
 "#;
 
     fn env(containers: &[&str], databases: &[&str]) -> Environment {
@@ -212,8 +283,52 @@ mod tests {
             "IPv6 skipped, a specific address kept"
         );
         assert_eq!(published_5432("0.0.0.0:6379->6379/tcp"), None);
+        assert_eq!(
+            published_5432(":::5432->5432/tcp"),
+            Some(("localhost".into(), 5432)),
+            "older docker's unbracketed IPv6 wildcard"
+        );
+        assert_eq!(
+            published_5432("[::]:6000->5432/tcp"),
+            Some(("localhost".into(), 6000)),
+            "published only on IPv6"
+        );
+        assert_eq!(
+            published_5432(":::5432->5432/tcp, 0.0.0.0:5433->5432/tcp"),
+            Some(("127.0.0.1".into(), 5433)),
+            "IPv4 preferred whatever the order"
+        );
+        assert_eq!(published_5432("[fd00::2]:5432->5432/tcp"), None);
+        assert_eq!(
+            published_5432("0.0.0.0:55430-55439->5430-5439/tcp"),
+            Some(("127.0.0.1".into(), 55432)),
+            "a range maps by offset"
+        );
+        assert_eq!(
+            published_5432("0.0.0.0:6000-6009->6000-6009/tcp"),
+            None,
+            "a range that doesn't cover 5432"
+        );
         assert_eq!(published_5432("5432/tcp"), None, "exposed, not published");
         assert_eq!(published_5432(""), None);
+    }
+
+    #[test]
+    fn images_are_read_whatever_the_registry_tag_or_digest() {
+        assert_eq!(repo_and_tag("postgres"), ("postgres", None));
+        assert_eq!(
+            repo_and_tag("localhost:5000/postgres:16"),
+            ("postgres", Some("16"))
+        );
+        assert_eq!(
+            repo_and_tag("postgres@sha256:abc"),
+            ("postgres", None),
+            "a digest isn't a tag"
+        );
+        assert!(postgres_image("bitnami/postgresql:16"));
+        assert!(postgres_image("localhost:5000/postgres"));
+        assert!(!postgres_image("my-postgres-app"));
+        assert!(!postgres_image("postgres-exporter"));
     }
 
     #[test]
@@ -222,8 +337,16 @@ mod tests {
         let names: Vec<&str> = all.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            ["pgman-postgres-1", "ledger-db", "old-pg", "internal-pg"],
-            "no redis"
+            [
+                "pgman-postgres-1",
+                "ledger-db",
+                "old-pg",
+                "internal-pg",
+                "gis",
+                "hub-pg",
+                "ranged"
+            ],
+            "no redis, no exporter"
         );
         assert!(parse_ps("not json").is_err());
         assert!(parse_ps("").unwrap().is_empty());
@@ -258,6 +381,9 @@ mod tests {
             by("pgman-postgres-1").engine.as_deref(),
             Some("postgres 16")
         );
+        assert_eq!(by("gis").engine.as_deref(), Some("postgis 16-3.4"));
+        assert_eq!(by("hub-pg").engine.as_deref(), Some("postgres 17"));
+        assert_eq!(by("ranged").engine.as_deref(), Some("custom"));
         assert_eq!(
             by("old-pg").connect,
             Err("container old-pg is exited".into())
