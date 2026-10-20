@@ -24,6 +24,6 @@ expression: dump(&buf)
 │    shop      direct   shop-local         —          —                        │
 │                                                                              │
 │                                                                              │
-│  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ · sta…│
+│  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ       │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

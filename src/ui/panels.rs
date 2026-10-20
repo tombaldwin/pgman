@@ -1494,6 +1494,49 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
     format!("  {}", parts.join(" · "))
 }
 
+/// Fit a ` · `-joined detail line into `width` columns from its tail,
+/// never mid-token: a last segment that doesn't fit is cut at a `.`,
+/// `-`, `:` or `/` with a `…` (an endpoint keeps its leading labels:
+/// `ledger-1.abc123.eu-west-1…`), or dropped whole when too little of it
+/// would show. One segment that alone is too wide is end-ellipsised.
+/// Pure.
+pub(crate) fn fit_segments(text: &str, width: usize) -> String {
+    use crate::ui::display_width;
+    if display_width(text) <= width {
+        return text.to_string();
+    }
+    let mut segs: Vec<&str> = text.split(" · ").collect();
+    while segs.len() > 1 {
+        let last = segs[segs.len() - 1];
+        let head = segs[..segs.len() - 1].join(" · ");
+        let room = width.saturating_sub(display_width(&head) + display_width(" · ") + 1);
+        if room >= 8 {
+            // The longest prefix of `last`, within `room`, that ends just
+            // before a separator.
+            let mut cut = None;
+            let mut used = 0;
+            for (i, c) in last.char_indices() {
+                used += crate::ui::char_width(c);
+                if used > room {
+                    break;
+                }
+                if matches!(c, '.' | '-' | ':' | '/') && i >= 4 {
+                    cut = Some(i);
+                }
+            }
+            if let Some(i) = cut {
+                return format!("{head} · {}…", &last[..i]);
+            }
+        }
+        segs.pop();
+        let joined = segs.join(" · ");
+        if display_width(&joined) <= width {
+            return joined;
+        }
+    }
+    crate::grid::truncate_cell(segs[0], width)
+}
+
 /// A replica's lag readings as the detail line shows them:
 /// `▁▂▂▃▅▇ · 2s–30s over 12 probes`, or `None` with fewer than two. Pure.
 pub(crate) fn lag_trend(samples: &[f64]) -> Option<String> {
@@ -2420,7 +2463,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     if let (Some(t), Some(at)) = (focused, detail_area) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                crate::grid::truncate_cell(
+                fit_segments(
                     &match lag_trend(ui.selected_lag_history()) {
                         // The trend near the front, where a narrow panel
                         // keeps it.
@@ -4773,5 +4816,29 @@ mod tests {
         let back: Vec<&str> = rows.iter().flat_map(|r| r.split_whitespace()).collect();
         let want: Vec<&str> = reason.split_whitespace().collect();
         assert_eq!(back, want);
+    }
+
+    #[test]
+    fn the_detail_line_is_cut_at_a_boundary_never_mid_token() {
+        let line = "  prod/ledger · db.r6g.large · multi-AZ · ledger-1.abc123xyz.eu-west-1.rds.amazonaws.com:5432";
+        assert_eq!(fit_segments(line, 200), line);
+        let fitted = fit_segments(line, 80);
+        assert!(crate::ui::display_width(&fitted) <= 80, "{fitted}");
+        assert!(
+            fitted.ends_with("…") && fitted.contains("· ledger-1.abc123xyz.eu-west-1"),
+            "{fitted}"
+        );
+        let cut = fitted.trim_end_matches('…');
+        assert!(
+            line.contains(&format!("{cut}.")) || line.contains(&format!("{cut}-")),
+            "cut right before a separator: {fitted}"
+        );
+        // Too little room for any of the endpoint: it goes whole.
+        assert_eq!(
+            fit_segments(line, 45),
+            "  prod/ledger · db.r6g.large · multi-AZ"
+        );
+        // One segment that is itself too wide is end-ellipsised.
+        assert!(crate::ui::display_width(&fit_segments("  prod/ledger", 8)) <= 8);
     }
 }
