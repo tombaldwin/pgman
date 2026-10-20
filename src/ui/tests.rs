@@ -1357,3 +1357,38 @@ fn a_running_watch_wears_a_badge() {
     });
     assert!(text(&a).contains(" WATCH 2s "), "{}", text(&a));
 }
+
+/// The confirm modal's footer is the keys that answer it, whatever
+/// status the editor left behind.
+#[test]
+fn the_confirm_modal_footer_keeps_its_y_n_keys() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.pending_run = Some(crate::app::PendingRun {
+        sql: "delete from t".into(),
+        kind: crate::app::RunKind::Run,
+        decision: crate::safety::Decision {
+            kind: crate::safety::StatementKind::Delete { has_where: false },
+            guard: crate::safety::Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
+        is_batch: false,
+        summary: Some("delete without a where".into()),
+    });
+    app.mode = crate::app::Mode::Confirm;
+    app.last_status = Some("completed `users`".into());
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let footer: String = (0..buf.area.width)
+        .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+        .collect();
+    assert!(footer.contains("y run · n / esc cancel"), "{footer}");
+}

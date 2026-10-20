@@ -1337,7 +1337,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             ]
         };
         Line::from(spans)
-    } else if let Some(status) = &app.last_status {
+    } else if let Some(status) = app
+        .last_status
+        .as_ref()
+        // The confirm modal says what it's asking itself; its footer is
+        // the keys that answer it. A status left from the editor (a
+        // completion's, the cost preview's) hid `y run · n / esc cancel`.
+        .filter(|_| app.mode != Mode::Confirm)
+    {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {
             format!(" {sp} ")
