@@ -1415,3 +1415,21 @@ fn the_error_overlay_without_detail_speaks_plainly() {
     assert!(text.contains("nothing more to show"), "{text}");
     assert!(!text.contains("DbError"));
 }
+
+/// A picker narrower than its panel sits in the middle of it, one row
+/// below the top, and never on the panel's own frame.
+#[test]
+fn a_floated_popup_is_centred_across_the_panel_and_off_its_frame() {
+    use ratatui::layout::Rect;
+    let panel = Rect {
+        x: 0,
+        y: 10,
+        width: 120,
+        height: 20,
+    };
+    let r = crate::ui::floated_in_panel(panel, 100, 8);
+    assert_eq!((r.x, r.y, r.width, r.height), (10, 11, 100, 8));
+    // As wide as the panel: inside its borders, not on them.
+    let r = crate::ui::floated_in_panel(panel, 200, 40);
+    assert_eq!((r.x, r.y, r.width, r.height), (1, 11, 118, 18));
+}

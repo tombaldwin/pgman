@@ -17,13 +17,13 @@ expression: dump(&buf)
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
-│╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                                │
-││▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                                │
-││  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                                │
-││                                                                │                                │
-││  nothing here connects until you press enter                   │                                │
-││  PGPASSWORD is only used with --dsn                            │                                │
-│╰────────────────────────────────────────────────────────────────╯                                │
+│id  email       ╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                │
+│1   ada@example.│▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                │
+│2   linus@exampl│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                │
+│3   grace@exampl│                                                                │                │
+│4   alan@example│  nothing here connects until you press enter                   │                │
+│5   edsger@examp│  PGPASSWORD is only used with --dsn                            │                │
+│6   katherine@ex╰────────────────────────────────────────────────────────────────╯                │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

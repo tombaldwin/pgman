@@ -17,13 +17,13 @@ expression: dump(&buf)
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────╮
-│╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                                                    │
-││▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                                                    │
-││  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                                                    │
-││                                                                │                                                    │
-││  nothing here connects until you press enter                   │                                                    │
-││  PGPASSWORD is only used with --dsn                            │                                                    │
-│╰────────────────────────────────────────────────────────────────╯                                                    │
+│id  email                 ╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                          │
+│1   ada@example.com       │▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                          │
+│2   linus@example.com     │  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                          │
+│3   grace@example.com     │                                                                │                          │
+│4   alan@example.com      │  nothing here connects until you press enter                   │                          │
+│5   edsger@example.com    │  PGPASSWORD is only used with --dsn                            │                          │
+│6   katherine@example.com ╰────────────────────────────────────────────────────────────────╯                          │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

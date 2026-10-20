@@ -2775,21 +2775,25 @@ fn centered_pct(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
-/// A popup floated one row and one column inside `panel`, sized to
-/// `content_w` × `content_h` but never past the room that leaves.
-/// Anchored top-left rather than centred: a popup centred on a panel
-/// it is nearly as wide as puts its own top border on the panel's
-/// border and title, fusing the two frames into one run of glyphs
-/// (`┌ pgman┌ pick a connection`). Falls back to centring when the
-/// panel is too small to float inside at all.
-fn floated_in_panel(panel: Rect, content_w: u16, content_h: u16) -> Rect {
+/// A popup floated one row inside `panel` and centred across its
+/// interior, sized to `content_w` × `content_h` but never past the
+/// room the panel's borders leave. Never on the panel's frame: a popup
+/// centred on a panel it is nearly as tall or wide as puts its own
+/// border on the panel's border and title, fusing the two frames into
+/// one run of glyphs (`┌ pgman┌ pick a connection`). It used to sit in
+/// the top-left corner for that reason, which left a narrow popup
+/// hard against one side of a wide panel. Falls back to centring when
+/// the panel is too small to float inside at all.
+pub(crate) fn floated_in_panel(panel: Rect, content_w: u16, content_h: u16) -> Rect {
     if panel.width < 4 || panel.height < 4 {
         return centered(panel, content_w, content_h);
     }
+    let inner_w = panel.width - 2;
+    let width = content_w.min(inner_w);
     Rect {
-        x: panel.x + 1,
+        x: panel.x + 1 + (inner_w - width) / 2,
         y: panel.y + 1,
-        width: content_w.min(panel.width - 2),
+        width,
         height: content_h.min(panel.height - 2),
     }
 }

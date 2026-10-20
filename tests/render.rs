@@ -757,7 +757,8 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     );
 
     // The panel's own top border row is intact — the popup starts on
-    // the row below it, and one column in.
+    // the row below it, inside the panel's borders and centred across
+    // it.
     let lines: Vec<&str> = rendered.lines().collect();
     let panel_top = lines
         .iter()
@@ -767,9 +768,19 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
         !lines[panel_top].contains("pick a connection"),
         "picker landed on the panel's top border row:\n{rendered}"
     );
+    let row: Vec<char> = lines[panel_top + 1].chars().collect();
+    assert_eq!(row.first(), Some(&'│'), "the panel's border:\n{rendered}");
+    assert_eq!(row.last(), Some(&'│'), "the panel's border:\n{rendered}");
+    let left = row.iter().position(|&c| c == '╭').expect("popup corner");
+    let right = row.iter().rposition(|&c| c == '╮').expect("popup corner");
     assert!(
-        lines[panel_top + 1].starts_with("│╭[ ◆ pick a connection"),
-        "picker should float one row/column inside the panel:\n{rendered}"
+        lines[panel_top + 1].contains("╭[ ◆ pick a connection"),
+        "picker should float one row inside the panel:\n{rendered}"
+    );
+    let (gap_left, gap_right) = (left - 1, row.len() - 2 - right);
+    assert!(
+        gap_left.abs_diff(gap_right) <= 1,
+        "picker should be centred ({gap_left} left, {gap_right} right):\n{rendered}"
     );
 
     // Every popup row keeps a blank column before its right border, so
