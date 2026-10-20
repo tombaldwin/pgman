@@ -787,6 +787,10 @@ pub async fn set_session_read_only(
     })
 }
 
+/// How long a connect waits for the server to answer — the same budget
+/// the ssh tunnel gets.
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub async fn connect_via(
     dsn: Dsn,
     via: Option<u16>,
@@ -923,6 +927,9 @@ async fn connect_inner(
         cfg.password(password);
     }
     cfg.application_name(application_name(&dsn));
+    // A host that drops packets would otherwise hold "connecting…" until
+    // the OS gives up (75 s on macOS, minutes on Linux).
+    cfg.connect_timeout(CONNECT_TIMEOUT);
     let verify = apply_ssl_mode(&mut cfg, &dsn);
 
     // Connect with TLS when we can build a connector; fall back to

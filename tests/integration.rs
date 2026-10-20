@@ -3480,3 +3480,29 @@ fn mcp_query_cuts_a_huge_cell() {
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["cells_cut"], 1);
 }
+
+/// A host that never answers fails within the connect timeout instead of
+/// waiting out the OS's TCP timeout. (10.255.255.1 is unroutable: on
+/// most networks packets to it vanish, which is the case that hung.)
+#[test]
+fn a_host_that_never_answers_fails_within_the_connect_timeout() {
+    let home = scratch_home("connect-timeout", "");
+    let started = std::time::Instant::now();
+    let out = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args([
+            "--batch",
+            "--dsn",
+            "postgres://u:p@10.255.255.1:5432/db?sslmode=disable",
+            "--sql",
+            "SELECT 1",
+        ])
+        .output()
+        .unwrap();
+    let took = started.elapsed();
+    assert!(!out.status.success());
+    assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+    eprintln!("{}", String::from_utf8_lossy(&out.stderr));
+}
