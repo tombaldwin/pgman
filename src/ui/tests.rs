@@ -1334,3 +1334,26 @@ fn the_error_pointer_names_the_key_that_works_here() {
     let f = footer(&mut app);
     assert!(f.contains("· F2 detail") && !f.contains("! detail"), "{f}");
 }
+
+#[test]
+fn a_running_watch_wears_a_badge() {
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let text = |a: &App| {
+        footer_badges_with(a, &a.theme, 0)
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<String>()
+    };
+    assert!(!text(&a).contains("WATCH"));
+    a.watch = Some(crate::app::WatchState {
+        sql: "select 1".into(),
+        interval: std::time::Duration::from_secs(2),
+        last_fire: std::time::Instant::now(),
+    });
+    assert!(text(&a).contains(" WATCH 2s "), "{}", text(&a));
+}

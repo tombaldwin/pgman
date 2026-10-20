@@ -92,7 +92,7 @@ diff, all of which are also dispatched from this mode.
 | `Ctrl-Z` | Undo |
 | `Ctrl-Y` / `Ctrl-Shift-Z` | Redo |
 | `Ctrl-R` | Reverse-incremental history search — see [History search](#history-search) |
-| `Ctrl-W` | `\watch` — re-run the buffer (or last history entry) every 2s; any key stops |
+| `Ctrl-W` | `\watch` — re-run the buffer (or last history entry) every 2s; a `WATCH` badge shows while it runs; any key stops |
 | `Ctrl-X` | Open the buffer in `$EDITOR` (suspends the TUI, resumes on save) |
 | `Ctrl-S` | Save the current buffer as a named saved query |
 | `Ctrl-O` | Open the saved-queries panel |

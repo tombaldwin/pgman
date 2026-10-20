@@ -643,6 +643,18 @@ pub(crate) fn footer_badges_with(
         ));
         out.push(Span::raw(" "));
     }
+    // `\watch` re-runs on its own until a key stops it; without a
+    // badge the only sign was a status line the first run replaced.
+    if let Some(w) = &app.watch {
+        out.push(Span::styled(
+            format!(" WATCH {}s ", w.interval.as_secs()),
+            Style::default()
+                .bg(theme.accent)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
     // JDBC tap connection badge — flashed whenever the tap
     // listener has seen at least one event this session. F4
     // hint piggybacks on the badge so the operator knows where
