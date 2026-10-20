@@ -34,7 +34,7 @@ expression: dump(&buf)
 │                 │     ] / [  1..9   next / prev tab · tab N — see the tabs section                 │                 │
 │                 │     T             slow queries (pg_stat_statements top-N)                        │                 │
 │                 │     L             active sessions + locks (pg_stat_activity)                     │                 │
-│                 │ ↓ 231 more below                                                                 │                 │
+│                 │ ↓ 232 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 ╰──────────────────────────────────────────────────────────────────────────────────╯                 │
 │                                                                                                                      │

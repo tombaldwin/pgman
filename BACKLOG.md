@@ -54,6 +54,15 @@ and Tom's decisions that day:
   the real thing, on the same server, so it wants its own decision —
   probably only where the profile isn't protected.
 
+### Patching outside a transaction — follow-ups
+- **Statement timeout for no-transaction patches.** They run under the
+  apply connection's 10-minute `statement_timeout`, like every patch. A
+  `VACUUM` or `CREATE INDEX CONCURRENTLY` on a large table can take
+  longer, and a timed-out concurrent build leaves an `INVALID` index
+  (the failure says to drop it). Lift or raise the timeout for those
+  statements only, or make it a per-run choice. Not decided: no timeout
+  means a hung build holds the TUI's apply until it's cancelled.
+
 ### From the robustness pass (2026-10-20) — not yet done
 Four Fable reviewers (hands-on tmux, MCP security, environments
 correctness, robustness + docs). Fixed on branch `robustness-pass`;

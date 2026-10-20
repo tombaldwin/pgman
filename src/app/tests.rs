@@ -10241,8 +10241,10 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
     a.env_patcher = Some(EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d| {
-            Box::pin(std::future::ready(Ok(crate::demo::patch_plan(&e, &s, &d))))
+        plan: std::sync::Arc::new(|e, s, d, outside| {
+            Box::pin(std::future::ready(Ok(crate::demo::patch_plan(
+                &e, &s, &d, outside,
+            ))))
         }),
         apply: std::sync::Arc::new(move |p| {
             applied
@@ -10256,6 +10258,7 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
                         outcome: Ok(2),
                     }],
                     error: None,
+                    recorded_after: None,
                 },
             ))
         }),
@@ -10272,7 +10275,10 @@ fn p_plans_patches_and_y_applies_them() {
     press(&mut a, KeyCode::Char('P'));
     let v = a.environments.patch.as_ref().expect("view open");
     assert!(matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.patches.len() == 2 && !p.protected));
-    assert_eq!(a.last_status.as_deref(), Some("y apply · q cancel"));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("y apply · q cancel · o plan outside a transaction")
+    );
     // Keys don't fall through to the overview while it's open.
     press(&mut a, KeyCode::Char('r'));
     press(&mut a, KeyCode::Enter);
@@ -10298,8 +10304,8 @@ fn p_plans_patches_and_y_applies_them() {
 fn a_protected_environment_applies_only_on_its_typed_name() {
     let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut a = patching_app(applied.clone());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d| {
-        let mut p = crate::demo::patch_plan(&e, &s, &d);
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
     });
@@ -10328,6 +10334,71 @@ fn a_protected_environment_applies_only_on_its_typed_name() {
 }
 
 #[test]
+fn o_plans_again_outside_a_transaction_and_that_takes_the_typed_name() {
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    press(&mut a, KeyCode::Char('P'));
+    press(&mut a, KeyCode::Char('o'));
+    let v = a.environments.patch.as_ref().unwrap();
+    let PatchStage::Plan(Ok(p)) = &v.stage else {
+        panic!("{:?}", v.stage)
+    };
+    assert!(p.outside_transaction && !p.protected);
+    assert_eq!(p.patches[2].outside, Some("CONCURRENTLY"));
+    let env = v.environment.clone();
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(format!("outside a transaction: type {env}, then Enter · Esc cancel").as_str())
+    );
+    // Unprotected, but y no longer applies: it's typed.
+    press(&mut a, KeyCode::Char('y'));
+    press(&mut a, KeyCode::Enter);
+    assert!(applied.lock().unwrap().is_empty());
+    press(&mut a, KeyCode::Backspace);
+    for c in env.chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(applied.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_plan_with_nothing_but_a_no_transaction_patch_offers_o() {
+    let mut p = crate::demo::patch_plan("staging", "staging", "shop", false);
+    p.patches.clear();
+    assert_eq!(
+        patch_hint(&Ok(p.clone())),
+        "nothing to apply in a transaction · o plan outside one · q back"
+    );
+    p.outside_would_help = false;
+    assert_eq!(patch_hint(&Ok(p)), "nothing to apply · q back");
+}
+
+#[test]
+fn while_a_name_is_typed_o_is_a_letter_and_ctrl_o_plans_outside() {
+    let mut a = patching_app(Default::default());
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
+        p.protected = true;
+        Box::pin(std::future::ready(Ok(p)))
+    });
+    press(&mut a, KeyCode::Char('P'));
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .ends_with("· ctrl-o plan outside a transaction"));
+    press(&mut a, KeyCode::Char('o'));
+    let v = a.environments.patch.as_ref().unwrap();
+    assert_eq!(v.typed, "o");
+    assert!(matches!(&v.stage, PatchStage::Plan(Ok(p)) if !p.outside_transaction));
+    a.on_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+    let v = a.environments.patch.as_ref().unwrap();
+    assert!(matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.outside_transaction));
+    assert_eq!(v.typed, "", "a fresh plan starts a fresh name");
+}
+
+#[test]
 fn a_late_plan_for_another_database_is_dropped() {
     let mut a = patching_app(Default::default());
     a.environments.patch = Some(PatchView {
@@ -10350,7 +10421,7 @@ fn a_late_plan_for_another_database_is_dropped() {
     ));
     // Applying can't be closed out from under.
     a.environments.patch.as_mut().unwrap().stage =
-        PatchStage::Applying(crate::demo::patch_plan("staging", "staging", "shop"));
+        PatchStage::Applying(crate::demo::patch_plan("staging", "staging", "shop", false));
     press(&mut a, KeyCode::Esc);
     assert!(a.environments.patch.is_some());
     // A second plan for the same database (Esc while planning, then P
@@ -10360,7 +10431,7 @@ fn a_late_plan_for_another_database_is_dropped() {
         environment: "staging".into(),
         server: "staging".into(),
         database: "shop".into(),
-        result: Ok(crate::demo::patch_plan("staging", "staging", "shop")),
+        result: Ok(crate::demo::patch_plan("staging", "staging", "shop", false)),
     });
     assert!(matches!(
         a.environments.patch.as_ref().unwrap().stage,

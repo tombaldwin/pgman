@@ -326,11 +326,12 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.env_patcher = Some(app::EnvPatcher {
-        plan: std::sync::Arc::new(|environment, server, database| {
+        plan: std::sync::Arc::new(|environment, server, database, outside| {
             Box::pin(pgman::inventory::patching::plan_for(
                 environment,
                 server,
                 database,
+                outside,
             ))
         }),
         apply: std::sync::Arc::new(|plan| Box::pin(pgman::inventory::patching::apply_for(plan))),

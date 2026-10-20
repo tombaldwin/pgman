@@ -8,11 +8,19 @@
 //!    each checked by [`query::apply::check_patch`] against safety.toml.
 //!    It stops at the first patch that can't be applied here (a read-only
 //!    profile, a blocked statement, its own `BEGIN`, `CONCURRENTLY`).
+//!    A pending file numbered below the highest recorded id is left out
+//!    and named: the database skipped it, and running it now would put it
+//!    after patches numbered above it.
 //! 2. After the confirmation, [`apply`] connects writable and runs the
 //!    planned patches in order — the text that was shown, not a fresh
 //!    read of the file — each in its own transaction, re-reading the
 //!    version table before each one and stopping at the first failure,
 //!    or at the first sign the database moved since the plan.
+//!
+//! Planned with `outside` (the TUI's `o`), a patch that can't run in a
+//! transaction is planned too, marked, and run statement by statement
+//! with no transaction; confirming such a plan takes the typed name even
+//! where the environment isn't protected. MCP never plans that way.
 //!
 //! Only a primary (or a plain server) is patched; a replica is refused.
 //! An environment is *protected* when it says `protected = true`, or by
@@ -40,6 +48,9 @@ pub struct PlannedPatch {
     /// The text as read at plan time — what runs.
     pub text: String,
     pub statements: Vec<String>,
+    /// Set when it runs outside a transaction, naming why (`VACUUM`…):
+    /// its statements commit one by one.
+    pub outside: Option<&'static str>,
 }
 
 /// What [`apply`] would do, for the operator to confirm.
@@ -60,12 +71,27 @@ pub struct PatchPlan {
     /// Every id recorded when planned, sorted: the run checks the
     /// database is still exactly here (plus what it has applied).
     pub recorded: Vec<i64>,
+    /// Pending files numbered below the highest recorded id, left out:
+    /// running one now would put it after patches numbered above it.
+    pub below_recorded: Vec<String>,
+    /// Planned with patches that need it allowed to run outside a
+    /// transaction (the TUI's `o`; never MCP).
+    pub outside_transaction: bool,
+    /// The plan stopped at a patch that would run outside a transaction:
+    /// planning again with `outside_transaction` gets further.
+    pub outside_would_help: bool,
 }
 
 impl PatchPlan {
     /// The patch's id, as the version table records it.
     fn id(p: &PatchFile) -> Option<i64> {
         p.version_id.or(p.filename_number)
+    }
+
+    /// Whether confirming takes typing the environment's name: a
+    /// protected one, or any patch running outside a transaction.
+    pub fn needs_typed(&self) -> bool {
+        self.protected || self.patches.iter().any(|p| p.outside.is_some())
     }
 }
 
@@ -83,6 +109,9 @@ pub struct ApplyReport {
     pub results: Vec<PatchResult>,
     /// Set when it couldn't start (connect, re-check).
     pub error: Option<String>,
+    /// The highest id recorded after the run, read again at the end;
+    /// `None` when it couldn't be read (or the run never connected).
+    pub recorded_after: Option<i64>,
 }
 
 impl ApplyReport {
@@ -99,6 +128,14 @@ impl ApplyReport {
         if let Some(e) = &self.error {
             return format!("nothing applied: {e}");
         }
+        let ran = self.ran();
+        match self.recorded_after {
+            Some(v) => format!("{ran} · recorded up to {v} now"),
+            None => ran,
+        }
+    }
+
+    fn ran(&self) -> String {
         match self.failed() {
             None => format!("applied {} patch(es)", self.applied()),
             Some(f) => format!(
@@ -215,12 +252,25 @@ async fn dsn_for(target: &Target, fetch_secret: &FetchSecret) -> Result<crate::c
     Ok(dsn)
 }
 
+/// `pending` (in id order) split at `applied_max`: those above it, which
+/// the plan runs, and those below it — a gap the database skipped, which
+/// the plan leaves out. Pure.
+pub fn split_at_recorded(
+    pending: Vec<PatchFile>,
+    applied_max: Option<i64>,
+) -> (Vec<PatchFile>, Vec<PatchFile>) {
+    pending
+        .into_iter()
+        .partition(|f| applied_max.is_none_or(|max| PatchPlan::id(f).is_none_or(|id| id > max)))
+}
+
 /// The pending patches of `target`, checked, for the operator to confirm.
 pub async fn plan(
     env: &Environment,
     target: &Target,
     safety: &crate::safety::SafetyConfig,
     fetch_secret: &FetchSecret,
+    outside: bool,
 ) -> Result<PatchPlan, String> {
     let cfg = refuse(env, target)?;
     let dir = env
@@ -246,6 +296,9 @@ pub async fn plan(
         applied_max: report.applied_max,
         patches: Vec::new(),
         stopped_at: None,
+        below_recorded: Vec::new(),
+        outside_transaction: outside,
+        outside_would_help: false,
         dir: dir.display().to_string(),
         recorded: {
             let mut r = applied.clone();
@@ -256,7 +309,9 @@ pub async fn plan(
     };
     let duplicated: std::collections::BTreeSet<i64> =
         report.duplicate_ids.iter().map(|(id, _)| *id).collect();
-    for file in report.pending {
+    let (pending, below) = split_at_recorded(report.pending, report.applied_max);
+    plan.below_recorded = below.into_iter().map(|f| f.file).collect();
+    for file in pending {
         let id = PatchPlan::id(&file).unwrap_or_default();
         if duplicated.contains(&id) {
             plan.stopped_at = Some((
@@ -280,13 +335,17 @@ pub async fn plan(
                 break;
             }
         };
-        match crate::query::apply::check_patch(safety, &target.database, &text) {
-            Ok(statements) => plan.patches.push(PlannedPatch {
+        match crate::query::apply::check_patch(safety, &target.database, &text, outside) {
+            Ok(checked) => plan.patches.push(PlannedPatch {
                 file,
                 text,
-                statements,
+                statements: checked.statements,
+                outside: checked.outside,
             }),
             Err(e) => {
+                plan.outside_would_help = !outside
+                    && crate::query::apply::check_patch(safety, &target.database, &text, true)
+                        .is_ok();
                 plan.stopped_at = Some((file.file, e));
                 break;
             }
@@ -394,11 +453,31 @@ pub async fn apply(
             let applied = crate::query::apply::applied_ids(&client, &cfg).await?;
             still_as_planned(plan, i, &applied)?;
             // Checked again: safety.toml may have changed since the plan.
-            let statements = crate::query::apply::check_patch(safety, &target.database, &p.text)?;
-            if statements != p.statements {
+            let checked = crate::query::apply::check_patch(
+                safety,
+                &target.database,
+                &p.text,
+                plan.outside_transaction,
+            )?;
+            if checked.statements != p.statements || checked.outside != p.outside {
                 return Err("the patch's statements differ from the plan".to_string());
             }
-            let done = crate::query::apply::apply(&client, &cfg, &p.file, &statements).await?;
+            let statements = checked.statements;
+            let done = match p.outside {
+                None => crate::query::apply::apply(&client, &cfg, &p.file, &statements).await?,
+                Some(what) => {
+                    tracing::warn!(
+                        target: "pgman::patching",
+                        environment = %plan.environment,
+                        server = %plan.server,
+                        database = %plan.database,
+                        file = %p.file.file,
+                        what,
+                        "patch running outside a transaction"
+                    );
+                    crate::query::apply::apply_outside(&client, &cfg, &p.file, &statements).await?
+                }
+            };
             if !done.recorded {
                 return Err(format!(
                     "it ran, but recorded no version row {}; stopping",
@@ -425,6 +504,13 @@ pub async fn apply(
             break;
         }
     }
+    report.recorded_after = match crate::query::apply::applied_ids(&client, &cfg).await {
+        Ok(ids) => ids.into_iter().max(),
+        Err(e) => {
+            tracing::warn!(target: "pgman::patching", error = %e, "couldn't re-read the version table");
+            None
+        }
+    };
     report
 }
 
@@ -435,13 +521,14 @@ pub async fn plan_for(
     environment: String,
     server: String,
     database: String,
+    outside: bool,
 ) -> Result<PatchPlan, String> {
     let (env, target) =
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
             .map_err(|e| format!("resolve task failed: {e}"))??;
     let safety = crate::safety::SafetyConfig::load_personal().0;
-    plan(&env, &target, &safety, &aws_secrets()).await
+    plan(&env, &target, &safety, &aws_secrets(), outside).await
 }
 
 /// [`apply`] for a plan from [`plan_for`], resolving its database again.
@@ -459,6 +546,7 @@ pub async fn apply_for(p: PatchPlan) -> ApplyReport {
         Err(e) => ApplyReport {
             results: Vec::new(),
             error: Some(e),
+            recorded_after: None,
         },
     }
 }
@@ -498,12 +586,37 @@ mod tests {
                     },
                     text: String::new(),
                     statements: Vec::new(),
+                    outside: None,
                 })
                 .collect(),
             stopped_at: None,
             dir: "/p".into(),
             recorded: vec![1],
+            below_recorded: Vec::new(),
+            outside_transaction: false,
+            outside_would_help: false,
         }
+    }
+
+    #[test]
+    fn a_pending_patch_below_the_recorded_version_is_left_out() {
+        let f = |id: i64| PatchFile {
+            file: format!("{id}-x.sql"),
+            filename_number: Some(id),
+            version_id: Some(id),
+        };
+        let names = |v: Vec<PatchFile>| v.into_iter().map(|f| f.file).collect::<Vec<_>>();
+        let (run, below) = split_at_recorded(vec![f(7), f(249), f(250)], Some(248));
+        assert_eq!(names(run), ["249-x.sql", "250-x.sql"]);
+        assert_eq!(names(below), ["7-x.sql"]);
+        // The recorded id itself isn't pending; one equal to it would be a
+        // second file claiming it, which isn't "above".
+        let (run, below) = split_at_recorded(vec![f(248)], Some(248));
+        assert!(run.is_empty());
+        assert_eq!(names(below), ["248-x.sql"]);
+        let (run, below) = split_at_recorded(vec![f(1), f(2)], None);
+        assert_eq!(names(run), ["1-x.sql", "2-x.sql"], "nothing recorded yet");
+        assert!(below.is_empty());
     }
 
     #[test]
@@ -584,8 +697,17 @@ mod tests {
                 },
             ],
             error: None,
+            recorded_after: None,
         };
         assert_eq!(r.summary(), "applied 1, then 3-x.sql failed: lock timeout");
+        let read = ApplyReport {
+            recorded_after: Some(2),
+            ..r.clone()
+        };
+        assert_eq!(
+            read.summary(),
+            "applied 1, then 3-x.sql failed: lock timeout · recorded up to 2 now"
+        );
         assert_eq!(
             ApplyReport {
                 error: Some("no route".into()),

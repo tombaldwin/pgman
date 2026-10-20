@@ -2906,7 +2906,9 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
 
         // 2: applies and records itself.
         let (p2, sql2) = patch(2, &format!("ALTER TABLE {tbl} ADD COLUMN c int;"));
-        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2).unwrap();
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2, false)
+            .unwrap()
+            .statements;
         let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts)
             .await
             .unwrap();
@@ -2921,7 +2923,9 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
 
         // 3: the second statement fails, so its version row is rolled back too.
         let (p3, sql3) = patch(3, "SELECT * FROM pgman_it_no_such_table;");
-        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3).unwrap();
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3, false)
+            .unwrap()
+            .statements;
         let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts)
             .await
             .unwrap_err();
@@ -2941,7 +2945,9 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
             .await
             .unwrap();
         let (p4, sql4) = patch(4, &format!("ALTER TABLE {tbl} ADD COLUMN d int;"));
-        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql4).unwrap();
+        let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql4, false)
+            .unwrap()
+            .statements;
         let started = std::time::Instant::now();
         let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts)
             .await
@@ -3036,7 +3042,9 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
     use pgman::inventory::patching::{apply, plan};
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let p = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let p = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
         assert!(p.protected, "named prod");
         assert_eq!(p.applied_max, Some(1));
         let files: Vec<&str> = p.patches.iter().map(|x| x.file.file.as_str()).collect();
@@ -3051,6 +3059,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &target,
             &pgman::safety::SafetyConfig::default(),
             &no_secrets,
+            false,
         )
         .await
         .unwrap();
@@ -3071,10 +3080,13 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             "{}",
             r.summary()
         );
+        assert_eq!(r.recorded_after, Some(2), "002 recorded, 003 rolled back");
 
         // Fix 003 on disk and plan again.
         std::fs::write(dir.join("003-bad.sql"), row(3)).unwrap();
-        let p2 = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let p2 = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
         assert_eq!(p2.applied_max, Some(2));
         assert_eq!(p2.patches.len(), 2);
 
@@ -3091,23 +3103,38 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             "{err}"
         );
 
+        // Now 003 is a gap below the recorded 4: planned again, it's left
+        // out and named, not run after 004.
+        let gap = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        assert!(gap.patches.is_empty(), "{:?}", gap.patches);
+        assert_eq!(gap.below_recorded, ["003-bad.sql"]);
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("DELETE FROM {vt} WHERE id = 4")],
+        );
+        assert!(out.status.success());
+
         // A replica is refused outright.
         let mut replica = target.clone();
         replica.role = pgman::mcp::connections::Role::Replica;
-        assert!(plan(&env, &replica, &writable, &no_secrets)
+        assert!(plan(&env, &replica, &writable, &no_secrets, false)
             .await
             .unwrap_err()
             .contains("replica"));
         env.protected = Some(false);
         assert!(
-            !plan(&env, &target, &writable, &no_secrets)
+            !plan(&env, &target, &writable, &no_secrets, false)
                 .await
                 .unwrap()
                 .protected
         );
 
         // A plan whose statements aren't its text's is refused.
-        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let mut fresh = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
         assert_eq!(fresh.patches[0].file.file, "003-bad.sql");
         fresh.patches[0].statements.push("SELECT 1".into());
         let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
@@ -3115,7 +3142,9 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         assert!(err.contains("differ from the plan"), "{err}");
 
         // A patch that runs but doesn't record its own id stops the run.
-        let mut fresh = plan(&env, &target, &writable, &no_secrets).await.unwrap();
+        let mut fresh = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
         let wrong = format!("INSERT INTO {vt} (id) VALUES (33);");
         fresh.patches[0].text = wrong.clone();
         fresh.patches[0].statements = vec![wrong.trim_end_matches(';').to_string()];
@@ -3123,10 +3152,16 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("recorded no version row 3"), "{err}");
         assert_eq!(r.results.len(), 1, "and nothing after it runs");
+        // (It did record 33, which would make every file a gap below it.)
+        let out = batch_with_home(
+            &home,
+            &["--yes", "--sql", &format!("DELETE FROM {vt} WHERE id = 33")],
+        );
+        assert!(out.status.success());
 
         // Two files with one id, or a name that disagrees with its id: fix the files first.
         std::fs::write(dir.join("003-dup.sql"), row(3)).unwrap();
-        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+        let (at, why) = plan(&env, &target, &writable, &no_secrets, false)
             .await
             .unwrap()
             .stopped_at
@@ -3139,7 +3174,7 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         // (Without 005, which would sort first and stop on CONCURRENTLY.)
         std::fs::remove_file(dir.join("005-idx.sql")).unwrap();
         std::fs::write(dir.join("003-bad.sql"), row(7)).unwrap();
-        let (at, why) = plan(&env, &target, &writable, &no_secrets)
+        let (at, why) = plan(&env, &target, &writable, &no_secrets, false)
             .await
             .unwrap()
             .stopped_at
@@ -3148,6 +3183,178 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         assert!(
             why.contains("its name says 3 but it records version 7"),
             "{why}"
+        );
+    });
+}
+
+/// A patch that needs no transaction is refused until planned outside
+/// one; then it runs statement by statement, and a failure part-way says
+/// what stayed applied.
+#[test]
+fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
+    let home = scratch_home("env-patch-outside", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_ov_{pid}");
+    let tbl = format!("pgman_it_ot_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int); INSERT INTO {tbl} VALUES (1), (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    for (name, body) in [
+        (
+            "002-col.sql",
+            // Fails first: an ordinary patch in an outside plan still
+            // runs in its own transaction, so this rolls back whole.
+            format!(
+                "{}ALTER TABLE {tbl} ADD COLUMN c int;\nSELECT * FROM pgman_it_no_such_table;\n",
+                row(2)
+            ),
+        ),
+        ("003-vac.sql", format!("{}VACUUM ANALYZE {tbl};\n", row(3))),
+        (
+            "004-idx.sql",
+            format!(
+                // The unique one fails on the duplicate ids, leaving it INVALID.
+                "{}CREATE INDEX CONCURRENTLY {tbl}_c ON {tbl} (c);\n\
+                 CREATE UNIQUE INDEX CONCURRENTLY {tbl}_u ON {tbl} (id);\n",
+                row(4)
+            ),
+        ),
+    ] {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"it-outside\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let inside = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        let files: Vec<&str> = inside
+            .patches
+            .iter()
+            .map(|x| x.file.file.as_str())
+            .collect();
+        assert_eq!(files, ["002-col.sql"]);
+        let (at, why) = inside.stopped_at.clone().unwrap();
+        assert!(at == "003-vac.sql" && why.contains("VACUUM"), "{why}");
+        assert!(inside.outside_would_help);
+
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        let shape: Vec<(&str, Option<&str>)> = p
+            .patches
+            .iter()
+            .map(|x| (x.file.file.as_str(), x.outside))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("002-col.sql", None),
+                ("003-vac.sql", Some("VACUUM")),
+                ("004-idx.sql", Some("CONCURRENTLY")),
+            ]
+        );
+        assert!(p.needs_typed() && !p.protected && !p.outside_would_help);
+        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("nothing applied"), "{err}");
+        assert_eq!(r.recorded_after, Some(1), "002 rolled back, row and all");
+        std::fs::write(
+            dir.join("002-col.sql"),
+            format!("{}ALTER TABLE {tbl} ADD COLUMN c int;\n", row(2)),
+        )
+        .unwrap();
+
+        // A plan made outside can't be run as one made inside.
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        let mut forged = p.clone();
+        forged.outside_transaction = false;
+        let r = apply(&env, &target, &writable, &no_secrets, &forged).await;
+        let err = r.results[1].outcome.as_ref().unwrap_err();
+        assert!(err.contains("can't run in a transaction"), "{err}");
+
+        // 002 ran in a transaction above; plan again from where it is.
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        // Nor run with a patch's no-transaction mark taken off.
+        let mut forged = p.clone();
+        forged.patches[0].outside = None;
+        let r = apply(&env, &target, &writable, &no_secrets, &forged).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(err.contains("differ from the plan"), "{err}");
+        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        assert_eq!(r.error, None);
+        assert_eq!(r.results[0].outcome, Ok(2), "VACUUM ran: {r:?}");
+        let err = r.results[1].outcome.as_ref().unwrap_err();
+        assert!(
+            err.starts_with("statement 3 of 3 failed outside a transaction")
+                && err.contains("2 earlier statement(s) stay applied")
+                && err.contains("version 4 IS recorded")
+                && err.contains("leaves an INVALID index"),
+            "{err}"
+        );
+        assert_eq!(r.recorded_after, Some(4));
+        let out = batch_with_home(
+            &home,
+            &[
+                "--format",
+                "csv",
+                "--sql",
+                &format!(
+                    "SELECT c.relname, i.indisvalid FROM pg_index i \
+                     JOIN pg_class c ON c.oid = i.indexrelid \
+                     WHERE i.indrelid = '{tbl}'::regclass ORDER BY 1"
+                ),
+            ],
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(&format!("{tbl}_c,t")) && stdout.contains(&format!("{tbl}_u,f")),
+            "the first index stayed, the failed one is INVALID: {stdout}"
         );
     });
 }
@@ -3313,7 +3520,8 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
     let mut writable = pgman::safety::SafetyConfig::default();
     writable.default.read_only = false;
     // The check refuses it outright now…
-    let refused = pgman::query::apply::check_patch(&writable, "pgman_test", &text).unwrap_err();
+    let refused =
+        pgman::query::apply::check_patch(&writable, "pgman_test", &text, false).unwrap_err();
     assert!(refused.contains("SET"), "{refused}");
     // …and were a statement like it to get through, the server runs it alone.
     let statements: Vec<String> = vec![
@@ -3616,6 +3824,9 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         stopped_at: None,
         dir: dir.display().to_string(),
         recorded: Vec::new(),
+        below_recorded: Vec::new(),
+        outside_transaction: false,
+        outside_would_help: false,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let r = rt.block_on(pgman::inventory::patching::apply(

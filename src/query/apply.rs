@@ -10,13 +10,21 @@
 //!
 //! What is refused before anything runs: a database the profile keeps
 //! read-only; a statement a `Block` guard stops; a patch that manages its
-//! own transaction (`BEGIN`/`COMMIT`) or builds an index `CONCURRENTLY`,
-//! neither of which can run inside pgman's transaction; and a patch that
+//! own transaction (`BEGIN`/`COMMIT`), or holds a statement that can't
+//! run inside one ([`needs_no_transaction`]: `VACUUM`, `CONCURRENTLY`…),
+//! since pgman's transaction is what makes it all or nothing; and a patch that
 //! changes session settings (`SET`, `RESET`, `set_config`) — it could lift
 //! the lock timeout, or change how the server reads the next statement
 //! (`standard_conforming_strings`) so that it isn't the statement pgman
 //! checked. Those are run by hand. The caller confirms each patch first;
 //! that confirmation is what answers the guards' `Confirm`.
+//!
+//! The one way past the transaction: an operator who plans with
+//! `outside` (the TUI's `o`, confirmed by typing the environment's name;
+//! never MCP) lets a patch holding a statement no transaction can run go
+//! through [`apply_outside`] — each statement committing as it runs, so a
+//! failure part-way leaves the earlier ones applied, and says so. The
+//! other refusals stand.
 //!
 //! Each statement goes to the server on its own through the extended
 //! protocol, which refuses a string holding more than one command: what
@@ -28,6 +36,27 @@ use crate::conn;
 /// How long a patch statement waits for a lock before failing.
 pub const LOCK_TIMEOUT: &str = "5s";
 
+/// What makes `stmt` unable to run inside a transaction block, if
+/// anything: the server refuses these there, so a patch holding one
+/// can't be all or nothing. Reads code tokens only — `concurrently` in a
+/// string or comment isn't one. Pure.
+pub fn needs_no_transaction(stmt: &str) -> Option<&'static str> {
+    let tokens = crate::safety::code_tokens(stmt);
+    let t = |i: usize| tokens.get(i).map(String::as_str);
+    // REFRESH MATERIALIZED VIEW CONCURRENTLY runs in a transaction fine.
+    if t(0) != Some("refresh") && tokens.iter().any(|t| t == "concurrently") {
+        return Some("CONCURRENTLY");
+    }
+    match (t(0), t(1)) {
+        (Some("vacuum"), _) => Some("VACUUM"),
+        (Some("create" | "drop"), Some("database")) => Some("CREATE or DROP DATABASE"),
+        (Some("create" | "drop"), Some("tablespace")) => Some("CREATE or DROP TABLESPACE"),
+        (Some("alter"), Some("system")) => Some("ALTER SYSTEM"),
+        (Some("reindex"), Some("system" | "database")) => Some("REINDEX SYSTEM or DATABASE"),
+        _ => None,
+    }
+}
+
 /// The next patch to apply: the lowest-id pending one, if any. Pure.
 pub fn next_patch(files: &[PatchFile], applied: &[i64]) -> Option<PatchFile> {
     patches::reconcile(files.to_vec(), applied)
@@ -36,13 +65,26 @@ pub fn next_patch(files: &[PatchFile], applied: &[i64]) -> Option<PatchFile> {
         .next()
 }
 
+/// A patch [`check_patch`] passed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked {
+    pub statements: Vec<String>,
+    /// What can't run in a transaction ([`needs_no_transaction`]), when
+    /// the patch holds one: it then runs statement by statement, each
+    /// committing as it goes ([`apply_outside`]). Only with `outside`.
+    pub outside: Option<&'static str>,
+}
+
 /// The statements of `sql`, checked for applying to `db`, or why not.
-/// Pure (reads only `safety`).
+/// `outside` lets a patch through that holds a statement no transaction
+/// can run (`VACUUM`, `CONCURRENTLY`…): the operator chose to run it
+/// without one. Pure (reads only `safety`).
 pub fn check_patch(
     safety: &crate::safety::SafetyConfig,
     db: &str,
     sql: &str,
-) -> Result<Vec<String>, String> {
+    outside: bool,
+) -> Result<Checked, String> {
     if safety.profile_for(db).read_only {
         return Err(format!(
             "safety.toml keeps '{db}' read-only; set read_only = false for it to apply patches"
@@ -63,6 +105,7 @@ pub fn check_patch(
     if statements.is_empty() {
         return Err("the patch has no statements".to_string());
     }
+    let mut needs = None;
     for s in &statements {
         if crate::safety::has_unicode_escape(s) {
             return Err(
@@ -84,16 +127,24 @@ pub fn check_patch(
                 "the patch manages its own transaction (BEGIN/COMMIT); apply it by hand".into(),
             );
         }
-        if tokens.iter().any(|t| t == "concurrently") {
-            return Err(
-                "the patch builds or drops an index CONCURRENTLY, which can't run in a \
-                 transaction; apply it by hand"
-                    .into(),
-            );
+        if let Some(what) = needs_no_transaction(s) {
+            if !outside {
+                return Err(format!(
+                    "the patch uses {what}, which can't run in a transaction; {OUTSIDE_HINT}"
+                ));
+            }
+            needs.get_or_insert(what);
         }
     }
-    Ok(statements)
+    Ok(Checked {
+        statements,
+        outside: needs,
+    })
 }
+
+/// How a patch [`needs_no_transaction`] gets applied.
+pub const OUTSIDE_HINT: &str =
+    "pgman's environments view can plan it to run outside one (o), or apply it by hand";
 
 /// What an apply did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +206,70 @@ pub async fn apply(
     })
 }
 
+/// Run `statements` (from a [`check_patch`] with `outside`) one at a
+/// time with no transaction around them, each committing as it runs, then
+/// read the version table again. A failure part-way leaves the earlier
+/// statements applied — and, when the version row came first, the patch
+/// recorded — so the error says exactly where it stopped.
+pub async fn apply_outside(
+    client: &tokio_postgres::Client,
+    cfg: &PatchesConfig,
+    patch: &PatchFile,
+    statements: &[String],
+) -> Result<Applied, String> {
+    let id = patch.version_id.or(patch.filename_number);
+    for (i, stmt) in statements.iter().enumerate() {
+        // Session-wide, there being no transaction to scope it; again
+        // before each statement, as in `apply`.
+        let reset = client
+            .batch_execute(&format!("SET lock_timeout = '{LOCK_TIMEOUT}'"))
+            .await;
+        let run = match reset {
+            Ok(()) => client.execute(stmt.as_str(), &[]).await.map(drop),
+            Err(e) => Err(e),
+        };
+        if let Err(e) = run {
+            let msg = e
+                .as_db_error()
+                .map(|d| d.message().to_string())
+                .unwrap_or_else(|| e.to_string());
+            let recorded = match (applied_ids(client, cfg).await, id) {
+                (Ok(ids), Some(id)) if ids.contains(&id) => {
+                    format!("version {id} IS recorded, so it reads as applied")
+                }
+                (Ok(_), Some(id)) => format!("version {id} is not recorded"),
+                _ => "the version table couldn't be read".to_string(),
+            };
+            return Err(outside_failure(i, statements.len(), stmt, &msg, &recorded));
+        }
+    }
+    let applied = applied_ids(client, cfg)
+        .await
+        .map_err(|e| format!("ran, but the version table couldn't be read afterwards: {e}"))?;
+    Ok(Applied {
+        file: patch.file.clone(),
+        statements: statements.len(),
+        recorded: id.is_some_and(|id| applied.contains(&id)),
+    })
+}
+
+/// What [`apply_outside`] says when statement `i` (of `n`) failed with
+/// `msg`. Pure.
+fn outside_failure(i: usize, n: usize, stmt: &str, msg: &str, recorded: &str) -> String {
+    let mut out = format!(
+        "statement {} of {n} failed outside a transaction: {msg}. {i} earlier statement(s) \
+         stay applied and {recorded}; finish the patch by hand",
+        i + 1
+    );
+    let tokens = crate::safety::code_tokens(stmt);
+    if tokens.first().is_some_and(|t| t == "create") && tokens.iter().any(|t| t == "concurrently") {
+        out.push_str(
+            " (a failed CREATE INDEX CONCURRENTLY leaves an INVALID index: drop it before trying again)",
+        );
+    }
+    out
+}
+
 /// Whether `client`'s server is a standby.
 pub async fn in_recovery(client: &tokio_postgres::Client) -> Result<bool, String> {
     client
@@ -212,13 +327,25 @@ mod tests {
     fn a_patch_is_checked_before_anything_runs() {
         let ok = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
                   ALTER TABLE t ADD COLUMN c int;";
-        assert_eq!(check_patch(&writable(), "ledger", ok).unwrap().len(), 2);
+        assert_eq!(
+            check_patch(&writable(), "ledger", ok, false)
+                .unwrap()
+                .statements
+                .len(),
+            2
+        );
         // SET inside a statement, and CONCURRENTLY in a string, are fine.
         let fine = "ALTER TABLE t ALTER COLUMN c SET DEFAULT 0;\n\
                     UPDATE t SET note = 'built concurrently' WHERE false;";
-        assert_eq!(check_patch(&writable(), "ledger", fine).unwrap().len(), 2);
+        assert_eq!(
+            check_patch(&writable(), "ledger", fine, false)
+                .unwrap()
+                .statements
+                .len(),
+            2
+        );
         assert!(
-            check_patch(&SafetyConfig::default(), "ledger", ok)
+            check_patch(&SafetyConfig::default(), "ledger", ok, false)
                 .unwrap_err()
                 .contains("read-only"),
             "the default profile is read-only"
@@ -226,6 +353,10 @@ mod tests {
         for (bad, why) in [
             ("BEGIN; ALTER TABLE t ADD c int; COMMIT;", "own transaction"),
             ("CREATE INDEX CONCURRENTLY i ON t (c);", "CONCURRENTLY"),
+            (
+                "VACUUM ANALYZE t;",
+                "VACUUM, which can't run in a transaction",
+            ),
             ("", "no statements"),
             ("DROP TABLE t;", "blocked"),
             ("SET lock_timeout = 0;", "session settings"),
@@ -241,8 +372,95 @@ mod tests {
                 "session settings",
             ),
         ] {
-            let e = check_patch(&writable(), "ledger", bad).unwrap_err();
+            let e = check_patch(&writable(), "ledger", bad, false).unwrap_err();
             assert!(e.contains(why), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn outside_lets_through_only_what_needs_no_transaction() {
+        let vacuum = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
+                      VACUUM ANALYZE t;";
+        let e = check_patch(&writable(), "ledger", vacuum, false).unwrap_err();
+        assert!(e.contains("plan it to run outside one (o)"), "{e}");
+        let c = check_patch(&writable(), "ledger", vacuum, true).unwrap();
+        assert_eq!(c.outside, Some("VACUUM"));
+        assert_eq!(c.statements.len(), 2);
+        // A patch that doesn't need it still runs in its transaction.
+        let plain = "ALTER TABLE t ADD COLUMN c int;";
+        assert_eq!(
+            check_patch(&writable(), "ledger", plain, true)
+                .unwrap()
+                .outside,
+            None
+        );
+        // And outside lifts nothing else.
+        for (bad, why) in [
+            ("BEGIN; VACUUM t; COMMIT;", "own transaction"),
+            ("SET lock_timeout = 0; VACUUM t;", "session settings"),
+            ("DROP TABLE t; VACUUM t;", "blocked"),
+        ] {
+            let e = check_patch(&writable(), "ledger", bad, true).unwrap_err();
+            assert!(e.contains(why), "{bad:?}: {e}");
+        }
+        assert!(
+            check_patch(&SafetyConfig::default(), "ledger", vacuum, true)
+                .unwrap_err()
+                .contains("read-only")
+        );
+    }
+
+    #[test]
+    fn a_failure_outside_a_transaction_says_what_stayed_and_what_to_drop() {
+        assert_eq!(
+            outside_failure(1, 3, "VACUUM t", "canceled", "version 4 IS recorded"),
+            "statement 2 of 3 failed outside a transaction: canceled. 1 earlier statement(s) \
+             stay applied and version 4 IS recorded; finish the patch by hand"
+        );
+        assert!(outside_failure(
+            0,
+            1,
+            "CREATE UNIQUE INDEX CONCURRENTLY i ON t (c)",
+            "canceling statement due to statement timeout",
+            "x"
+        )
+        .ends_with("leaves an INVALID index: drop it before trying again)"));
+        assert!(!outside_failure(0, 1, "DROP INDEX CONCURRENTLY i", "m", "x").contains("INVALID"));
+    }
+
+    #[test]
+    fn statements_the_server_refuses_in_a_transaction_are_named() {
+        for (stmt, what) in [
+            ("VACUUM t", "VACUUM"),
+            ("vacuum (verbose, analyze) t", "VACUUM"),
+            ("CREATE INDEX CONCURRENTLY i ON t (c)", "CONCURRENTLY"),
+            ("DROP INDEX CONCURRENTLY IF EXISTS i", "CONCURRENTLY"),
+            ("REINDEX INDEX CONCURRENTLY i", "CONCURRENTLY"),
+            (
+                "ALTER TABLE p DETACH PARTITION c CONCURRENTLY",
+                "CONCURRENTLY",
+            ),
+            ("CREATE DATABASE d", "CREATE or DROP DATABASE"),
+            ("DROP DATABASE d", "CREATE or DROP DATABASE"),
+            (
+                "CREATE TABLESPACE s LOCATION '/x'",
+                "CREATE or DROP TABLESPACE",
+            ),
+            ("ALTER SYSTEM SET work_mem = '8MB'", "ALTER SYSTEM"),
+            ("REINDEX DATABASE d", "REINDEX SYSTEM or DATABASE"),
+        ] {
+            assert_eq!(needs_no_transaction(stmt), Some(what), "{stmt}");
+        }
+        for stmt in [
+            "CREATE INDEX i ON t (c)",
+            "REINDEX INDEX i",
+            "ALTER DATABASE d SET work_mem = '8MB'",
+            "UPDATE t SET note = 'vacuum concurrently' -- concurrently",
+            "SELECT 1 /* VACUUM */",
+            "CREATE TABLE vacuum_log (id int)",
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
+        ] {
+            assert_eq!(needs_no_transaction(stmt), None, "{stmt}");
         }
     }
 }

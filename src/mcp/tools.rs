@@ -238,10 +238,12 @@ impl Server {
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
             ));
         }
+        // Never outside a transaction: that takes the TUI's typed confirm.
         let plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
             database.clone(),
+            false,
         )
         .await?;
         if plan.patches.is_empty() {
@@ -266,6 +268,7 @@ impl Server {
             .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
                 results: Vec::new(),
                 error: Some(format!("the apply task failed: {e}")),
+                recorded_after: None,
             });
         Ok(render_apply(&plan, Some(&report), &report.summary()))
     }
@@ -808,6 +811,12 @@ pub fn confirm_request(plan: &crate::inventory::patching::PatchPlan) -> (String,
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
+    if !plan.below_recorded.is_empty() {
+        message.push_str(&format!(
+            " WARNING, not included: {} — pending but numbered below the recorded version, so they would run out of order.",
+            plan.below_recorded.join(", ")
+        ));
+    }
     message.push_str(&format!("\n\nWhat will run (files in {}):", plan.dir));
     let mut shown = 0usize;
     'files: for p in &plan.patches {
@@ -900,8 +909,10 @@ pub fn render_apply(
         "recorded_up_to": plan.applied_max,
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
+        "below_recorded": plan.below_recorded,
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
+        "recorded_after": report.and_then(|r| r.recorded_after),
         "summary": summary,
     })
     .to_string()
