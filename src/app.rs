@@ -2727,10 +2727,9 @@ impl App {
     /// operator types. Preserves the cycle's `origin` fields so a
     /// later Esc still undoes back to the pre-Tab state.
     fn refresh_completion(&mut self) {
-        let existing = match self.completion.take() {
-            Some(c) => c,
-            None => return,
-        };
+        if self.completion.take().is_none() {
+            return;
+        }
         let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             return;
@@ -2759,14 +2758,17 @@ impl App {
         }
         let prefix_start = self.editor.cursor.saturating_sub(id.prefix.len());
         let cand_count = cands.len();
+        // What the operator typed to narrow is theirs: Esc goes back to
+        // it, not to the text the popup opened on. Keeping the opening
+        // text lost every character typed since — the popup a space
+        // after `FROM` opens starts on an empty prefix, so `us` then
+        // Tab then Esc left nothing.
         self.completion = Some(CompletionCycle {
             start: prefix_start,
             end: self.editor.cursor,
-            // Original cycle's origin is preserved so Esc-restore
-            // returns to the pre-Tab state, not the mid-narrow state.
-            origin: existing.origin,
-            origin_prefix: existing.origin_prefix,
-            origin_cursor: existing.origin_cursor,
+            origin: self.editor.buffer[prefix_start..self.editor.cursor].to_string(),
+            origin_prefix: id.prefix,
+            origin_cursor: self.editor.cursor,
             candidates: cands,
             selected: None,
         });

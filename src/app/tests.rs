@@ -10966,3 +10966,32 @@ fn backslash_d_on_a_name_nothing_matches_says_so() {
     assert_eq!(a.mode, Mode::SchemaBrowser);
     assert_eq!(a.schema_browser.filter.as_deref(), Some("ord"));
 }
+
+#[test]
+fn esc_after_tab_gives_back_what_was_typed() {
+    let mut cache = two_table_cache();
+    cache.tables.push(crate::query::schema::TableMeta {
+        schema: "public".into(),
+        name: "order_items".into(),
+    });
+    // The space after FROM opens the popup on an empty prefix; `ord`
+    // narrows it; Tab picks; Esc must leave `ord`, not the empty text
+    // the popup opened on.
+    for keys in [
+        vec![KeyCode::Tab, KeyCode::Esc],
+        vec![KeyCode::Tab, KeyCode::Tab, KeyCode::Esc],
+        vec![KeyCode::Esc],
+    ] {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.schema_cache = cache.clone();
+        a.mode = Mode::Editor;
+        type_str(&mut a, "select * from ord");
+        assert!(a.completion.is_some(), "the popup is up while narrowing");
+        for k in &keys {
+            press(&mut a, *k);
+        }
+        assert_eq!(a.editor.buffer, "select * from ord", "{keys:?}");
+        assert_eq!(a.editor.cursor, a.editor.buffer.len());
+        assert_eq!(a.mode, Mode::Editor, "Esc closed the popup, not the editor");
+    }
+}
