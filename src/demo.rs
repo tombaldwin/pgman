@@ -46,7 +46,7 @@ pub fn app(theme: Theme) -> App {
         plan: std::sync::Arc::new(|e, s, d, outside| {
             Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
         }),
-        apply: std::sync::Arc::new(|p| {
+        apply: std::sync::Arc::new(|p, _cancel| {
             Box::pin(std::future::ready(
                 crate::inventory::patching::ApplyReport {
                     results: p

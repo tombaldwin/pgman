@@ -334,7 +334,9 @@ async fn main() -> anyhow::Result<()> {
                 outside,
             ))
         }),
-        apply: std::sync::Arc::new(|plan| Box::pin(pgman::inventory::patching::apply_for(plan))),
+        apply: std::sync::Arc::new(|plan, cancel| {
+            Box::pin(pgman::inventory::patching::apply_for(plan, cancel))
+        }),
         immediate: false,
     });
     application.env_discoverer = Some(app::EnvDiscoverer {

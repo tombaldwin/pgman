@@ -1026,6 +1026,10 @@ pub struct PatchView {
     /// What has been typed toward a protected environment's name.
     pub typed: String,
     pub scroll: usize,
+    /// While applying: how to cancel the running statement.
+    pub cancel: crate::inventory::patching::CancelSlot,
+    /// Esc pressed once while applying: the next one cancels.
+    pub cancel_armed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1068,6 +1072,7 @@ pub type PatchPlanFn = std::sync::Arc<
 pub type PatchApplyFn = std::sync::Arc<
     dyn Fn(
             crate::inventory::patching::PatchPlan,
+            crate::inventory::patching::CancelSlot,
         ) -> futures::future::BoxFuture<'static, crate::inventory::patching::ApplyReport>
         + Send
         + Sync,

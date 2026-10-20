@@ -4071,6 +4071,8 @@ impl App {
             stage: PatchStage::Planning,
             typed: String::new(),
             scroll: 0,
+            cancel: Default::default(),
+            cancel_armed: false,
         });
         self.last_status = Some(format!("planning {server}/{database}'s patches…"));
         let fut = (patcher.plan)(
@@ -4144,14 +4146,17 @@ impl App {
         }
         let plan = plan.clone();
         v.stage = PatchStage::Applying(plan.clone());
+        v.cancel = crate::inventory::patching::CancelSlot::default();
+        v.cancel_armed = false;
+        let cancel = v.cancel.clone();
         self.last_status = Some(format!(
-            "applying {} patch(es) to {}/{}…",
+            "applying {} patch(es) to {}/{}… · Esc twice cancels",
             plan.patches.len(),
             plan.server,
             plan.database
         ));
         tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), "patches confirmed");
-        let fut = (patcher.apply)(plan.clone());
+        let fut = (patcher.apply)(plan.clone(), cancel);
         if patcher.immediate {
             let report = futures::executor::block_on(fut);
             self.on_env_patched(plan, report);
@@ -4212,8 +4217,29 @@ impl App {
         match key.code {
             KeyCode::Down => v.scroll = v.scroll.saturating_add(1),
             KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
+            // Esc twice cancels the running statement; anything else
+            // between disarms.
+            KeyCode::Esc if matches!(v.stage, PatchStage::Applying(_)) && !v.cancel_armed => {
+                v.cancel_armed = true;
+                self.last_status = Some(
+                    "Esc again cancels the running statement: in a transaction it rolls back, \
+                     outside one what ran stays · any other key keeps going"
+                        .into(),
+                );
+            }
+            KeyCode::Esc if matches!(v.stage, PatchStage::Applying(_)) => {
+                v.cancel_armed = false;
+                self.last_status = Some(if v.cancel.cancel() {
+                    tracing::warn!(target: "pgman::patching", environment = %v.environment, server = %v.server, database = %v.database, "operator cancelled the running patch statement");
+                    "cancel sent — the run stops when the server gives the statement up".into()
+                } else {
+                    "not connected yet — nothing to cancel; Esc twice again in a moment".into()
+                });
+            }
             _ if matches!(v.stage, PatchStage::Applying(_)) => {
-                self.last_status = Some("applying — wait for it to finish".into());
+                v.cancel_armed = false;
+                self.last_status =
+                    Some("applying — wait for it to finish, or Esc twice to cancel".into());
             }
             KeyCode::Esc => {
                 self.environments.patch = None;

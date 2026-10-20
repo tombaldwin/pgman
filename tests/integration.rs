@@ -3065,7 +3065,15 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         .unwrap();
         assert!(ro.patches.is_empty() && ro.stopped_at.unwrap().1.contains("read-only"));
 
-        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            &Default::default(),
+        )
+        .await;
         assert_eq!(r.error, None);
         assert_eq!(r.results.len(), 2, "stops at 003: {r:?}");
         assert_eq!(r.results[0].outcome, Ok(2));
@@ -3096,7 +3104,15 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             &["--yes", "--sql", &format!("INSERT INTO {vt} VALUES (4)")],
         );
         assert!(out.status.success());
-        let r = apply(&env, &target, &writable, &no_secrets, &p2).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p2,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(
             err.contains("004-col.sql was applied by someone else"),
@@ -3137,7 +3153,15 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
             .unwrap();
         assert_eq!(fresh.patches[0].file.file, "003-bad.sql");
         fresh.patches[0].statements.push("SELECT 1".into());
-        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &fresh,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("differ from the plan"), "{err}");
 
@@ -3148,7 +3172,15 @@ fn environment_patches_plan_then_apply_in_order_and_stop_at_a_failure() {
         let wrong = format!("INSERT INTO {vt} (id) VALUES (33);");
         fresh.patches[0].text = wrong.clone();
         fresh.patches[0].statements = vec![wrong.trim_end_matches(';').to_string()];
-        let r = apply(&env, &target, &writable, &no_secrets, &fresh).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &fresh,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("recorded no version row 3"), "{err}");
         assert_eq!(r.results.len(), 1, "and nothing after it runs");
@@ -3296,7 +3328,15 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             ]
         );
         assert!(p.needs_typed() && !p.protected && !p.outside_would_help);
-        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("nothing applied"), "{err}");
         assert_eq!(r.recorded_after, Some(1), "002 rolled back, row and all");
@@ -3312,7 +3352,15 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
             .unwrap();
         let mut forged = p.clone();
         forged.outside_transaction = false;
-        let r = apply(&env, &target, &writable, &no_secrets, &forged).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &forged,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[1].outcome.as_ref().unwrap_err();
         assert!(err.contains("can't run in a transaction"), "{err}");
 
@@ -3323,10 +3371,26 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         // Nor run with a patch's no-transaction mark taken off.
         let mut forged = p.clone();
         forged.patches[0].outside = None;
-        let r = apply(&env, &target, &writable, &no_secrets, &forged).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &forged,
+            &Default::default(),
+        )
+        .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("differ from the plan"), "{err}");
-        let r = apply(&env, &target, &writable, &no_secrets, &p).await;
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &p,
+            &Default::default(),
+        )
+        .await;
         assert_eq!(r.error, None);
         assert_eq!(r.results[0].outcome, Ok(2), "VACUUM ran: {r:?}");
         let err = r.results[1].outcome.as_ref().unwrap_err();
@@ -3428,6 +3492,127 @@ fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
             .unwrap()
             .get(0);
         assert_eq!(timeout, "500ms");
+    });
+}
+
+/// A cancel during a run stops the running statement on the server:
+/// outside a transaction what ran stays, inside one the patch rolls back.
+#[test]
+fn cancelling_a_run_stops_the_running_statement() {
+    let home = scratch_home("env-patch-cancel", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_cv_{pid}");
+    let tbl = format!("pgman_it_ct_{pid}");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); CREATE TABLE {tbl} (id int)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    std::fs::write(
+        dir.join("002-vac.sql"),
+        format!("{}VACUUM {tbl};\nSELECT pg_sleep(60);\n", row(2)),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("003-slow.sql"),
+        format!("{}SELECT pg_sleep(60);\n", row(3)),
+    )
+    .unwrap();
+    let env = pgman::inventory::parse_config(&format!(
+        "[[environments]]\nname = \"it-cancel\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+         version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+        dir.display()
+    ))
+    .unwrap()
+    .remove(0);
+    let target = pgman::inventory::Target {
+        database: "pgman_test".into(),
+        server: "local".into(),
+        role: pgman::mcp::connections::Role::Direct,
+        replica_of: None,
+        host: None,
+        port: None,
+        engine: None,
+        status: None,
+        class: None,
+        multi_az: None,
+        connect: Ok(pgman::inventory::ConnectSpec {
+            dsn: pgman::conn::Dsn::parse(DSN).unwrap(),
+            secret: None,
+            password_env: None,
+        }),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan, CancelSlot};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // Cancels once the run has connected and is into its sleep.
+        let run = |p: pgman::inventory::patching::PatchPlan| {
+            let (env, target, writable, no_secrets) = (
+                env.clone(),
+                target.clone(),
+                writable.clone(),
+                no_secrets.clone(),
+            );
+            async move {
+                let slot = CancelSlot::default();
+                let started = std::time::Instant::now();
+                let running = {
+                    let slot = slot.clone();
+                    tokio::spawn(async move {
+                        apply(&env, &target, &writable, &no_secrets, &p, &slot).await
+                    })
+                };
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                assert!(slot.cancel(), "connected within 2 s");
+                let report = running.await.unwrap();
+                assert!(
+                    started.elapsed() < std::time::Duration::from_secs(20),
+                    "stopped well before the 60 s sleep"
+                );
+                assert!(!slot.cancel(), "emptied once the run is over");
+                report
+            }
+        };
+
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 2);
+        let r = run(p).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("canceling statement due to user request")
+                && err.contains("version 2 IS recorded"),
+            "outside: what ran stays: {err}"
+        );
+        assert_eq!(r.results.len(), 1, "and nothing after it runs");
+
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        assert_eq!(p.patches[0].file.file, "003-slow.sql");
+        let r = run(p).await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("nothing applied") && err.contains("canceling statement"),
+            "inside: rolled back: {err}"
+        );
+        assert_eq!(r.recorded_after, Some(2));
     });
 }
 
@@ -3907,6 +4092,7 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
         &writable,
         &no_secrets,
         &plan,
+        &Default::default(),
     ));
     let err = r.error.expect("refused");
     assert!(err.contains("is a standby"), "{err}");
