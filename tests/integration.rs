@@ -3593,6 +3593,17 @@ fn cancelling_a_run_stops_the_running_statement() {
             .await
             .unwrap();
         assert_eq!(p.patches.len(), 2);
+        // Cancelled before it connected: it starts nothing.
+        let early = CancelSlot::default();
+        assert!(!early.cancel());
+        let r = apply(&env, &target, &writable, &no_secrets, &p, &early).await;
+        assert_eq!(r.results.len(), 1);
+        assert!(r.results[0]
+            .outcome
+            .as_ref()
+            .unwrap_err()
+            .starts_with("cancelled before it started"));
+        assert_eq!(r.recorded_after, Some(1), "nothing ran");
         let r = run(p).await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(

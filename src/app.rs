@@ -4233,7 +4233,7 @@ impl App {
                     tracing::warn!(target: "pgman::patching", environment = %v.environment, server = %v.server, database = %v.database, "operator cancelled the running patch statement");
                     "cancel sent — the run stops when the server gives the statement up".into()
                 } else {
-                    "not connected yet — nothing to cancel; Esc twice again in a moment".into()
+                    "cancel requested — the run stops before its first patch".into()
                 });
             }
             _ if matches!(v.stage, PatchStage::Applying(_)) => {

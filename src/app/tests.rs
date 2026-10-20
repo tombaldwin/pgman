@@ -10414,14 +10414,16 @@ fn esc_twice_while_applying_cancels_the_running_statement() {
         cancel: slot.clone(),
         cancel_armed: false,
     });
-    // Not connected yet: nothing to send.
+    // Not connected yet: nothing to send, but the run won't start.
     press(&mut a, KeyCode::Esc);
     press(&mut a, KeyCode::Esc);
-    assert!(a
-        .last_status
-        .as_deref()
-        .unwrap()
-        .starts_with("not connected yet"));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("cancel requested — the run stops before its first patch")
+    );
+    assert!(slot.requested());
+    let slot = crate::inventory::patching::CancelSlot::default();
+    a.environments.patch.as_mut().unwrap().cancel = slot.clone();
     let count = sent.clone();
     slot.set(std::sync::Arc::new(move || {
         count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
