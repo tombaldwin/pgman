@@ -81,6 +81,91 @@ pub fn plan(targets: &[Target]) -> Vec<Step> {
         .collect()
 }
 
+/// Where a Java or Kotlin migration sits for a location under
+/// `src/main/resources`: the same package under `src/main/java` and
+/// `src/main/kotlin`, which the classpath location also covers once
+/// compiled. Nothing for a directory elsewhere. Pure.
+pub fn source_twins(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    use std::path::{Component, PathBuf};
+    let parts: Vec<Component> = dir.components().collect();
+    let at = parts.windows(3).rposition(|w| {
+        w.iter()
+            .map(|c| c.as_os_str())
+            .eq(["src", "main", "resources"]
+                .iter()
+                .map(std::ffi::OsStr::new))
+    });
+    let Some(at) = at else {
+        return Vec::new();
+    };
+    ["java", "kotlin"]
+        .iter()
+        .map(|lang| {
+            let mut p: PathBuf = parts[..at + 2].iter().collect();
+            p.push(lang);
+            p.extend(&parts[at + 3..]);
+            p
+        })
+        .collect()
+}
+
+/// Deepest a migration directory is read, and most entries.
+const MIGRATION_DEPTH: usize = 16;
+const MIGRATION_ENTRIES: usize = 50_000;
+
+/// File names under Flyway's directories, read recursively as Flyway
+/// reads its locations, with each one's Java and Kotlin twin
+/// ([`source_twins`]) where there is one. A configured directory that
+/// can't be listed is an error; a twin that doesn't exist isn't.
+/// Blocking.
+fn flyway_files_in(dirs: &[std::path::PathBuf]) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    let mut seen = 0usize;
+    let mut walk = |root: &std::path::Path, required: bool| -> Result<(), String> {
+        let mut stack = vec![(root.to_path_buf(), 0usize)];
+        while let Some((dir, depth)) = stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(e) if required && depth == 0 => {
+                    return Err(format!("cannot list {}: {e}", dir.display()))
+                }
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                seen += 1;
+                if seen > MIGRATION_ENTRIES {
+                    return Err(format!(
+                        "more than {MIGRATION_ENTRIES} entries under {}; not counted",
+                        root.display()
+                    ));
+                }
+                // Not followed: a link can loop.
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if kind.is_dir() {
+                    if depth < MIGRATION_DEPTH {
+                        stack.push((entry.path(), depth + 1));
+                    }
+                } else if let Some(n) = entry.file_name().to_str() {
+                    names.push(n.to_string());
+                }
+            }
+        }
+        Ok(())
+    };
+    for dir in dirs {
+        walk(dir, true)?;
+        for twin in source_twins(dir) {
+            walk(&twin, false)?;
+        }
+    }
+    // A directory named twice (as itself and as a twin) counts once.
+    names.sort_unstable();
+    names.dedup();
+    Ok(names)
+}
+
 /// A probe's answer for one row: `None` when it wasn't connected to —
 /// a primary read via its replica, or a server that isn't running
 /// ([`plan`] says which).
@@ -210,20 +295,12 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
     // A directory that can't be read is said on each row, the way the
     // patch directory's is, rather than leaving no `(+n)` and no reason.
     let (flyway_files, flyway_err): (Option<Vec<String>>, Option<String>) =
-        match settings.migrations_dir() {
+        match settings.migrations_dirs() {
             None => (None, None),
             Some(Err(e)) => (None, Some(e)),
-            Some(Ok(dir)) => tokio::task::spawn_blocking(move || match std::fs::read_dir(&dir) {
-                Ok(entries) => (
-                    Some(
-                        entries
-                            .flatten()
-                            .filter_map(|e| e.file_name().to_str().map(str::to_string))
-                            .collect(),
-                    ),
-                    None,
-                ),
-                Err(e) => (None, Some(format!("cannot list {}: {e}", dir.display()))),
+            Some(Ok(dirs)) => tokio::task::spawn_blocking(move || match flyway_files_in(&dirs) {
+                Ok(files) => (Some(files), None),
+                Err(e) => (None, Some(e)),
             })
             .await
             .unwrap_or_else(|e| (None, Some(format!("migrations task failed: {e}")))),
@@ -292,6 +369,68 @@ mod tests {
             multi_az: None,
             connect: Err("not in a test".into()),
         }
+    }
+
+    #[test]
+    fn a_resources_location_has_java_and_kotlin_twins() {
+        use std::path::{Path, PathBuf};
+        assert_eq!(
+            source_twins(Path::new("/w/app/src/main/resources/db/migration")),
+            [
+                PathBuf::from("/w/app/src/main/java/db/migration"),
+                PathBuf::from("/w/app/src/main/kotlin/db/migration")
+            ]
+        );
+        assert_eq!(
+            source_twins(Path::new("/w/src/main/resources/x/src/main/resources/db")),
+            [
+                PathBuf::from("/w/src/main/resources/x/src/main/java/db"),
+                PathBuf::from("/w/src/main/resources/x/src/main/kotlin/db")
+            ],
+            "the innermost resources directory"
+        );
+        assert!(source_twins(Path::new("/w/app/db/migration")).is_empty());
+        assert!(source_twins(Path::new("/w/app/main/resources/db")).is_empty());
+    }
+
+    #[test]
+    fn flyway_files_are_read_recursively_with_their_java_twins() {
+        let root = std::env::temp_dir().join(format!("pgman-flyway-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let res = root.join("src/main/resources/db/migration");
+        let java = root.join("src/main/java/db/migration");
+        let other = root.join("vendor");
+        for d in [res.join("2024"), java.clone(), other.clone()] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        for f in [
+            res.join("V1__init.sql"),
+            res.join("2024/V2__nested.sql"),
+            java.join("V3__Backfill.java"),
+            other.join("V4__vendor.sql"),
+        ] {
+            std::fs::write(f, "").unwrap();
+        }
+        let got = flyway_files_in(&[res.clone(), other.clone()]).unwrap();
+        assert_eq!(
+            got,
+            [
+                "V1__init.sql",
+                "V2__nested.sql",
+                "V3__Backfill.java",
+                "V4__vendor.sql"
+            ]
+        );
+        assert_eq!(
+            flyway_files_in(&[res.clone(), java.clone()]).unwrap().len(),
+            3,
+            "the java directory named as well counts once"
+        );
+        let missing = root.join("nope");
+        assert!(flyway_files_in(&[missing])
+            .unwrap_err()
+            .starts_with("cannot list "));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

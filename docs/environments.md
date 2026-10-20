@@ -216,7 +216,7 @@ tools by the table each keeps, and `SCHEMA` shows that tool's version:
 
 | Tool | Table | `SCHEMA` shows |
 |---|---|---|
-| Flyway | `flyway_schema_history` | `flyway 2.3.1`: the newest successful version. A failed migration shows `✗` in red. With `migrations_dir` naming its `V<version>__*.sql` directory, pending ones show as `(+2)`. |
+| Flyway | `flyway_schema_history` | `flyway 2.3.1`: the newest successful version. A failed migration shows `✗` in red. With `migrations_dir` naming its `V<version>__*.sql` directory, pending ones show as `(+2)`; see below. |
 | Liquibase | `databasechangelog` | the last changeset run |
 | Prisma | `_prisma_migrations` | the last finished migration; a failed one shows `✗` |
 | sqlx | `_sqlx_migrations` | the highest version; a failed one shows `✗` |
@@ -231,6 +231,14 @@ name = "staging"
 probe = true
 migrations_dir = "~/src/app/src/main/resources/db/migration"   # Flyway only, optional
 ```
+
+`migrations_dir` takes what `flyway.locations` would: one directory or
+several, comma-separated, with or without a `filesystem:` prefix. Each
+is read recursively, as Flyway reads it. A directory under
+`src/main/resources` also brings in the same package under
+`src/main/java` and `src/main/kotlin`, so Java and Kotlin migrations
+(`V3__Backfill.java`) count too. A `classpath:` location is refused:
+pgman can't see a classpath, so name the directory it maps to instead.
 
 How a probe connects:
 

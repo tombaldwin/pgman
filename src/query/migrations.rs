@@ -12,8 +12,8 @@
 //! | Alembic | `alembic_version` | the current revision |
 //! | Prisma | `_prisma_migrations` | the last finished migration; failures flagged |
 //!
-//! Flyway can also count pending migrations against a directory of
-//! `V<version>__<name>.sql` files. Every statement here is a fixed read.
+//! Flyway can also count pending migrations against its directories of
+//! `V<version>__<name>.sql` files (and Java or Kotlin migrations). Every statement here is a fixed read.
 
 use crate::conn::{self, TypedRows};
 
@@ -151,12 +151,15 @@ pub(crate) fn version_key(v: &str) -> Vec<u64> {
     key
 }
 
-/// A Flyway versioned-migration file's version: `V1_2__add.sql` → `1.2`.
-/// Repeatable (`R__`) and undo (`U`) files have none. Pure.
+/// A Flyway versioned-migration file's version: `V1_2__add.sql` → `1.2`,
+/// and the same for a Java or Kotlin migration's source
+/// (`V3__Backfill.java`). Repeatable (`R__`) and undo (`U`) files have
+/// none. Pure.
 pub fn flyway_file_version(file: &str) -> Option<String> {
     let rest = file.strip_prefix('V')?;
     let (version, _) = rest.split_once("__")?;
-    if version.is_empty() || !file.to_ascii_lowercase().ends_with(".sql") {
+    let lower = file.to_ascii_lowercase();
+    if version.is_empty() || ![".sql", ".java", ".kt"].iter().any(|x| lower.ends_with(x)) {
         return None;
     }
     Some(version.replace('_', "."))
@@ -432,6 +435,12 @@ mod tests {
         assert_eq!(flyway_file_version("R__views.sql"), None);
         assert_eq!(flyway_file_version("V__x.sql"), None);
         assert_eq!(flyway_file_version("V1__x.txt"), None);
+        assert_eq!(
+            flyway_file_version("V3__Backfill.java").as_deref(),
+            Some("3")
+        );
+        assert_eq!(flyway_file_version("V4_1__Move.kt").as_deref(), Some("4.1"));
+        assert_eq!(flyway_file_version("R__Views.java"), None);
     }
 
     #[test]
