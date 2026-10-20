@@ -207,25 +207,33 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
     let vt = settings.version_table.clone();
     let vt_configured = vt.is_some();
     // Flyway migration files, read once, for a pending count.
-    let flyway_files: Option<Vec<String>> = match settings.migrations_dir() {
-        Some(Ok(dir)) => tokio::task::spawn_blocking(move || {
-            std::fs::read_dir(&dir).ok().map(|entries| {
-                entries
-                    .flatten()
-                    .filter_map(|e| e.file_name().to_str().map(str::to_string))
-                    .collect()
+    // A directory that can't be read is said on each row, the way the
+    // patch directory's is, rather than leaving no `(+n)` and no reason.
+    let (flyway_files, flyway_err): (Option<Vec<String>>, Option<String>) =
+        match settings.migrations_dir() {
+            None => (None, None),
+            Some(Err(e)) => (None, Some(e)),
+            Some(Ok(dir)) => tokio::task::spawn_blocking(move || match std::fs::read_dir(&dir) {
+                Ok(entries) => (
+                    Some(
+                        entries
+                            .flatten()
+                            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                            .collect(),
+                    ),
+                    None,
+                ),
+                Err(e) => (None, Some(format!("cannot list {}: {e}", dir.display()))),
             })
-        })
-        .await
-        .ok()
-        .flatten(),
-        _ => None,
-    };
+            .await
+            .unwrap_or_else(|e| (None, Some(format!("migrations task failed: {e}")))),
+        };
     let flyway_files = flyway_files.as_ref();
     let probes = ready.into_iter().enumerate().map(|(i, r)| {
         let cfg = cfg.clone();
         let vt = vt.clone();
         let files_err = files_err.clone();
+        let flyway_err = flyway_err.clone().filter(|_| !vt_configured);
         let port = via.get(&i).copied();
         async move {
             let mut dsn = match r? {
@@ -253,7 +261,9 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
             };
             Some(result.map(|mut p| {
                 if p.schema_error.is_none() {
-                    p.schema_error = files_err.map(|e| format!("patch files: {e}"));
+                    p.schema_error = files_err
+                        .map(|e| format!("patch files: {e}"))
+                        .or(flyway_err.map(|e| format!("migrations_dir: {e}")));
                 }
                 p
             }))

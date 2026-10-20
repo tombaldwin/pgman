@@ -2608,7 +2608,7 @@ fn probes_recognise_common_migration_tools() {
         if tool == "flyway" {
             // An environment that names its own version table, for other
             // databases only: no guessing here.
-            let mut explicit = report;
+            let mut explicit = report.clone();
             explicit.probe = Some(pgman::inventory::ProbeSettings {
                 version_table: Some(pgman::inventory::VersionTable {
                     table: "t_version".into(),
@@ -2627,6 +2627,27 @@ fn probes_recognise_common_migration_tools() {
                 .unwrap()
                 .unwrap();
             assert_eq!(p.migration_tool, None, "configured, so not detected");
+        }
+        if tool == "django" {
+            // A migrations_dir that can't be read says so on the row.
+            let mut missing = report;
+            missing.probe = Some(pgman::inventory::ProbeSettings {
+                version_table: None,
+                migrations_dir: Some("/nonexistent/pgman/migrations".into()),
+            });
+            let p = rt
+                .block_on(pgman::inventory::probe::run(
+                    missing,
+                    std::sync::Arc::new(|_| unreachable!()),
+                ))
+                .remove(0)
+                .unwrap()
+                .unwrap();
+            let e = p.schema_error.unwrap_or_default();
+            assert!(
+                e.starts_with("migrations_dir: cannot list /nonexistent"),
+                "{e}"
+            );
         }
     }
     let f = &results["flyway"];
