@@ -405,7 +405,10 @@ mod tests {
     fn a_discovered_source_needs_the_flag() {
         let refused = build(
             &[],
-            vec![pick("dataSource (app)", "postgres://ledger@localhost/ledger")],
+            vec![pick(
+                "dataSource (app)",
+                "postgres://ledger@localhost/ledger",
+            )],
             false,
         );
         assert_eq!(refused[0].refusal.as_deref(), Some(DISCOVERED_REFUSAL));
@@ -413,7 +416,10 @@ mod tests {
 
         let allowed = build(
             &[],
-            vec![pick("dataSource (app)", "postgres://ledger@localhost/ledger")],
+            vec![pick(
+                "dataSource (app)",
+                "postgres://ledger@localhost/ledger",
+            )],
             true,
         );
         assert_eq!(allowed[0].refusal, None);
@@ -476,8 +482,14 @@ mod tests {
             &[],
             vec![
                 pick("dataSource", "postgres://ledger@localhost:5432/ledger"),
-                pick("replicaDataSource", "postgres://ledger@localhost:5432/ledger"),
-                pick("logDataSource", "postgres://ledger@localhost:5432/ledgerlog"),
+                pick(
+                    "replicaDataSource",
+                    "postgres://ledger@localhost:5432/ledger",
+                ),
+                pick(
+                    "logDataSource",
+                    "postgres://ledger@localhost:5432/ledgerlog",
+                ),
             ],
             true,
         );
