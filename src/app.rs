@@ -2014,7 +2014,11 @@ impl App {
             self.open_command_bar();
             return;
         }
-        if ctrl && matches!(key.code, KeyCode::Char('t')) {
+        // A new tab or a cycle swaps the editor buffer: from a prompt
+        // (save-as, rename, param, filter) Enter would then act on the
+        // other tab's SQL. The editor and the panels are fine.
+        let tab_keys_ok = !typing_mode || self.mode == Mode::Editor;
+        if ctrl && matches!(key.code, KeyCode::Char('t')) && tab_keys_ok {
             self.new_tab();
             return;
         }
@@ -2026,11 +2030,11 @@ impl App {
             self.close_active_tab();
             return;
         }
-        if ctrl && matches!(key.code, KeyCode::Tab) {
+        if ctrl && matches!(key.code, KeyCode::Tab) && tab_keys_ok {
             self.cycle_tab(!shift);
             return;
         }
-        if ctrl && shift && matches!(key.code, KeyCode::BackTab) {
+        if ctrl && shift && matches!(key.code, KeyCode::BackTab) && tab_keys_ok {
             // Some terminals deliver Ctrl-Shift-Tab as BackTab.
             self.cycle_tab(false);
             return;

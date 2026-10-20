@@ -7896,6 +7896,31 @@ fn alt_digit_does_not_switch_tabs_under_a_typing_prompt() {
     assert_eq!(a.editor.buffer, "select 1");
 }
 
+#[test]
+fn ctrl_t_and_ctrl_tab_do_not_switch_tabs_under_a_typing_prompt() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.saved_queries_file = temp_saved_path("ctrl-t-prompt");
+    a.mode = Mode::Editor;
+    a.editor.buffer = "select 1".into();
+    a.new_tab();
+    a.editor.buffer = "select 2".into();
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert_eq!(a.mode, Mode::SaveQueryPrompt);
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    a.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
+    assert_eq!(
+        (a.tabs.len(), a.active_tab),
+        (2, 1),
+        "a tab key acted under the prompt"
+    );
+    assert_eq!(a.editor.buffer, "select 2");
+    // From the editor they still work.
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+    assert_eq!(a.tabs.len(), 3);
+}
+
 // ----- A quiet server is "only this session", not "0 total" -----------
 
 #[test]
