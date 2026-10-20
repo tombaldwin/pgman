@@ -10995,3 +10995,52 @@ fn esc_after_tab_gives_back_what_was_typed() {
         assert_eq!(a.mode, Mode::Editor, "Esc closed the popup, not the editor");
     }
 }
+
+#[test]
+fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
+    // A space typed in front of the `;` opens the popup by itself;
+    // Enter used to write its first candidate into the statement.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from orders;");
+    press(&mut a, KeyCode::Left);
+    type_str(&mut a, " where ");
+    assert!(a.completion.as_ref().is_some_and(|c| c.selected.is_none()));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.completion.is_none());
+    assert_eq!(
+        a.editor.buffer, "select * from orders where ;",
+        "nothing inserted"
+    );
+    assert!(reached_request_run(&a), "{:?}", a.last_error);
+
+    // Picked with Tab, Enter accepts it and runs nothing yet.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from ;");
+    press(&mut a, KeyCode::Left);
+    type_str(&mut a, "eve");
+    press(&mut a, KeyCode::Tab);
+    assert!(
+        a.completion.as_ref().is_some_and(|c| c.selected.is_some()),
+        "{:?} {:?} {:?}",
+        a.editor.buffer,
+        a.last_status,
+        a.completion.as_ref().map(|c| c.selected)
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from events;");
+    assert!(!reached_request_run(&a), "accepting isn't running");
+
+    // Unterminated, Enter still accepts the first candidate.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from ");
+    assert!(a.completion.is_some());
+    press(&mut a, KeyCode::Enter);
+    assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
+    assert!(!reached_request_run(&a));
+}
