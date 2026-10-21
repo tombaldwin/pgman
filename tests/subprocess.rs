@@ -355,6 +355,42 @@ fn init_config_writes_a_default_and_refuses_to_overwrite() {
     assert!(stderr.contains("already exists"), "got: {stderr}");
 }
 
+/// `--batch` repairs pgman's directories to owner-only the way the
+/// TUI's startup does, even on a run that stops at its arguments.
+#[cfg(unix)]
+#[test]
+fn batch_repairs_the_private_directories_like_the_tui() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("pgman-batch-dirs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let dirs = [".config/pgman", ".local/share/pgman", ".cache/pgman"].map(|d| home.join(d));
+    for d in &dirs {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args([
+            "--batch",
+            "--dsn",
+            "postgres://x@127.0.0.1:1/x",
+            "--sql",
+            " ",
+        ])
+        .output()
+        .expect("spawn pgman");
+    let modes: Vec<u32> = dirs
+        .iter()
+        .map(|d| std::fs::metadata(d).unwrap().permissions().mode() & 0o777)
+        .collect();
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out.status.code(), Some(2), "stops at the empty SQL");
+    assert_eq!(modes, [0o700; 3], "config, data, cache: {modes:?}");
+}
+
 #[test]
 fn log_over_64mb_is_refused_before_being_read() {
     let dir = std::env::temp_dir().join(format!("pgman-log-cap-{}", std::process::id()));
