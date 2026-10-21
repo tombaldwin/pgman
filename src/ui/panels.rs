@@ -2637,11 +2637,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         } else {
             Style::default().fg(theme.text)
         };
-        let user_app = if row.application.is_empty() {
-            row.user.clone()
-        } else {
-            format!("{}/{}", row.user, row.application)
-        };
+        let user_app = sessions_user_app(&row.user, &row.application);
         let one_line: String = row
             .query
             .chars()
@@ -2669,6 +2665,18 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// The sessions panel's `user/app` cell, cut to its 20 columns with a
+/// `…` so a long application name can't push the columns after it out
+/// from under their headers.
+fn sessions_user_app(user: &str, application: &str) -> String {
+    let full = if application.is_empty() {
+        user.to_string()
+    } else {
+        format!("{user}/{application}")
+    };
+    crate::grid::truncate_cell(&full, 20)
 }
 
 /// Shorten well-known long `pg_stat_activity.state` values so the
@@ -4714,6 +4722,18 @@ mod tests {
         // Both states are shorter than "state" (5 chars) — the column
         // still needs to fit the header label.
         assert_eq!(sessions_state_col_width(["idle", ""].into_iter()), 5);
+    }
+
+    #[test]
+    fn sessions_user_app_fits_its_column() {
+        assert_eq!(sessions_user_app("billing", ""), "billing");
+        assert_eq!(sessions_user_app("billing", "psql"), "billing/psql");
+        let long = sessions_user_app("billing_service", "invoice-reconciler-worker");
+        assert_eq!(crate::ui::display_width(&long), 20, "{long}");
+        assert!(
+            long.starts_with("billing_service/") && long.ends_with('…'),
+            "{long}"
+        );
     }
 
     #[test]
