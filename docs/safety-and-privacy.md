@@ -258,8 +258,8 @@ rather than following the link and re-permissioning a directory it
 does not own; if you point `~/.cache/pgman` at a shared volume, its
 mode stays yours to set. `pgman --upgrade` runs its subprocesses from
 `$HOME`, or from that cache directory when `$HOME` is unusable, never
-from a shared temp directory (with neither usable it falls back to the
-system temp directory, and says so in the log) — `cargo` and `brew` search upward from
+from a shared temp directory (with neither usable it refuses, before
+running anything, and says to set `HOME`) — `cargo` and `brew` search upward from
 the working directory for a `.cargo/config.toml`, and one in a
 world-writable `/tmp` would be anyone's to write. That's a floor, not a
 substitute for filesystem hygiene: if your `~` itself isn't otherwise
