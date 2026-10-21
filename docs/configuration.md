@@ -12,6 +12,7 @@ URL-embedded password.
 | Path | Purpose |
 | --- | --- |
 | `~/.config/pgman/safety.toml` | Personal safety guard rails: default profile + per-database overrides. |
+| `~/.config/pgman/config.toml` | Personal UI defaults: `redact_default`. See [below](#configtoml). |
 | `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd. |
 | `~/.config/pgman/connections.toml` | Personal named connections for `pgman mcp serve`, ssh tunnels included. See [MCP server](mcp.md). |
 | `~/.config/pgman/environments.toml` | Environments for the `E` overview and the MCP `environments` tool. See [Environments](environments.md). |
@@ -32,6 +33,20 @@ never writes them, so their permissions are whatever you gave them.
 `environments.toml` is yours too, except that a discovery save (`d` in
 the overview, `pgman env discover --save`, MCP `environments_save`)
 appends to it, under a lock (`.environments.toml.lock`).
+
+## `config.toml`
+
+`~/.config/pgman/config.toml` holds UI defaults. pgman never writes it.
+
+```toml
+# Start every TUI session in redaction mode (as if run with --redact);
+# :redact off still turns it off for the session.
+redact_default = true
+```
+
+Keys pgman doesn't know are ignored. A file that doesn't parse turns
+redaction **on** and says why in the footer: it is a privacy setting,
+so a typo fails closed. `--demo` doesn't read this file.
 
 ## `~/.config/pgman/safety.toml`
 
