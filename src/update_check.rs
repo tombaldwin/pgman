@@ -334,29 +334,7 @@ async fn fetch_latest_version() -> Option<String> {
         tracing::debug!("update check: crates.io returned {}", resp.status());
         return None;
     }
-    // Reject anything claiming to be oversize before buffering it at
-    // all. A response with no `Content-Length` (chunked) still gets
-    // the post-read length check below.
-    if let Some(len) = resp.content_length() {
-        if len > MAX_RESPONSE_BYTES {
-            tracing::debug!("update check: response body too large ({len} bytes), ignoring");
-            return None;
-        }
-    }
-    let bytes = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::debug!("update check: could not read response body: {e}");
-            return None;
-        }
-    };
-    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
-        tracing::debug!(
-            "update check: response body too large ({} bytes), ignoring",
-            bytes.len()
-        );
-        return None;
-    }
+    let bytes = read_body_capped(resp, MAX_RESPONSE_BYTES).await?;
     let body = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
         Err(e) => {
@@ -369,6 +347,38 @@ async fn fetch_latest_version() -> Option<String> {
         tracing::debug!("update check: could not parse crates.io response");
     }
     latest
+}
+
+/// Read `resp`'s body, giving up as soon as it passes `max` bytes.
+///
+/// A `Content-Length` over the cap is refused before reading
+/// anything; a chunked body (no length) is read a chunk at a time
+/// and dropped the moment the running total passes `max`, so an
+/// endless response costs at most `max` plus one chunk.
+async fn read_body_capped(mut resp: reqwest::Response, max: u64) -> Option<Vec<u8>> {
+    if let Some(len) = resp.content_length() {
+        if len > max {
+            tracing::debug!("update check: response body too large ({len} bytes), ignoring");
+            return None;
+        }
+    }
+    let mut body = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                body.extend_from_slice(&chunk);
+                if body.len() as u64 > max {
+                    tracing::debug!("update check: response body passed {max} bytes, ignoring");
+                    return None;
+                }
+            }
+            Ok(None) => return Some(body),
+            Err(e) => {
+                tracing::debug!("update check: could not read response body: {e}");
+                return None;
+            }
+        }
+    }
 }
 
 /// Check for a newer release, honouring the six-hour cache at
@@ -716,5 +726,100 @@ mod tests {
         assert!(result.is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serve one HTTP/1.1 response on a loopback port: `head` then
+    /// `chunks` chunked-encoded pieces of `chunk` (endless when
+    /// `chunks` is `None`). Returns the URL.
+    async fn serve_chunked(chunk: &'static [u8], chunks: Option<usize>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut req = [0u8; 1024];
+            let _ = sock.read(&mut req).await;
+            let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+            if sock.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut sent = 0;
+            while chunks.is_none_or(|n| sent < n) {
+                let frame = format!("{:x}\r\n", chunk.len());
+                let ok = sock.write_all(frame.as_bytes()).await.is_ok()
+                    && sock.write_all(chunk).await.is_ok()
+                    && sock.write_all(b"\r\n").await.is_ok();
+                if !ok {
+                    return; // the client hung up — what the cap should do
+                }
+                sent += 1;
+            }
+            let _ = sock.write_all(b"0\r\n\r\n").await;
+        });
+        format!("http://{addr}/")
+    }
+
+    async fn get(url: &str) -> reqwest::Response {
+        // `no_proxy`: a CI box with HTTP_PROXY set must still hit loopback.
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        client.get(url).send().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_endless_chunked_body_is_dropped_at_the_cap() {
+        // No Content-Length and no end: buffering the whole body (the
+        // old `bytes()` then check) never returns, so the timeout is
+        // the failure this guards against.
+        let url = serve_chunked(&[b'x'; 4096], None).await;
+        let resp = get(&url).await;
+        assert_eq!(resp.content_length(), None);
+        let body = tokio::time::timeout(
+            Duration::from_secs(5),
+            read_body_capped(resp, MAX_RESPONSE_BYTES),
+        )
+        .await
+        .expect("the cap must stop reading an endless body");
+        assert!(body.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_chunked_body_under_the_cap_is_read_whole() {
+        let url = serve_chunked(b"{\"crate\":{}}", Some(3)).await;
+        let body = read_body_capped(get(&url).await, MAX_RESPONSE_BYTES).await;
+        assert_eq!(body.map(|b| b.len()), Some(3 * 12));
+    }
+
+    #[tokio::test]
+    async fn a_chunked_body_one_chunk_over_the_cap_is_refused() {
+        // 17 x 4 KiB = 68 KiB: finite, so this pins the cap itself
+        // rather than just "it terminates".
+        let url = serve_chunked(&[b'x'; 4096], Some(17)).await;
+        let body = read_body_capped(get(&url).await, MAX_RESPONSE_BYTES).await;
+        assert!(body.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_oversize_content_length_is_refused_before_reading() {
+        // The server claims 10 MB and then sends nothing: only the
+        // up-front length check can answer before the timeout.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut req = [0u8; 1024];
+            let _ = sock.read(&mut req).await;
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: 10000000\r\n\r\n";
+            let _ = sock.write_all(head.as_bytes()).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let resp = get(&format!("http://{addr}/")).await;
+        let body = tokio::time::timeout(
+            Duration::from_secs(2),
+            read_body_capped(resp, MAX_RESPONSE_BYTES),
+        )
+        .await
+        .expect("an oversize Content-Length must be refused without reading");
+        assert!(body.is_none());
     }
 }
