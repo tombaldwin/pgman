@@ -1589,3 +1589,16 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
         "rows aren't"
     );
 }
+
+/// `/` with no grid and `Q` with nothing saved open nothing; the footer
+/// says why rather than leaving the key looking dead.
+#[test]
+fn slash_and_q_on_the_start_card_say_why_nothing_opened() {
+    for (key, want) in [('/', "nothing to filter"), ('Q', "no saved queries")] {
+        let mut a = settle_app();
+        a.mode = Mode::Normal;
+        a.on_key(KeyEvent::from(KeyCode::Char(key)));
+        let text = dump(&render(&mut a, 100, 30));
+        assert!(text.contains(want), "{key}: {want:?} not on screen:\n{text}");
+    }
+}
