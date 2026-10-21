@@ -45,8 +45,9 @@ and breaking changes.
   with `:param` prompts, `$EDITOR`, `\watch`, DBUnit fixture apply and
   capture.
 - **Safety** — read-only by default, `statement_timeout`, per-database
-  guards (block / confirm / allow) on every statement, DML wrapped in a
-  rollback transaction, `EXPLAIN ANALYZE` always rolled back, and a
+  guards (block / confirm / allow) on every statement, DML left in an
+  open transaction until you commit or roll it back, `EXPLAIN ANALYZE`
+  always rolled back, and a
   project's `[safety]` block can only tighten yours.
 - **DBA panels** — schema browser, schema-lint wizard, EXPLAIN tree,
   slow queries, sessions and locks, result diff, `\l`, `\x`, `\c`, `\i`,
