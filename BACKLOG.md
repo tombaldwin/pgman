@@ -70,8 +70,6 @@ small-UX, correctness and environments findings landed on branch
   `describe-db-clusters`, tested against fixtures only. Whether a
   reader answers the lag probe's `pg_last_wal_receive_lsn` /
   `pg_stat_wal_receiver` usefully is unverified.
-- **`demo.gif` predates the robustness UX**: it shows the old start
-  card (no TAP line) and the old pickers. Re-record with `vhs demo.tape`.
 - **JOIN … ON with a multi-column foreign key** offers one predicate
   per column pair: the cached `FkEdge` carries no constraint name, so
   the pairs can't be grouped into one `a = b AND c = d` candidate.
