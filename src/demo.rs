@@ -5,8 +5,9 @@
 //! / `order_items`), a result grid, saved queries (including a
 //! `:param` one), and a burst of JDBC-tap events that trips the
 //! live N+1 detector. Used for screenshots, the README demo gif
-//! (`vhs demo.tape`), and talks, so the frame is identical on every
-//! launch and never touches a real server.
+//! (`vhs demo.tape`), and talks, so the frames are the same on every
+//! launch (the tap burst lands at the same moment each time) and it
+//! never touches a real server.
 //!
 //! `App::demo` is set so the run loop skips the connection and
 //! skips persisting draft / history / saved-queries to disk — a
@@ -132,12 +133,13 @@ pub fn app(theme: Theme) -> App {
 /// starts with an empty grid so the F8 / F4 hint is the first thing
 /// on screen, not a result the operator hasn't asked for yet.
 ///
-/// Everything else — schema cache, saved queries, history, tap
-/// events — is identical to [`app`]; only the grid (cleared back to
+/// Everything else — schema cache, saved queries, history — is
+/// identical to [`app`]; only the grid (cleared back to
 /// `Grid::default()`, same as a fresh, query-less connection), the
 /// editor (empty: the walkthrough says `e` then paste, and a paste
-/// appended to the pre-filled SELECT) and `databases` (populated, so
-/// the start card's databases line isn't blank) differ.
+/// appended to the pre-filled SELECT), `databases` (populated, so the
+/// start card's databases line isn't blank) and the tap (quiet until
+/// its burst arrives, `DEMO_TAP_DELAY` in) differ.
 pub fn launch_app(theme: Theme) -> App {
     let mut a = app(theme);
     a.grid = Grid::default();
