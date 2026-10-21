@@ -121,8 +121,8 @@ Three things worth knowing:
   [docs/safety-and-privacy.md](docs/safety-and-privacy.md#running-pgman-inside-a-checkout-you-did-not-write).
 - **TLS:** `sslmode=require` / `prefer` encrypt the connection but do **not**
   verify the server certificate (matching libpq). Use `sslmode=verify-full` on
-  untrusted networks. `sslmode=verify-ca` currently verifies the hostname too,
-  which is stricter than libpq.
+  untrusted networks. `sslmode=verify-ca` checks the chain but not the hostname,
+  as libpq does.
 - **JDBC tap:** the `--tap-listen` / `--tap-otlp` / `--tap-udp` listeners are
   unauthenticated and bind to `127.0.0.1` by default. Only bind a non-loopback
   address on a trusted/firewalled network.
