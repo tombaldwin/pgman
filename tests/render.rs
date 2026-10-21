@@ -1269,6 +1269,10 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
                 body.starts_with("    "),
                 "{heading} row unindented: {body:?}\n{text}"
             );
+            assert!(
+                body.trim_end_matches('│').ends_with("  "),
+                "{heading} row runs into the border: {body:?}\n{text}"
+            );
         }
     }
     let text = dump(&render(&mut a, 100, 24));

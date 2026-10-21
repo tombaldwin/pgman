@@ -473,8 +473,10 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     // and dropped the rest flush against the border, unpadded. The DSN
     // is middle-cut; a path (source, logs) is wrapped at its `/`s under
     // its label, so all of it is there to copy; prose (error, hint) is
-    // wrapped on words under its own indent.
-    let inner_width = area.width.saturating_sub(2) as usize;
+    // wrapped on words under its own indent. Two columns are kept clear
+    // on the right, matching the labels' two on the left, so no word
+    // runs into the border.
+    let inner_width = (area.width.saturating_sub(2) as usize).saturating_sub(2);
     const LABEL_WIDTH: usize = 10; // `"  target  "`
     let value_width = inner_width.saturating_sub(LABEL_WIDTH);
     let fit_value = |v: &str| middle_ellipsis(v, value_width);
