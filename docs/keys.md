@@ -225,9 +225,9 @@ don't list beside their table: an expanded partitioned table shows one
 ## Schema wizard
 
 Opened with `W`. Pure checks (LINT001–004: missing PK, mixed-case, reserved
-word, mixed naming) run over the cached schema; live checks (LINT101–106: FK
+word, mixed naming) run over the cached schema; live checks (LINT101–107: FK
 without index, unused index, duplicate indexes, bloat, no comment, mixed
-timestamp/timestamptz) query the database.
+timestamp/timestamptz, a serial or identity column nothing keeps unique) query the database.
 
 | Key | Action |
 |---|---|

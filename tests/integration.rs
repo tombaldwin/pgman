@@ -4846,3 +4846,67 @@ fn ddl_copy_recreates_the_table_it_was_read_from() {
         assert!(err.contains("isn't in the catalog"), "{err}");
     });
 }
+
+/// LINT107 finds a sequence-filled column nothing keeps unique — with
+/// no primary key, beside another primary key, as an identity, under
+/// a partial unique index — and leaves the covered shapes alone.
+#[test]
+fn lint107_finds_sequence_columns_nothing_keeps_unique() {
+    let home = scratch_home("lint107", WRITABLE_PROFILE);
+    let s = format!("pgman_it_l7_{}", std::process::id());
+    let setup = format!(
+        "CREATE TABLE {s}_nopk (id serial, x int); \
+         CREATE TABLE {s}_other (k int PRIMARY KEY, seq_no bigserial); \
+         CREATE TABLE {s}_ident (id int GENERATED ALWAYS AS IDENTITY, x int); \
+         CREATE TABLE {s}_partial (id serial); \
+         CREATE UNIQUE INDEX {s}_partial_u ON {s}_partial (id) WHERE id > 0; \
+         CREATE TABLE {s}_pk (id serial PRIMARY KEY); \
+         CREATE TABLE {s}_uniq (id serial UNIQUE); \
+         CREATE TABLE {s}_comp (tenant int, id serial, PRIMARY KEY (tenant, id)); \
+         CREATE TABLE {s}_incl (id serial, x int); \
+         CREATE UNIQUE INDEX {s}_incl_u ON {s}_incl (id) INCLUDE (x)"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let findings = rt.block_on(async {
+        let client = probe_client(DSN).await;
+        pgman::query::lint::fetch_live(&client).await.unwrap()
+    });
+    let mut ours: Vec<(String, String)> = findings
+        .iter()
+        .filter(|f| f.code == "LINT107" && f.object.contains(&s))
+        .map(|f| {
+            (
+                f.object.trim_start_matches("public.").to_string(),
+                f.suggestion.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    ours.sort();
+    assert_eq!(
+        ours,
+        vec![
+            (
+                format!("{s}_ident.id"),
+                format!("ALTER TABLE public.{s}_ident ADD PRIMARY KEY (id);")
+            ),
+            (
+                format!("{s}_nopk.id"),
+                format!("ALTER TABLE public.{s}_nopk ADD PRIMARY KEY (id);")
+            ),
+            (
+                format!("{s}_other.seq_no"),
+                format!("ALTER TABLE public.{s}_other ADD UNIQUE (seq_no);")
+            ),
+            (
+                format!("{s}_partial.id"),
+                format!("ALTER TABLE public.{s}_partial ADD PRIMARY KEY (id);")
+            ),
+        ]
+    );
+}

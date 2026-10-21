@@ -373,6 +373,33 @@ HAVING count(*) FILTER (WHERE t.typname = 'timestamp') > 0 \
    AND count(*) FILTER (WHERE t.typname = 'timestamptz') > 0 \
 ORDER BY 1";
 
+/// LINT107: a column filled from a sequence it owns (`serial`, or an
+/// identity column — `pg_depend` deptype `a` / `i`) that nothing
+/// keeps unique: it is in no primary key, and no single-column unique
+/// index (without a predicate) covers it. The sequence never repeats,
+/// but an explicit insert, a data load or a `setval` back does, and
+/// nothing stops it. The last column says whether the table has a
+/// primary key at all, which decides the suggestion.
+pub const SEQUENCE_COLUMN_NOT_UNIQUE_SQL: &str = "\
+SELECT n.nspname, c.relname, a.attname, \
+       EXISTS (SELECT 1 FROM pg_catalog.pg_constraint p WHERE p.conrelid = c.oid AND p.contype = 'p') \
+FROM pg_catalog.pg_depend d \
+JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S' \
+JOIN pg_catalog.pg_class c ON c.oid = d.refobjid AND c.relkind IN ('r', 'p') \
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.refobjsubid \
+WHERE d.classid = 'pg_catalog.pg_class'::regclass \
+  AND d.refclassid = 'pg_catalog.pg_class'::regclass \
+  AND d.deptype IN ('a', 'i') \
+  AND NOT c.relispartition \
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint p \
+                   WHERE p.conrelid = c.oid AND p.contype = 'p' AND a.attnum = ANY (p.conkey)) \
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index x \
+                   WHERE x.indrelid = c.oid AND x.indisunique AND x.indnkeyatts = 1 \
+                     AND x.indkey[0] = a.attnum AND x.indpred IS NULL) \
+ORDER BY 1, 2, 3";
+
 /// Run every live-query lint check against `client` and return
 /// the merged findings. Each check runs independently — one
 /// failing (permission denied, missing stat view) does NOT kill
@@ -413,6 +440,11 @@ pub async fn fetch_live(client: &tokio_postgres::Client) -> Result<Vec<Finding>,
     match run_lint106(client).await {
         Ok(fs) => out.extend(fs),
         Err(e) => errors.push(format!("LINT106: {e}")),
+    }
+    ran += 1;
+    match run_lint107(client).await {
+        Ok(fs) => out.extend(fs),
+        Err(e) => errors.push(format!("LINT107: {e}")),
     }
 
     if errors.len() == ran {
@@ -520,6 +552,56 @@ async fn run_lint106(client: &tokio_postgres::Client) -> Result<Vec<Finding>, St
         out.push(mixed_timestamp_finding(&schema, ts, tstz));
     }
     Ok(out)
+}
+
+async fn run_lint107(client: &tokio_postgres::Client) -> Result<Vec<Finding>, String> {
+    let rows = client
+        .query(SEQUENCE_COLUMN_NOT_UNIQUE_SQL, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let schema: String = row.try_get::<usize, String>(0).map_err(|e| e.to_string())?;
+        let table: String = row.try_get::<usize, String>(1).map_err(|e| e.to_string())?;
+        let column: String = row.try_get::<usize, String>(2).map_err(|e| e.to_string())?;
+        let has_pk: bool = row.try_get::<usize, bool>(3).map_err(|e| e.to_string())?;
+        out.push(sequence_column_not_unique_finding(
+            &schema, &table, &column, has_pk,
+        ));
+    }
+    Ok(out)
+}
+
+/// Pure builder for LINT107 (a sequence-filled column nothing keeps
+/// unique). With no primary key on the table, the column is the
+/// obvious one; with one, it gets a unique constraint instead.
+pub fn sequence_column_not_unique_finding(
+    schema: &str,
+    table: &str,
+    column: &str,
+    table_has_pk: bool,
+) -> Finding {
+    let (why, fix) = if table_has_pk {
+        (
+            "the table's primary key is other columns",
+            format!("ALTER TABLE {schema}.{table} ADD UNIQUE ({column});"),
+        )
+    } else {
+        (
+            "the table has no primary key",
+            format!("ALTER TABLE {schema}.{table} ADD PRIMARY KEY ({column});"),
+        )
+    };
+    Finding {
+        severity: Severity::Medium,
+        code: "LINT107",
+        title: "sequence-filled column with nothing keeping it unique".to_string(),
+        object: format!("{schema}.{table}.{column}"),
+        detail: format!(
+            "`{column}` on `{schema}.{table}` takes its values from a sequence it owns (serial / identity) but no primary key or unique index covers it, and {why} — an explicit insert, a data load or a setval back gives two rows the same id and nothing refuses it"
+        ),
+        suggestion: Some(fix),
+    }
 }
 
 /// Pure builder for LINT102 (unused index) findings. Stats-cold
@@ -883,6 +965,29 @@ mod tests {
         assert_eq!(f.object, "public");
         assert!(f.detail.contains("3"));
         assert!(f.detail.contains("7"));
+    }
+
+    #[test]
+    fn sequence_column_not_unique_finding_suggests_by_whether_there_is_a_pk() {
+        let f = sequence_column_not_unique_finding("public", "orders", "id", false);
+        assert_eq!(f.code, "LINT107");
+        assert_eq!(f.severity, Severity::Medium);
+        assert_eq!(f.object, "public.orders.id");
+        assert!(f.detail.contains("no primary key"), "{}", f.detail);
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some("ALTER TABLE public.orders ADD PRIMARY KEY (id);")
+        );
+        let f = sequence_column_not_unique_finding("public", "orders", "seq_no", true);
+        assert!(
+            f.detail.contains("primary key is other columns"),
+            "{}",
+            f.detail
+        );
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some("ALTER TABLE public.orders ADD UNIQUE (seq_no);")
+        );
     }
 
     #[test]

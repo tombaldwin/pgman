@@ -2683,7 +2683,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz"),
+        row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz · 107 serial not unique"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);
