@@ -1050,6 +1050,29 @@ pub fn splash_should_dismiss(
     }
 }
 
+/// The draft auto-save throttle: at most one write per window.
+const DRAFT_SAVE_GAP: Duration = Duration::from_millis(500);
+
+/// Pure: when a dirty draft is next due to be saved — the end of the
+/// throttle window after `last_save`, or at once when it has never been
+/// saved. The run loop sleeps until then so the save happens even when
+/// no key or message arrives to wake it.
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use pgman::app::draft_save_at;
+/// let t0 = Instant::now();
+/// let gap = Duration::from_millis(500);
+/// assert_eq!(draft_save_at(Some(t0), gap), t0 + gap);
+/// assert!(draft_save_at(None, gap) <= Instant::now()); // never saved → now
+/// ```
+pub fn draft_save_at(last_save: Option<Instant>, min_gap: Duration) -> Instant {
+    match last_save {
+        Some(t) => t + min_gap,
+        None => Instant::now(),
+    }
+}
+
 /// Pure decision: is the draft auto-save throttle past its window?
 /// Returns `true` when at least `min_gap` has elapsed since the last
 /// save, OR when there's never been a save yet. The run-loop uses
@@ -1705,6 +1728,12 @@ impl App {
                 self.spawn_update_check();
             }
             let animate = self.wants_animation();
+            // A dirty draft inside the save throttle needs the loop to
+            // wake when the window closes: without this, the tail of a
+            // typing burst sat unsaved until the next key, and closing
+            // the terminal lost it.
+            let draft_save_at = (!self.demo && self.draft_dirty)
+                .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
             tokio::select! {
                 ev = events.recv() => {
                     match ev {
@@ -1728,6 +1757,9 @@ impl App {
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
                 }
+                _ = tokio::time::sleep_until(
+                    tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
+                ), if draft_save_at.is_some() => {}
             }
             // Deferred actions that need `&mut TuiHost`. `\e`
             // (external editor) sets the flag from the editor key
@@ -1744,11 +1776,7 @@ impl App {
             // write via rename; not even a syscall when not dirty.
             if !self.demo
                 && self.draft_dirty
-                && draft_save_due(
-                    self.draft_last_save,
-                    Instant::now(),
-                    Duration::from_millis(500),
-                )
+                && draft_save_due(self.draft_last_save, Instant::now(), DRAFT_SAVE_GAP)
             {
                 let _ = persist_draft_to(&self.draft_file, &self.editor.buffer);
                 self.draft_last_save = Some(Instant::now());

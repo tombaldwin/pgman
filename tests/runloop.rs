@@ -145,3 +145,35 @@ async fn run_loop_external_edit_flag_triggers_suspend_resume() {
         app.last_status
     );
 }
+
+/// A typing burst inside the auto-save throttle is still saved once
+/// the window closes, with no further key to wake the loop. Before,
+/// only the burst's first key reached the draft file until the next
+/// event, so closing the terminal lost the rest.
+#[tokio::test]
+async fn run_loop_saves_the_tail_of_a_typing_burst_without_another_key() {
+    let mut app = settled_app();
+    app.mode = Mode::Editor;
+    let draft = app.draft_file.clone();
+    let mut tui = HeadlessTui::default();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    for c in "select 1;".chars() {
+        tx.send(key(KeyCode::Char(c))).unwrap();
+    }
+    let observe = async move {
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        let saved = std::fs::read_to_string(&draft).unwrap_or_default();
+        drop(tx); // ends the loop
+        saved
+    };
+    let (run, saved) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(app.run_with(&mut tui, rx), observe)
+    })
+    .await
+    .expect("loop hung");
+    run.unwrap();
+    assert_eq!(
+        saved, "select 1;",
+        "the draft file held {saved:?} before exit"
+    );
+}
