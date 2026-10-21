@@ -68,6 +68,10 @@ pub enum CandidateKind {
     /// Surfaced in SELECT-list / RETURNING contexts where they're
     /// usefully called inline.
     Function,
+    /// A whole join predicate (`o.user_id = u.id`) from a foreign key
+    /// between the table just joined and one already in scope —
+    /// offered right after `JOIN … ON`.
+    Join,
 }
 
 impl CandidateKind {
@@ -79,6 +83,7 @@ impl CandidateKind {
             CandidateKind::Alias => "alias",
             CandidateKind::Keyword => "keyword",
             CandidateKind::Function => "fn",
+            CandidateKind::Join => "join",
         }
     }
 }
@@ -360,6 +365,8 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
     } else {
         Vec::new()
     };
+    // The tables before the cursor are `in_scope[..joined_so_far]`.
+    let joined_so_far = before.len();
     let mut in_scope = before;
     in_scope.extend(after);
 
@@ -407,6 +414,22 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
         &select_aliases,
         schema,
     );
+    // Right after `JOIN … ON`, the foreign keys between the table just
+    // joined and the ones before it are the likeliest predicate: offer
+    // each whole, ahead of the single columns.
+    if id.qualifier.is_none()
+        && classification.ctx == ClauseContext::Predicate
+        && ends_with_word(&buf[..id.start], "ON")
+    {
+        let joins = join_on_fk_candidates(&in_scope[..joined_so_far], &id.prefix, schema);
+        if !joins.is_empty() {
+            // The alias just typed (`ON o|`) is a candidate equal to the
+            // prefix, and an exact match commits at once — the join
+            // would never be seen. Accepting it changes nothing anyway.
+            cands.retain(|c| !c.insert.eq_ignore_ascii_case(&id.prefix));
+        }
+        cands.splice(0..0, joins);
+    }
     // Generic top-level keyword layer. Offers the flat "muscle memory"
     // SQL vocabulary (SELECT/FROM/WHERE/…, common functions) whenever
     // the operator is typing an unqualified word of at least
@@ -463,6 +486,80 @@ pub fn candidates_for(buf: &str, cursor: usize, schema: &SchemaCache) -> Vec<Can
         return candidates_fuzzy(&id, &in_scope, &ctes, schema);
     }
     cands
+}
+
+/// `text` ends with the keyword `word` (case-insensitive, whole word),
+/// trailing whitespace aside.
+fn ends_with_word(text: &str, word: &str) -> bool {
+    let t = text.trim_end();
+    t.len() >= word.len()
+        && t.is_char_boundary(t.len() - word.len())
+        && t[t.len() - word.len()..].eq_ignore_ascii_case(word)
+        && !t[..t.len() - word.len()]
+            .chars()
+            .next_back()
+            .is_some_and(is_ident_char)
+}
+
+/// The join predicates the schema's foreign keys offer between the
+/// last table in `refs` (the one just joined) and each one before it,
+/// in either direction: `o.user_id = u.id` for `users u JOIN orders o
+/// ON`. Each side is written the way the query names it — the alias
+/// when there is one. A multi-column key gives one predicate per
+/// column pair. Only predicates starting with `prefix` (so typing the
+/// alias narrows them). Pure.
+pub fn join_on_fk_candidates(
+    refs: &[TableRefInQuery],
+    prefix: &str,
+    schema: &SchemaCache,
+) -> Vec<Candidate> {
+    let Some((joined, earlier)) = refs.split_last() else {
+        return Vec::new();
+    };
+    // Whether a reference names the catalog table `(s, n)`: the same
+    // name, and the same schema when it gives one. An unqualified name
+    // could be any schema's on the search path, and the key itself says
+    // which one it joins.
+    let names = |t: &TableRefInQuery, s: &str, n: &str| {
+        t.name.eq_ignore_ascii_case(n)
+            && t.schema
+                .as_deref()
+                .is_none_or(|ts| ts.eq_ignore_ascii_case(s))
+    };
+    let shown = |t: &TableRefInQuery| t.alias.clone().unwrap_or_else(|| t.name.clone());
+    let mut out: Vec<Candidate> = Vec::new();
+    for other in earlier.iter().rev() {
+        for e in &schema.fk_edges {
+            let pair = if names(joined, &e.child_schema, &e.child_table)
+                && names(other, &e.parent_schema, &e.parent_table)
+            {
+                Some((&e.child_column, other, &e.parent_column))
+            } else if names(other, &e.child_schema, &e.child_table)
+                && names(joined, &e.parent_schema, &e.parent_table)
+            {
+                Some((&e.parent_column, other, &e.child_column))
+            } else {
+                None
+            };
+            let Some((joined_col, other_ref, other_col)) = pair else {
+                continue;
+            };
+            let text = format!(
+                "{}.{joined_col} = {}.{other_col}",
+                shown(joined),
+                shown(other_ref)
+            );
+            if starts_with_ci(&text, prefix) && !out.iter().any(|c| c.insert == text) {
+                out.push(Candidate {
+                    display: text.clone(),
+                    insert: text,
+                    kind: CandidateKind::Join,
+                    context: Some("foreign key".into()),
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Subsequence-match score for fuzzy completion. Lower = better.
@@ -3040,5 +3137,118 @@ mod tests {
         // Statement-start keywords also work without a cache.
         let cands = candidates_for("SE", 2, &cache);
         assert!(cands.iter().any(|c| c.display == "SELECT"));
+    }
+
+    /// users ← orders ← order_items, plus an unrelated `audit.users`.
+    fn fk_cache() -> SchemaCache {
+        use crate::query::schema::FkEdge;
+        let mut c = SchemaCache::default();
+        for (s, t, cols) in [
+            ("audit", "users", &["id", "actor"][..]),
+            ("public", "order_items", &["id", "order_id"][..]),
+            ("public", "orders", &["id", "user_id"][..]),
+            ("public", "users", &["id", "email"][..]),
+        ] {
+            c.tables.push(TableMeta {
+                schema: s.into(),
+                name: t.into(),
+            });
+            c.columns_by_table.insert(
+                (s.into(), t.into()),
+                cols.iter().map(|x| x.to_string()).collect(),
+            );
+        }
+        let edge = |ct: &str, cc: &str, pt: &str| FkEdge {
+            child_schema: "public".into(),
+            child_table: ct.into(),
+            child_column: cc.into(),
+            parent_schema: "public".into(),
+            parent_table: pt.into(),
+            parent_column: "id".into(),
+        };
+        c.fk_edges = vec![
+            edge("orders", "user_id", "users"),
+            edge("order_items", "order_id", "orders"),
+        ];
+        c.schemas = vec!["audit".into(), "public".into()];
+        c
+    }
+
+    fn joins_at_end(sql: &str) -> Vec<String> {
+        candidates_for(sql, sql.len(), &fk_cache())
+            .into_iter()
+            .filter(|c| c.kind == CandidateKind::Join)
+            .map(|c| c.insert)
+            .collect()
+    }
+
+    #[test]
+    fn join_on_offers_the_foreign_key_predicate_in_either_direction() {
+        // Child joined to its parent…
+        assert_eq!(
+            joins_at_end("SELECT * FROM users u JOIN orders o ON "),
+            vec!["o.user_id = u.id"]
+        );
+        // …and parent joined to its child.
+        assert_eq!(
+            joins_at_end("SELECT * FROM orders o JOIN users u ON "),
+            vec!["u.id = o.user_id"]
+        );
+        // No alias: the table's name.
+        assert_eq!(
+            joins_at_end("select * from users join orders on "),
+            vec!["orders.user_id = users.id"]
+        );
+    }
+
+    #[test]
+    fn join_on_pairs_the_new_table_with_each_earlier_one_nearest_first() {
+        assert_eq!(
+            joins_at_end(
+                "SELECT * FROM users u JOIN orders o ON o.user_id = u.id JOIN order_items i ON "
+            ),
+            vec!["i.order_id = o.id"]
+        );
+        // Nothing links the new table to anything before it: none.
+        assert!(joins_at_end("SELECT * FROM users u JOIN order_items i ON ").is_empty());
+    }
+
+    #[test]
+    fn join_on_candidates_narrow_by_prefix_and_lead_the_list() {
+        let sql = "SELECT * FROM users u JOIN orders o ON o";
+        let cands = candidates_for(sql, sql.len(), &fk_cache());
+        assert_eq!(cands[0].insert, "o.user_id = u.id");
+        assert_eq!(cands[0].kind.label(), "join");
+        assert_eq!(cands[0].context.as_deref(), Some("foreign key"));
+        assert!(joins_at_end("SELECT * FROM users u JOIN orders o ON x").is_empty());
+    }
+
+    #[test]
+    fn join_candidates_only_right_after_on() {
+        // Mid-predicate, in WHERE, after a qualifier: plain completion.
+        assert!(joins_at_end("SELECT * FROM users u JOIN orders o ON o.user_id = ").is_empty());
+        assert!(joins_at_end("SELECT * FROM users u JOIN orders o ON true WHERE ").is_empty());
+        assert!(joins_at_end("SELECT * FROM users u JOIN orders o ON o.").is_empty());
+        // `ON` must be the whole word.
+        assert!(joins_at_end("SELECT * FROM users u JOIN orders o WHERE won").is_empty());
+    }
+
+    #[test]
+    fn join_on_resolves_a_schema_qualified_table() {
+        // audit.users has no foreign keys: nothing, though public.users would.
+        assert!(joins_at_end("SELECT * FROM audit.users a JOIN orders o ON ").is_empty());
+        assert_eq!(
+            joins_at_end("SELECT * FROM public.users a JOIN orders o ON "),
+            vec!["o.user_id = a.id"]
+        );
+    }
+
+    #[test]
+    fn ends_with_word_is_whole_word_and_case_blind() {
+        assert!(ends_with_word("x JOIN y ON ", "ON"));
+        assert!(ends_with_word("x join y on", "ON"));
+        assert!(!ends_with_word("x join y won", "ON"));
+        assert!(!ends_with_word("", "ON"));
+        assert!(ends_with_word("ON", "ON"));
     }
 }

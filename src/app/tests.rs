@@ -8660,6 +8660,27 @@ fn enter_on_a_backslash_command_runs_it() {
     assert_eq!(a.editor.buffer, "", "the backslash command was dispatched");
 }
 
+#[test]
+fn tab_after_join_on_completes_the_foreign_key_predicate() {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM users u JOIN orders o ON o");
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let popup = a.completion.as_ref().expect("a popup");
+    assert_eq!(popup.candidates[0].insert, "o.user_id = u.id");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        a.editor.buffer,
+        "SELECT * FROM users u JOIN orders o ON o.user_id = u.id"
+    );
+    // Tab on the space after ON shows it first too.
+    a.completion = None;
+    set_editor(&mut a, "SELECT * FROM orders o JOIN order_items i ON ");
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let popup = a.completion.as_ref().expect("a popup");
+    assert_eq!(popup.candidates[0].insert, "i.order_id = o.id");
+}
+
 fn popup_with(a: &mut App, selected: Option<usize>) {
     use crate::query::complete::CandidateKind;
     a.editor.buffer = "SELECT * FROM us".into();

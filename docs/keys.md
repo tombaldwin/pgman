@@ -118,6 +118,11 @@ diff, all of which are also dispatched from this mode.
 
 Typing a space right after `FROM`, `JOIN`, `INNER`, `LEFT`, `RIGHT`, `FULL`,
 `CROSS`, `INTO`, `WHERE`, `AND`, `OR` or `ON` also auto-triggers completion.
+Right after `JOIN … ON` the popup leads with the whole predicate from each
+foreign key between the table just joined and the ones before it, in either
+direction and named the way the query names them (`users u JOIN orders o ON`
+offers `o.user_id = u.id`); typing the alias narrows to its own. A
+multi-column key offers one predicate per column pair.
 
 A newline inherits the previous line's indentation, plus one level (`[editor]
 indent`, default 2) when that line ends with `(`, `,` or a clause keyword such
