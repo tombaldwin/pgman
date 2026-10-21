@@ -3,17 +3,17 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
+ pgman X.X.X │ ledger  connected · pg 16.4
  1 empty             ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │> (empty — press e to focus)                              │
 ╰──────────────────────────────────────────────────────────╯
 ╭[ ◆ start ◆ ]─────────────────────────────────────────────╮
-│ connected to shop on localhost:5432 · pg 16.2 · RO       │
+│ connected to ledger on localhost:5433 · pg 16.4 · RO     │
 │                                                          │
 │   e   write a query                                      │
-│   S   schema browser (3 tables)                          │
-│   Q   saved queries (3)                                  │
+│   S   schema browser (26 tables)                         │
+│   Q   saved queries (4)                                  │
 │   T   slow queries                                       │
 │   W   schema wizard                                      │
 │   L   sessions & locks                                   │

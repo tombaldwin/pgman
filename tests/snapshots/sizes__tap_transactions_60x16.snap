@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
+│ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
 │ │  STATE        STMTS    FPS        SPAN     DB-TIME  │  │
-│ │  open             6      1     125.0ms       2.7ms  │  │
-╰─│  open             1      1         0µs       1.8ms  │──╯
-╭[│  open             1      1         0µs       310µs  │──╮
-│i│                                                     │  │
-│1│                                                     │  │
-│2│                                                     │  │
-│3│                                                     │  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│ │  open             9      2     195.0ms       5.6ms  │  │
+╰─│  open             1      1         0µs       290µs  │──╯
+╭[│  open             1      1         0µs       2.3ms  │──╮
+│n│                                                     │  │
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I╰─────────────────────────────────────────────────────╯0-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · ? +5 more

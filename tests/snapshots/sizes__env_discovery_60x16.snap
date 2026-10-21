@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ discover ◆ ] space choose · s save · p scope · q back ╮
-│  AWS account 123456789012, eu-west-2 · ambient profile ·…│
+│  AWS account 210987654321, eu-west-2 · ambient profile ·…│
 │                                                          │
-│  [x] analytics  1 replica · 1 database · 2 secrets · tun…│
-│  [ ] qa         0 replicas · 1 database · 1 secret · tun…│
-│      staging    already in environment staging           │
+│  [x] analytics       1 replica · 1 database · 2 secrets …│
+│  [ ] ledger-dev      0 replicas · 1 database · 1 secret …│
+│      ledger-prod     already in environment production   │
+│      ledger-staging  already in environment staging      │
 │                                                          │
 │  s appends for analytics:                                │
-│  # tunnels through bastion (i-0demo); the ssh user comes…│
+│  # tunnels through bastion (i-0f3a9c1e7b2d45680); the ss…│
 │  [[environments]]                                        │
 │  name = "analytics"                                      │
-│  source = { kind = "rds", instances = ["analytics"], reg…│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · space choose · ? +5 more

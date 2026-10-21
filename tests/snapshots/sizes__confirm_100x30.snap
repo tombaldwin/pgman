@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││             PostgreSQL   confirm │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││             PostgreSQL   confirm │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DESC;                                                                       │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
+│  WHERE status = 'open'                                                                           │
+│  ORDER BY due_at;                                                                                │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6╭[ ◆ confirm ◆ ]─────────────────────────────────────────────────────╮──────────────╮
-│id  email     │run (DELETE without WHERE) · Postgres will refuse it — this session │              │
-│1   ada@exampl│is read-only                                                        │              │
-│2   linus@exam│                                                                    │              │
-│3   grace@exam│DELETE FROM orders                                                  │              │
-│4   alan@examp│                                                                    │              │
-│5   edsger@exa│y = send it anyway · n / esc = cancel                               │              │
-│6   katherine@╰────────────────────────────────────────────────────────────────────╯              │
+╭[ ◆ result · 5╭[ ◆ confirm ◆ ]─────────────────────────────────────────────────────╮──────────────╮
+│number      cu│run (DELETE without WHERE) · Postgres will refuse it — this session │              │
+│INV-004822  21│is read-only                                                        │              │
+│INV-004824  21│                                                                    │              │
+│INV-004827  21│DELETE FROM orders                                                  │              │
+│INV-004829  21│                                                                    │              │
+│INV-004831  21│y = send it anyway · n / esc = cancel                               │              │
+│              ╰────────────────────────────────────────────────────────────────────╯              │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

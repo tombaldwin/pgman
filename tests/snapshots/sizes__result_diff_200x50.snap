@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                    PostgreSQL   diff │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                    PostgreSQL   diff │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ Result diff ◆ ] A: public.users (6 rows) vs B: public.users (6 rows) · key: id · r re-pin · c clear · q close ────────────────────────────────────────────────────────────────────╮       │
-│       │+1 added   -1 removed   ~1 changed   =4 unchanged                                                                                                                                     │       │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER╭[ ◆ Result diff ◆ ] A: public.invoices (5 rows) vs B: public.invoices (5 rows) · key: number · r re-pin · c clear · q close ──────────────────────────────────────────────────────────╮       │
+│       │+1 added   -1 removed   ~1 changed   =3 unchanged                                                                                                                                     │       │
 ╰───────│                                                                                                                                                                                      │───────╯
-╭[ ◆ res│  - 2 | linus@example.com | free | 2026-01-09 14:48:00+00                                                                                                                             │───────╮
-│id  ema│  ~ [1] email: ada@example.com → ada+updated@example.com                                                                                                                              │       │
-│1   ada│  + 7 | nathan@example.com | free | 2026-04-01 00:00:00+00                                                                                                                            │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
-│7   nat│                                                                                                                                                                                      │       │
+╭[ ◆ res│  - INV-004824 | 2104 | open | GBP | 768.00 | 2026-10-04 09:00:00+00                                                                                                                  │───────╮
+│number │  ~ [INV-004822] total: 5712.00 → 5512.00                                                                                                                                             │       │
+│INV-004│  + INV-004833 | 2103 | open | USD | 249.00 | 2026-11-01 09:00:00+00                                                                                                                  │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   diff · +1 -1 ~1 =4
+ RO   TAP   N+1 ×1   diff · +1 -1 ~1 =3

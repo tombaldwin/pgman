@@ -3356,7 +3356,12 @@ mod tests {
 
     #[test]
     fn environment_lines_group_replicas_under_their_primary_and_align_columns() {
-        let lines = environment_lines(&crate::demo::environments());
+        let mut envs = crate::demo::environments();
+        // A static row: no engine or status from its source.
+        let local = &mut envs[3].targets[0];
+        local.engine = None;
+        local.status = None;
+        let lines = environment_lines(&envs);
         let rows: Vec<(&str, usize)> = lines
             .iter()
             .filter_map(|l| match l {
@@ -3364,8 +3369,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(rows.iter().map(|r| r.1).collect::<Vec<_>>(), [0, 1, 2, 3]);
-        assert!(rows[1].0.contains("└ staging-replica"), "{}", rows[1].0);
+        assert_eq!(
+            rows.iter().map(|r| r.1).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4, 5, 6, 7]
+        );
+        assert!(rows[1].0.contains("└ ledger-prod-replica"), "{}", rows[1].0);
         assert!(rows[1].0.contains("replica"));
         // Columns line up: every row puts the engine at the header's column.
         let col = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
@@ -3379,29 +3387,29 @@ mod tests {
         assert_eq!(col(rows[0].0, "postgres"), col(&header, "engine"));
         assert_eq!(col(rows[1].0, "postgres"), col(&header, "engine"));
         // Static rows carry no engine or status: shown as a dash.
-        assert!(rows[3].0.contains("—"), "{}", rows[3].0);
+        assert!(rows[7].0.contains("—"), "{}", rows[7].0);
     }
 
     #[test]
     fn the_detail_line_carries_what_the_columns_leave_out() {
         let envs = crate::demo::environments();
         let d = environment_detail(&envs[0].targets[1]);
-        assert!(d.contains("staging-replica/shop"), "{d}");
+        assert!(d.contains("ledger-prod-replica/ledger"), "{d}");
         assert!(
-            d.contains("staging-replica.c1x2y3.eu-west-2.rds.amazonaws.com:5432"),
+            d.contains("ledger-prod-replica.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432"),
             "{d}"
         );
         assert!(
-            d.contains("db.t4g.medium") && d.contains("single-AZ"),
+            d.contains("db.r6g.2xlarge") && d.contains("single-AZ"),
             "{d}"
         );
-        assert!(d.contains("replica of staging"), "{d}");
+        assert!(d.contains("replica of ledger-prod"), "{d}");
         assert!(
             d.find("replica of").unwrap() < d.find("rds.amazonaws.com").unwrap(),
             "the endpoint goes last, so truncation takes it first: {d}"
         );
-        let local = environment_detail(&envs[2].targets[0]);
-        assert_eq!(local, "  shop-local/shop · localhost:5432");
+        let local = environment_detail(&envs[3].targets[0]);
+        assert_eq!(local, "  ledger-db-1/ledger · 127.0.0.1:5432");
     }
 
     #[test]
@@ -3523,12 +3531,17 @@ mod tests {
         let text: Vec<String> = patch_lines(&v).into_iter().map(|l| l.0).collect();
         assert_eq!(
             text[1],
-            "  2 to apply, in order, each in its own transaction · recorded up to 41"
+            "  2 to apply, in order, each in its own transaction · recorded up to 318"
         );
         assert_eq!(text[2], "  mode: for real · Tab dry run or copy");
-        assert_eq!(text[3], "  42-order-notes.sql");
-        assert_eq!(text[5], "      ALTER TABLE orders ADD COLUMN notes text");
-        assert!(text[9].starts_with("  not included: 44-orders-created-idx.sql"));
+        assert_eq!(text[3], "  319-APP-101-invoice-dunning-stage.sql");
+        assert_eq!(
+            text[5],
+            "      ALTER TABLE invoices ADD COLUMN dunning_stage smallint NOT NULL DEFAULT 0"
+        );
+        assert!(
+            text[9].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
+        );
         assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
         assert_eq!(
             patch_prompt(&v),
@@ -3543,32 +3556,41 @@ mod tests {
             crate::inventory::patching::ApplyReport {
                 results: vec![
                     crate::inventory::patching::PatchResult {
-                        file: "42-order-notes.sql".into(),
+                        file: "319-APP-101-invoice-dunning-stage.sql".into(),
                         outcome: Ok(2),
                     },
                     crate::inventory::patching::PatchResult {
-                        file: "43-customer-tier.sql".into(),
+                        file: "320-APP-102-credit-note-reason-code.sql".into(),
                         outcome: Err("lock timeout".into()),
                     },
                 ],
                 error: None,
-                recorded_after: Some(42),
+                recorded_after: Some(319),
                 ..Default::default()
             },
         );
         let done = patch_lines(&v);
         assert_eq!(
             done[1],
-            ("  ✓ 42-order-notes.sql — 2 statement(s)".into(), false)
+            (
+                "  ✓ 319-APP-101-invoice-dunning-stage.sql — 2 statement(s)".into(),
+                false
+            )
         );
         assert_eq!(
             done[2],
-            ("  ✗ 43-customer-tier.sql — lock timeout".into(), true)
+            (
+                "  ✗ 320-APP-102-credit-note-reason-code.sql — lock timeout".into(),
+                true
+            )
         );
-        assert_eq!(done[3], ("  recorded up to 42 now (was 41)".into(), false));
+        assert_eq!(
+            done[3],
+            ("  recorded up to 319 now (was 318)".into(), false)
+        );
         assert!(done[4]
             .0
-            .starts_with("  still pending: 44-orders-created-idx.sql"));
+            .starts_with("  still pending: 321-APP-104-open-invoices-by-customer-idx.sql"));
         let mut long = crate::demo::patch_plan("staging", "staging", "shop", false);
         long.patches[0].statements = vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()];
         v.stage = PatchStage::Plan(Ok(long));
@@ -3602,7 +3624,7 @@ mod tests {
             lines[1],
             (
                 "  3 to apply, in order, 1 OUTSIDE a transaction, the rest each in its own \
-                 · recorded up to 41"
+                 · recorded up to 318"
                     .into(),
                 true
             )
@@ -3610,14 +3632,14 @@ mod tests {
         let at = lines
             .iter()
             .position(|l| {
-                l.0 == "  ⚠ 44-orders-created-idx.sql — OUTSIDE a transaction (CONCURRENTLY)"
+                l.0 == "  ⚠ 321-APP-104-open-invoices-by-customer-idx.sql — OUTSIDE a transaction (CONCURRENTLY)"
             })
             .expect("marked");
         assert!(lines[at].1 && lines[at + 1].1, "both lines loud");
         assert!(lines[at + 1]
             .0
             .starts_with("    each statement commits as it runs"));
-        assert!(lines.contains(&("  42-order-notes.sql".into(), false)));
+        assert!(lines.contains(&("  319-APP-101-invoice-dunning-stage.sql".into(), false)));
         assert_eq!(
             patch_prompt(&v),
             Some(("  type staging to apply: sta▏".into(), true)),
@@ -3631,7 +3653,7 @@ mod tests {
             plan,
             crate::inventory::patching::ApplyReport {
                 results: vec![crate::inventory::patching::PatchResult {
-                    file: "44-orders-created-idx.sql".into(),
+                    file: "321-APP-104-open-invoices-by-customer-idx.sql".into(),
                     outcome: Ok(2),
                 }],
                 ..Default::default()
@@ -3639,7 +3661,7 @@ mod tests {
         );
         assert_eq!(
             patch_lines(&v)[1].0,
-            "  ✓ 44-orders-created-idx.sql — 2 statement(s), outside a transaction"
+            "  ✓ 321-APP-104-open-invoices-by-customer-idx.sql — 2 statement(s), outside a transaction"
         );
     }
 
@@ -3706,12 +3728,12 @@ mod tests {
             .contains("the same locks and does the same work on staging"));
         assert_eq!(
             lines[1].0,
-            "  3 to try, in order, all in one transaction, rolled back at the end · recorded up to 41"
+            "  3 to try, in order, all in one transaction, rolled back at the end · recorded up to 318"
         );
         assert!(lines[4].0.contains("holds every lock until the last patch"));
         assert_eq!(
             lines[5].0,
-            "    it stops at 44-orders-created-idx.sql: CONCURRENTLY can't run in a transaction"
+            "    it stops at 321-APP-104-open-invoices-by-customer-idx.sql: CONCURRENTLY can't run in a transaction"
         );
         assert!(patch_prompt(&v).unwrap().0.contains("to dry-run: "));
         v.mode = RunMode::Copy;
@@ -3722,10 +3744,10 @@ mod tests {
         assert!(patch_prompt(&v).unwrap().0.contains("to apply to a copy: "));
         let done = |mode, copy| ApplyReport {
             results: vec![PatchResult {
-                file: "42-order-notes.sql".into(),
+                file: "319-APP-101-invoice-dunning-stage.sql".into(),
                 outcome: Ok(2),
             }],
-            recorded_after: Some(42),
+            recorded_after: Some(319),
             mode,
             copy,
             ..Default::default()
@@ -3736,7 +3758,7 @@ mod tests {
             text[1],
             "  dry run — everything below was rolled back; nothing was kept"
         );
-        assert!(text.contains(&"  recorded up to 42 still (was 41)".to_string()));
+        assert!(text.contains(&"  recorded up to 319 still (was 318)".to_string()));
         let copy = CopyNote {
             name: "shop_pgman_copy_7".into(),
             dropped: Err("in use".into()),
@@ -3744,7 +3766,7 @@ mod tests {
         v.stage = PatchStage::Done(plan, done(RunMode::Copy, Some(copy)));
         let lines = patch_lines(&v);
         assert_eq!(lines[1].0, "  on a copy of shop — shop itself is unchanged");
-        assert!(lines.contains(&("  the copy recorded up to 42 (was 41)".into(), false)));
+        assert!(lines.contains(&("  the copy recorded up to 319 (was 318)".into(), false)));
         assert!(lines.contains(&(
             "  ✗ copy shop_pgman_copy_7 NOT dropped: in use — drop it by hand".into(),
             true
@@ -3793,7 +3815,7 @@ mod tests {
         let mut plan = crate::demo::patch_plan("staging", "staging", "shop", false);
         plan.below_recorded = vec!["7-old.sql".into()];
         let warning = (
-            "  ⚠ not included: 7-old.sql — pending, but numbered below the recorded 41; \
+            "  ⚠ not included: 7-old.sql — pending, but numbered below the recorded 318; \
              it would run out of order, so apply it by hand if it's needed"
                 .to_string(),
             true,
@@ -3831,16 +3853,19 @@ mod tests {
         assert_eq!(
             lines[1],
             (
-                "  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]".into(),
+                "  FATAL ×1 · last 2026-10-21 09:31:12 UTC · [unknown]@[unknown]".into(),
                 true
             ),
             "newest first; FATAL is loud"
         );
         assert_eq!(
             lines[3].0,
-            "  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop"
+            "  ERROR ×1 · last 2026-10-21 09:20:40 UTC · billing@ledger"
         );
-        assert!(lines[4].0.contains("orders_pkey"));
+        assert!(lines[4].0.contains("usage_events_2026_10"));
+        assert!(lines
+            .iter()
+            .any(|l| l.0 == "  ERROR ×3 · last 2026-10-21 09:12:48 UTC · billing@ledger"));
         let empty = crate::app::LogsView {
             result: Some(Ok(Vec::new())),
             ..v.clone()
@@ -3898,12 +3923,50 @@ mod tests {
         );
     }
 
+    /// The demo's first two environments with only their `ledger` rows:
+    /// a primary and its replica, then a single server.
+    fn drift_fixture() -> Vec<crate::inventory::EnvReport> {
+        let mut demo = crate::demo::environments();
+        demo.truncate(2);
+        for r in &mut demo {
+            r.targets.retain(|t| t.database == "ledger");
+        }
+        demo
+    }
+
+    /// `--demo`'s own probes give the drift view something to flag in
+    /// both databases: production behind on each, the local container
+    /// on the newest patch.
+    #[test]
+    fn the_demos_drift_view_flags_both_databases() {
+        use crate::app::ProbeState;
+        let envs = crate::demo::environments();
+        let probes: Vec<Vec<ProbeState>> = envs
+            .iter()
+            .map(|r| match &r.probe {
+                Some(_) => crate::demo::environment_probes(r)
+                    .into_iter()
+                    .map(|o| match o {
+                        Some(r) => ProbeState::Done(r.map(Box::new)),
+                        None => ProbeState::ViaReplica,
+                    })
+                    .collect(),
+                None => vec![ProbeState::Off; r.targets.len()],
+            })
+            .collect();
+        let (dbs, names, cells) = drift_matrix(&envs, &probes);
+        assert_eq!(dbs, ["ledger", "ledgerlog"]);
+        assert_eq!(names, ["production", "staging", "dev", "local"]);
+        assert!(cells[0][0].behind && !cells[0][3].behind, "{cells:?}");
+        assert!(cells[1][0].behind && !cells[1][1].behind, "{cells:?}");
+        assert_eq!(cells[0][2].text, "—", "dev is stopped");
+    }
+
     #[test]
     fn drift_shows_each_databases_version_by_environment_and_flags_the_behind() {
         use crate::app::ProbeState;
         use crate::query::probe::Probe;
-        let mut demo = crate::demo::environments();
-        demo.truncate(2); // staging (primary + replica), qa
+        let demo = drift_fixture(); // production (primary + replica), staging
         let probe = |v: i64, pending: usize| {
             ProbeState::done(Ok(Probe {
                 schema_version: Some(v),
@@ -3916,8 +3979,8 @@ mod tests {
             vec![probe(248, 3)],
         ];
         let (dbs, envs, cells) = drift_matrix(&demo, &probes);
-        assert_eq!(dbs, ["shop"]);
-        assert_eq!(envs, ["staging", "qa"]);
+        assert_eq!(dbs, ["ledger"]);
+        assert_eq!(envs, ["production", "staging"]);
         assert_eq!(
             cells[0],
             [
@@ -3958,8 +4021,7 @@ mod tests {
     fn drift_compares_named_versions_by_count_and_name_not_as_numbers() {
         use crate::app::ProbeState;
         use crate::query::probe::Probe;
-        let mut demo = crate::demo::environments();
-        demo.truncate(2); // staging (primary + replica), qa
+        let demo = drift_fixture(); // production (primary + replica), staging
         let named = |tool: &str, name: &str, applied: usize| {
             ProbeState::done(Ok(Probe {
                 migration_tool: Some(tool.into()),
@@ -4019,8 +4081,7 @@ mod tests {
     fn drift_shows_every_version_of_a_database_in_an_environment() {
         use crate::app::ProbeState;
         use crate::query::probe::Probe;
-        let mut demo = crate::demo::environments();
-        demo.truncate(2); // staging (primary + replica), qa
+        let demo = drift_fixture(); // production (primary + replica), staging
         let probe = |v: i64| {
             ProbeState::done(Ok(Probe {
                 schema_version: Some(v),
@@ -4151,10 +4212,10 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        assert!(primary.0.contains("v251 (+1)"), "{}", primary.0);
+        assert!(primary.0.contains("v318 (+3)"), "{}", primary.0);
         assert!(!primary.0.contains("via replica"), "{}", primary.0);
         assert!(
-            !primary.0.contains("812 MB"),
+            !primary.0.contains("48 GB"),
             "its own size isn't known: {}",
             primary.0
         );
@@ -4167,7 +4228,7 @@ mod tests {
         assert_eq!(via_replica_cells(&ProbeState::Off).schema, "—");
         let d = environment_detail_probed(&envs[0].targets[0], &ProbeState::ViaReplica);
         assert!(
-            d.starts_with("  staging/shop · schema as read on its replica · "),
+            d.starts_with("  ledger-prod/ledger · schema as read on its replica · "),
             "{d}"
         );
     }
@@ -4195,16 +4256,17 @@ mod tests {
             })
             .collect();
         let at = |t: &str, needle: &str| crate::ui::display_width(&t[..t.find(needle).unwrap()]);
-        assert_eq!(at(&texts[1], "v251 (+1)"), at(&texts[0], "schema"));
-        assert_eq!(at(&texts[2], "v251 (+1)"), at(&texts[0], "schema"));
-        assert_eq!(at(&texts[2], "lag 0.4s"), at(&texts[0], "lag"));
-        assert_eq!(at(&texts[2], "812 MB"), at(&texts[0], "size"));
+        assert_eq!(at(&texts[1], "v318 (+3)"), at(&texts[0], "schema"));
+        assert_eq!(at(&texts[2], "v318 (+3)"), at(&texts[0], "schema"));
+        assert_eq!(at(&texts[2], "lag 0.8s"), at(&texts[0], "lag"));
+        assert_eq!(at(&texts[2], "48 GB"), at(&texts[0], "size"));
         let end = |t: &str, n: &str| at(t, n) + crate::ui::display_width(n);
+        // Counts are right-aligned to the column's widest cell.
         assert_eq!(
-            end(&texts[2], "12"),
-            end(&texts[0], "sessions"),
+            end(&texts[6], "23"),
+            end(&texts[2], "1 long tx)"),
             "sessions right-aligned: {}",
-            texts[2]
+            texts[6]
         );
         assert!(
             texts[0].find("size").unwrap() < texts[0].find("engine").unwrap(),
@@ -4212,9 +4274,9 @@ mod tests {
             texts[0]
         );
         assert!(
-            !texts[3].contains("schema"),
-            "qa doesn't probe: {}",
-            texts[3]
+            !texts[8].contains("schema"),
+            "dev doesn't probe: {}",
+            texts[8]
         );
 
         // No environment probes: the old layout, no probe column.
@@ -4231,11 +4293,10 @@ mod tests {
     fn a_probe_reads_the_version_the_source_could_not() {
         use crate::app::ProbeState;
         let mut envs = crate::demo::environments();
-        envs[2].probe = Some(crate::inventory::ProbeSettings {
-            version_table: None,
-            ..Default::default()
-        });
+        // A source that doesn't know the engine.
+        envs[3].targets[0].engine = None;
         let probes = vec![
+            vec![ProbeState::Off; 4],
             vec![ProbeState::Off; 2],
             vec![ProbeState::Off; 1],
             vec![ProbeState::done(Ok(crate::query::probe::Probe {
@@ -4247,16 +4308,16 @@ mod tests {
         let local = lines
             .iter()
             .find_map(|l| match l {
-                EnvLine::Row { text, index: 3, .. } => Some(text.clone()),
+                EnvLine::Row { text, index: 7, .. } => Some(text.clone()),
                 _ => None,
             })
             .unwrap();
         assert!(local.contains("postgres 17.2"), "{local}");
 
-        let t = &envs[2].targets[0];
+        let t = &envs[3].targets[0];
         assert_eq!(
             environment_detail_probed(t, &ProbeState::done(Err("no route\nto host".into()))),
-            "  shop-local/shop · ✗ no route to host"
+            "  ledger-db-1/ledger · ✗ no route to host"
         );
         assert_eq!(
             environment_detail_probed(t, &ProbeState::Probing),
@@ -4765,19 +4826,19 @@ mod tests {
         let found = crate::demo::discovery();
         let row = |name: &str, chosen: bool| {
             let p = found.proposals.iter().find(|p| p.env.name == name).unwrap();
-            proposal_row(p, chosen, 9)
+            proposal_row(p, chosen, 14)
         };
         assert_eq!(
             row("analytics", true),
-            "  [x] analytics  1 replica · 1 database · 2 secrets · tunnel · 1 note"
+            "  [x] analytics       1 replica · 1 database · 2 secrets · tunnel · 1 note"
         );
         assert_eq!(
-            row("qa", false),
-            "  [ ] qa         0 replicas · 1 database · 1 secret · tunnel · 1 note"
+            row("ledger-dev", false),
+            "  [ ] ledger-dev      0 replicas · 1 database · 1 secret · tunnel · 1 note"
         );
         assert_eq!(
-            row("staging", true),
-            "      staging    already in environment staging",
+            row("ledger-staging", true),
+            "      ledger-staging  already in environment staging",
             "covered: never shown as chosen"
         );
     }
@@ -4793,7 +4854,7 @@ mod tests {
         d.scope = d.scopes[1].clone();
         assert_eq!(
             discovery_heading(&d, "AWS account 1"),
-            "  AWS account 1 · profile staging · p scope 2/2"
+            "  AWS account 1 · profile production · p scope 2/2"
         );
     }
 

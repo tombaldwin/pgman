@@ -4,52 +4,52 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                  PostgreSQL   schema │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                  PostgreSQL   schema │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-│           │▼ public  (3)                                                        schema: public                                                                                           │           │
-╰───────────│  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │───────────╯
-╭[ ◆ result │      · user_id : bigint NOT NULL                                    3 table(s)                                                                                               │───────────╮
-│id  email  │      · status : varchar(20) NOT NULL                                                                                                                                         │           │
-│1   ada@exa│      ⌁ orders_user_id_idx                                           enter to expand — then arrow / j/k into the tables                                                       │           │
-│2   linus@e│  ▼ users  (4 col, 1 cons)                                                                                                                                                    │           │
-│3   grace@e│      ◆ users_pkey                                                                                                                                                            │           │
-│4   alan@ex│                                                                                                                                                                              │           │
-│5   edsger@│                                                                                                                                                                              │           │
-│6   katheri│                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
-│           │                                                                                                                                                                              │           │
+│           │▼ public  (20)                                                       schema: public                                                                                           │           │
+╰───────────│  ▼ accounts  (5 col, 1 cons)                                                                                                                                                 │───────────╯
+╭[ ◆ result │      · customer_id : bigint NOT NULL                                20 table(s)                                                                                              │───────────╮
+│number     │  ▼ audit_log  (7 col, 1 cons)                                                                                                                                                │           │
+│INV-004822 │      · actor_user_id : bigint                                       enter to expand — then arrow / j/k into the tables                                                       │           │
+│INV-004824 │  ▼ customers  (10 col, 2 cons)                                                                                                                                               │           │
+│INV-004827 │      · status : text NOT NULL                                                                                                                                                │           │
+│INV-004829 │      ◆ customers_pkey                                                                                                                                                        │           │
+│INV-004831 │      ◆ customers_public_id_key                                                                                                                                               │           │
+│           │  ▼ invoices  (12 col, 2 cons)                                                                                                                                                │           │
+│           │      · customer_id : bigint NOT NULL                                                                                                                                         │           │
+│           │      · status : text NOT NULL                                                                                                                                                │           │
+│           │      ⌁ invoices_customer_id_issued_at_idx                                                                                                                                    │           │
+│           │  ▼ payments  (8 col, 2 cons)                                                                                                                                                 │           │
+│           │      · status : text NOT NULL                                                                                                                                                │           │
+│           │  ▼ subscriptions  (9 col, 1 cons)                                                                                                                                            │           │
+│           │      · customer_id : bigint NOT NULL                                                                                                                                         │           │
+│           │      · status : text NOT NULL                                                                                                                                                │           │
+│           │      ⌁ subscriptions_customer_id_idx                                                                                                                                         │           │
+│           │  ▼ tax_rates  (5 col, 1 cons)                                                                                                                                                │           │
+│           │      · inclusive : boolean NOT NULL                                                                                                                                          │           │
+│           │  ▼ usage_events  (6 col, 1 cons)                                                                                                                                             │           │
+│           │      ◆ usage_events_pkey                                                                                                                                                     │           │
+│           │      ⌁ usage_events_subscription_item_id_occurred_at_idx                                                                                                                     │           │
+│           │    ▼ 3 partitions                                                                                                                                                            │           │
+│           │        · usage_events_2026_08                                                                                                                                                │           │
+│           │        · usage_events_2026_09                                                                                                                                                │           │
+│           │        · usage_events_2026_10                                                                                                                                                │           │
+│           │  ▼ users  (7 col, 2 cons)                                                                                                                                                    │           │
+│           │      · customer_id : bigint NOT NULL                                                                                                                                         │           │
+│           │      ◆ users_email_key                                                                                                                                                       │           │
+│           │      ◆ users_pkey                                                                                                                                                            │           │
 │           ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯           │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 7 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear

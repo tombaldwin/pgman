@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                   PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                   PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
-│  WH╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q cl╮    │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q c╮    │
 │  OR│   CALLS        SPAN  TXN / CONN          CALLER · FINGERPRINT                                              │    │
-│    │       6     125.0ms  conn-7#42           OrderService.loadItems:88 · select * from order_items where order…│    │
+│    │       8     175.0ms  conn-7#311          InvoiceService.loadLines:112 · select id, description, quantity, …│    │
 ╰────│                                                                                                            │────╯
 ╭[ ◆ │                                                                                                            │────╮
-│id  │                                                                                                            │    │
-│1   │                                                                                                            │    │
-│2   │                                                                                                            │    │
-│3   │                                                                                                            │    │
-│4   │                                                                                                            │    │
-│5   │                                                                                                            │    │
-│6   │                                                                                                            │    │
+│numb│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

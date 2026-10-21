@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
-│  WHERE plan = 'pro'                                      │
-│  ORDER BY created_at DESC;                               │
+│  FROM invoices                                           │
+│  WHERE status = 'open'                                   │
+│  ORDER BY due_at;                                        │
 ╰╭[ ◆ save query · enter persist · esc cancel ◆ ]─────────╮╯
 ╭│name:                                                   │╮
-││select-id-email-plan-created_at                         ││
+││select-number-customer_id-status-curr                   ││
 ││                                                        ││
 │╰────────────────────────────────────────────────────────╯│
-│3   grace@example.com      pro   2026-02-01 08:30:00+00   │
-│4   alan@example.com       team  2026-02-17 19:05:00+00   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│INV-00482  2107       open    GBP       22140.00  2026-10-│
+│INV-00482  2109       open    USD       980.00    2026-10-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   save query · enter persist · esc cancel

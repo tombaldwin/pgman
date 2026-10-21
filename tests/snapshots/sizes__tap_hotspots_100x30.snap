@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││            PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││            PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  F╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · ╮   │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  F╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle ·╮   │
 │  W│   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CALLER               │   │
-│  O│       6      0      450µs      495µs      495µs  select * from order… · OrderService.load│   │
-│   │       1      0      1.8ms      1.8ms      1.8ms  select id, user_id,… · OrderService.list│   │
-╰───│       1      0      310µs      310µs      310µs  select id, email, p… · UserController.sh│───╯
-╭[ ◆│                                                                                          │───╮
-│id │                                                                                          │   │
-│1  │                                                                                          │   │
-│2  │                                                                                          │   │
-│3  │                                                                                          │   │
-│4  │                                                                                          │   │
-│5  │                                                                                          │   │
-│6  │                                                                                          │   │
+│  O│       8      0      465µs      525µs      525µs  select id, descript… · InvoiceService.lo│   │
+│   │       1      0      2.3ms      2.3ms      2.3ms  update subscription… · DunningJob.advanc│   │
+╰───│       1      0      1.8ms      1.8ms      1.8ms  select id, number, … · InvoiceController│───╯
+╭[ ◆│       1      0      290µs      290µs      290µs  select id, name, bi… · CustomerRepositor│───╮
+│num│                                                                                          │   │
+│INV│                                                                                          │   │
+│INV│                                                                                          │   │
+│INV│                                                                                          │   │
+│INV│                                                                                          │   │
+│INV│                                                                                          │   │
+│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

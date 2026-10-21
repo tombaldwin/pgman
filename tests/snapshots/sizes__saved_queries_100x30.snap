@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││       PostgreSQL   saved queries │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││       PostgreSQL   saved queries │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  FRO╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · q close ──────────╮     │
-│  WHE│  pro-users                     SELECT id, email, created_at FROM users WHERE plan = '│     │
-│  ORD│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;            │     │
-│     │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        su│     │
-╰─────│                                                                                      │─────╯
+│  WHE│  overdue-invoices              SELECT number, customer_id, currency, total, due_at FR│     │
+│  ORD│  customer-invoices             SELECT number, status, total, due_at FROM invoices WHE│     │
+│     │  mrr-by-month                  SELECT month, currency, mrr, customers FROM reporting.│     │
+╰─────│  failing-webhooks-24h          SELECT webhook_id, status_code, count(*) FROM webhook_│─────╯
 ╭[ ◆ r│                                                                                      │─────╮
-│id  e│                                                                                      │     │
-│1   a│  pro-users                                                                           │     │
-│2   l│  SELECT id, email, created_at                                                        │     │
-│3   g│  FROM users                                                                          │     │
-│4   a│  WHERE plan = 'pro'                                                                  │     │
-│5   e│  ORDER BY created_at DESC;                                                           │     │
-│6   k│                                                                                      │     │
+│numbe│                                                                                      │     │
+│INV-0│  overdue-invoices                                                                    │     │
+│INV-0│  SELECT number, customer_id, currency, total, due_at                                 │     │
+│INV-0│  FROM invoices                                                                       │     │
+│INV-0│  WHERE status = 'open'                                                               │     │
+│INV-0│  AND due_at < now()                                                                  │     │
+│     │  ORDER BY due_at;                                                                    │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
@@ -32,4 +32,4 @@ expression: dump(&buf)
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   saved queries · 3 entries
+ RO   TAP   N+1 ×1   saved queries · 4 entries

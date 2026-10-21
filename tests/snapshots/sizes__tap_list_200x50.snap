@@ -4,28 +4,28 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────╮       │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q close ────────────────────────────────────────────────────────────────────╮       │
 │       │    DURATION       ROWS  APP                   SQL / KIND                                                                                                                             │       │
-╰───────│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?                                                                                │───────╯
-╭[ ◆ res│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │───────╮
-│id  ema│       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│1   ada│       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│2   lin│       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│3   gra│       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│4   ala│       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                                                                                           │       │
-│5   eds│       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id = ?                                                                                         │       │
-│6   kat│                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
+╰───────│       290µs          1  billing-api           SELECT id, name, billing_email, currency FROM customers WHERE id = ?                                                                   │───────╯
+╭[ ◆ res│       1.8ms          1  billing-api           SELECT id, number, status, total, due_at FROM invoices WHERE customer_id = ? ORDER BY issued_at DESC LIMIT ?                           │───────╮
+│number │       420µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│INV-004│       435µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│INV-004│       450µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│INV-004│       465µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│INV-004│       480µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│INV-004│       495µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│       │       510µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│       │       525µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?                                          │       │
+│       │       2.3ms          1  billing-api           UPDATE subscriptions SET status = ?, current_period_end = ? WHERE id = ?                                                               │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

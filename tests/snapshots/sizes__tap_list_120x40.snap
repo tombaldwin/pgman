@@ -4,27 +4,27 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                   PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                   PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
-│  WH╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · q c╮    │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · … ╮    │
 │  OR│    DURATION       ROWS  APP                   SQL / KIND                                                   │    │
-│    │       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHERE status = ?      │    │
-╰────│       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │────╯
-╭[ ◆ │       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │────╮
-│id  │       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
-│1   │       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
-│2   │       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
-│3   │       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id = ?                 │    │
-│4   │       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id = ?               │    │
-│5   │                                                                                                            │    │
-│6   │                                                                                                            │    │
-│    │                                                                                                            │    │
+│    │       290µs          1  billing-api           SELECT id, name, billing_email, currency FROM customers WHER…│    │
+╰────│       1.8ms          1  billing-api           SELECT id, number, status, total, due_at FROM invoices WHERE…│────╯
+╭[ ◆ │       420µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│────╮
+│numb│       435µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│INV-│       450µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│INV-│       465µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│INV-│       480µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│INV-│       495µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│INV-│       510µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│    │       525µs          1  billing-api           SELECT id, description, quantity, unit_amount, amount FROM i…│    │
+│    │       2.3ms          1  billing-api           UPDATE subscriptions SET status = ?, current_period_end = ? …│    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││          PostgreSQL   row │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││          PostgreSQL   row │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM ╭[ ◆ row 1 / 6 · field 1/4 ◆ ]─────────────────────────────────╮       │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  FROM ╭[ ◆ row 1 / 5 · field 1/6 ◆ ]─────────────────────────────────╮       │
 │  WHERE│                                                              │       │
-│  ORDER│ id         │ 1                                               │       │
-╰───────│ email      │ ada@example.com                                 │───────╯
-╭[ ◆ res│ plan       │ pro                                             │───────╮
-│id  ema│ created_at │ 2026-01-04 09:12:00+00                          │       │
-│1   ada│                                                              │       │
-│2   lin│                                                              │       │
-│3   gra│                                                              │       │
-│4   ala│                                                              │       │
-│5   eds│                                                              │       │
-│6   kat│                                                              │       │
+│  ORDER│ number      │ INV-004822                                     │       │
+╰───────│ customer_id │ 2102                                           │───────╯
+╭[ ◆ res│ status      │ open                                           │───────╮
+│number │ currency    │ EUR                                            │       │
+│INV-004│ total       │ 5712.00                                        │0+00   │
+│INV-004│ due_at      │ 2026-10-01 09:00:00+00                         │0+00   │
+│INV-004│                                                              │0+00   │
+│INV-004│                                                              │0+00   │
+│INV-004│                                                              │0+00   │
+│       │                                                              │       │
 │       ╰──────────────────────────────────────────────────────────────╯       │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

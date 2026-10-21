@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   environments │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││ PostgreSQL   environments │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ environments · log errors ◆ ] q back · j/k scroll · r again ──────────────╮
 │  staging · staging — recent errors from its RDS log                          │
 │                                                                              │
-│  FATAL ×1 · last 2026-03-02 09:31:12 UTC · [unknown]@[unknown]               │
-│      password authentication failed for user "report"                        │
-│  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop                         │
-│      duplicate key value violates unique constraint "orders_pkey"            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
+│  FATAL ×1 · last 2026-10-21 09:31:12 UTC · [unknown]@[unknown]               │
+│      password authentication failed for user "finance_ro"                    │
+│  ERROR ×1 · last 2026-10-21 09:20:40 UTC · billing@ledger                    │
+│      insert or update on table "usage_events_2026_10" violates foreign key   │
+│        constraint "usage_events_subscription_item_id_fkey"                   │
+│  ERROR ×3 · last 2026-10-21 09:12:48 UTC · billing@ledger                    │
+│      duplicate key value violates unique constraint                          │
+│        "payments_provider_ref_key"                                           │
+│  ERROR ×1 · last 2026-10-21 09:00:02 UTC · ledger_report@ledger              │
+│      canceling statement due to statement timeout                            │
+│  ERROR ×1 · last 2026-10-21 08:15:33 UTC · billing@ledger                    │
+│      deadlock detected                                                       │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

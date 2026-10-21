@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││        PostgreSQL   about │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││        PostgreSQL   about │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, em╭[ ◆ about ◆ ]─────────────────────────────────╮               │
-│  FROM users   │                                              │               │
-│  WHERE plan = │                                              │               │
-│  ORDER BY crea│              pgman X.X.X · beta              │               │
+│> SELECT number╭[ ◆ about ◆ ]─────────────────────────────────╮               │
+│  FROM invoices│                                              │               │
+│  WHERE status │                                              │               │
+│  ORDER BY due_│              pgman X.X.X · beta              │               │
 ╰───────────────│       installed via a standalone binary      │───────────────╯
-╭[ ◆ result · 6 │   k9s-style Postgres TUI for Java/AWS shops  │───────────────╮
-│id  email      │            server: pg 16.2 (demo)            │               │
-│1   ada@example│                                              │               │
-│2   linus@examp│       by Tom Baldwin / Polymorphism Ltd      │               │
-│3   grace@examp│          license: MIT OR Apache-2.0          │               │
-│4   alan@exampl│                                              │               │
-│5   edsger@exam│           esc / enter / A to close           │               │
-│6   katherine@e│                                              │               │
+╭[ ◆ result · 5 │   k9s-style Postgres TUI for Java/AWS shops  │───────────────╮
+│number      cus│            server: pg 16.4 (demo)            │               │
+│INV-004822  210│                                              │ 09:00:00+00   │
+│INV-004824  210│       by Tom Baldwin / Polymorphism Ltd      │ 09:00:00+00   │
+│INV-004827  210│          license: MIT OR Apache-2.0          │ 09:00:00+00   │
+│INV-004829  210│                                              │ 09:00:00+00   │
+│INV-004831  211│           esc / enter / A to close           │ 09:00:00+00   │
+│               │                                              │               │
 │               ╰──────────────────────────────────────────────╯               │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

@@ -430,25 +430,27 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
     let mut a = pgman::demo::app(Theme::default());
     a.splash_visible = false;
     a.splash_until = None;
-    // Normal: the users result grid.
+    // Normal: the open-invoices result grid.
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("ada@example.com"),
+        rendered.contains("INV-004822"),
         "grid data missing:\n{rendered}"
     );
-    // Schema browser opens against the fixture cache (3 tables,
-    // collapsed under the public schema node).
+    // Schema browser opens against the fixture cache (two schemas,
+    // collapsed).
     a.mode = Mode::SchemaBrowser;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("public") && rendered.contains("3 table(s)"),
+        rendered.contains("public")
+            && rendered.contains("reporting")
+            && rendered.contains("20 table(s)"),
         "schema browser missing:\n{rendered}"
     );
     // Tap monitor shows the synthetic events.
     a.mode = Mode::TapMonitor;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("order_items"),
+        rendered.contains("invoice_lines"),
         "tap events missing:\n{rendered}"
     );
 }
@@ -464,31 +466,42 @@ fn schema_browser_shows_a_tables_indexes() {
     a.splash_until = None;
     a.mode = Mode::SchemaBrowser;
     a.schema_browser.expanded.insert("public".into());
-    a.schema_browser.expanded.insert("public.orders".into());
+    a.schema_browser.expanded.insert("public.payments".into());
     let rows = a.flattened_schema_browser();
     a.schema_browser.cursor = rows
         .iter()
-        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "payments"))
         .unwrap();
-    let rendered = dump(&render(&mut a, 140, 30));
-    assert!(rendered.contains("⌁ orders_user_id_idx"), "{rendered}");
-    // The primary key's index lists once, as the constraint.
-    assert!(rendered.contains("◆ orders_pkey"), "{rendered}");
-    assert!(!rendered.contains("⌁ orders_pkey"), "{rendered}");
-    assert!(rendered.contains("indexes (2)"), "{rendered}");
+    let rendered = dump(&render(&mut a, 140, 60));
+    assert!(rendered.contains("⌁ payments_invoice_id_idx"), "{rendered}");
+    // A primary key's or unique constraint's index lists once, as the
+    // constraint.
+    assert!(rendered.contains("◆ payments_pkey"), "{rendered}");
+    assert!(!rendered.contains("⌁ payments_pkey"), "{rendered}");
     assert!(
-        rendered.contains("· orders_pkey  primary key"),
+        rendered.contains("◆ payments_provider_ref_key"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("⌁ payments_provider_ref_key"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("indexes (3)"), "{rendered}");
+    assert!(
+        rendered.contains("· payments_pkey  primary key"),
         "{rendered}"
     );
     a.schema_browser.cursor = rows
         .iter()
         .position(
-            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "orders_user_id_idx"),
+            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "payments_invoice_id_idx"),
         )
         .unwrap();
-    let rendered = dump(&render(&mut a, 140, 30));
+    let rendered = dump(&render(&mut a, 180, 60));
     assert!(
-        rendered.contains("CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id)"),
+        rendered.contains(
+            "CREATE INDEX payments_invoice_id_idx ON public.payments USING btree (invoice_id)"
+        ),
         "{rendered}"
     );
 }

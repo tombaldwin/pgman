@@ -1,34 +1,46 @@
 //! Synthetic-data demo mode (`pgman --demo`).
 //!
 //! Builds a fully-populated [`App`] with no database, no network,
-//! and no disk reads — a small fixture schema (`users` / `orders`
-//! / `order_items`), a result grid, saved queries (including a
-//! `:param` one), and a burst of JDBC-tap events that trips the
-//! live N+1 detector. Used for screenshots, the README demo gif
-//! (`vhs demo.tape`), and talks, so the frames are the same on every
-//! launch (the tap burst lands at the same moment each time) and it
-//! never touches a real server.
+//! and no disk reads: `ledger`, the billing database of a fictional
+//! B2B subscriptions product ([`schema`] has its two dozen relations,
+//! partitions and views), a result grid of overdue invoices, saved
+//! queries (including a `:param` one), environments from production to
+//! a local container with a replica, drift and pending patches, and a
+//! burst of JDBC-tap events that trips the live N+1 detector. Used for
+//! screenshots, the README demo gif (`vhs demo.tape`), and talks, so
+//! the frames are the same on every launch (the tap burst lands at the
+//! same moment each time) and it never touches a real server.
 //!
 //! `App::demo` is set so the run loop skips the connection and
 //! skips persisting draft / history / saved-queries to disk — a
 //! demo run can't clobber the operator's real session.
 
-use std::collections::HashMap;
+mod schema;
+
+pub use schema::table_ddl;
 
 use crate::app::{App, ConnState, DatabaseInfo};
 use crate::conn::Dsn;
 use crate::grid::Grid;
-use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, IndexMeta, SchemaCache, TableMeta};
+use crate::query::schema::SchemaCache;
 use crate::safety::SafetyConfig;
 use crate::saved::SavedQuery;
 use crate::tap::{TapEvent, TapKind};
 use crate::theme::Theme;
 
+/// The query the demo opens with (`app`) and the grid it answers.
+const OPENING_QUERY: &str = "SELECT number, customer_id, status, currency, total, due_at\n\
+                             FROM invoices\n\
+                             WHERE status = 'open'\n\
+                             ORDER BY due_at;";
+
 /// Build the demo [`App`]. Pure (no I/O); everything is in memory.
 pub fn app(theme: Theme) -> App {
-    // A throwaway DSN so the chrome shows a sensible target. The
-    // run loop never connects in demo mode.
-    let dsn = Dsn::parse("postgres://demo@localhost:5432/shop").ok();
+    // Staging through an ssh tunnel, the usual way to an RDS database
+    // behind a bastion — and a target short enough that an 80-column
+    // chrome still shows the database. The run loop never connects in
+    // demo mode.
+    let dsn = Dsn::parse("postgres://billing@localhost:5433/ledger").ok();
     let mut a = App::new(theme, dsn, Vec::new(), SafetyConfig::default());
     a.demo = true;
     // Demo runs are for screenshots / the README gif — no network,
@@ -89,33 +101,28 @@ pub fn app(theme: Theme) -> App {
     });
     a.dsn_origin = Some("--demo (synthetic data)".into());
     a.conn_state = ConnState::Connected {
-        server_version: "16.2 (demo)".into(),
+        server_version: "16.4 (demo)".into(),
     };
-    a.schema_cache = schema_cache();
-    let (cols, rows) = users_result();
-    a.grid = Grid {
-        columns: cols,
-        rows,
-        truncated: false,
-    };
+    a.schema_cache = schema::schema_cache();
+    // The opening grid is the opening query's answer, so running it
+    // again changes nothing.
+    a.grid = answer(OPENING_QUERY, &a.schema_cache);
     // Populate the derived view state (visible rows + selection)
     // through the same path a real QueryOk uses, so the demo can't
     // drift from the live renderer.
     a.reset_grid_view();
-    a.grid_view.source = Some(("public".into(), "users".into()));
-    a.editor.buffer = "SELECT id, email, plan, created_at\n\
-                       FROM users\n\
-                       WHERE plan = 'pro'\n\
-                       ORDER BY created_at DESC;"
-        .into();
+    a.grid_view.source = Some(("public".into(), "invoices".into()));
+    a.editor.buffer = OPENING_QUERY.into();
     a.editor.cursor = a.editor.buffer.len();
     for q in saved_queries() {
         a.saved_queries.upsert(q);
     }
     a.history = vec![
-        "SELECT count(*) FROM orders WHERE status = 'shipped';".into(),
-        "SELECT * FROM users WHERE id = 42;".into(),
+        "SELECT count(*) FROM webhook_deliveries WHERE delivered_at IS NULL;".into(),
+        "SELECT * FROM invoice_lines WHERE invoice_id = 48207;".into(),
+        "SELECT * FROM customers WHERE id = 2107;".into(),
     ];
+    a.notifications.items = notifications();
     let events = tap_events();
     a.tap_health.query_count = events.len() as u64;
     if let Some(last) = events.last() {
@@ -150,16 +157,16 @@ pub fn launch_app(theme: Theme) -> App {
     a.editor_highlight_cache = None;
     a.databases = vec![
         DatabaseInfo {
-            name: "shop".into(),
-            size: "812 MB".into(),
+            name: "ledger".into(),
+            size: "6.2 GB".into(),
         },
         DatabaseInfo {
-            name: "shop_test".into(),
-            size: "94 MB".into(),
+            name: "ledgerlog".into(),
+            size: "1.1 GB".into(),
         },
         DatabaseInfo {
-            name: "analytics".into(),
-            size: "3.4 GB".into(),
+            name: "ledger_test".into(),
+            size: "212 MB".into(),
         },
     ];
     // Nothing has happened at launch, so the tap is quiet: the burst
@@ -182,36 +189,48 @@ pub const DEMO_TAP_DELAY: std::time::Duration = std::time::Duration::from_secs(2
 /// Answer a query synthetically — no client, no network, called from
 /// `App::spawn_run_demo` on `Guard::Allow` in `--demo` mode.
 ///
-/// A `SELECT` whose single `FROM` table is in `cache` gets plausible
-/// rows shaped by that table's real columns: the canned
-/// [`users_result`] for `users`, deterministic generated rows for
-/// anything else (`orders`, `order_items`). Everything else — writes
-/// that reached `Allow` under a customised safety profile, joins,
-/// unknown tables, `SELECT 1`-style queries with no table at all —
-/// gets a one-row notice so the operator sees *something* rather than
-/// a raw error.
+/// A `SELECT` whose single `FROM` relation is in `cache` gets rows
+/// shaped by that relation's real columns: the written-out `invoices`
+/// and `customers`, filtered by the WHERE's `column = value` terms;
+/// deterministic generated rows for everything else, made to satisfy
+/// those terms. Everything else — writes that reached `Allow` under a
+/// customised safety profile, joins, unknown tables, `SELECT 1`-style
+/// queries with no table at all — gets a one-row notice so the
+/// operator sees *something* rather than a raw error.
 pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
     let table = crate::app::infer_single_source_table(sql).filter(|(schema, name)| {
         cache
             .columns_meta_by_table
             .contains_key(&(schema.clone(), name.clone()))
     });
+    let equalities = where_clause_of(sql)
+        .map(where_equalities)
+        .unwrap_or_default();
     let full = match table {
-        Some((_, name)) if name == "users" => {
-            let (columns, rows) = users_result();
-            Grid {
-                columns,
-                rows,
-                truncated: false,
-            }
-        }
         Some((schema, name)) => {
-            let cols = cache
-                .columns_meta_by_table
-                .get(&(schema, name.clone()))
-                .cloned()
-                .unwrap_or_default();
-            generated_rows(&name, &cols)
+            let canned = match (schema.as_str(), name.as_str()) {
+                ("public", "invoices") => Some(schema::invoices()),
+                ("public", "customers") => Some(schema::customers()),
+                _ => None,
+            };
+            match canned {
+                Some((columns, rows)) => filter_rows(
+                    Grid {
+                        columns,
+                        rows,
+                        truncated: false,
+                    },
+                    &equalities,
+                ),
+                None => {
+                    let cols = cache
+                        .columns_meta_by_table
+                        .get(&(schema, name.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    generated_rows(&name, &cols, &equalities)
+                }
+            }
         }
         // The notice is a one-column answer about the demo itself, not
         // about the statement — projecting it would be nonsense.
@@ -229,7 +248,7 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
 
 /// `n` when `sql` ends `LIMIT n` (an optional `;` after it), so a
 /// demo answer is no longer than the statement asked for — the
-/// schema browser's `p` asks for five rows and `users` has six.
+/// schema browser's `p` asks for five rows and `customers` has twelve.
 fn trailing_limit(sql: &str) -> Option<usize> {
     let sql = sql.trim().trim_end_matches(';');
     let mut words = sql.split_whitespace().rev();
@@ -307,8 +326,80 @@ fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '$'
 }
 
+/// The `column = value` terms of a WHERE that is nothing but terms
+/// joined by `AND`: `(column, value)` with the column's last
+/// dot-separated segment and the value unquoted. Terms of any other
+/// shape (`due_at < now()`, `IN (…)`) are skipped; a WHERE with a
+/// top-level `OR` yields nothing, since dropping a row its other branch
+/// would keep answers a different question. Pure.
+fn where_equalities(clause: &str) -> Vec<(String, String)> {
+    let mut terms = Vec::new();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut start = 0usize;
+    for (i, c) in clause.char_indices() {
+        match c {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            _ if in_string || depth > 0 => {}
+            _ if word_at(clause, i, "or") => return Vec::new(),
+            _ if word_at(clause, i, "and") => {
+                terms.push(&clause[start..i]);
+                start = i + "and".len();
+            }
+            _ => {}
+        }
+    }
+    terms.push(&clause[start..]);
+    terms
+        .into_iter()
+        .filter_map(|term| {
+            let (lhs, rhs) = term.split_once('=')?;
+            // `<=`, `>=`, `!=` leave their first character on the left,
+            // which no column name holds.
+            let column = column_name_of(lhs)?;
+            let rhs = rhs.trim();
+            let value = match rhs.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+                Some(v) if !v.contains('\'') => v,
+                Some(_) => return None,
+                None if !rhs.is_empty() && rhs.chars().all(|c| c.is_ascii_digit()) => rhs,
+                None => return None,
+            };
+            Some((column.to_ascii_lowercase(), value.to_string()))
+        })
+        .collect()
+}
+
+/// `grid`'s rows whose cell in each `equalities` column holds its
+/// value. A column the grid doesn't have is no filter at all. Pure.
+fn filter_rows(grid: Grid, equalities: &[(String, String)]) -> Grid {
+    let tests: Vec<(usize, &str)> = equalities
+        .iter()
+        .filter_map(|(col, value)| {
+            let i = grid
+                .columns
+                .iter()
+                .position(|c| c.eq_ignore_ascii_case(col))?;
+            Some((i, value.as_str()))
+        })
+        .collect();
+    Grid {
+        rows: grid
+            .rows
+            .into_iter()
+            .filter(|row| {
+                tests
+                    .iter()
+                    .all(|(i, v)| row.get(*i).is_some_and(|c| c == v))
+            })
+            .collect(),
+        ..grid
+    }
+}
+
 /// Narrow `grid` to the columns a simple SELECT list names, so
-/// `SELECT id, status FROM orders` doesn't answer with every column
+/// `SELECT id, status FROM invoices` doesn't answer with every column
 /// the table has.
 ///
 /// Deliberately conservative — the whole grid comes back unchanged
@@ -401,73 +492,6 @@ fn notice_grid() -> Grid {
     }
 }
 
-/// The schema browser's DDL copy in `--demo`: built from the demo
-/// schema the way the catalog would answer for it — `id` a
-/// `bigserial` primary key, each FK edge a `FOREIGN KEY` constraint,
-/// and the indexes no constraint owns. `None` for a table the demo
-/// doesn't have.
-pub fn table_ddl(
-    cache: &SchemaCache,
-    schema: &str,
-    table: &str,
-) -> Option<crate::query::ddl::TableDdl> {
-    use crate::app::quote_ident;
-    use crate::query::ddl::{DdlColumn, DdlKind, TableDdl};
-    let key = (schema.to_string(), table.to_string());
-    let columns = cache
-        .columns_meta_by_table
-        .get(&key)?
-        .iter()
-        .map(|c| {
-            let serial = c.name == "id";
-            DdlColumn {
-                name: quote_ident(&c.name),
-                type_name: c.type_name.clone(),
-                not_null: c.not_null,
-                default: serial.then(|| format!("nextval('{table}_id_seq'::regclass)")),
-                owns_sequence: serial,
-                ..DdlColumn::default()
-            }
-        })
-        .collect();
-    let primary = cache
-        .constraints
-        .iter()
-        .filter(|c| c.schema == schema && c.table == table)
-        .map(|c| (quote_ident(&c.name), "PRIMARY KEY (id)".to_string()));
-    let foreign = cache
-        .fk_edges
-        .iter()
-        .filter(|e| e.child_schema == schema && e.child_table == table)
-        .map(|e| {
-            (
-                quote_ident(&format!("{table}_{}_fkey", e.child_column)),
-                format!(
-                    "FOREIGN KEY ({}) REFERENCES {}({})",
-                    quote_ident(&e.child_column),
-                    quote_ident(&e.parent_table),
-                    quote_ident(&e.parent_column)
-                ),
-            )
-        });
-    let indexes = cache
-        .indexes_by_table
-        .get(&key)
-        .into_iter()
-        .flatten()
-        .filter(|ix| !ix.primary)
-        .map(|ix| ix.definition.clone())
-        .collect();
-    Some(TableDdl {
-        qualified_name: format!("{}.{}", quote_ident(schema), quote_ident(table)),
-        kind: DdlKind::Table,
-        columns,
-        constraints: primary.chain(foreign).collect(),
-        partition_key: None,
-        indexes,
-    })
-}
-
 /// `\df`'s answer in `--demo`: the demo schema's functions, in the
 /// columns the live catalog query returns, filtered by `pattern` the
 /// way the server would filter them (psql wildcards, `schema.`
@@ -476,29 +500,11 @@ pub fn table_ddl(
 /// shows a pattern reaching system schemas.
 pub fn functions_grid(pattern: Option<&str>) -> Grid {
     use crate::query::backslash::{glob_matches, split_pattern};
-    const FUNCTIONS: &[[&str; 5]] = &[
-        ["pg_catalog", "now", "timestamp with time zone", "", "func"],
-        [
-            "public",
-            "order_total",
-            "bigint",
-            "p_order_id bigint",
-            "func",
-        ],
-        ["public", "refresh_user_stats", "void", "", "proc"],
-        [
-            "public",
-            "user_order_count",
-            "integer",
-            "p_user_id bigint",
-            "func",
-        ],
-    ];
     let wanted = pattern.map(str::trim).filter(|p| !p.is_empty());
-    let rows = FUNCTIONS
+    let rows = schema::FUNCTIONS
         .iter()
         .filter(|[schema, name, ..]| match wanted {
-            None => *schema != "pg_catalog",
+            None => *schema == "public",
             Some(p) => {
                 let (s, n) = split_pattern(p);
                 glob_matches(&n, name) && s.is_none_or(|s| glob_matches(&s, schema))
@@ -526,71 +532,256 @@ pub fn functions_grid(pattern: Option<&str>) -> Grid {
 /// every single time. EXPLAIN was the one feature the demo could never
 /// show.
 ///
-/// The plan is a Hash Join over two Seq Scans on the demo's own
-/// tables. `analyze` adds the `Actual *` fields Postgres only emits
-/// under ANALYZE, so the tree renders timings for `EXPLAIN ANALYZE`
-/// and estimates for plain `EXPLAIN` — the same difference a live
-/// session shows.
+/// A query on one relation is planned the way Postgres would plan it
+/// against the demo's row estimates: an index scan when the WHERE pins
+/// the leading column of one of the table's indexes, a sequential scan
+/// (filtered) otherwise, and an Append over the partitions of a
+/// partitioned table. Two tables joined by a foreign key are a Hash
+/// Join on it; anything else is shown the invoices ⋈ customers join.
+/// `analyze` adds the `Actual *` fields Postgres only emits under
+/// ANALYZE, so the tree renders timings for `EXPLAIN ANALYZE` and
+/// estimates for plain `EXPLAIN` — the same difference a live session
+/// shows.
 pub fn explain_plan_grid(analyze: bool, sql: &str, cache: &SchemaCache) -> Grid {
-    // A query on one demo table is planned as a scan of that table —
-    // every EXPLAIN used to show the same users ⋈ orders join, whatever
-    // it was asked about. Joins and the rest keep the join plan.
     let table = crate::app::infer_single_source_table(sql).filter(|(schema, name)| {
         cache
             .columns_meta_by_table
             .contains_key(&(schema.clone(), name.clone()))
     });
-    if let Some((_, name)) = table {
-        return scan_plan_grid(analyze, &name, where_clause_of(sql));
-    }
-    join_plan_grid(analyze)
-}
-
-/// A one-node plan: a sequential scan of `table`, filtered by `filter`
-/// when the query has a WHERE.
-fn scan_plan_grid(analyze: bool, table: &str, filter: Option<&str>) -> Grid {
-    let total = if table == "users" {
-        users_result().1.len()
-    } else {
-        GENERATED_ROW_COUNT
+    let plan = match table.and_then(|(s, n)| schema::rel(&s, &n)) {
+        Some(rel) => scan_plan(analyze, rel, where_clause_of(sql)),
+        None => join_plan(analyze, sql),
     };
-    let rows = if filter.is_some() { 1 } else { total };
-    let filter_json = filter
-        .map(|f| {
-            // One line, escaped: the plan is JSON, and a WHERE typed
-            // over several lines would otherwise break it.
-            let f = f.split_whitespace().collect::<Vec<_>>().join(" ");
-            let f = f.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(",\n      \"Filter\": \"({f})\"")
-        })
-        .unwrap_or_default();
-    let actual = if analyze {
-        let removed = if filter.is_some() {
-            format!(",\n      \"Rows Removed by Filter\": {}", total - rows)
-        } else {
-            String::new()
-        };
-        format!(
-            ",\n      \"Actual Startup Time\": 0.01,\
-             \n      \"Actual Total Time\": 0.04,\
-             \n      \"Actual Rows\": {rows},\
-             \n      \"Actual Loops\": 1{removed}"
-        )
-    } else {
-        String::new()
-    };
-    let plan = format!(
-        "[\n  {{\n    \"Plan\": {{\n      \"Node Type\": \"Seq Scan\",\
-         \n      \"Relation Name\": \"{table}\",\n      \"Alias\": \"{table}\",\
-         \n      \"Startup Cost\": 0.00,\n      \"Total Cost\": 1.06,\
-         \n      \"Plan Rows\": {rows},\n      \"Plan Width\": 40{filter_json}{actual}\
-         \n    }}\n  }}\n]"
-    );
+    let json = serde_json::json!([{ "Plan": plan }]);
     Grid {
         columns: vec!["QUERY PLAN".to_string()],
-        rows: vec![vec![plan]],
+        rows: vec![vec![serde_json::to_string_pretty(&json).unwrap_or_default()]],
         truncated: false,
     }
+}
+
+/// Round to two decimals, as Postgres prints costs and timings.
+fn r2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
+}
+
+/// One plan node's JSON: the fields Postgres always writes, plus the
+/// `Actual *` ones under ANALYZE (`ms` the node's total time).
+fn node(
+    analyze: bool,
+    kind: &str,
+    cost: (f64, f64),
+    rows: u64,
+    width: u64,
+    ms: f64,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::json;
+    let mut n = serde_json::Map::new();
+    n.insert("Node Type".into(), json!(kind));
+    n.insert("Startup Cost".into(), json!(r2(cost.0)));
+    n.insert("Total Cost".into(), json!(r2(cost.1)));
+    n.insert("Plan Rows".into(), json!(rows));
+    n.insert("Plan Width".into(), json!(width));
+    if analyze {
+        n.insert("Actual Startup Time".into(), json!(r2(ms / 40.0)));
+        n.insert("Actual Total Time".into(), json!(r2(ms)));
+        n.insert("Actual Rows".into(), json!(rows));
+        n.insert("Actual Loops".into(), json!(1));
+    }
+    n
+}
+
+/// The leading column of each of `rel`'s full (non-partial) indexes,
+/// with whether that index is unique.
+fn leading_index_columns(rel: &schema::Rel) -> Vec<(String, String, bool)> {
+    schema::indexes_of(rel)
+        .into_iter()
+        .filter(|ix| !ix.definition.contains(" WHERE "))
+        .filter_map(|ix| {
+            let cols = ix.definition.split("USING btree (").nth(1)?;
+            let first = cols.split([',', ')', ' ']).next()?.to_string();
+            // A composite key is unique only as a whole.
+            let unique = ix.unique && !cols.split(')').next()?.contains(',');
+            Some((ix.name, first, unique))
+        })
+        .collect()
+}
+
+/// How many rows an equality on `column` of `rel` finds: one for a
+/// unique column, the table's rows per parent for a foreign key, and a
+/// small fraction otherwise.
+fn equality_rows(rel: &schema::Rel, column: &str, unique: bool) -> u64 {
+    if unique {
+        return 1;
+    }
+    let parent = schema::FOREIGN_KEYS
+        .iter()
+        .find(|(c, col, _)| *c == rel.name && *col == column)
+        .and_then(|(_, _, p)| schema::rel("public", p));
+    match parent {
+        Some(p) if p.rows > 0 => (rel.rows / p.rows).max(1),
+        _ => (rel.rows / 1_000).max(1),
+    }
+}
+
+/// The plan for a query on one relation, filtered by `filter` when it
+/// has a WHERE.
+fn scan_plan(
+    analyze: bool,
+    rel: &schema::Rel,
+    filter: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::json;
+    let filter = filter.map(|f| f.split_whitespace().collect::<Vec<_>>().join(" "));
+    if let schema::Kind::Partitioned(_) = rel.kind {
+        let children: Vec<serde_json::Value> = schema::partitions_of(rel.name)
+            .map(|p| {
+                let mut child = scan_plan(analyze, p, filter.as_deref());
+                child.insert("Parent Relationship".into(), json!("Member"));
+                serde_json::Value::Object(child)
+            })
+            .collect();
+        let sum = |key: &str| -> f64 {
+            children
+                .iter()
+                .filter_map(|c| c.get(key).and_then(|v| v.as_f64()))
+                .sum()
+        };
+        let rows = sum("Plan Rows") as u64;
+        let mut n = node(
+            analyze,
+            "Append",
+            (0.0, sum("Total Cost")),
+            rows,
+            48,
+            sum("Actual Total Time"),
+        );
+        n.insert("Plans".into(), json!(children));
+        return n;
+    }
+    let width = 8 * rel.columns.len() as u64 + 16;
+    let index = filter.as_deref().and_then(|f| {
+        let eqs = where_equalities(f);
+        leading_index_columns(rel)
+            .into_iter()
+            .find(|(_, col, _)| eqs.iter().any(|(c, _)| c == col))
+            .map(|(name, col, unique)| (name, col, unique, f.to_string()))
+    });
+    if let Some((name, col, unique, f)) = index {
+        let rows = equality_rows(rel, &col, unique);
+        let total = 0.43 + 4.0 + rows as f64 * 1.2;
+        let mut n = node(
+            analyze,
+            "Index Scan",
+            (0.43, total),
+            rows,
+            width,
+            0.02 + rows as f64 * 0.004,
+        );
+        n.insert("Scan Direction".into(), json!("Forward"));
+        n.insert("Index Name".into(), json!(name));
+        n.insert("Relation Name".into(), json!(rel.name));
+        n.insert("Alias".into(), json!(rel.name));
+        n.insert("Index Cond".into(), json!(format!("({f})")));
+        return n;
+    }
+    let pages = (rel.bytes.0 / 8192).max(1) as f64;
+    let total_rows = rel.rows.max(1);
+    let rows = match filter {
+        Some(_) => (total_rows / 4).max(1),
+        None => total_rows,
+    };
+    let cost = pages + total_rows as f64 * if filter.is_some() { 0.0125 } else { 0.01 };
+    let mut n = node(
+        analyze,
+        "Seq Scan",
+        (0.0, cost),
+        rows,
+        width,
+        0.05 + total_rows as f64 / 1_000_000.0 * 95.0,
+    );
+    n.insert("Relation Name".into(), json!(rel.name));
+    n.insert("Alias".into(), json!(rel.name));
+    if let Some(f) = filter {
+        n.insert("Filter".into(), json!(format!("({f})")));
+        if analyze {
+            n.insert("Rows Removed by Filter".into(), json!(total_rows - rows));
+        }
+    }
+    n
+}
+
+/// The Hash Join two foreign-key-related tables in `sql` are planned
+/// as, or invoices ⋈ customers for anything else. A WHERE filters the
+/// child side, the one the join's rows come from.
+fn join_plan(analyze: bool, sql: &str) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::json;
+    let refs = crate::query::from_parse::parse_from_tables(sql);
+    let alias = |name: &str| {
+        refs.iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.alias.clone())
+            .unwrap_or_else(|| name.to_string())
+    };
+    let named: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+    let (child, column, parent) = schema::FOREIGN_KEYS
+        .iter()
+        .find(|(c, _, p)| named.contains(c) && named.contains(p))
+        .copied()
+        .unwrap_or(("invoices", "customer_id", "customers"));
+    let (Some(outer), Some(inner)) = (schema::rel("public", child), schema::rel("public", parent))
+    else {
+        return node(analyze, "Result", (0.0, 0.01), 1, 0, 0.01);
+    };
+    let scan = |rel: &schema::Rel, rel_alias: String, filter: Option<&str>| {
+        let mut n = scan_plan(analyze, rel, filter);
+        n.insert("Alias".into(), json!(rel_alias));
+        n
+    };
+    let mut outer_scan = scan(outer, alias(child), where_clause_of(sql));
+    outer_scan.insert("Parent Relationship".into(), json!("Outer"));
+    let outer_rows = outer_scan["Plan Rows"].as_u64().unwrap_or(outer.rows);
+    let mut inner_scan = scan(inner, alias(parent), None);
+    inner_scan.insert("Parent Relationship".into(), json!("Outer"));
+    let inner_cost = inner_scan["Total Cost"].as_f64().unwrap_or(0.0);
+    let inner_ms = inner_scan
+        .get("Actual Total Time")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let mut hash = node(
+        analyze,
+        "Hash",
+        (inner_cost, inner_cost),
+        inner.rows,
+        40,
+        inner_ms * 1.3,
+    );
+    hash.insert("Parent Relationship".into(), json!("Inner"));
+    hash.insert("Plans".into(), json!([inner_scan]));
+    let outer_cost = outer_scan["Total Cost"].as_f64().unwrap_or(0.0);
+    let outer_ms = outer_scan
+        .get("Actual Total Time")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let mut join = node(
+        analyze,
+        "Hash Join",
+        (inner_cost, inner_cost + outer_cost * 1.2),
+        outer_rows,
+        96,
+        (outer_ms + inner_ms) * 1.6,
+    );
+    join.insert("Join Type".into(), json!("Inner"));
+    join.insert(
+        "Hash Cond".into(),
+        json!(format!(
+            "({}.{column} = {}.id)",
+            alias(child),
+            alias(parent)
+        )),
+    );
+    join.insert("Plans".into(), json!([outer_scan, hash]));
+    join
 }
 
 /// The text of `sql`'s top-level WHERE, up to its ORDER / GROUP /
@@ -624,281 +815,48 @@ fn where_clause_of(sql: &str) -> Option<&str> {
     start.map(|s| sql[s..].trim()).filter(|w| !w.is_empty())
 }
 
-/// The users ⋈ orders hash join a join (or anything else) is shown.
-fn join_plan_grid(analyze: bool) -> Grid {
-    let actual = |time: &str, rows: &str| -> String {
-        if analyze {
-            format!(
-                ",\n        \"Actual Startup Time\": 0.05,\
-                 \n        \"Actual Total Time\": {time},\
-                 \n        \"Actual Rows\": {rows},\
-                 \n        \"Actual Loops\": 1"
-            )
-        } else {
-            String::new()
-        }
-    };
-    let plan = format!(
-        "[\n  {{\n    \"Plan\": {{\n      \"Node Type\": \"Hash Join\",\
-         \n      \"Join Type\": \"Inner\",\
-         \n      \"Startup Cost\": 1.09,\n      \"Total Cost\": 2.21,\
-         \n      \"Plan Rows\": 4,\n      \"Plan Width\": 68,\
-         \n      \"Hash Cond\": \"(orders.user_id = users.id)\"{join_actual},\
-         \n      \"Plans\": [\n        {{\n          \"Node Type\": \"Seq Scan\",\
-         \n          \"Parent Relationship\": \"Outer\",\
-         \n          \"Relation Name\": \"orders\",\n          \"Alias\": \"orders\",\
-         \n          \"Startup Cost\": 0.00,\n          \"Total Cost\": 1.04,\
-         \n          \"Plan Rows\": 4,\n          \"Plan Width\": 36{outer_actual}\n        }},\
-         \n        {{\n          \"Node Type\": \"Seq Scan\",\
-         \n          \"Parent Relationship\": \"Inner\",\
-         \n          \"Relation Name\": \"users\",\n          \"Alias\": \"users\",\
-         \n          \"Startup Cost\": 0.00,\n          \"Total Cost\": 1.04,\
-         \n          \"Plan Rows\": 4,\n          \"Plan Width\": 36{inner_actual}\n        }}\
-         \n      ]\n    }}\n  }}\n]",
-        join_actual = actual("0.41", "4"),
-        outer_actual = actual("0.12", "4"),
-        inner_actual = actual("0.09", "4"),
-    );
-    Grid {
-        columns: vec!["QUERY PLAN".to_string()],
-        rows: vec![vec![plan]],
-        truncated: false,
-    }
-}
-
 /// Number of synthetic rows `generated_rows` fabricates per table —
-/// within the 3–5 range asked for, deterministic across runs.
-const GENERATED_ROW_COUNT: usize = 4;
+/// a screenful, deterministic across runs.
+const GENERATED_ROW_COUNT: usize = 8;
 
 /// Fabricate `GENERATED_ROW_COUNT` deterministic rows shaped by
 /// `cols` — every value is a pure function of `(table, column name /
 /// type, row index)`, so the same query always answers the same way.
-fn generated_rows(table: &str, cols: &[ColumnMeta]) -> Grid {
+///
+/// The WHERE's `column = value` terms hold in every row: the column
+/// takes the value, and a term on `id` answers that one row.
+fn generated_rows(
+    table: &str,
+    cols: &[crate::query::schema::ColumnMeta],
+    equalities: &[(String, String)],
+) -> Grid {
+    let pinned = |name: &str| {
+        equalities
+            .iter()
+            .find(|(c, _)| c.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    };
+    let count = if pinned("id").is_some() {
+        1
+    } else {
+        GENERATED_ROW_COUNT
+    };
     let columns = cols.iter().map(|c| c.name.clone()).collect();
-    let rows = (0..GENERATED_ROW_COUNT)
-        .map(|i| cols.iter().map(|c| synth_cell(table, c, i)).collect())
+    let rows = (0..count)
+        .map(|i| {
+            cols.iter()
+                .map(|c| {
+                    pinned(&c.name)
+                        .unwrap_or_else(|| schema::synth_cell(table, &c.name, &c.type_name, i))
+                })
+                .collect()
+        })
         .collect();
     Grid {
         columns,
         rows,
         truncated: false,
     }
-}
-
-/// One synthesized cell for `col` at 0-indexed `row_idx`, biased by
-/// the demo schema's own naming (`_id` foreign keys, `status`,
-/// `*_cents`, `sku`, `qty`) and falling back to the column's Postgres
-/// type for anything it doesn't recognise by name.
-fn synth_cell(table: &str, col: &ColumnMeta, row_idx: usize) -> String {
-    let n = row_idx + 1;
-    let name = col.name.as_str();
-    let ty = col.type_name.as_str();
-    if name == "id" {
-        return n.to_string();
-    }
-    if name.ends_with("_id") {
-        // Foreign key: cycle through a small parent-id range so it
-        // reads as plausible rather than monotonically increasing
-        // alongside the row's own id.
-        return ((row_idx % 3) + 1).to_string();
-    }
-    match (table, name) {
-        ("orders", "status") => {
-            ["pending", "shipped", "delivered", "cancelled"][row_idx % 4].to_string()
-        }
-        ("orders", "total_cents") => (1_999 + row_idx * 550).to_string(),
-        ("order_items", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
-        ("order_items", "qty") => ((row_idx % 4) + 1).to_string(),
-        ("order_items", "price_cents") => (499 + row_idx * 250).to_string(),
-        _ if ty.starts_with("timestamp") => {
-            format!(
-                "2026-0{}-{:02} {:02}:00:00+00",
-                (row_idx % 6) + 1,
-                4 + row_idx,
-                8 + row_idx
-            )
-        }
-        _ if ty.starts_with("bigint") || ty.starts_with("integer") => n.to_string(),
-        _ => format!("{name}-{n}"),
-    }
-}
-
-/// `(schema, table)` keys live a lot here.
-fn key(table: &str) -> (String, String) {
-    ("public".to_string(), table.to_string())
-}
-
-fn col(name: &str, ty: &str, not_null: bool) -> ColumnMeta {
-    ColumnMeta {
-        name: name.into(),
-        type_name: ty.into(),
-        not_null,
-    }
-}
-
-/// A small but realistic e-commerce schema: users 1—* orders 1—*
-/// order_items, with primary keys and FK edges so the schema
-/// browser and FK-navigation light up.
-fn schema_cache() -> SchemaCache {
-    let mut columns_meta_by_table: HashMap<(String, String), Vec<ColumnMeta>> = HashMap::new();
-    columns_meta_by_table.insert(
-        key("users"),
-        vec![
-            col("id", "bigint", true),
-            col("email", "varchar(255)", true),
-            col("plan", "varchar(20)", true),
-            col("created_at", "timestamptz", true),
-        ],
-    );
-    columns_meta_by_table.insert(
-        key("orders"),
-        vec![
-            col("id", "bigint", true),
-            col("user_id", "bigint", true),
-            col("status", "varchar(20)", true),
-            col("total_cents", "integer", true),
-            col("created_at", "timestamptz", true),
-        ],
-    );
-    columns_meta_by_table.insert(
-        key("order_items"),
-        vec![
-            col("id", "bigint", true),
-            col("order_id", "bigint", true),
-            col("sku", "varchar(40)", true),
-            col("qty", "integer", true),
-            col("price_cents", "integer", true),
-        ],
-    );
-
-    let columns_by_table: HashMap<(String, String), Vec<String>> = columns_meta_by_table
-        .iter()
-        .map(|(k, v)| (k.clone(), v.iter().map(|c| c.name.clone()).collect()))
-        .collect();
-
-    let tables = vec![
-        TableMeta {
-            schema: "public".into(),
-            name: "order_items".into(),
-        },
-        TableMeta {
-            schema: "public".into(),
-            name: "orders".into(),
-        },
-        TableMeta {
-            schema: "public".into(),
-            name: "users".into(),
-        },
-    ];
-
-    let constraints = vec![
-        ConstraintMeta {
-            schema: "public".into(),
-            table: "users".into(),
-            name: "users_pkey".into(),
-        },
-        ConstraintMeta {
-            schema: "public".into(),
-            table: "orders".into(),
-            name: "orders_pkey".into(),
-        },
-        ConstraintMeta {
-            schema: "public".into(),
-            table: "order_items".into(),
-            name: "order_items_pkey".into(),
-        },
-    ];
-
-    let fk_edges = vec![
-        FkEdge {
-            child_schema: "public".into(),
-            child_table: "orders".into(),
-            child_column: "user_id".into(),
-            parent_schema: "public".into(),
-            parent_table: "users".into(),
-            parent_column: "id".into(),
-        },
-        FkEdge {
-            child_schema: "public".into(),
-            child_table: "order_items".into(),
-            child_column: "order_id".into(),
-            parent_schema: "public".into(),
-            parent_table: "orders".into(),
-            parent_column: "id".into(),
-        },
-    ];
-
-    // Each table's primary-key index, plus the two FK-column indexes a
-    // real schema like this one would have.
-    let index = |table: &str, name: &str, cols: &str, primary: bool| {
-        (
-            key(table),
-            IndexMeta {
-                name: name.into(),
-                definition: format!(
-                    "CREATE {}INDEX {name} ON public.{table} USING btree ({cols})",
-                    if primary { "UNIQUE " } else { "" }
-                ),
-                unique: primary,
-                primary,
-            },
-        )
-    };
-    let mut indexes_by_table: HashMap<(String, String), Vec<IndexMeta>> = HashMap::new();
-    for (k, ix) in [
-        index("order_items", "order_items_order_id_idx", "order_id", false),
-        index("order_items", "order_items_pkey", "id", true),
-        index("orders", "orders_pkey", "id", true),
-        index("orders", "orders_user_id_idx", "user_id", false),
-        index("users", "users_pkey", "id", true),
-    ] {
-        indexes_by_table.entry(k).or_default().push(ix);
-    }
-    let mut indexes: Vec<TableMeta> = indexes_by_table
-        .values()
-        .flatten()
-        .map(|ix| TableMeta {
-            schema: "public".into(),
-            name: ix.name.clone(),
-        })
-        .collect();
-    indexes.sort_by(|a, b| a.name.cmp(&b.name));
-
-    SchemaCache {
-        schemas: vec!["public".into()],
-        tables,
-        indexes,
-        columns_by_table,
-        columns_meta_by_table,
-        constraints,
-        fk_edges,
-        indexes_by_table,
-        ..SchemaCache::default()
-    }
-}
-
-/// The result grid: a slice of `users`.
-fn users_result() -> (Vec<String>, Vec<Vec<String>>) {
-    let cols = vec![
-        "id".to_string(),
-        "email".to_string(),
-        "plan".to_string(),
-        "created_at".to_string(),
-    ];
-    let rows = vec![
-        row(&["1", "ada@example.com", "pro", "2026-01-04 09:12:00+00"]),
-        row(&["2", "linus@example.com", "free", "2026-01-09 14:48:00+00"]),
-        row(&["3", "grace@example.com", "pro", "2026-02-01 08:30:00+00"]),
-        row(&["4", "alan@example.com", "team", "2026-02-17 19:05:00+00"]),
-        row(&["5", "edsger@example.com", "free", "2026-03-03 11:22:00+00"]),
-        row(&[
-            "6",
-            "katherine@example.com",
-            "pro",
-            "2026-03-21 16:40:00+00",
-        ]),
-    ];
-    (cols, rows)
 }
 
 fn row(cells: &[&str]) -> Vec<String> {
@@ -908,61 +866,92 @@ fn row(cells: &[&str]) -> Vec<String> {
 fn saved_queries() -> Vec<SavedQuery> {
     vec![
         SavedQuery {
-            name: "pro-users".into(),
-            body: "SELECT id, email, created_at\nFROM users\nWHERE plan = 'pro'\nORDER BY created_at DESC;".into(),
+            name: "overdue-invoices".into(),
+            body: "SELECT number, customer_id, currency, total, due_at\nFROM invoices\nWHERE status = 'open'\n  AND due_at < now()\nORDER BY due_at;".into(),
         },
         SavedQuery {
-            name: "order-by-id".into(),
-            body: "SELECT * FROM orders WHERE id = :order_id;".into(),
+            name: "customer-invoices".into(),
+            body: "SELECT number, status, total, due_at\nFROM invoices\nWHERE customer_id = :customer_id\nORDER BY issued_at DESC;".into(),
         },
         SavedQuery {
-            name: "daily-revenue".into(),
-            body: "SELECT date_trunc('day', created_at) AS day,\n       sum(total_cents) / 100.0 AS revenue\nFROM orders\nGROUP BY 1 ORDER BY 1 DESC;".into(),
+            name: "mrr-by-month".into(),
+            body: "SELECT month, currency, mrr, customers\nFROM reporting.mrr_by_month\nORDER BY month DESC\nLIMIT 12;".into(),
+        },
+        SavedQuery {
+            name: "failing-webhooks-24h".into(),
+            body: "SELECT webhook_id, status_code, count(*)\nFROM webhook_deliveries\nWHERE status_code >= 500\n  AND created_at > now() - interval '24 hours'\nGROUP BY 1, 2\nORDER BY 3 DESC;".into(),
         },
     ]
 }
 
-/// A JDBC-tap event burst: one `OrderService.loadItems` N+1 (six
-/// `SELECT … order_items WHERE order_id = ?` in one transaction
-/// within ~150ms) plus a couple of one-off statements, so the
+/// `NOTIFY` arrivals on the billing service's channel, for the F3 panel.
+fn notifications() -> Vec<crate::conn::NotificationMsg> {
+    [
+        (
+            "invoice_events",
+            31_822,
+            "{\"invoice\": \"INV-004827\", \"event\": \"payment_failed\"}",
+        ),
+        (
+            "invoice_events",
+            31_822,
+            "{\"invoice\": \"INV-004831\", \"event\": \"finalized\"}",
+        ),
+        ("dunning", 31_907, "{\"customer_id\": 2107, \"stage\": 2}"),
+    ]
+    .into_iter()
+    .map(|(channel, pid, payload)| crate::conn::NotificationMsg {
+        channel: channel.into(),
+        pid,
+        payload: payload.into(),
+    })
+    .collect()
+}
+
+/// A JDBC-tap event burst: one `InvoiceService.loadLines` N+1 (eight
+/// `SELECT … FROM invoice_lines WHERE invoice_id = ?` in one
+/// transaction within ~200ms) plus the requests around it, so the
 /// TapMonitor's hotspots / callers / N+1 views all render with
 /// real-looking data.
 fn tap_events() -> Vec<TapEvent> {
     // Fixed base time so the demo is deterministic (well before
     // "now"; the views key off relative ordering, not wall clock).
     const BASE: u64 = 1_730_000_000_000_000;
-    let mut events = Vec::new();
-
-    events.push(query(
+    let mut events = vec![query(
         BASE,
-        "select-orders",
+        "conn-3",
         None,
-        "SELECT id, user_id, status FROM orders WHERE status = ?",
-        1840,
-        Some("OrderService.listOpen:54"),
+        "SELECT id, name, billing_email, currency FROM customers WHERE id = ?",
+        290,
+        Some("CustomerRepository.findById:41"),
+    )];
+    events.push(query(
+        BASE + 40_000,
+        "conn-7",
+        Some("conn-7#311"),
+        "SELECT id, number, status, total, due_at FROM invoices WHERE customer_id = ? ORDER BY issued_at DESC LIMIT ?",
+        1_840,
+        Some("InvoiceController.list:58"),
     ));
-
-    // The N+1: six near-identical selects in one txn, ~25ms apart.
-    for i in 0..6u64 {
+    // The N+1: eight near-identical selects in one txn, ~25ms apart.
+    for i in 0..8u64 {
         events.push(query(
             BASE + 60_000 + i * 25_000,
             "conn-7",
-            Some("conn-7#42"),
-            "SELECT * FROM order_items WHERE order_id = ?",
+            Some("conn-7#311"),
+            "SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?",
             420 + i * 15,
-            Some("OrderService.loadItems:88"),
+            Some("InvoiceService.loadLines:112"),
         ));
     }
-
     events.push(query(
         BASE + 400_000,
-        "select-user",
-        None,
-        "SELECT id, email, plan FROM users WHERE id = ?",
-        310,
-        Some("UserController.show:31"),
+        "conn-2",
+        Some("conn-2#90"),
+        "UPDATE subscriptions SET status = ?, current_period_end = ? WHERE id = ?",
+        2_310,
+        Some("DunningJob.advance:77"),
     ));
-
     events
 }
 
@@ -980,7 +969,7 @@ fn query(
         kind: TapKind::Query,
         ts_unix_micros: ts,
         received_at_unix_micros: ts,
-        app: Some("shop-api".into()),
+        app: Some("billing-api".into()),
         pool: Some("primary".into()),
         conn: Some(conn.into()),
         txn: txn.map(str::to_string),
@@ -996,93 +985,168 @@ fn query(
     }
 }
 
+/// The demo's AWS account and region, as an environment's source.
+const RDS_SOURCE: &str = "RDS 210987654321 eu-west-2";
+
 /// The environments panel in `--demo`: synthetic, fixed, no aws CLI.
+/// Production has a read replica serving both databases; staging is a
+/// single instance a minor release ahead; dev is stopped; a local
+/// container runs the newest major with every patch applied.
 pub fn environments() -> Vec<crate::inventory::EnvReport> {
-    use crate::inventory::{EnvReport, Target};
+    use crate::inventory::{EnvReport, ProbeSettings, Target};
     use crate::mcp::connections::Role;
     const NO_SERVER: &str = "--demo has no server — restart without --demo to connect";
-    let rds = |db: &str, server: &str, role: Role, of: Option<&str>, status: &str| Target {
+    let rds = |db: &str, server: &str, role: Role, of: Option<&str>, engine: &str| Target {
         database: db.into(),
         server: server.into(),
         role,
         replica_of: of.map(str::to_string),
-        host: Some(format!("{server}.c1x2y3.eu-west-2.rds.amazonaws.com")),
+        host: Some(format!("{server}.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com")),
         port: Some(5432),
-        engine: Some("postgres 16.4".into()),
-        status: Some(status.into()),
-        class: Some("db.t4g.medium".into()),
-        multi_az: Some(false),
+        engine: Some(engine.into()),
+        status: Some("available".into()),
+        class: Some(
+            match server {
+                "ledger-prod" | "ledger-prod-replica" => "db.r6g.2xlarge",
+                "ledger-staging" => "db.r6g.large",
+                _ => "db.t4g.medium",
+            }
+            .into(),
+        ),
+        multi_az: Some(server == "ledger-prod"),
         connect: Err(NO_SERVER.into()),
     };
+    const PROD_ENGINE: &str = "postgres 15.8 (↑15.12 · 17.4)";
+    const STAGING_ENGINE: &str = "postgres 16.4 (↑16.8 · 17.4)";
+    let probe = || Some(ProbeSettings::default());
     vec![
         EnvReport {
-            name: "staging".into(),
-            source: "RDS 123456789012 eu-west-2".into(),
+            name: "production".into(),
+            source: RDS_SOURCE.into(),
             targets: vec![
-                rds("shop", "staging", Role::Primary, None, "available"),
+                rds("ledger", "ledger-prod", Role::Primary, None, PROD_ENGINE),
                 rds(
-                    "shop",
-                    "staging-replica",
+                    "ledger",
+                    "ledger-prod-replica",
                     Role::Replica,
-                    Some("staging"),
-                    "available",
+                    Some("ledger-prod"),
+                    PROD_ENGINE,
+                ),
+                rds("ledgerlog", "ledger-prod", Role::Primary, None, PROD_ENGINE),
+                rds(
+                    "ledgerlog",
+                    "ledger-prod-replica",
+                    Role::Replica,
+                    Some("ledger-prod"),
+                    PROD_ENGINE,
                 ),
             ],
             error: None,
-            probe: Some(crate::inventory::ProbeSettings {
-                version_table: None,
-                ..Default::default()
-            }),
+            probe: probe(),
         },
         EnvReport {
-            name: "qa".into(),
-            source: "RDS 123456789012 eu-west-2".into(),
-            targets: vec![rds("shop", "qa", Role::Direct, None, "stopped")],
+            name: "staging".into(),
+            source: RDS_SOURCE.into(),
+            targets: vec![
+                rds(
+                    "ledger",
+                    "ledger-staging",
+                    Role::Direct,
+                    None,
+                    STAGING_ENGINE,
+                ),
+                rds(
+                    "ledgerlog",
+                    "ledger-staging",
+                    Role::Direct,
+                    None,
+                    STAGING_ENGINE,
+                ),
+            ],
+            error: None,
+            probe: probe(),
+        },
+        EnvReport {
+            name: "dev".into(),
+            source: RDS_SOURCE.into(),
+            targets: vec![Target {
+                status: Some("stopped".into()),
+                ..rds("ledger", "ledger-dev", Role::Direct, None, STAGING_ENGINE)
+            }],
             error: None,
             probe: None,
         },
         EnvReport {
             name: "local".into(),
-            source: "connections.toml".into(),
+            source: "docker".into(),
             targets: vec![Target {
-                database: "shop".into(),
-                server: "shop-local".into(),
+                database: "ledger".into(),
+                server: "ledger-db-1".into(),
                 role: Role::Direct,
                 replica_of: None,
-                host: Some("localhost".into()),
+                host: Some("127.0.0.1".into()),
                 port: Some(5432),
-                engine: None,
-                status: None,
+                engine: Some("postgres 17.2".into()),
+                status: Some("running".into()),
                 class: None,
                 multi_az: None,
                 connect: Err(NO_SERVER.into()),
             }],
             error: None,
-            probe: None,
+            probe: probe(),
         },
     ]
 }
 
-/// Probe answers in `--demo`: staging's replica is read (its primary
-/// via it), a patch behind.
+/// Probe answers in `--demo`, by environment and database: production
+/// read through its replica, three patches behind the local container,
+/// its ledgerlog a Flyway migration behind staging's.
 pub fn environment_probes(
     report: &crate::inventory::EnvReport,
 ) -> Vec<crate::inventory::probe::Outcome> {
     use crate::inventory::probe::{plan, Step};
+    use crate::query::probe::Probe;
+    let ledger = |version: &str, schema: i64, pending: usize, sessions: i64, size: &str| Probe {
+        server_version: Some(version.into()),
+        in_recovery: Some(false),
+        schema_version: Some(schema),
+        pending: Some(pending),
+        sessions: Some(sessions),
+        size: Some(size.into()),
+        blocked: Some(0),
+        long_tx: Some(0),
+        ..Default::default()
+    };
+    let flyway = |version: &str, label: &str, applied: usize, sessions: i64, size: &str| Probe {
+        server_version: Some(version.into()),
+        in_recovery: Some(false),
+        migration_tool: Some("flyway".into()),
+        schema_label: Some(label.into()),
+        migrations_applied: Some(applied),
+        sessions: Some(sessions),
+        size: Some(size.into()),
+        ..Default::default()
+    };
+    let replica = |p: Probe| Probe {
+        in_recovery: Some(true),
+        lag_secs: Some(0.8),
+        ..p
+    };
     plan(&report.targets)
         .into_iter()
-        .map(|step| match step {
+        .zip(&report.targets)
+        .map(|(step, t)| match step {
             Step::ViaReplica | Step::NotRunning => None,
-            Step::Connect => Some(Ok(crate::query::probe::Probe {
-                server_version: Some("16.4".into()),
-                in_recovery: Some(true),
-                lag_secs: Some(0.4),
-                schema_version: Some(251),
-                pending: Some(1),
-                schema_error: None,
-                sessions: Some(12),
-                size: Some("812 MB".into()),
-                ..Default::default()
+            Step::Connect => Some(Ok(match (report.name.as_str(), t.database.as_str()) {
+                ("production", "ledger") => replica(Probe {
+                    blocked: Some(1),
+                    long_tx: Some(1),
+                    ..ledger("15.8", 318, 3, 84, "48 GB")
+                }),
+                ("production", _) => replica(flyway("15.8", "1.42", 42, 9, "7.9 GB")),
+                ("staging", "ledger") => ledger("16.4", 318, 3, 23, "6.2 GB"),
+                ("staging", _) => flyway("16.4", "1.43", 43, 4, "1.1 GB"),
+                _ => ledger("17.2", 321, 0, 3, "1.4 GB"),
             })),
         })
         .collect()
@@ -1102,34 +1166,47 @@ pub fn slow_queries() -> Vec<crate::query::slow_queries::SlowQueryRow> {
     };
     vec![
         row(
-            "SELECT o.* FROM orders o JOIN users u ON u.id = o.user_id WHERE u.email = $1",
-            48_210,
-            41.7,
-            96_420,
+            "UPDATE webhook_deliveries SET delivered_at = now(), status_code = $1 WHERE id = $2",
+            2_210_448,
+            1.1,
+            2_210_448,
         ),
         row(
-            "SELECT * FROM order_items WHERE order_id = $1",
-            912_004,
-            1.9,
-            2_736_012,
+            "SELECT i.* FROM invoices i JOIN customers c ON c.id = i.customer_id WHERE c.billing_email = $1 ORDER BY i.issued_at DESC",
+            61_204,
+            38.2,
+            734_448,
         ),
         row(
-            "SELECT count(*) FROM orders WHERE created_at > $1",
-            1_440,
-            212.5,
-            1_440,
+            "SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = $1",
+            4_812_330,
+            0.42,
+            14_436_990,
         ),
         row(
-            "UPDATE orders SET status = $1, updated_at = now() WHERE id = $2",
-            15_380,
-            3.4,
-            15_380,
+            "SELECT subscription_item_id, sum(quantity) FROM usage_events WHERE occurred_at >= $1 AND occurred_at < $2 GROUP BY subscription_item_id",
+            744,
+            1_812.6,
+            7_348_488,
+        ),
+        row(
+            "REFRESH MATERIALIZED VIEW reporting.revenue_daily",
+            30,
+            41_220.0,
+            0,
+        ),
+        row(
+            "SELECT count(*) FROM webhook_deliveries WHERE delivered_at IS NULL AND created_at < $1",
+            8_640,
+            96.4,
+            8_640,
         ),
     ]
 }
 
-/// The sessions panel in `--demo`: one session waiting on another's
-/// lock, the holder idle in transaction, and the app's pool.
+/// The sessions panel in `--demo`: the API waiting on a lock an idle
+/// transaction holds, the dunning job, the webhook dispatcher, and an
+/// autovacuum worker on the busiest table.
 pub fn sessions() -> Vec<crate::query::sessions::SessionRow> {
     let s = |pid: i32,
              user: &str,
@@ -1152,156 +1229,238 @@ pub fn sessions() -> Vec<crate::query::sessions::SessionRow> {
     };
     vec![
         s(
-            4417,
-            "shop",
-            "shop-api",
+            31_840,
+            "billing",
+            "billing-api",
             "active",
             Some("Lock:transactionid"),
-            "4402",
-            "UPDATE orders SET status = 'shipped' WHERE id = 1042",
+            "31877",
+            "UPDATE invoices SET status = 'paid', paid_at = now() WHERE id = 48207",
             8.2,
         ),
         s(
-            4402,
-            "report",
+            31_877,
+            "finance_ro",
             "psql",
             "idle in transaction",
-            None,
+            Some("Client:ClientRead"),
             "",
-            "SELECT * FROM orders WHERE id = 1042 FOR UPDATE",
+            "SELECT * FROM invoices WHERE customer_id = 2107 FOR UPDATE",
             412.0,
         ),
-        s(4390, "shop", "shop-api", "idle", None, "", "COMMIT", 1.1),
         s(
-            4388,
-            "shop",
-            "shop-api",
-            "idle",
+            31_907,
+            "billing",
+            "dunning",
+            "active",
             None,
             "",
-            "SELECT * FROM users WHERE id = $1",
-            0.4,
+            "SELECT id, customer_id, total FROM invoices WHERE status = 'open' AND due_at < now() - interval '14 days'",
+            3.6,
+        ),
+        s(
+            31_822,
+            "billing",
+            "webhooks",
+            "idle",
+            Some("Client:ClientRead"),
+            "",
+            "UPDATE webhook_deliveries SET delivered_at = now(), status_code = $1 WHERE id = $2",
+            0.3,
+        ),
+        s(
+            31_790,
+            "billing",
+            "billing-api",
+            "idle",
+            Some("Client:ClientRead"),
+            "",
+            "COMMIT",
+            1.1,
+        ),
+        s(
+            31_655,
+            "rdsadmin",
+            "",
+            "active",
+            None,
+            "",
+            "autovacuum: VACUUM ANALYZE public.webhook_deliveries",
+            96.0,
         ),
     ]
 }
 
-/// A patch plan in `--demo`: two pending patches, then one that can't
-/// run in a transaction — left out, or with `outside` planned to run
-/// without one; protected when the environment's name says production.
+/// The patch files `--demo`'s plans are made of, newest last:
+/// `(id, name, statements)`. The last can't run in a transaction.
+const PATCHES: &[(i64, &str, &[&str])] = &[
+    (
+        319,
+        "APP-101-invoice-dunning-stage",
+        &[
+            "INSERT INTO schema_version (id) VALUES (319)",
+            "ALTER TABLE invoices ADD COLUMN dunning_stage smallint NOT NULL DEFAULT 0",
+        ],
+    ),
+    (
+        320,
+        "APP-102-credit-note-reason-code",
+        &[
+            "INSERT INTO schema_version (id) VALUES (320)",
+            "ALTER TABLE credit_notes ADD COLUMN reason_code text NOT NULL DEFAULT 'other'",
+        ],
+    ),
+    (
+        321,
+        "APP-104-open-invoices-by-customer-idx",
+        &[
+            "INSERT INTO schema_version (id) VALUES (321)",
+            "CREATE INDEX CONCURRENTLY invoices_open_customer_due_idx ON invoices (customer_id, due_at) WHERE status = 'open'",
+        ],
+    ),
+];
+
+/// A patch plan in `--demo`: the patches the environment hasn't
+/// recorded — all three everywhere but the local container, which has
+/// them — the last of which can't run in a transaction: left out, or
+/// with `outside` planned to run without one. Protected when the
+/// environment's name says production.
 pub fn patch_plan(
     environment: &str,
     server: &str,
     database: &str,
     outside: bool,
 ) -> crate::inventory::patching::PatchPlan {
-    let patch =
-        |id: i64, name: &str, statements: &[&str]| crate::inventory::patching::PlannedPatch {
-            file: crate::query::patches::PatchFile {
-                file: format!("{id}-{name}.sql"),
-                filename_number: Some(id),
-                version_id: Some(id),
-            },
-            text: statements.join("\n"),
-            statements: statements.iter().map(|s| s.to_string()).collect(),
-            outside: None,
-        };
-    let mut patches = vec![
-        patch(
-            42,
-            "order-notes",
-            &[
-                "INSERT INTO db_version (id) VALUES (42)",
-                "ALTER TABLE orders ADD COLUMN notes text",
-            ],
-        ),
-        patch(
-            43,
-            "customer-tier",
-            &[
-                "INSERT INTO db_version (id) VALUES (43)",
-                "ALTER TABLE customers ADD COLUMN tier smallint NOT NULL DEFAULT 0",
-            ],
-        ),
-    ];
-    let idx = "44-orders-created-idx.sql";
-    let stopped_at = if outside {
-        patches.push(crate::inventory::patching::PlannedPatch {
-            outside: Some("CONCURRENTLY"),
-            ..patch(
-                44,
-                "orders-created-idx",
-                &[
-                    "INSERT INTO db_version (id) VALUES (44)",
-                    "CREATE INDEX CONCURRENTLY orders_created_idx ON orders (created_at)",
-                ],
-            )
-        });
-        None
-    } else {
-        Some((
-            idx.to_string(),
+    use crate::inventory::patching::{PatchPlan, PlannedPatch};
+    let applied: i64 = if environment == "local" { 321 } else { 318 };
+    let patch = |id: i64, name: &str, statements: &[&str]| PlannedPatch {
+        file: crate::query::patches::PatchFile {
+            file: format!("{id}-{name}.sql"),
+            filename_number: Some(id),
+            version_id: Some(id),
+        },
+        text: statements.join("\n"),
+        statements: statements.iter().map(|s| s.to_string()).collect(),
+        outside: None,
+    };
+    let (last, rest) = PATCHES.split_last().expect("demo patches");
+    let mut patches: Vec<PlannedPatch> = rest
+        .iter()
+        .filter(|(id, ..)| *id > applied)
+        .map(|(id, name, statements)| patch(*id, name, statements))
+        .collect();
+    let (id, name, statements) = *last;
+    let concurrent_pending = id > applied;
+    let stopped_at = match (concurrent_pending, outside) {
+        (false, _) => None,
+        (true, true) => {
+            patches.push(PlannedPatch {
+                outside: Some("CONCURRENTLY"),
+                ..patch(id, name, statements)
+            });
+            None
+        }
+        (true, false) => Some((
+            format!("{id}-{name}.sql"),
             format!(
                 "the patch uses CONCURRENTLY, which can't run in a transaction; {}",
                 crate::query::apply::OUTSIDE_HINT
             ),
-        ))
+        )),
     };
-    crate::inventory::patching::PatchPlan {
+    PatchPlan {
         environment: environment.into(),
         server: server.into(),
         database: database.into(),
         protected: environment.to_ascii_lowercase().contains("prod"),
-        applied_max: Some(41),
+        applied_max: Some(applied),
         patches,
-        dir: "~/src/shop/db/patches".into(),
-        recorded: (1..=41).collect(),
+        dir: "~/src/ledger/db/patches".into(),
+        recorded: (1..=applied).collect(),
         below_recorded: Vec::new(),
         outside_transaction: outside,
-        outside_would_help: !outside,
+        outside_would_help: concurrent_pending && !outside,
         stopped_at,
     }
 }
 
-/// Log errors in `--demo`: synthetic, in RDS's shape.
+/// Log errors in `--demo`: synthetic, in RDS's shape, about the demo's
+/// own tables and roles.
 pub fn log_errors() -> Vec<crate::inventory::rds_logs::LogError> {
     crate::inventory::rds_logs::parse_errors(
-        "2026-03-02 09:14:02 UTC:10.0.4.7(51022):shop@shop:[4411]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
-         2026-03-02 09:20:40 UTC:10.0.4.7(51040):shop@shop:[4419]:ERROR:  duplicate key value violates unique constraint \"orders_pkey\"\n\
-         2026-03-02 09:31:12 UTC:10.0.4.9(40110):[unknown]@[unknown]:[4501]:FATAL:  password authentication failed for user \"report\"\n",
+        "2026-10-21 06:02:14 UTC:10.20.4.7(51022):billing@ledger:[29412]:ERROR:  duplicate key value violates unique constraint \"payments_provider_ref_key\"\n\
+         2026-10-21 07:41:09 UTC:10.20.4.7(51188):billing@ledger:[30005]:ERROR:  duplicate key value violates unique constraint \"payments_provider_ref_key\"\n\
+         2026-10-21 08:15:33 UTC:10.20.4.9(40310):billing@ledger:[30577]:ERROR:  deadlock detected\n\
+         2026-10-21 09:00:02 UTC:10.20.6.12(35020):ledger_report@ledger:[30981]:ERROR:  canceling statement due to statement timeout\n\
+         2026-10-21 09:12:48 UTC:10.20.4.7(51420):billing@ledger:[31104]:ERROR:  duplicate key value violates unique constraint \"payments_provider_ref_key\"\n\
+         2026-10-21 09:20:40 UTC:10.20.4.8(48812):billing@ledger:[31240]:ERROR:  insert or update on table \"usage_events_2026_10\" violates foreign key constraint \"usage_events_subscription_item_id_fkey\"\n\
+         2026-10-21 09:31:12 UTC:10.20.6.15(40110):[unknown]@[unknown]:[31501]:FATAL:  password authentication failed for user \"finance_ro\"\n",
     )
 }
 
-/// The discovery view in `--demo`: proposals from a synthetic account,
-/// `staging` already covered.
+/// The discovery view in `--demo`: proposals from the demo account,
+/// production and staging already covered.
 pub fn discovery() -> crate::inventory::discover::Found {
     use crate::inventory::discover::{propose, Ec2Host, Found};
     use crate::inventory::rds::RdsInstance;
-    let inst = |id: &str, source: Option<&str>, replicas: &[&str], db: &str| RdsInstance {
-        id: id.into(),
-        host: Some(format!("{id}.c1x2y3.eu-west-2.rds.amazonaws.com")),
-        port: Some(5432),
-        engine: "postgres".into(),
-        engine_version: "16.4".into(),
-        status: "available".into(),
-        class: "db.t4g.medium".into(),
-        multi_az: false,
-        source: source.map(str::to_string),
-        replicas: replicas.iter().map(|r| r.to_string()).collect(),
-        db_name: Some(db.into()),
-        vpc_id: Some("vpc-demo".into()),
-        upgrades: None,
-        cluster: None,
-    };
+    let inst =
+        |id: &str, source: Option<&str>, replicas: &[&str], db: &str, version: &str| RdsInstance {
+            id: id.into(),
+            host: Some(format!("{id}.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com")),
+            port: Some(5432),
+            engine: "postgres".into(),
+            engine_version: version.into(),
+            status: if id == "ledger-dev" {
+                "stopped".into()
+            } else {
+                "available".into()
+            },
+            class: "db.r6g.large".into(),
+            multi_az: id == "ledger-prod",
+            source: source.map(str::to_string),
+            replicas: replicas.iter().map(|r| r.to_string()).collect(),
+            db_name: Some(db.into()),
+            vpc_id: Some("vpc-0a1b2c3d4e5f60718".into()),
+            upgrades: None,
+            cluster: None,
+        };
     let instances = vec![
-        inst("staging", None, &["staging-replica"], "shop"),
-        inst("staging-replica", Some("staging"), &[], "shop"),
-        inst("qa", None, &[], "shop"),
-        inst("analytics", None, &["analytics-replica"], "warehouse"),
-        inst("analytics-replica", Some("analytics"), &[], "warehouse"),
+        inst(
+            "ledger-prod",
+            None,
+            &["ledger-prod-replica"],
+            "ledger",
+            "15.8",
+        ),
+        inst(
+            "ledger-prod-replica",
+            Some("ledger-prod"),
+            &[],
+            "ledger",
+            "15.8",
+        ),
+        inst("ledger-staging", None, &[], "ledger", "16.4"),
+        inst("ledger-dev", None, &[], "ledger", "16.4"),
+        inst(
+            "analytics",
+            None,
+            &["analytics-replica"],
+            "warehouse",
+            "16.4",
+        ),
+        inst(
+            "analytics-replica",
+            Some("analytics"),
+            &[],
+            "warehouse",
+            "16.4",
+        ),
     ];
     let secrets: Vec<String> = [
-        "staging/database/shop/credentials",
-        "qa/database/shop/credentials",
+        "ledger-prod/database/ledger/credentials",
+        "ledger-prod/database/ledger_replica/credentials",
+        "ledger-staging/database/ledger/credentials",
+        "ledger-dev/database/ledger/credentials",
         "analytics/database/warehouse/credentials",
         "analytics/database/warehouse_replica/credentials",
     ]
@@ -1309,28 +1468,29 @@ pub fn discovery() -> crate::inventory::discover::Found {
     .map(|s| s.to_string())
     .collect();
     let hosts = vec![Ec2Host {
-        id: "i-0demo".into(),
+        id: "i-0f3a9c1e7b2d45680".into(),
         name: Some("bastion".into()),
-        vpc_id: Some("vpc-demo".into()),
+        vpc_id: Some("vpc-0a1b2c3d4e5f60718".into()),
         public_dns: "bastion.eu-west-2.compute.amazonaws.com".into(),
     }];
     let scope = crate::aws_cli::AwsScope {
         region: Some("eu-west-2".into()),
         profile: None,
-        account: Some("123456789012".into()),
+        account: Some("210987654321".into()),
     };
     let existing = crate::inventory::parse_config(
-        "[[environments]]\nname = \"staging\"\nsource = { kind = \"rds\", instances = [\"staging\"] }\n",
+        "[[environments]]\nname = \"production\"\nsource = { kind = \"rds\", instances = [\"ledger-prod*\"] }\n\
+         [[environments]]\nname = \"staging\"\nsource = { kind = \"rds\", instances = [\"ledger-staging\"] }\n",
     )
     .unwrap_or_default();
     Found {
-        header: "AWS account 123456789012, eu-west-2".into(),
+        header: "AWS account 210987654321, eu-west-2".into(),
         warnings: Vec::new(),
         proposals: propose(&instances, &secrets, &hosts, &scope, &existing),
         scopes: vec![
             crate::aws_cli::AwsScope::default(),
             crate::aws_cli::AwsScope {
-                profile: Some("staging".into()),
+                profile: Some("production".into()),
                 ..crate::aws_cli::AwsScope::default()
             },
         ],
@@ -1338,356 +1498,4 @@ pub fn discovery() -> crate::inventory::discover::Found {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn demo_app_is_populated_and_marked_demo() {
-        let a = app(Theme::default());
-        assert!(a.demo, "demo flag must be set so persistence is skipped");
-        assert!(matches!(a.conn_state, ConnState::Connected { .. }));
-        assert!(!a.grid.rows.is_empty(), "grid has data");
-        assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
-        assert_eq!(a.schema_cache.tables.len(), 3);
-        assert!(a
-            .saved_queries
-            .entries
-            .iter()
-            .any(|q| q.body.contains(":order_id")));
-        assert!(!a.tap_events.is_empty());
-    }
-
-    #[test]
-    fn demo_tap_events_trip_the_nplus1_detector() {
-        let a = app(Theme::default());
-        // The loadItems burst should surface as at least one N+1
-        // finding via the same detector the live panel uses.
-        let findings = a.current_nplus1();
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.fingerprint.contains("order_items")),
-            "expected an order_items N+1 finding; got {findings:?}"
-        );
-    }
-
-    #[test]
-    fn demo_schema_cache_has_pk_constraints_and_fks() {
-        let c = schema_cache();
-        assert_eq!(c.constraints.len(), 3);
-        assert_eq!(c.fk_edges.len(), 2);
-        assert!(c.columns_meta_by_table.contains_key(&key("users")));
-        // `item` was a copy of `order_items` kept for a walkthrough the
-        // docs no longer have; the browser showed both.
-        assert!(!c.columns_meta_by_table.contains_key(&key("item")));
-        assert_eq!(c.tables.len(), c.columns_meta_by_table.len());
-    }
-
-    /// The docs' N+1 walkthrough queries `order_items`; the demo
-    /// answers it with rows shaped by the table's columns.
-    #[test]
-    fn answer_select_on_order_items_yields_its_rows() {
-        let cache = schema_cache();
-        let g = answer("SELECT * FROM order_items WHERE order_id = 1", &cache);
-        assert_eq!(
-            g.columns,
-            vec!["id", "order_id", "sku", "qty", "price_cents"]
-        );
-        assert!(!g.rows.is_empty());
-        assert!(g.rows[0][2].starts_with("SKU-"), "{:?}", g.rows[0]);
-        assert!(g.rows[0][3].parse::<u32>().is_ok(), "{:?}", g.rows[0]);
-    }
-
-    /// EXPLAIN plans the table it was asked about, with its WHERE as
-    /// the filter; a join keeps the join plan.
-    #[test]
-    fn explain_plans_the_table_asked_about() {
-        let cache = schema_cache();
-        let plan = |sql: &str, analyze: bool| {
-            let g = explain_plan_grid(analyze, sql, &cache);
-            crate::query::explain::parse(&g.rows[0][0]).expect("valid plan JSON")
-        };
-        let filter = |p: &crate::query::explain::PlanNode| {
-            p.extras
-                .iter()
-                .find(|(k, _)| k == "Filter")
-                .map(|(_, v)| v.clone())
-        };
-        let p = plan(
-            "EXPLAIN SELECT * FROM orders WHERE status = 'shipped' LIMIT 5;",
-            false,
-        );
-        assert_eq!(p.node_type, "Seq Scan");
-        assert_eq!(p.relation_name.as_deref(), Some("orders"));
-        assert_eq!(filter(&p).as_deref(), Some("(status = 'shipped')"));
-        let p = plan(
-            "select *\nfrom users\nwhere email = \"x\"\n  and id = 1",
-            true,
-        );
-        assert_eq!(p.relation_name.as_deref(), Some("users"));
-        assert_eq!(filter(&p).as_deref(), Some("(email = \"x\" and id = 1)"));
-        assert_eq!(p.actual_rows, Some(1.0));
-        let p = plan("SELECT * FROM order_items", false);
-        assert_eq!(filter(&p), None);
-        let p = plan(
-            "SELECT * FROM orders o JOIN users u ON u.id = o.user_id",
-            false,
-        );
-        assert_eq!(p.node_type, "Hash Join");
-    }
-
-    #[test]
-    fn launch_app_opens_empty_with_databases_populated() {
-        let a = launch_app(Theme::default());
-        assert!(a.demo);
-        assert!(
-            a.grid.columns.is_empty() && a.grid.rows.is_empty(),
-            "launch_app must start on an EMPTY grid so draw_landing (the \
-             start card) renders instead of a pre-run result: {:?}",
-            a.grid
-        );
-        assert!(
-            !a.databases.is_empty(),
-            "start card's databases line needs data to show"
-        );
-        assert!(
-            a.editor.buffer.is_empty() && a.editor.cursor == 0,
-            "launch_app must start with an EMPTY editor — docs/logs-to-sql.md says \
-             `e` then paste, and a paste appended to the pre-filled SELECT: {:?}",
-            a.editor.buffer
-        );
-        // Everything else app() sets up is untouched, bar the tap.
-        assert_eq!(a.schema_cache.tables.len(), 3);
-    }
-
-    /// `--demo` opens with the tap quiet — no events, no TAP / N+1
-    /// badges — and the burst arrives after `DEMO_TAP_DELAY`, one event
-    /// a frame, until the N+1 finding is there and the feed is gone.
-    #[test]
-    fn launch_app_tap_is_quiet_until_the_burst_arrives() {
-        let mut a = launch_app(Theme::default());
-        assert!(a.tap_events.is_empty() && a.tap_health.query_count == 0);
-        assert!(a.current_nplus1().is_empty());
-        let feed = a.demo_tap_feed.as_ref().expect("a pending burst");
-        let (due, total) = (feed.due, feed.pending.len());
-        assert_eq!(total, tap_events().len());
-
-        // Before it's due: nothing arrives.
-        a.tick_demo_tap(due - std::time::Duration::from_millis(1));
-        assert!(a.tap_events.is_empty());
-
-        // From then on, one event per frame.
-        a.tick_demo_tap(due);
-        assert_eq!(a.tap_events.len(), 1);
-        for _ in 1..total {
-            a.tick_demo_tap(due);
-        }
-        assert_eq!(a.tap_events.len(), total);
-        assert!(a.tap_health.query_count > 0);
-        assert!(
-            a.demo_tap_feed.is_none(),
-            "the feed must go with its last event, or it holds the frame clock awake"
-        );
-        assert!(
-            a.current_nplus1()
-                .iter()
-                .any(|f| f.fingerprint.contains("order_items")),
-            "the delivered burst trips the detector, as app()'s pre-filled ring does"
-        );
-    }
-
-    #[test]
-    fn app_is_unchanged_by_launch_app_existing() {
-        // app() itself still opens with its pre-populated users grid —
-        // tests/sizes.rs and tests/render.rs depend on that shape.
-        let a = app(Theme::default());
-        assert!(!a.grid.rows.is_empty());
-        assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
-    }
-
-    #[test]
-    fn answer_select_on_users_yields_the_users_grid() {
-        let cache = schema_cache();
-        let grid = answer("SELECT id, email, plan, created_at FROM users", &cache);
-        let (expected_cols, expected_rows) = users_result();
-        assert_eq!(grid.columns, expected_cols);
-        assert_eq!(grid.rows, expected_rows);
-    }
-
-    #[test]
-    fn answer_select_on_orders_yields_rows_with_orders_columns() {
-        let cache = schema_cache();
-        let grid = answer("SELECT * FROM orders WHERE status = 'shipped'", &cache);
-        assert_eq!(
-            grid.columns,
-            vec!["id", "user_id", "status", "total_cents", "created_at"]
-        );
-        assert!(
-            grid.rows.len() >= 3 && grid.rows.len() <= 5,
-            "expected 3-5 generated rows, got {}",
-            grid.rows.len()
-        );
-        // Every row is fully shaped (one cell per column) with
-        // non-empty, deterministic values.
-        for row in &grid.rows {
-            assert_eq!(row.len(), grid.columns.len());
-            assert!(row.iter().all(|c| !c.is_empty()));
-        }
-        // Deterministic: same SQL answers the same way every time.
-        let again = answer("SELECT * FROM orders WHERE status = 'shipped'", &cache);
-        assert_eq!(grid.rows, again.rows);
-    }
-
-    #[test]
-    fn answer_unknown_statement_yields_one_row_notice() {
-        let cache = schema_cache();
-        let grid = answer("SELECT 1", &cache);
-        assert_eq!(grid.columns, vec!["demo".to_string()]);
-        assert_eq!(grid.rows.len(), 1);
-        assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
-
-        // A join (not a single-table FROM) also falls back to the notice.
-        let grid = answer(
-            "SELECT * FROM orders o JOIN users u ON u.id = o.user_id",
-            &cache,
-        );
-        assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
-    }
-
-    #[test]
-    fn select_list_of_cuts_at_the_top_level_from() {
-        assert_eq!(select_list_of("select a, b from t"), Some("a, b"));
-        assert_eq!(
-            select_list_of("  SELECT  o.id  FROM orders o"),
-            Some("o.id")
-        );
-        // No FROM at all — the whole remainder is the list.
-        assert_eq!(select_list_of("select 1"), Some("1"));
-        // A FROM inside a subquery or a string literal must not cut.
-        assert_eq!(
-            select_list_of("select (select 1 from t) as x from u"),
-            Some("(select 1 from t) as x")
-        );
-        assert_eq!(
-            select_list_of("select 'from me' as note from t"),
-            Some("'from me' as note")
-        );
-        // `fromage` is not the keyword.
-        assert_eq!(select_list_of("select fromage from t"), Some("fromage"));
-        // Not a SELECT.
-        assert_eq!(select_list_of("update users set a = 1"), None);
-        assert_eq!(select_list_of("selected"), None);
-        assert_eq!(select_list_of(""), None);
-    }
-
-    #[test]
-    fn answer_does_not_panic_on_multibyte_sql() {
-        // `word_at` sliced `rest[..word.len()]` by byte; `fé€` puts a
-        // multi-byte char across byte 4 and the TUI died with
-        // "end byte index 4 is not a char boundary".
-        let cache = schema_cache();
-        for sql in [
-            "SELECT fé€ FROM users",
-            "select f€ from users",
-            "SELECT 中文 FROM orders o",
-        ] {
-            let _ = answer(sql, &cache);
-        }
-    }
-
-    #[test]
-    fn project_columns_narrows_to_the_named_columns() {
-        let grid = Grid {
-            columns: vec!["id".into(), "user_id".into(), "status".into()],
-            rows: vec![
-                vec!["1".into(), "7".into(), "shipped".into()],
-                vec!["2".into(), "8".into(), "pending".into()],
-            ],
-            truncated: false,
-        };
-        let out = project_columns("id, status", grid);
-        assert_eq!(out.columns, vec!["id".to_string(), "status".to_string()]);
-        assert_eq!(out.rows[0], vec!["1".to_string(), "shipped".to_string()]);
-        assert_eq!(out.rows[1], vec!["2".to_string(), "pending".to_string()]);
-    }
-
-    #[test]
-    fn project_columns_keeps_every_column_for_anything_it_cannot_read() {
-        let grid = || Grid {
-            columns: vec!["id".into(), "user_id".into(), "status".into()],
-            rows: vec![vec!["1".into(), "7".into(), "shipped".into()]],
-            truncated: false,
-        };
-        let all = vec![
-            "id".to_string(),
-            "user_id".to_string(),
-            "status".to_string(),
-        ];
-        // `*` and `t.*`
-        assert_eq!(project_columns("*", grid()).columns, all);
-        assert_eq!(project_columns("o.*", grid()).columns, all);
-        // An expression, a function call, an alias.
-        assert_eq!(project_columns("id + 1", grid()).columns, all);
-        assert_eq!(project_columns("count(*)", grid()).columns, all);
-        assert_eq!(project_columns("id AS pk", grid()).columns, all);
-        assert_eq!(project_columns("distinct id", grid()).columns, all);
-        // A column the grid doesn't have: dropping the ones it DOES
-        // have would answer a different question than the one asked.
-        assert_eq!(project_columns("id, total", grid()).columns, all);
-        assert_eq!(project_columns("", grid()).columns, all);
-    }
-
-    #[test]
-    fn project_columns_reads_alias_qualified_names_case_insensitively() {
-        let grid = Grid {
-            columns: vec!["id".into(), "Status".into()],
-            rows: vec![vec!["1".into(), "shipped".into()]],
-            truncated: true,
-        };
-        let out = project_columns("o.ID , o.status", grid);
-        assert_eq!(out.columns, vec!["id".to_string(), "Status".to_string()]);
-        assert!(out.truncated, "the cap flag travels with the projection");
-    }
-
-    #[test]
-    fn answer_projects_the_select_list_of_a_generated_table() {
-        let cache = schema_cache();
-        let full = answer("select * from orders", &cache);
-        assert_eq!(full.columns.len(), 5, "orders has five columns");
-        let narrowed = answer("select o.id, o.total_cents from orders o", &cache);
-        assert_eq!(
-            narrowed.columns,
-            vec!["id".to_string(), "total_cents".to_string()],
-            "the demo must answer the columns that were asked for"
-        );
-        assert_eq!(narrowed.rows.len(), full.rows.len());
-        assert!(narrowed.rows.iter().all(|r| r.len() == 2));
-        // The canned users result projects the same way.
-        let users = answer("select email from users", &cache);
-        assert_eq!(users.columns, vec!["email".to_string()]);
-        // And the "no table I know" notice is never projected.
-        let notice = answer("select nothing from mystery", &cache);
-        assert_eq!(notice.columns, vec!["demo".to_string()]);
-    }
-
-    #[test]
-    fn answer_honours_a_trailing_limit() {
-        let cache = schema_cache();
-        assert_eq!(answer("select * from users", &cache).rows.len(), 6);
-        assert_eq!(answer("SELECT * FROM users LIMIT 2;", &cache).rows.len(), 2);
-        assert_eq!(answer("select * from orders limit 1", &cache).rows.len(), 1);
-        assert_eq!(answer("select * from users limit 50", &cache).rows.len(), 6);
-        assert_eq!(trailing_limit("select 1"), None);
-        assert_eq!(trailing_limit("select * from t limit x"), None);
-        assert_eq!(trailing_limit("select * from t where id = 3"), None);
-    }
-
-    #[test]
-    fn functions_grid_has_the_live_columns() {
-        let g = functions_grid(None);
-        assert_eq!(g.columns, ["schema", "name", "result", "arguments", "type"]);
-        assert!(g.rows.iter().all(|r| r.len() == g.columns.len()));
-        assert_eq!(functions_grid(Some("public.order_*")).rows.len(), 1);
-        assert_eq!(functions_grid(Some("audit.order_*")).rows.len(), 0);
-    }
-}
+mod tests;

@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────────────────────────────╮       │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: N+1 · v cycle · Shift-B baseline · s sort · c clear · q close ─────────────────────────────────────────────────────────────────────╮       │
 │       │   CALLS        SPAN  TXN / CONN          CALLER · FINGERPRINT                                                                                                                        │       │
-╰───────│       6     125.0ms  conn-7#42           OrderService.loadItems:88 · select * from order_items where order_id = ?                                                                    │───────╯
+╰───────│       8     175.0ms  conn-7#311          InvoiceService.loadLines:112 · select id, description, quantity, unit_amount, amount from invoice_lines where invoice_id = ?                │───────╯
 ╭[ ◆ res│                                                                                                                                                                                      │───────╮
-│id  ema│                                                                                                                                                                                      │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│                                                                                                                                                                                      │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
+│number │                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

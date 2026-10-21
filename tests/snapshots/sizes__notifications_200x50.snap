@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                           PostgreSQL   notifications │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                           PostgreSQL   notifications │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER B╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮         │
 │         │  CHANNEL                  PID  PAYLOAD                                                                                                                                           │         │
 ╰─────────│  orders_channel          4321  order:9001 shipped                                                                                                                                │─────────╯
 ╭[ ◆ resul│  cache_invalidate        4322  users                                                                                                                                             │─────────╮
-│id  email│                                                                                                                                                                                  │         │
-│1   ada@e│                                                                                                                                                                                  │         │
-│2   linus│                                                                                                                                                                                  │         │
-│3   grace│                                                                                                                                                                                  │         │
-│4   alan@│                                                                                                                                                                                  │         │
-│5   edsge│                                                                                                                                                                                  │         │
-│6   kathe│                                                                                                                                                                                  │         │
+│number   │                                                                                                                                                                                  │         │
+│INV-00482│                                                                                                                                                                                  │         │
+│INV-00482│                                                                                                                                                                                  │         │
+│INV-00482│                                                                                                                                                                                  │         │
+│INV-00482│                                                                                                                                                                                  │         │
+│INV-00483│                                                                                                                                                                                  │         │
+│         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │
 │         │                                                                                                                                                                                  │         │

@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  F╭[ ◆ saved queries ◆ ] enter load · r rename · d de╮   │
-│  W│  pro-users                     SELECT id, email, │   │
-│  O│  order-by-id                   SELECT * FROM orde│   │
-╰───│  daily-revenue                 SELECT date_trunc(│───╯
-╭[ ◆│                                                  │───╮
-│id │                                                  │   │
-│1  │  pro-users                                       │   │
-│2  │  SELECT id, email, created_at                    │   │
-│3  │  FROM users                                      │   │
-│4  ╰──────────────────────────────────────────────────╯   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│  W│  overdue-invoices              SELECT number, cus│   │
+│  O│  customer-invoices             SELECT number, sta│   │
+╰───│  mrr-by-month                  SELECT month, curr│───╯
+╭[ ◆│  failing-webhooks-24h          SELECT webhook_id,│───╮
+│num│                                                  │t  │
+│INV│  overdue-invoices                                │10-│
+│INV│  SELECT number, customer_id, currency, total,    │10-│
+│INV│  due_at                                          │10-│
+│INV╰──────────────────────────────────────────────────╯10-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   saved queries · 3 entries
+ RO   TAP   N+1 ×1   saved queries · 4 entries

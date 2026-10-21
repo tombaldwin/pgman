@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││             PostgreSQL   explain │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││             PostgreSQL   explain │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  FRO╭[ ◆ EXPLAIN plan ◆ ] q / esc close ───────────────────────────────────────────────────╮     │
 │  WHE│▼ Hash Join · 50.00ms · 4500 rows                                                     │     │
 │  ORD│    Hash Cond: (o.user_id = u.id)                                                     │     │
 │     │  · Seq Scan on orders o · 30.00ms · ~10000 rows                                      │     │
 ╰─────│  ▼ Hash · 5.00ms                                                                     │─────╯
 ╭[ ◆ r│    · Seq Scan on users u · 4.00ms                                                    │─────╮
-│id  e│                                                                                      │     │
-│1   a│                                                                                      │     │
-│2   l│                                                                                      │     │
-│3   g│                                                                                      │     │
-│4   a│                                                                                      │     │
-│5   e│                                                                                      │     │
-│6   k│                                                                                      │     │
+│numbe│                                                                                      │     │
+│INV-0│                                                                                      │     │
+│INV-0│                                                                                      │     │
+│INV-0│                                                                                      │     │
+│INV-0│                                                                                      │     │
+│INV-0│                                                                                      │     │
+│     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │
 │     │                                                                                      │     │

@@ -1579,7 +1579,7 @@ mod tests {
     #[test]
     fn environments_report_probes_only_when_asked_and_only_where_enabled() {
         let mut reports = crate::demo::environments();
-        // staging probes (demo fixture); qa and local don't.
+        // production, staging and local probe (demo fixture); dev doesn't.
         let probes: Vec<Option<Vec<crate::inventory::probe::Outcome>>> = reports
             .iter()
             .map(|r| r.probe.as_ref().map(|_| crate::demo::environment_probes(r)))
@@ -1587,23 +1587,23 @@ mod tests {
         let path = std::path::Path::new("/cfg/environments.toml");
         let v: Value =
             serde_json::from_str(&render_environments(path, &reports, Some(&probes))).unwrap();
-        let staging = &v["environments"][0];
+        let production = &v["environments"][0];
         assert_eq!(
-            staging["databases"][0]["probe"],
-            json!({"via_replica": "staging-replica", "schema_version": 251, "pending": 1}),
+            production["databases"][0]["probe"],
+            json!({"via_replica": "ledger-prod-replica", "schema_version": 318, "pending": 3}),
             "the primary carries its replica's patch level"
         );
-        let replica = &staging["databases"][1]["probe"];
-        assert_eq!(replica["schema_version"], 251);
-        assert_eq!(replica["pending"], 1);
+        let replica = &production["databases"][1]["probe"];
+        assert_eq!(replica["schema_version"], 318);
+        assert_eq!(replica["pending"], 3);
         assert_eq!(replica["in_recovery"], true);
-        assert_eq!(replica["sessions"], 12);
-        assert_eq!(replica["size"], "812 MB");
-        assert!(v["environments"][1]["probe"]
+        assert_eq!(replica["sessions"], 84);
+        assert_eq!(replica["size"], "48 GB");
+        assert!(v["environments"][2]["probe"]
             .as_str()
             .unwrap()
             .starts_with("not enabled"));
-        assert!(v["environments"][1]["databases"][0].get("probe").is_none());
+        assert!(v["environments"][2]["databases"][0].get("probe").is_none());
 
         // Not asked: no probe keys at all.
         let v: Value = serde_json::from_str(&render_environments(path, &reports, None)).unwrap();

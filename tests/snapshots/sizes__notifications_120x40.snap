@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││              PostgreSQL   notifications │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││              PostgreSQL   notifications │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
 │  WHE╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ─────────────────────────────────────────────────╮     │
 │  ORD│  CHANNEL                  PID  PAYLOAD                                                                   │     │
 │     │  orders_channel          4321  order:9001 shipped                                                        │     │
 ╰─────│  cache_invalidate        4322  users                                                                     │─────╯
 ╭[ ◆ r│                                                                                                          │─────╮
-│id  e│                                                                                                          │     │
-│1   a│                                                                                                          │     │
-│2   l│                                                                                                          │     │
-│3   g│                                                                                                          │     │
-│4   a│                                                                                                          │     │
-│5   e│                                                                                                          │     │
-│6   k│                                                                                                          │     │
+│numbe│                                                                                                          │     │
+│INV-0│                                                                                                          │     │
+│INV-0│                                                                                                          │     │
+│INV-0│                                                                                                          │     │
+│INV-0│                                                                                                          │     │
+│INV-0│                                                                                                          │     │
+│     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │
 │     │                                                                                                          │     │

@@ -4,15 +4,15 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                     PostgreSQL   row │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                     PostgreSQL   row │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM us╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮         │
-│  WHERE p│                                                                                                                                                                                  │         │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM in╭[ ◆ data · row 1 of 1 · field 1/1 · JSON ◆ ]──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮         │
+│  WHERE s│                                                                                                                                                                                  │         │
 │  ORDER B│ ▼ { 3 }                                                                                                                                                                          │         │
 │         │   "id": 1                                                                                                                                                                        │         │
 ╰─────────│   ▼ "meta": { 1 }                                                                                                                                                                │─────────╯

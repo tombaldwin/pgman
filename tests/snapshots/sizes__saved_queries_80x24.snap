@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   saved querie │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││ PostgreSQL   saved querie │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
 │  FR╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · ╮    │
-│  WH│  pro-users                     SELECT id, email, created_at FROM us│    │
-│  OR│  order-by-id                   SELECT * FROM orders WHERE id = :ord│    │
-╰────│  daily-revenue                 SELECT date_trunc('day', created_at)│────╯
-╭[ ◆ │                                                                    │────╮
-│id  │                                                                    │    │
-│1   │  pro-users                                                         │    │
-│2   │  SELECT id, email, created_at                                      │    │
-│3   │  FROM users                                                        │    │
-│4   │  WHERE plan = 'pro'                                                │    │
-│5   │  ORDER BY created_at DESC;                                         │    │
-│6   │                                                                    │    │
+│  WH│  overdue-invoices              SELECT number, customer_id, currency│    │
+│  OR│  customer-invoices             SELECT number, status, total, due_at│    │
+╰────│  mrr-by-month                  SELECT month, currency, mrr, custome│────╯
+╭[ ◆ │  failing-webhooks-24h          SELECT webhook_id, status_code, coun│────╮
+│numb│                                                                    │    │
+│INV-│  overdue-invoices                                                  │0   │
+│INV-│  SELECT number, customer_id, currency, total, due_at               │0   │
+│INV-│  FROM invoices                                                     │0   │
+│INV-│  WHERE status = 'open'                                             │0   │
+│INV-│  AND due_at < now()                                                │0   │
+│    │  ORDER BY due_at;                                                  │    │
 │    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   saved queries · 3 entries
+ RO   TAP   N+1 ×1   saved queries · 4 entries

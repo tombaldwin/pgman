@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││  PostgreSQL   connections │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││  PostgreSQL   connections │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM users                                                                  │
-│  WHERE plan = 'pro'                                                          │
-│  ORDER BY created_at DESC;                                                   │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  FROM invoices                                                               │
+│  WHERE status = 'open'                                                       │
+│  ORDER BY due_at;                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ╭[ ╭[ ◆ open an ssh tunnel? ◆ ]─────────────────────────────────────────────╮──╮
-│id│  ssh tom@bastion.example.com → db.internal:5432                        │  │
-│1 │                                                                        │  │
-│2 │  picked project data source 'via-bastion' wants an ssh session first.  │  │
-│3 │  pgman runs the system ssh binary with your keys, agent and            │  │
-│4 │  ~/.ssh/config — before any Postgres traffic, so a failed              │  │
-│5 │  database login would not stop it.                                     │  │
-│6 │                                                                        │  │
+│nu│  ssh tom@bastion.example.com → db.internal:5432                        │  │
+│IN│                                                                        │  │
+│IN│  picked project data source 'via-bastion' wants an ssh session first.  │  │
+│IN│  pgman runs the system ssh binary with your keys, agent and            │  │
+│IN│  ~/.ssh/config — before any Postgres traffic, so a failed              │  │
+│IN│  database login would not stop it.                                     │  │
+│  │                                                                        │  │
 │  │  y proceed · any other key cancels                                     │  │
 │  ╰────────────────────────────────────────────────────────────────────────╯  │
 ╰──────────────────────────────────────────────────────────────────────────────╯

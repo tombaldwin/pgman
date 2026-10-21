@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
-│ │no findings — schema looks clean                     │  │
-│ │                                                     │  │
-╰─│                                                     │──╯
-╭[│                                                     │──╮
-│i│                                                     │  │
-│1│                                                     │  │
-│2│                                                     │  │
-│3│                                                     │  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│ │  SEV    CODE     object                             │  │
+│ │  HIGH   LINT001  reporting.mrr_by_month             │  │
+╰─│  HIGH   LINT001  reporting.overdue_invoices         │──╯
+╭[│  HIGH   LINT001  reporting.revenue_daily            │──╮
+│n│                                                     │  │
+│I│  LINT001 · table without PRIMARY KEY or UNIQUE const│0-│
+│I│  object: reporting.mrr_by_month                     │0-│
+│I│  no UNIQUE / PRIMARY KEY constraint found for repo  │0-│
+│I╰─────────────────────────────────────────────────────╯0-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · ? +4 more

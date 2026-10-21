@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││                 PostgreSQL   row │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││                 PostgreSQL   row │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM us╭[ ◆ row 1 / 6 · field 1/4 ◆ ]─────────────────────────────────────────────────╮         │
-│  WHERE p│                                                                              │         │
-│  ORDER B│ id         │ 1                                                               │         │
-│         │ email      │ ada@example.com                                                 │         │
-╰─────────│ plan       │ pro                                                             │─────────╯
-╭[ ◆ resul│ created_at │ 2026-01-04 09:12:00+00                                          │─────────╮
-│id  email│                                                                              │         │
-│1   ada@e│                                                                              │         │
-│2   linus│                                                                              │         │
-│3   grace│                                                                              │         │
-│4   alan@│                                                                              │         │
-│5   edsge│                                                                              │         │
-│6   kathe│                                                                              │         │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM in╭[ ◆ row 1 / 5 · field 1/6 ◆ ]─────────────────────────────────────────────────╮         │
+│  WHERE s│                                                                              │         │
+│  ORDER B│ number      │ INV-004822                                                     │         │
+│         │ customer_id │ 2102                                                           │         │
+╰─────────│ status      │ open                                                           │─────────╯
+╭[ ◆ resul│ currency    │ EUR                                                            │─────────╮
+│number   │ total       │ 5712.00                                                        │         │
+│INV-00482│ due_at      │ 2026-10-01 09:00:00+00                                         │         │
+│INV-00482│                                                                              │         │
+│INV-00482│                                                                              │         │
+│INV-00482│                                                                              │         │
+│INV-00483│                                                                              │         │
+│         │                                                                              │         │
 │         │                                                                              │         │
 │         │                                                                              │         │
 │         │                                                                              │         │

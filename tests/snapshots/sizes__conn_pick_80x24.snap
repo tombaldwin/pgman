@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││  PostgreSQL   connections │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││  PostgreSQL   connections │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM users                                                                  │
-│  WHERE plan = 'pro'                                                          │
-│  ORDER BY created_at DESC;                                                   │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  FROM invoices                                                               │
+│  WHERE status = 'open'                                                       │
+│  ORDER BY due_at;                                                            │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────╮
-│id  em╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮      │
-│1   ad│▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │      │
-│2   li│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │      │
-│3   gr│                                                                │      │
-│4   al│  nothing here connects until you press enter                   │      │
-│5   ed│  PGPASSWORD is only used with --dsn                            │      │
-│6   ka╰────────────────────────────────────────────────────────────────╯      │
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────────────────────────╮
+│number╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮      │
+│INV-00│▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │+00   │
+│INV-00│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │+00   │
+│INV-00│                                                                │+00   │
+│INV-00│  nothing here connects until you press enter                   │+00   │
+│INV-00│  PGPASSWORD is only used with --dsn                            │+00   │
+│      ╰────────────────────────────────────────────────────────────────╯      │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

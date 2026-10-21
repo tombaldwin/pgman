@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   notification │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││ PostgreSQL   notification │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
 │  F╭[ ◆ NOTIFY arrivals ◆ ] j/k · y yank · c clear · q close ─────────────╮   │
 │  W│  CHANNEL                  PID  PAYLOAD                               │   │
 │  O│  orders_channel          4321  order:9001 shipped                    │   │
 ╰───│  cache_invalidate        4322  users                                 │───╯
 ╭[ ◆│                                                                      │───╮
-│id │                                                                      │   │
-│1  │                                                                      │   │
-│2  │                                                                      │   │
-│3  │                                                                      │   │
-│4  │                                                                      │   │
-│5  │                                                                      │   │
-│6  │                                                                      │   │
+│num│                                                                      │   │
+│INV│                                                                      │   │
+│INV│                                                                      │   │
+│INV│                                                                      │   │
+│INV│                                                                      │   │
+│INV│                                                                      │   │
+│   │                                                                      │   │
 │   ╰──────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

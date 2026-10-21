@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││     PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││     PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: hotspots · … ────────╮   │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · … ───────╮   │
 │  │   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CA│   │
-│  │       6      0      450µs      495µs      495µs  select * … · OrderSer│   │
-╰──│       1      0      1.8ms      1.8ms      1.8ms  select id… · OrderSer│───╯
-╭[ │       1      0      310µs      310µs      310µs  select id… · UserCont│───╮
-│id│                                                                       │   │
-│1 │                                                                       │   │
-│2 │                                                                       │   │
-│3 │                                                                       │   │
-│4 │                                                                       │   │
-│5 │                                                                       │   │
-│6 │                                                                       │   │
+│  │       8      0      465µs      525µs      525µs  select id… · InvoiceS│   │
+╰──│       1      0      2.3ms      2.3ms      2.3ms  update su… · DunningJ│───╯
+╭[ │       1      0      1.8ms      1.8ms      1.8ms  select id… · InvoiceC│───╮
+│nu│       1      0      290µs      290µs      290µs  select id… · Customer│   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│  │                                                                       │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

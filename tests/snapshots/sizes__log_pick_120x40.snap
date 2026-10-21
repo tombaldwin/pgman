@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                 PostgreSQL   logs → SQL │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                 PostgreSQL   logs → SQL │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                           │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WHERE status = 'open'                                                                                               │
+│  ORDER BY due_at;                                                                                                    │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────╮
-│id  email╭[ ◆ log picks · 1/2 ◆ ]───────────────────────────────────────────────────────────────────────────╮         │
-│1   ada@e│  2 queries · view: all queries (press `c` to toggle)                                             │         │
-│2   linus│                                                                                                  │         │
-│3   grace│▶ [hibernate] select * from users where id = 42                                                   │         │
-│4   alan@│  [pglog]     select * from orders where user_id = 42                                             │         │
-│5   edsge╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
-│6   katherine@example.com  pro   2026-03-21 16:40:00+00                                                               │
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────╮
+│number   ╭[ ◆ log picks · 1/2 ◆ ]───────────────────────────────────────────────────────────────────────────╮         │
+│INV-00482│  2 queries · view: all queries (press `c` to toggle)                                             │         │
+│INV-00482│                                                                                                  │         │
+│INV-00482│▶ [hibernate] select * from users where id = 42                                                   │         │
+│INV-00482│  [pglog]     select * from orders where user_id = 42                                             │         │
+│INV-00483╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FRO╭[ ◆ row 1 / 6 · field 1/4 ◆ ]─────────────────╮     │
+│  FRO╭[ ◆ row 1 / 5 · field 1/6 ◆ ]─────────────────╮     │
 │  WHE│                                              │     │
-│  ORD│ id         │ 1                               │     │
-╰─────│ email      │ ada@example.com                 │─────╯
-╭[ ◆ r│ plan       │ pro                             │─────╮
-│id  e│ created_at │ 2026-01-04 09:12:00+00          │     │
-│1   a│                                              │00   │
-│2   l│                                              │00   │
-│3   g│                                              │00   │
-│4   a╰──────────────────────────────────────────────╯00   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│  ORD│ number      │ INV-004822                     │     │
+╰─────│ customer_id │ 2102                           │─────╯
+╭[ ◆ r│ status      │ open                           │─────╮
+│numbe│ currency    │ EUR                            │_at  │
+│INV-0│ total       │ 5712.00                        │6-10-│
+│INV-0│ due_at      │ 2026-10-01 09:00:00+00         │6-10-│
+│INV-0│                                              │6-10-│
+│INV-0╰──────────────────────────────────────────────╯6-10-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   J / K next / prev row · ? +4 more

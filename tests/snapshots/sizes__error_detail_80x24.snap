@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││        PostgreSQL   error │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││        PostgreSQL   error │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM users                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  FROM invoices                                                               │
 │  WHE╭[ ◆ error detail ◆ ] F2 / esc / q close ──────────────────────────╮     │
 │  ORD│ ERROR · SQLSTATE 23505                                           │     │
 ╰─────│                                                                  │─────╯
 ╭[ ◆ r│    message: duplicate key value violates unique constraint "use  │─────╮
-│id  e│             rs_email_key"                                        │     │
-│1   a│     detail: Key (email)=(ada@example.com) already exists.        │     │
-│2   l│      where: SQL statement "INSERT INTO users (email, plan) VALU  │     │
-│3   g│             ES ($1, $2)"                                         │     │
-│4   a│                                                                  │     │
-│5   e│affected object:                                                  │     │
-│6   k╰──────────────────────────────────────────────────────────────────╯     │
+│numbe│             rs_email_key"                                        │     │
+│INV-0│     detail: Key (email)=(ada@example.com) already exists.        │00   │
+│INV-0│      where: SQL statement "INSERT INTO users (email, plan) VALU  │00   │
+│INV-0│             ES ($1, $2)"                                         │00   │
+│INV-0│                                                                  │00   │
+│INV-0│affected object:                                                  │00   │
+│     ╰──────────────────────────────────────────────────────────────────╯     │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

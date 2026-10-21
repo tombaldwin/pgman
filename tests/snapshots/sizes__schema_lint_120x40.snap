@@ -4,27 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                PostgreSQL   schema lint │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                PostgreSQL   schema lint │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
 │  WH╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ──────────────────────────────────────────────╮    │
-│  OR│no findings — schema looks clean                                                                            │    │
-│    │                                                                                                            │    │
-╰────│                                                                                                            │────╯
-╭[ ◆ │                                                                                                            │────╮
-│id  │                                                                                                            │    │
-│1   │                                                                                                            │    │
-│2   │                                                                                                            │    │
-│3   │                                                                                                            │    │
-│4   │                                                                                                            │    │
-│5   │                                                                                                            │    │
-│6   │                                                                                                            │    │
-│    │                                                                                                            │    │
+│  OR│  SEV    CODE     object                                            title                                   │    │
+│    │  HIGH   LINT001  reporting.mrr_by_month                            table without PRIMARY KEY or UNIQUE con…│    │
+╰────│  HIGH   LINT001  reporting.overdue_invoices                        table without PRIMARY KEY or UNIQUE con…│────╯
+╭[ ◆ │  HIGH   LINT001  reporting.revenue_daily                           table without PRIMARY KEY or UNIQUE con…│────╮
+│numb│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
@@ -32,8 +30,10 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
+│    │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                                  │    │
+│    │  object: reporting.mrr_by_month                                                                            │    │
+│    │  no UNIQUE / PRIMARY KEY constraint found for reporting.mrr_by_month                                       │    │
+│    │  suggest: ALTER TABLE reporting.mrr_by_month ADD PRIMARY KEY (...);                                        │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

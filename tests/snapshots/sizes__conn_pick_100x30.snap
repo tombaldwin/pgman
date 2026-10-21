@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││         PostgreSQL   connections │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││         PostgreSQL   connections │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DESC;                                                                       │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
+│  WHERE status = 'open'                                                                           │
+│  ORDER BY due_at;                                                                                │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
-│id  email       ╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                │
-│1   ada@example.│▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                │
-│2   linus@exampl│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                │
-│3   grace@exampl│                                                                │                │
-│4   alan@example│  nothing here connects until you press enter                   │                │
-│5   edsger@examp│  PGPASSWORD is only used with --dsn                            │                │
-│6   katherine@ex╰────────────────────────────────────────────────────────────────╯                │
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
+│number      cust╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────────────╮                │
+│INV-004822  2102│▶ [project]  prod     app@prod-db:5432/main  sslmode=default    │                │
+│INV-004824  2104│  [IntelliJ] staging  app@staging-db:5432/main  sslmode=default │                │
+│INV-004827  2107│                                                                │                │
+│INV-004829  2109│  nothing here connects until you press enter                   │                │
+│INV-004831  2111│  PGPASSWORD is only used with --dsn                            │                │
+│                ╰────────────────────────────────────────────────────────────────╯                │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

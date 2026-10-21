@@ -4,26 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                             PostgreSQL   schema lint │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                             PostgreSQL   schema lint │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
-│       │no findings — schema looks clean                                                                                                                                                      │       │
-╰───────│                                                                                                                                                                                      │───────╯
-╭[ ◆ res│                                                                                                                                                                                      │───────╮
-│id  ema│                                                                                                                                                                                      │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│                                                                                                                                                                                      │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
+│       │  SEV    CODE     object                                            title                                                                                                             │       │
+╰───────│  HIGH   LINT001  reporting.mrr_by_month                            table without PRIMARY KEY or UNIQUE constraint                                                                    │───────╯
+╭[ ◆ res│  HIGH   LINT001  reporting.overdue_invoices                        table without PRIMARY KEY or UNIQUE constraint                                                                    │───────╮
+│number │  HIGH   LINT001  reporting.revenue_daily                           table without PRIMARY KEY or UNIQUE constraint                                                                    │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
@@ -40,9 +39,10 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
+│       │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                                                                                                            │       │
+│       │  object: reporting.mrr_by_month                                                                                                                                                      │       │
+│       │  no UNIQUE / PRIMARY KEY constraint found for reporting.mrr_by_month                                                                                                                 │       │
+│       │  suggest: ALTER TABLE reporting.mrr_by_month ADD PRIMARY KEY (...);                                                                                                                  │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

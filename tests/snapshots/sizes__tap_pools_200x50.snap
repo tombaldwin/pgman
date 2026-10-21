@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ────────────────────────────────────────────────────────────────────╮       │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: pools · v cycle · Shift-B baseline · s sort · c clear · q close ───────────────────────────────────────────────────────────────────╮       │
 │       │  CONNS   PEAK   CALLS    ERR        BUSY        P95  POOL · APP                                                                                                                      │       │
-╰───────│      3      1       8      0       4.9ms      1.8ms  primary · shop-api                                                                                                              │───────╯
+╰───────│      3      1      11      0       8.2ms      2.3ms  primary · billing-api                                                                                                           │───────╯
 ╭[ ◆ res│                                                                                                                                                                                      │───────╮
-│id  ema│                                                                                                                                                                                      │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│                                                                                                                                                                                      │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
+│number │                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

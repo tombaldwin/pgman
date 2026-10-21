@@ -3,14 +3,14 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
-│  WHERE plan = 'pro'                                      │
-│  ORDER BY created_at DESC;                               │
+│  FROM invoices                                           │
+│  WHERE status = 'open'                                   │
+│  ORDER BY due_at;                                        │
 ╰──────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────╮
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────╮
 │╭[ ◆ pick a connection · 1/2 ◆ ]─────────────────────────╮│
 ││▶ [project]  prod     app@prod-db:5432/main  sslmode=d… ││
 ││  [IntelliJ] staging  app@staging-db:5432/main  sslmod… ││

@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││               PostgreSQL   error │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││               PostgreSQL   error │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
 │  WHER╭[ ◆ error detail ◆ ] F2 / esc / q close ───────────────────────────────────────────╮       │
 │  ORDE│ ERROR · SQLSTATE 23505                                                            │       │
 │      │                                                                                   │       │
 ╰──────│    message: duplicate key value violates unique constraint "users_email_key"      │───────╯
 ╭[ ◆ re│     detail: Key (email)=(ada@example.com) already exists.                         │───────╮
-│id  em│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"       │       │
-│1   ad│                                                                                   │       │
-│2   li│affected object:                                                                   │       │
-│3   gr│     schema: public                                                                │       │
-│4   al│      table: users                                                                 │       │
-│5   ed│ constraint: users_email_key                                                       │       │
-│6   ka│                                                                                   │       │
+│number│      where: SQL statement "INSERT INTO users (email, plan) VALUES ($1, $2)"       │       │
+│INV-00│                                                                                   │       │
+│INV-00│affected object:                                                                   │       │
+│INV-00│     schema: public                                                                │       │
+│INV-00│      table: users                                                                 │       │
+│INV-00│ constraint: users_email_key                                                       │       │
+│      │                                                                                   │       │
 │      │                                                                                   │       │
 │      │                                                                                   │       │
 │      │                                                                                   │       │

@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ active sessions ◆ ] pg_stat_activity — r refresh ╮  │
 │ │     PID  USER/APP              STATE         AGE(S) │  │
 │ │    1234  alice/psql            active          12.5 │  │
 ╰─│    5678  bob/pgman             idle in tx     300.0 │──╯
 ╭[│                                                     │──╮
-│i│                                                     │  │
-│1│                                                     │  │
-│2│                                                     │  │
-│3│                                                     │  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│n│                                                     │  │
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I╰─────────────────────────────────────────────────────╯0-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · K terminate · ? +4 more
