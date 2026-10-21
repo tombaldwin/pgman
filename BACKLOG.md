@@ -105,13 +105,6 @@ small-UX, correctness and environments findings landed on branch
   `Content-Length` before and the body length after; a chunked response
   with no length buffers before the check. Needs reqwest's `stream`
   feature and a `take` — one Cargo feature away.
-- **`has_where` is a whole-statement keyword check**, so a `DELETE` whose
-  only `WHERE` is inside a subquery classifies as `with WHERE` (Confirm,
-  not Block). Needs a real parser; documented in
-  `docs/safety-and-privacy.md`.
-- **`--tap-record` permission verification** was inconclusive in the
-  sandbox (the agent's filesystem view and the subprocess's did not line
-  up); the code mirrors `write_private`. Verify by hand on Linux.
 - **Batch mode skips the directory-permission repair** that the TUI's
   `init_logging` does (data/config dirs stay at whatever mode they had).
 
@@ -119,9 +112,6 @@ Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
 
 ### Connection & chrome
-- IntelliJ `dataSources.local.xml` password parsing — the
-  `parse_local_passwords` referenced in `creds::intellij`'s doc
-  comment doesn't exist yet. Today `PGPASSWORD` fills the gap.
 - NUMERIC / unknown-type cell rendering in `conn::cell_to_string` —
   currently best-effort `Debug`-style for unknown OIDs.
 - TLS `verify-ca` hostname-skip via a custom rustls verifier — the
@@ -651,8 +641,6 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
-- **Real `:about` command** once a typed-command palette lands. The
-  `A` keybinding works in the meantime.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs
@@ -684,22 +672,20 @@ the list for the cases where it can't reach.
   Higher-value, bigger scope than the other completion items here.
 
 ### Reuse from the sibling `ebman` project
-Survey is in [Done]. Lift as the milestones reach them:
+Already shared through `tb-tui-common`: chrome, splash, overlay,
+`TextInput`, theme, font probe and the path helpers. pgman has its own
+update check and `:` command registry (`COMMAND_NAMES`, feeding Tab
+completion and help). Still to lift, as features reach them:
 - `shell.rs` — PTY wrapper + key→bytes; verbatim. Use for `psql` /
-  `pg_dump` / `claude` handoff (M2 / advisor / snapshots).
-- Toast stack, Braille spinner, pill-chain widgets (`ui.rs`) — lift
-  as chrome is built out.
-- `state.rs` — line-oriented persisted state; adapt for saved
-  connections / query history.
+  `pg_dump` / `claude` handoff (snapshots / advisor).
+- Toast stack (`ui.rs`).
+- `state.rs` — line-oriented persisted state.
 - `mode_action.rs` — `ConfirmModal` + countdown state machine; adapt
-  for `safety::Guard::Confirm` prompts and backup / restore.
-- `commands.rs` — `:command` registry feeding help + Ctrl-K palette.
+  for backup / restore.
 - `form.rs` — multi-field modal; connection editor + safety.toml
   editor.
 - `mode_detail.rs` — tabbed drill-down pattern.
-- Smaller: `keys.rs`, `plugins.rs`, `update_check.rs`, `control.rs`,
-  `cost_cache.rs` (→ schema / plan cache), `report_bug.rs` (PII
-  scrubber).
+- `report_bug.rs` (PII scrubber), `cost_cache.rs` (→ plan cache).
 - Skip (AWS-specific): `profiles.rs`, `sso.rs`, `aws.rs`.
 
 ## v2 — AWS (not started)
