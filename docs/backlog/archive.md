@@ -23,6 +23,9 @@ Historical record. Newest at the top within each section.
   guarded by a render test); the tap memo's generation counter (already
   `App::tap_generation`); `:about` (exists); IntelliJ local passwords
   (IntelliJ keeps them in the OS keychain, never the XML).
+- The integration suite names everything it creates `pgman_it_<what>_<pid>`
+  and drops it when the test binary exits (plus anything a killed run
+  left); the ~400 relations already leaked were dropped by hand.
 - Verified by hand: `--tap-record` creates its file 0600 and new
   directories 0700, and tightens a pre-existing 0644 file (macOS; the
   same `open(2)` / `fchmod` calls on Linux).

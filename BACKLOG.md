@@ -70,14 +70,6 @@ small-UX, correctness and environments findings landed on branch
   `describe-db-clusters`, tested against fixtures only. Whether a
   reader answers the lag probe's `pg_last_wal_receive_lsn` /
   `pg_stat_wal_receiver` usefully is unverified.
-- **Integration tests leak their tables.** Most create
-  `pgman_it_<what>_<pid>` relations and never drop them; CI's database
-  is throwaway, but a developer's compose database had ~400 by
-  2026-10-21, crowding the schema browser and completion when testing
-  by hand. Either a drop guard per test, or a sweep that drops the
-  ones whose pid is no longer running (safe beside a parallel run).
-  The sweep was written in the backlog pass but not run: it deletes
-  tables, so it waits for Tom's go-ahead.
 - **JOIN … ON with a multi-column foreign key** offers one predicate
   per column pair: the cached `FkEdge` carries no constraint name, so
   the pairs can't be grouped into one `a = b AND c = d` candidate.
