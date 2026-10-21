@@ -1077,10 +1077,10 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
 
 /// One result row as the grid shows it: the text-wire cells lined up
 /// with the `n_columns` Describe promised ([`project_cells`]) and SQL
-/// NULL rendered as the empty string — the same convention
-/// [`cell_to_string`] uses, which `grid::cmp_cells` sorts last. The
-/// shared row→cells step of every result-set path (TUI grid, `--batch
-/// csv` / `tsv` / `expanded`). Pure / testable.
+/// NULL rendered as the empty string, which `grid::cmp_cells` sorts
+/// last. The shared row→cells step of every result-set path (TUI grid,
+/// the `T` / `L` panel loads, `--batch csv` / `tsv` / `expanded`).
+/// Pure / testable.
 pub fn display_cells(cells: Vec<Option<String>>, n_columns: usize) -> Vec<String> {
     project_cells(cells, n_columns)
         .into_iter()
@@ -1091,8 +1091,8 @@ pub fn display_cells(cells: Vec<Option<String>>, n_columns: usize) -> Vec<String
 /// Stream a row-returning statement over the simple-query (text)
 /// protocol into display strings, stopping at `grid::MAX_ROWS`. Every
 /// type arrives already rendered by the server — no client-side
-/// decoder to be missing. Returns `(rows, truncated)` like
-/// [`stream_rows`].
+/// decoder to be missing. Returns `(rows, truncated)`, `truncated`
+/// being `true` iff at least one row existed past the cap.
 async fn stream_text_rows(
     client: &tokio_postgres::Client,
     sql: &str,
@@ -1261,34 +1261,6 @@ pub async fn run_statement_typed_capped(
     Ok((typed, truncated))
 }
 
-/// Stream rows from a prepared statement (no params) into string-rendered
-/// vectors, stopping at `grid::MAX_ROWS`. Returns `(rows, truncated)` where
-/// `truncated` is `true` iff at least one additional row existed past the cap.
-async fn stream_rows(
-    client: &tokio_postgres::Client,
-    stmt: &tokio_postgres::Statement,
-) -> Result<(Vec<Vec<String>>, bool), QueryErr> {
-    use futures::StreamExt;
-    use tokio_postgres::types::ToSql;
-    let params: [&(dyn ToSql + Sync); 0] = [];
-    let stream = client
-        .query_raw(stmt, params)
-        .await
-        .map_err(QueryErr::from)?;
-    let mut stream = Box::pin(stream);
-    let mut out: Vec<Vec<String>> = Vec::new();
-    let mut truncated = false;
-    while let Some(row_res) = stream.next().await {
-        let row = row_res.map_err(QueryErr::from)?;
-        if out.len() >= crate::grid::MAX_ROWS {
-            truncated = true;
-            break;
-        }
-        out.push((0..row.len()).map(|i| cell_to_string(&row, i)).collect());
-    }
-    Ok((out, truncated))
-}
-
 /// Open a transaction and run `sql`. On success the transaction is **left
 /// open** — the caller (usually the App's commit/rollback prompt) decides
 /// `COMMIT` or `ROLLBACK`. On error the transaction is rolled back immediately
@@ -1449,7 +1421,10 @@ pub async fn run_query(client: &tokio_postgres::Client, sql: &str) -> Result<Gri
         .iter()
         .map(|c| c.name().to_string())
         .collect();
-    let (rows, truncated) = stream_rows(client, &stmt).await?;
+    // Text wire, like the editor's path: every column type (NUMERIC,
+    // timestamps, arrays, enums) arrives rendered by the server, so no
+    // client-side decoder can be missing.
+    let (rows, truncated) = stream_text_rows(client, sql, columns.len()).await?;
     Ok(Grid {
         columns,
         rows,
@@ -1467,44 +1442,6 @@ pub async fn terminate_backend(client: &tokio_postgres::Client, pid: i32) -> Res
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
-}
-
-/// Render one cell as a display string. Handles common scalar types; SQL NULL
-/// renders empty, and a type we can't decode renders `?`.
-fn cell_to_string(row: &tokio_postgres::Row, i: usize) -> String {
-    use tokio_postgres::types::{FromSql, Type};
-
-    fn show<T>(row: &tokio_postgres::Row, i: usize) -> Option<String>
-    where
-        T: std::fmt::Display + for<'a> FromSql<'a>,
-    {
-        match row.try_get::<usize, Option<T>>(i) {
-            Ok(Some(v)) => Some(v.to_string()),
-            Ok(None) => Some(String::new()), // SQL NULL
-            Err(_) => None,                  // unsupported type / decode error
-        }
-    }
-
-    let ty = row.columns()[i].type_().clone();
-    let rendered = if ty == Type::BOOL {
-        show::<bool>(row, i)
-    } else if ty == Type::INT2 {
-        show::<i16>(row, i)
-    } else if ty == Type::INT4 {
-        show::<i32>(row, i)
-    } else if ty == Type::INT8 {
-        show::<i64>(row, i)
-    } else if ty == Type::OID {
-        show::<u32>(row, i)
-    } else if ty == Type::FLOAT4 {
-        show::<f32>(row, i)
-    } else if ty == Type::FLOAT8 {
-        show::<f64>(row, i)
-    } else {
-        // TEXT / VARCHAR / NAME / etc. decode as String; anything else errors.
-        show::<String>(row, i)
-    };
-    rendered.unwrap_or_else(|| "?".to_string())
 }
 
 /// The exact set of `sslmode` values `Dsn::parse` accepts (after

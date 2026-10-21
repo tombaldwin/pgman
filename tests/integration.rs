@@ -1089,6 +1089,37 @@ async fn typed_capped_runner_stops_at_the_cap_and_says_so() {
     assert_eq!(typed.rows, vec![vec![Some("1".to_string())]]);
 }
 
+/// The panel loads (`T`, `L`) read through `run_query`, which used to
+/// decode the binary wire itself and showed `?` for every type it had no
+/// decoder for — NUMERIC (`pg_stat_statements` on some versions), dates,
+/// arrays. Over the text wire each arrives as the server prints it.
+#[tokio::test]
+async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
+    let (client, _tunnel) = lib_client().await;
+    let grid = pgman::conn::run_query(
+        &client,
+        "SELECT 1.50::numeric AS n, DATE '2024-05-06' AS d, \
+         ARRAY[1,2] AS a, INTERVAL '90 minutes' AS i, NULL::numeric AS z, \
+         2::int4 AS k, true AS b",
+    )
+    .await
+    .expect("query runs");
+    assert_eq!(grid.columns, ["n", "d", "a", "i", "z", "k", "b"]);
+    assert_eq!(
+        grid.rows,
+        vec![vec![
+            "1.50",
+            "2024-05-06",
+            "{1,2}",
+            "01:30:00",
+            "",
+            "2",
+            "t"
+        ]]
+    );
+    assert!(!grid.truncated);
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.
