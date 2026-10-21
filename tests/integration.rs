@@ -14,6 +14,19 @@
 
 use std::process::Command;
 
+/// `pgman` with `HOME` and the XDG directories pointed at a scratch
+/// directory, so no test reads, creates or re-permissions the real
+/// `~/.config/pgman` and friends. A test that sets them again wins.
+fn pgman() -> Command {
+    let home = std::env::temp_dir().join(format!("pgman-test-home-{}", std::process::id()));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pgman"));
+    cmd.env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"));
+    cmd
+}
+
 /// DSN of the docker-compose postgres. Matches docker-compose.test.yml.
 const DSN: &str = "postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
 
@@ -28,19 +41,12 @@ async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
         .unwrap_or_else(|e| panic!("{dsn}: {e} (is the compose file's standby up?)"))
 }
 
-/// Path to the freshly-built `pgman` binary. Cargo sets this env var
-/// when compiling integration tests so we don't have to guess the
-/// path or shell out to `cargo run`.
-fn pgman_binary() -> &'static str {
-    env!("CARGO_BIN_EXE_pgman")
-}
-
 /// `pgman query 'SQL' --json` is `--batch --sql 'SQL' --format json`:
 /// typed JSON rows on stdout, exit 0.
 #[test]
 fn query_alias_runs_one_statement_as_json() {
     let home = std::env::temp_dir().join(format!("pgman-query-alias-{}", std::process::id()));
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -61,7 +67,7 @@ fn query_alias_runs_one_statement_as_json() {
 
 #[test]
 fn batch_select_1_emits_csv_and_exits_zero() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -86,7 +92,7 @@ fn batch_select_1_emits_csv_and_exits_zero() {
 
 #[test]
 fn batch_json_shape() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -113,7 +119,7 @@ fn batch_json_types_null_bool_numbers_and_text() {
     // collapse into the same `""` an empty string gets, and numbers /
     // booleans must come back as JSON numbers/booleans rather than
     // stringified text.
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -163,7 +169,7 @@ fn batch_multistatement_routes_through_simple_query_protocol() {
 
 #[test]
 fn batch_query_failure_exits_one_and_writes_stderr() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -352,7 +358,7 @@ async fn every_connection_identifies_itself_as_pgman_in_pg_stat_activity() {
 
 #[test]
 fn batch_expanded_format_renders_one_record_per_block() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -446,7 +452,7 @@ fn scratch_home_without_profile(name: &str) -> std::path::PathBuf {
 
 /// Run `pgman --batch` with `HOME` pointed at a scratch profile.
 fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(pgman_binary())
+    pgman()
         .env("HOME", home)
         // The GitHub runner exports XDG_CONFIG_HOME, and pgman honours
         // it over $HOME — so point all three XDG dirs at the scratch
@@ -462,7 +468,7 @@ fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Outpu
 
 /// `batch_with_home`, against `dsn` instead of the default database.
 fn batch_with_home_dsn(home: &std::path::Path, dsn: &str, args: &[&str]) -> std::process::Output {
-    Command::new(pgman_binary())
+    pgman()
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -764,7 +770,7 @@ fn batch_connect_failure_carries_the_same_hint_the_tui_shows() {
     // silently succeeding.
     let wrong =
         "postgres://pgman_test:definitely-the-wrong-password@127.0.0.1:55432/pgman_test?sslmode=disable";
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args(["--batch", "--dsn", wrong, "--sql", "SELECT 1"])
         .output()
         .expect("spawn pgman");
@@ -954,7 +960,7 @@ fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
 /// money, inet — in the grid and in the CSV alike.
 #[test]
 fn batch_csv_renders_every_common_column_type_as_psql_prints_it() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -1165,7 +1171,7 @@ fn mcp_session_env(
     requests: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
     use std::io::Write;
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -1207,7 +1213,7 @@ fn mcp_session_env_sequential(
     requests: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
     use std::io::{BufRead, Write};
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -1911,7 +1917,7 @@ fn env_discover_proposes_then_appends_on_save() {
     .unwrap();
     let (path, log) = fake_aws(&home);
     let run = |args: &[&str]| {
-        Command::new(pgman_binary())
+        pgman()
             .env("PATH", &path)
             .env("FAKE_AWS_ACCOUNT", "210987654321")
             .env("FAKE_RDS_JSON", &rds)
@@ -2128,7 +2134,7 @@ fn env_discover_save_waits_for_another_process_holding_the_lock() {
         .open(home.join(".config/pgman/.environments.toml.lock"))
         .unwrap();
     lock.lock().unwrap();
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .env("PATH", &path)
         .env("FAKE_AWS_ACCOUNT", "210987654321")
         .env("FAKE_RDS_JSON", &rds)
@@ -4080,7 +4086,7 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
         ),
     )
     .unwrap();
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -4208,7 +4214,7 @@ fn apply_patches_finds_an_rds_server_without_asking_for_upgrade_targets() {
     )
     .unwrap();
     let (path, log) = fake_aws(&home);
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -4503,7 +4509,7 @@ fn mcp_query_cuts_a_huge_cell() {
 fn a_host_that_never_answers_fails_within_the_connect_timeout() {
     let home = scratch_home("connect-timeout", "");
     let started = std::time::Instant::now();
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
