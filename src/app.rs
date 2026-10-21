@@ -4143,9 +4143,9 @@ impl App {
         // Kick off the live-query checks (LINT101+). Results land
         // via `AppMsg::LiveLintLoaded` and get merged into
         // `schema_lint_findings` — see the handler. `--demo` has no
-        // server to ask: its live checks find nothing more.
+        // server to ask: its fixture answers for one.
         if self.demo {
-            self.on_live_lint_loaded(Ok(Vec::new()));
+            self.on_live_lint_loaded(Ok(crate::demo::live_lint()));
         } else if let Some(client) = self.client.clone() {
             let tx = self.msg_tx.clone();
             let generation = self.generation;

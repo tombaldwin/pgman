@@ -1,5 +1,6 @@
 ---
 source: tests/sizes.rs
+assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
@@ -11,18 +12,18 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
-│  │no findings — schema looks clean                                       │   │
-│  │                                                                       │   │
-╰──│                                                                       │───╯
-╭[ │                                                                       │───╮
-│nu│                                                                       │   │
-│IN│                                                                       │   │
-│IN│                                                                       │   │
-│IN│                                                                       │   │
-│IN│                                                                       │   │
-│IN│                                                                       │   │
-│  │                                                                       │   │
+│  │  SEV    CODE     object                                            tit│   │
+│  │  HIGH   LINT101  public.accounts.accounts_customer_id_fkey         FK…│   │
+╰──│  HIGH   LINT101  public.audit_log.audit_log_actor_user_id_fkey     FK…│───╯
+╭[ │  HIGH   LINT101  public.credit_notes.credit_notes_invoice_id_fkey  FK…│───╮
+│nu│  HIGH   LINT101  public.customers.customers_tax_rate_id_fkey       FK…│   │
+│IN│  LINT101 · FK column not the leading column of any index              │   │
+│IN│  object: public.accounts.accounts_customer_id_fkey                    │   │
+│IN│  constraint `accounts_customer_id_fkey` on `public.accounts` referen  │   │
+│IN│  ces column(s) (customer_id) — no index leads with the first FK colu  │   │
+│IN│  mn, so cascade / lookup queries will sequential-scan                 │   │
+│  │  suggest: CREATE INDEX ON public.accounts (customer_id);              │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · ? +2 more
+ RO   TAP   N+1 ×1   tip · … first) · y yanks SQL suggestion · ? full keys

@@ -17,7 +17,7 @@
 
 mod schema;
 
-pub use schema::table_ddl;
+pub use schema::{live_lint, table_ddl};
 
 use crate::app::{App, ConnState, DatabaseInfo};
 use crate::conn::Dsn;

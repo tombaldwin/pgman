@@ -634,6 +634,41 @@ pub(super) const CHECKS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The schema wizard's live checks as the demo's catalog would answer
+/// them: every foreign key no index leads with (the three [`INDEXES`]
+/// names among them; none is its table's primary key), an audit index
+/// nothing reads, and the webhook deliveries' dead tuples.
+pub fn live_lint() -> Vec<crate::query::lint::Finding> {
+    use crate::query::lint::{
+        bloated_table_finding, fk_without_index_finding, unused_index_finding,
+    };
+    let leads_with = |table: &str, column: &str| {
+        INDEXES.iter().any(|(t, _, _, tail)| {
+            *t == table
+                && tail.trim_start_matches('(').split([',', ')', ' ']).next() == Some(column)
+        })
+    };
+    let mut out: Vec<_> = FOREIGN_KEYS
+        .iter()
+        .filter(|(table, column, _)| !leads_with(table, column))
+        .map(|(table, column, _)| {
+            fk_without_index_finding("public", table, &format!("{table}_{column}_fkey"), column)
+        })
+        .collect();
+    out.push(unused_index_finding(
+        "public",
+        "audit_log",
+        "audit_log_entity_idx",
+    ));
+    out.push(bloated_table_finding(
+        "public",
+        "webhook_deliveries",
+        22_418_903,
+        4_120_556,
+    ));
+    out
+}
+
 /// The relation called `name` in `schema`.
 pub(super) fn rel(schema: &str, name: &str) -> Option<&'static Rel> {
     RELATIONS

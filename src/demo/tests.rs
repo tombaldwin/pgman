@@ -630,3 +630,34 @@ fn demo_views_are_not_flagged_for_a_missing_primary_key() {
         "{lint001:?}"
     );
 }
+
+/// The wizard's live checks in the demo: a foreign key is flagged
+/// exactly when no index (or the primary key) leads with its column —
+/// the three the fixture leaves out on purpose among them, the indexed
+/// ones never — plus an unused index and a bloated table.
+#[test]
+fn demo_live_lint_flags_exactly_the_unindexed_foreign_keys() {
+    let findings = live_lint();
+    let fks: Vec<&str> = findings
+        .iter()
+        .filter(|f| f.code == "LINT101")
+        .map(|f| f.object.as_str())
+        .collect();
+    for unindexed in [
+        "public.refunds.refunds_payment_id_fkey",
+        "public.credit_notes.credit_notes_invoice_id_fkey",
+        "public.subscription_items.subscription_items_plan_price_id_fkey",
+    ] {
+        assert!(fks.contains(&unindexed), "{unindexed} missing: {fks:?}");
+    }
+    for indexed in [
+        "public.invoice_lines.invoice_lines_invoice_id_fkey",
+        "public.payments.payments_invoice_id_fkey",
+        "public.usage_events.usage_events_subscription_item_id_fkey",
+        "public.webhook_deliveries.webhook_deliveries_webhook_id_fkey",
+    ] {
+        assert!(!fks.contains(&indexed), "{indexed} is indexed: {fks:?}");
+    }
+    assert!(findings.iter().any(|f| f.code == "LINT102"));
+    assert!(findings.iter().any(|f| f.code == "LINT104"));
+}

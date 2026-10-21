@@ -1,20 +1,21 @@
 ---
 source: tests/sizes.rs
+assertion_line: 250
 expression: dump(&buf)
 ---
  pgman X.X.X │ ledger  connected · pg 16.4
  1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │ ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh ·╮  │
-│ │no findings — schema looks clean                     │  │
-│ │                                                     │  │
-╰─│                                                     │──╯
-╭[│                                                     │──╮
-│n│                                                     │  │
-│I│                                                     │0-│
-│I│                                                     │0-│
-│I│                                                     │0-│
+│ │  SEV    CODE     object                             │  │
+│ │  HIGH   LINT101  public.accounts.accounts_customer_i│  │
+╰─│  HIGH   LINT101  public.audit_log.audit_log_actor_us│──╯
+╭[│  HIGH   LINT101  public.credit_notes.credit_notes_in│──╮
+│n│  HIGH   LINT101  public.customers.customers_tax_rate│  │
+│I│  LINT101 · FK column not the leading column of any i│0-│
+│I│  object: public.accounts.accounts_customer_id_fkey  │0-│
+│I│  constraint `accounts_customer_id_fkey` on `public  │0-│
 │I╰─────────────────────────────────────────────────────╯0-│
 │INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · ? +4 more
+ RO   TAP   N+1 ×1   tip · … · y… suggestion · ? full keys

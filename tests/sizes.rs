@@ -635,10 +635,11 @@ fn scr_sessions() -> App {
 }
 
 fn scr_schema_lint() -> App {
+    // Opened with `W`, as an operator would, so the demo's live checks
+    // are in the frame as well as the catalog-only ones.
     let mut a = base();
-    a.schema_lint.findings = pgman::query::lint::run_all(&a.schema_cache);
-    a.schema_lint.cursor = 0;
-    a.mode = Mode::SchemaLint;
+    a.on_key(key('W'));
+    assert_eq!(a.mode, Mode::SchemaLint);
     a
 }
 
