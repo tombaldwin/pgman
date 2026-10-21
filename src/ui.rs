@@ -453,13 +453,28 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     let value = Style::default().fg(theme.text);
     let red = Style::default().fg(theme.health_red);
 
-    // Every labelled row is fitted to the card's inner width (borders
-    // off) rather than left to `Paragraph`'s wrap: a path or DSN has
-    // no space to break at, so the wrap cut it mid-token and dropped
-    // the remainder flush against the border, unpadded.
+    // Every row is fitted to the card's inner width (borders off)
+    // rather than left to `Paragraph`'s wrap, which cut a path mid-token
+    // and dropped the rest flush against the border, unpadded. The DSN
+    // is middle-cut; a path (source, logs) is wrapped at its `/`s under
+    // its label, so all of it is there to copy; prose (error, hint) is
+    // wrapped on words under its own indent.
     let inner_width = area.width.saturating_sub(2) as usize;
     const LABEL_WIDTH: usize = 10; // `"  target  "`
-    let fit_value = |v: &str| middle_ellipsis(v, inner_width.saturating_sub(LABEL_WIDTH));
+    let value_width = inner_width.saturating_sub(LABEL_WIDTH);
+    let fit_value = |v: &str| middle_ellipsis(v, value_width);
+    let labelled_path = |name: &'static str, path: &str| -> Vec<Line<'static>> {
+        wrap_path(path, value_width)
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let lead = if i == 0 { name } else { "          " };
+                Line::from(vec![Span::styled(lead, label), Span::styled(row, value)])
+            })
+            .collect()
+    };
+    const PROSE_INDENT: usize = 4;
+    let prose_width = inner_width.saturating_sub(PROSE_INDENT).max(10);
 
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
         "connection failed",
@@ -476,17 +491,14 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         ]));
     }
     if let Some(origin) = &app.dsn_origin {
-        lines.push(Line::from(vec![
-            Span::styled("  source  ", label),
-            Span::styled(fit_value(origin), value),
-        ]));
+        lines.extend(labelled_path("  source  ", origin));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  error", label)));
-    for chunk in err.split('\n') {
+    for row in wrap_words(err, prose_width) {
         lines.push(Line::from(vec![
             Span::styled("    ", label),
-            Span::styled(chunk.to_string(), red),
+            Span::styled(row, red),
         ]));
     }
 
@@ -494,15 +506,15 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         if let Some(hint) = crate::conn::connect_hint(err, dsn) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  hint", label)));
-            lines.push(Line::from(vec![
-                Span::styled("    ", label),
-                Span::styled(
-                    hint,
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
+            let style = Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD);
+            for row in wrap_words(&hint, prose_width) {
+                lines.push(Line::from(vec![
+                    Span::styled("    ", label),
+                    Span::styled(row, style),
+                ]));
+            }
         }
     }
 
@@ -516,10 +528,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let log_path = crate::util::cache_dir().join(dated_log_file_name(now));
-    lines.push(Line::from(vec![
-        Span::styled("  logs    ", label),
-        Span::styled(fit_value(&log_path.display().to_string()), value),
-    ]));
+    lines.extend(labelled_path("  logs    ", &log_path.display().to_string()));
     let mut actions = String::from("  r retry");
     if !app.conn_pick.picks.is_empty() {
         actions.push_str(" · p change connection");
@@ -1052,6 +1061,39 @@ fn word_ellipsis(s: &str, target_len: usize) -> Option<String> {
     }
     let out = format!("{head}… {last}");
     (display_width(&out) <= target_len).then_some(out)
+}
+
+/// `path` as rows of at most `width` columns, broken after a `/` where
+/// one fits and inside a name only when that name alone is wider than
+/// a row. The rows concatenate back to `path`: nothing is elided, so
+/// the whole path is on screen to copy. Pure / testable.
+pub(crate) fn wrap_path(path: &str, width: usize) -> Vec<String> {
+    if width == 0 || display_width(path) <= width {
+        return vec![path.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut row = String::new();
+    let mut row_w = 0;
+    for piece in path.split_inclusive('/') {
+        let piece_w = display_width(piece);
+        if row_w > 0 && row_w + piece_w > width {
+            out.push(std::mem::take(&mut row));
+            row_w = 0;
+        }
+        for c in piece.chars() {
+            let cw = char_width(c);
+            if row_w > 0 && row_w + cw > width {
+                out.push(std::mem::take(&mut row));
+                row_w = 0;
+            }
+            row.push(c);
+            row_w += cw;
+        }
+    }
+    if !row.is_empty() {
+        out.push(row);
+    }
+    out
 }
 
 /// Ellipsise `s` down to `target_len` columns, keeping both ends.

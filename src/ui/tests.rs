@@ -655,6 +655,28 @@ fn fit_hints_measures_cjk_hints_in_columns() {
 }
 
 #[test]
+fn wrap_path_breaks_after_slashes_and_loses_nothing() {
+    let p = "/Users/someone/.cache/pgman/pgman.log.2026-10-21";
+    assert_eq!(wrap_path(p, 80), vec![p]);
+    let rows = wrap_path(p, 20);
+    assert_eq!(
+        rows,
+        vec!["/Users/someone/", ".cache/pgman/", "pgman.log.2026-10-21"]
+    );
+    assert_eq!(rows.concat(), p);
+    // A name wider than a row is split inside it, still within width.
+    let rows = wrap_path(p, 8);
+    assert_eq!(rows.concat(), p);
+    assert!(rows.iter().all(|r| display_width(r) <= 8), "{rows:?}");
+    // Double-width names never overrun a row either.
+    let rows = wrap_path("/データ/東京都大阪府/x", 5);
+    assert_eq!(rows.concat(), "/データ/東京都大阪府/x");
+    assert!(rows.iter().all(|r| display_width(r) <= 5), "{rows:?}");
+    // Width 0 hands the path back whole rather than looping.
+    assert_eq!(wrap_path(p, 0), vec![p]);
+}
+
+#[test]
 fn middle_ellipsis_never_overruns_a_cjk_budget() {
     for target in 0..=20 {
         let got = middle_ellipsis(JA, target);

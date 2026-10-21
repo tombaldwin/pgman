@@ -1199,11 +1199,12 @@ fn a_failed_panel_load_leaves_the_start_card_in_place() {
 }
 
 /// The connection-failure card names the log file that exists
-/// (`pgman.log.YYYY-MM-DD`, not `pgman.log`), keeps it on one fitted
-/// row rather than wrapping the path across the border, and — with no
-/// password in the DSN — suggests supplying one.
+/// (`pgman.log.YYYY-MM-DD`, not `pgman.log`), wraps a long path whole
+/// under its label rather than eliding it (it is there to be copied)
+/// or wrapping it flush against the border, and — with no password in
+/// the DSN — suggests supplying one.
 #[test]
-fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
+fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
     let mut a = settle_app();
     a.mode = Mode::Normal;
     a.conn_state = ConnState::Failed(
@@ -1230,14 +1231,46 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
             "actions row lost at {width}:\n{text}"
         );
     }
-    // Narrow: the path is middle-ellipsised on its row, never wrapped
-    // onto an unpadded continuation row. Rendered tall enough that the
-    // card keeps its logs row under the five-line editor — at 30
-    // columns every other row wraps, and the card does not shrink.
-    let text = dump(&render(&mut a, 30, 34));
-    let logs_row = text.lines().find(|l| l.contains("logs")).unwrap();
-    assert!(logs_row.contains('…'), "{logs_row:?}");
-    // The hint knows no password was supplied.
+    // Narrow: the path is wrapped whole — no `…` — onto continuation
+    // rows padded under the label, so all of it can be copied. Rendered
+    // tall enough that the card keeps its logs rows under the five-line
+    // editor: at 30 columns every other row wraps too.
+    let text = dump(&render(&mut a, 30, 40));
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| l.contains("logs")).unwrap();
+    assert!(!lines[at].contains('…'), "{:?}", lines[at]);
+    let mut path = String::new();
+    for (i, l) in lines[at..].iter().enumerate() {
+        let body: String = l.chars().skip(1).collect(); // the left border
+        if i > 0 && !body.starts_with("          ") {
+            break;
+        }
+        let value: String = body.chars().skip(10).collect();
+        path.push_str(value.trim_end_matches('│').trim_end());
+    }
+    let dir = pgman::util::cache_dir().display().to_string();
+    assert!(
+        path.starts_with(&dir) && path.contains("pgman.log."),
+        "the wrapped rows should rebuild the whole path under {dir}: {path:?}\n{text}"
+    );
+    // At 30 columns the error and the hint wrap, and every row keeps
+    // its indent rather than starting flush against the border. The
+    // hint knows no password was supplied.
+    for heading in ["  error", "  hint"] {
+        let at = lines.iter().position(|l| l.contains(heading)).unwrap();
+        let rows: Vec<String> = lines[at + 1..]
+            .iter()
+            .map(|l| l.chars().skip(1).collect::<String>())
+            .take_while(|body| !body.trim_end_matches('│').trim().is_empty())
+            .collect();
+        assert!(rows.len() > 1, "{heading} should wrap at 30:\n{text}");
+        for body in &rows {
+            assert!(
+                body.starts_with("    "),
+                "{heading} row unindented: {body:?}\n{text}"
+            );
+        }
+    }
     let text = dump(&render(&mut a, 100, 24));
     assert!(text.contains("PGPASSWORD"), "{text}");
 }
@@ -1599,6 +1632,9 @@ fn slash_and_q_on_the_start_card_say_why_nothing_opened() {
         a.mode = Mode::Normal;
         a.on_key(KeyEvent::from(KeyCode::Char(key)));
         let text = dump(&render(&mut a, 100, 30));
-        assert!(text.contains(want), "{key}: {want:?} not on screen:\n{text}");
+        assert!(
+            text.contains(want),
+            "{key}: {want:?} not on screen:\n{text}"
+        );
     }
 }
