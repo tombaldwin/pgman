@@ -1623,6 +1623,70 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
     );
 }
 
+/// An error too long for the footer row wraps onto up to two more,
+/// taken from the body, with the detail pointer ending the last; on a
+/// cramped terminal, and under the error overlay that already shows
+/// it, the footer stays one row.
+#[test]
+fn a_long_error_wraps_the_footer_but_not_on_a_cramped_terminal() {
+    use pgman::conn::QueryErrDetail;
+    let msg = "column \"created_at\" of relation \"order_items\" does not exist \
+               · hint: perhaps you meant to reference the column \"orders.created_at\"";
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.last_error = Some(msg.into());
+    a.last_error_detail = Some(QueryErrDetail {
+        code: Some("42703".into()),
+        severity: Some("ERROR".into()),
+        detail: None,
+        hint: None,
+        r#where: None,
+        schema: None,
+        table: None,
+        column: None,
+        data_type: None,
+        constraint: None,
+    });
+    let buf = render(&mut a, 60, 24);
+    let rows: Vec<String> = (21..24).map(|y| row_text(&buf, y)).collect();
+    assert!(rows[0].contains("⚠ column \"created_at\""), "{rows:?}");
+    assert!(rows[2].ends_with("! detail"), "{rows:?}");
+    // Every word of the message is on screen: nothing was elided.
+    let joined = rows.join(" ");
+    for word in msg.split_whitespace() {
+        assert!(joined.contains(word), "{word:?} missing: {rows:?}");
+    }
+    // The continuation rows sit under the message, not the badges.
+    let byte = rows[0].find("column").unwrap();
+    let text_col = rows[0][..byte].chars().count(); // `⚠` is one column
+    assert!(
+        rows[1].starts_with(&" ".repeat(text_col)),
+        "continuation not indented: {rows:?}"
+    );
+    // The body gave the rows up: the result block's bottom border now
+    // sits on row 20.
+    assert!(row_text(&buf, 20).starts_with('╰'), "{}", dump(&buf));
+
+    // Cramped (a body under 12 rows): one row, cut, the pointer kept.
+    let buf = render(&mut a, 80, 14);
+    assert!(row_text(&buf, 12).starts_with('╰'), "{}", dump(&buf));
+    let footer = row_text(&buf, 13);
+    assert!(
+        footer.contains('…') && footer.ends_with("! detail"),
+        "{footer:?}"
+    );
+
+    // Under the overlay: one row too.
+    a.mode = Mode::ErrorDetail;
+    let buf = render(&mut a, 80, 24);
+    let footer = row_text(&buf, 23);
+    assert!(
+        footer.contains('⚠') && footer.ends_with("! detail"),
+        "the error starts on the last row: {}",
+        dump(&buf)
+    );
+}
+
 /// `/` with no grid and `Q` with nothing saved open nothing; the footer
 /// says why rather than leaving the key looking dead.
 #[test]

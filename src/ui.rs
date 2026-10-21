@@ -60,6 +60,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Everything between the header row (and tab bar) and the footer
     // row is the editor's and the grid's to share — see `pane_split`.
     let body_height = area.height.saturating_sub(header_h + 1 + tabbar_height);
+    // An error that does not fit one footer row takes up to two more,
+    // out of the body — never so many that the body drops under
+    // `CRAMPED_BODY` (the `!` / F2 overlay still has all of it), and
+    // not while that overlay is open and showing it already.
+    let spare = if app.mode == Mode::ErrorDetail {
+        0
+    } else {
+        body_height
+            .saturating_sub(CRAMPED_BODY)
+            .min(ERROR_FOOTER_MAX_ROWS - 1)
+    };
+    let footer_h = footer_error_rows(app, area.width, 1 + spare as usize)
+        .len()
+        .max(1) as u16;
+    let body_height = body_height.saturating_sub(footer_h - 1);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let zoom = app.zoomed.then(|| zoomed_pane(app));
     let (editor_height, results_height) =
@@ -71,7 +86,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Constraint::Length(tabbar_height),  // optional tab bar
         Constraint::Length(editor_height),  // editor pane (border + lines + border)
         Constraint::Length(results_height), // results grid
-        Constraint::Length(1),              // footer
+        Constraint::Length(footer_h),       // footer
     ])
     .split(area);
     if header_h > 1 {
@@ -767,6 +782,78 @@ pub(crate) fn footer_text(s: &str) -> String {
     out
 }
 
+/// The footer's error marker.
+const ERROR_ICON: &str = " ⚠ ";
+
+/// Most rows the footer grows to for an error that does not fit one.
+pub(crate) const ERROR_FOOTER_MAX_ROWS: u16 = 3;
+
+/// The pointer to the error overlay that ends the footer's error: `!`
+/// where no character is being typed; F2 (fn-F2 on a Mac) in the
+/// editor and the prompts, where `!` is a character. Empty when there
+/// is no detail to open.
+fn error_pointer(app: &App) -> &'static str {
+    match app.last_error_detail {
+        Some(_) if app.mode.is_text_input() => " · F2 detail",
+        Some(_) => " · ! detail",
+        None => "",
+    }
+}
+
+/// The footer's error rows at `width` columns, at most `max_rows` of
+/// them — empty when the footer is not showing an error (none, or the
+/// `:` bar or the tx prompt owns the footer). `draw` sizes the footer
+/// from this and `draw_footer` renders it, so the two cannot disagree.
+fn footer_error_rows(app: &App, width: u16, max_rows: usize) -> Vec<String> {
+    let bar_open = app.command_bar.is_some() && app.mode == Mode::CommandBar;
+    let Some(err) = app
+        .last_error
+        .as_ref()
+        .filter(|_| app.mode != Mode::TxDecision && !bar_open)
+    else {
+        return Vec::new();
+    };
+    let badge_width: usize = footer_badges(app, &app.theme)
+        .iter()
+        .map(|s| display_width(&s.content))
+        .sum();
+    let room = (width as usize).saturating_sub(badge_width + display_width(ERROR_ICON));
+    error_footer_rows(&footer_text(err), error_pointer(app), room, max_rows)
+}
+
+/// An error wrapped on words into at most `max_rows` rows of `width`
+/// columns, `pointer` ending the last. What does not fit is cut on the
+/// last row by [`fit_status`], which keeps the pointer — the way to
+/// the rest. With one row this is the old single-line footer. A
+/// multi-line server error arrives folded into ` · ` segments by
+/// [`footer_text`]; the overlay keeps its original lines. Pure.
+pub(crate) fn error_footer_rows(
+    msg: &str,
+    pointer: &str,
+    width: usize,
+    max_rows: usize,
+) -> Vec<String> {
+    let full = format!("{msg}{pointer}");
+    if width == 0 || max_rows <= 1 || display_width(&full) <= width {
+        return vec![fit_status(&full, width)];
+    }
+    let mut rows = wrap_words(msg, width);
+    if rows.len() > max_rows {
+        let rest = rows.split_off(max_rows - 1).join(" ");
+        rows.push(rest);
+    }
+    let last = rows.pop().unwrap_or_default();
+    if display_width(&last) + display_width(pointer) <= width {
+        rows.push(format!("{last}{pointer}"));
+    } else if rows.len() + 2 <= max_rows {
+        rows.push(last);
+        rows.push(fit_status(pointer.trim_start_matches(" · "), width));
+    } else {
+        rows.push(fit_status(&format!("{last}{pointer}"), width));
+    }
+    rows
+}
+
 /// Rows the editor block takes — its two border rows included — for a
 /// buffer of `content_lines` when the header and footer have left
 /// `body_height` rows to the editor and the result grid together.
@@ -1315,6 +1402,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .command_bar
         .as_ref()
         .filter(|_| app.mode == Mode::CommandBar);
+    // Rows under the first, for an error wrapped over a taller footer.
+    let mut extra_rows: Vec<Line<'static>> = Vec::new();
     let line = if let Some(bar) = bar {
         let mut spans = vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
@@ -1341,44 +1430,44 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             }
         }
         Line::from(spans)
-    } else if let Some(err) = &app.last_error {
-        let icon = " ⚠ ";
-        // The "F2 detail" pointer is the load-bearing part of this line
-        // when it's present — it's how the operator finds the rich error
-        // view — so it's appended as `fit_status`'s protected last
-        // segment (joined with the same " · " it uses to split on)
-        // rather than as a separate span that could get truncated away
-        // by a raw cell-width clip.
-        // `!` where no character is being typed; F2 (fn-F2 on a Mac)
-        // in the editor and the prompts, where `!` is a character.
-        let pointer = match app.last_error_detail {
-            Some(_) if app.mode.is_text_input() => " · F2 detail",
-            Some(_) => " · ! detail",
-            None => "",
-        };
-        // One row: a multi-line server error (message + `hint:`
-        // continuation) is folded into ` · ` segments here; F2 keeps
-        // the original lines.
-        let full = format!("{}{pointer}", footer_text(err));
-        let available = area
-            .width
-            .saturating_sub(badge_width)
-            .saturating_sub(display_width(icon) as u16) as usize;
-        let fitted = fit_status(&full, available);
-        let spans = if !pointer.is_empty() && fitted.ends_with(pointer) {
-            let msg_part = &fitted[..fitted.len() - pointer.len()];
-            vec![
-                Span::styled(icon, Style::default().fg(theme.health_red)),
-                Span::styled(msg_part.to_string(), Style::default().fg(theme.health_red)),
-                Span::styled(pointer.to_string(), Style::default().fg(theme.muted)),
-            ]
-        } else {
-            vec![
-                Span::styled(icon, Style::default().fg(theme.health_red)),
-                Span::styled(fitted, Style::default().fg(theme.health_red)),
-            ]
-        };
-        Line::from(spans)
+    } else if let Some(rows) = Some(footer_error_rows(app, area.width, area.height as usize))
+        .filter(|rows| !rows.is_empty())
+    {
+        // The error wraps over the footer's rows (see `draw`); the rows
+        // after the first are indented under its text, and the detail
+        // pointer that ends the last is muted.
+        let pointer = error_pointer(app);
+        let bare_pointer = pointer.trim_start_matches(" · ");
+        let red = Style::default().fg(theme.health_red);
+        let muted = Style::default().fg(theme.muted);
+        let indent = " ".repeat(badge_width as usize + display_width(ERROR_ICON));
+        let last = rows.len() - 1;
+        let mut lines: Vec<Line<'static>> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let lead = if i == 0 {
+                    Span::styled(ERROR_ICON, red)
+                } else {
+                    Span::raw(indent.clone())
+                };
+                let body = if i != last || pointer.is_empty() {
+                    vec![Span::styled(row, red)]
+                } else if let Some(msg) = row.strip_suffix(pointer) {
+                    vec![
+                        Span::styled(msg.to_string(), red),
+                        Span::styled(pointer, muted),
+                    ]
+                } else if row == bare_pointer {
+                    vec![Span::styled(row, muted)]
+                } else {
+                    vec![Span::styled(row, red)]
+                };
+                Line::from(std::iter::once(lead).chain(body).collect::<Vec<_>>())
+            })
+            .collect();
+        extra_rows = lines.split_off(1);
+        lines.remove(0)
     } else if let Some(status) = app
         .last_status
         .as_ref()
@@ -1563,7 +1652,20 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     for s in line.spans {
         combined.push(s);
     }
-    f.render_widget(Paragraph::new(Line::from(combined)), area);
+    f.render_widget(
+        Paragraph::new(Line::from(combined)),
+        Rect { height: 1, ..area },
+    );
+    if !extra_rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(Text::from(extra_rows)),
+            Rect {
+                y: area.y + 1,
+                height: area.height.saturating_sub(1),
+                ..area
+            },
+        );
+    }
 
     // Real terminal cursor for the typing modes whose input is
     // surfaced through the footer (GridFilter, HistorySearch,
