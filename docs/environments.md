@@ -18,10 +18,10 @@ from each database (see [Probes](#probes)). Press `Enter` on a row to
 connect to that database.
 
 ```
-staging · RDS 123456789012 eu-west-2
-  database  role     server             status     engine         endpoint
-  shop      primary  staging            available  postgres 16.4  staging.….rds.amazonaws.com:5432
-  shop      replica  └ staging-replica  available  postgres 16.4  staging-replica.….rds.amazonaws.com:5432
+production · RDS 210987654321 eu-west-2
+  database  role     server                 status     engine         endpoint
+  ledger    primary  ledger-prod            available  postgres 15.8  ledger-prod.….rds.amazonaws.com:5432
+  ledger    replica  └ ledger-prod-replica  available  postgres 15.8  ledger-prod-replica.….rds.amazonaws.com:5432
 ```
 
 ## `~/.config/pgman/environments.toml`

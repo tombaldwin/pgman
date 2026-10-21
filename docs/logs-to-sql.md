@@ -45,17 +45,17 @@ so running a pick returns real-looking rows even with no database
 connected:
 
 ```
-2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.user_id=?
-2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]
-2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?
-2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]
-2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?
-2024-01-15 10:00:00.121 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [102]
+2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.number, i.total from invoices i where i.status=?
+2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [open]
+2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
+2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [BIGINT] - [48202]
+2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
+2024-01-15 10:00:00.121 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [BIGINT] - [48204]
 ```
 
-That `order_items` select fires twice for two different `order_id`s in the
-same burst — a classic N+1: an order lookup followed by a per-row item
-lookup that should have been a join.
+That `invoice_lines` select fires twice for two different `invoice_id`s in
+the same burst — a classic N+1: the open invoices, then a per-invoice
+line lookup that should have been a join.
 
 ## Three ways in
 
@@ -73,16 +73,16 @@ lookup that should have been a join.
   statement first, then one `TYPE:value` parameter per line, in order:
 
   ```
-  select * from orders where id = ? and status = ?
+  select * from invoices where customer_id = ? and status = ?
 
-  INTEGER:42
-  VARCHAR:shipped
+  BIGINT:2107
+  VARCHAR:open
   ```
 
   `F8` / `ctrl-l` recognise this shape exactly like a log paste (the hint
   reads `looks like a jdbc log · ctrl-l / F8 to reconstruct queries`) and
-  land you in the same picker below with one pick: `select * from orders
-  where id = 42 and status = 'shipped'`. A `NULL` value works for any type
+  land you in the same picker below with one pick: `select * from invoices
+  where customer_id = 2107 and status = 'open'`. A `NULL` value works for any type
   (`VARCHAR:NULL`); lines without a `TYPE:` prefix are skipped, so stray
   blank lines or comments in the tail don't break the parse.
 
@@ -94,7 +94,7 @@ pgman opens the pick list with a one-line triage summary up top:
 
 ```
 3 queries · 1 N+1 cluster (2 of 3 repeated) · view: all queries (press `c` to toggle)
-leader (×2): select oi.id, oi.sku from order_items oi where oi.order_id=?
+leader (×2): select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
 ```
 
 (The leader line and the cluster view below both show the raw, unsubstituted
@@ -105,9 +105,9 @@ Below it, one row per reconstructed query, tagged by source and showing the
 runnable SQL with bind values substituted in:
 
 ```
-▶ [hibernate] select o.id, o.total_cents from orders o where o.user_id=42
-  [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=101
-  [hibernate] select oi.id, oi.sku from order_items oi where oi.order_id=102
+▶ [hibernate] select i.id, i.number, i.total from invoices i where i.status='open'
+  [hibernate] select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=48202
+  [hibernate] select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=48204
 ```
 
 Press `c` to flip to the cluster view — the same queries grouped by shape,
@@ -115,7 +115,7 @@ most-repeated first, so a loop-driven select stands out instead of hiding
 among near-identical rows in a longer log:
 
 ```
-▶ ×2   select oi.id, oi.sku from order_items oi where oi.order_id=?
+▶ ×2   select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?
 ```
 
 `c` again toggles back. `j`/`k` (or the arrow keys) move the selection,

@@ -214,7 +214,14 @@ and breaking changes.
   which channel installed it; an update check at most every six hours
   that never delays the first frame (`--no-update-check`).
 - **`--demo`** — the whole tool against synthetic data, no database,
-  answering queries through the real guards.
+  answering queries through the real guards. Its database is `ledger`,
+  the billing database of a made-up subscriptions product: 26 relations
+  across `public` and `reporting` (partitioned usage events, views,
+  identity keys, partial indexes), answers that honour a WHERE's
+  `column = value` terms, EXPLAIN plans from its row estimates, and
+  four environments — production with a replica, staging, a stopped
+  dev, a local container — whose versions, drift, pending patches,
+  log errors, sessions and slow queries tell one story.
 
 ### Hardening before release
 

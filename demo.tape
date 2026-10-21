@@ -76,22 +76,22 @@ Sleep 700ms
 Ctrl+U
 Sleep 400ms
 
-# Type a 5-line Hibernate log sample: an order lookup, then an
-# order_items lookup that repeats for a second order_id in the same
+# Type a 5-line Hibernate log sample: the open invoices, then an
+# invoice_lines lookup that repeats for a second invoice_id in the same
 # burst — the N+1 signature nplus1.rs clusters on. Both tables are in
 # the --demo fixture schema, so the run below returns real rows instead
 # of the "no database" notice. Typed at a fast override speed; these
 # lines are long and the ambient TypingSpeed would blow the runtime
 # budget.
-Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select o.id, o.total_cents from orders o where o.user_id=?"
+Type@12ms "2024-01-15 10:00:00.100 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select i.id, i.number, i.total from invoices i where i.status=?"
 Enter
-Type@12ms "2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [42]"
+Type@12ms "2024-01-15 10:00:00.101 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [open]"
 Enter
-Type@12ms "2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?"
+Type@12ms "2024-01-15 10:00:00.110 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?"
 Enter
-Type@12ms "2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [INTEGER] - [101]"
+Type@12ms "2024-01-15 10:00:00.111 TRACE 1 --- [nio-8080-exec-3] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [BIGINT] - [48202]"
 Enter
-Type@12ms "2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select oi.id, oi.sku from order_items oi where oi.order_id=?"
+Type@12ms "2024-01-15 10:00:00.120 DEBUG 1 --- [nio-8080-exec-3] org.hibernate.SQL : select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=?"
 Sleep 700ms
 
 # ctrl-l — same import path as F8 — parses the buffer and opens the
@@ -99,18 +99,18 @@ Sleep 700ms
 Ctrl+L
 Sleep 2000ms
 
-# `c` toggles to the N+1 cluster view: the repeated order_items lookup
+# `c` toggles to the N+1 cluster view: the repeated invoice_lines lookup
 # collapses to one row, ×2.
 Type "c"
 Sleep 2000ms
 
 # `c` again back to the all-queries view (index resets to row 0 — the
-# order lookup, first in the log).
+# open-invoices query, first in the log).
 Type "c"
 Sleep 1000ms
 
-# Enter loads the top (first) reconstructed query — the order lookup,
-# against the `orders` table — into the editor, bind values
+# Enter loads the top (first) reconstructed query — the open invoices,
+# against the `invoices` table — into the editor, bind values
 # substituted in and a `;` on the end.
 Enter
 Sleep 1000ms
@@ -118,8 +118,7 @@ Sleep 1000ms
 # Enter again runs it: the buffer ends with `;`, so a bare Enter is
 # the run key (Alt-Enter / F5 would run it unterminated). `--demo` has
 # no real connection, but the statement still clears safety::evaluate's
-# guard and comes back through demo::answer with the `orders` table's
-# real columns.
+# guard and comes back through demo::answer with the open invoices.
 Enter
 Sleep 2000ms
 
