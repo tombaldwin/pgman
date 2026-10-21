@@ -123,7 +123,8 @@ const MIN_SEGMENT: usize = 3;
 /// pgman knows from its own state.
 #[derive(Debug, Clone, Default)]
 pub struct Redactor {
-    /// Whole names, lowercased, longest first.
+    /// Whole names, lowercased. Order doesn't matter: overlapping
+    /// matches are merged.
     names: Vec<String>,
     /// Their non-generic segments, lowercased, matched as whole words.
     segments: Vec<String>,
@@ -156,7 +157,6 @@ impl Redactor {
                 out.names.push(name);
             }
         }
-        out.names.sort_by_key(|n| std::cmp::Reverse(n.len()));
         out
     }
 
