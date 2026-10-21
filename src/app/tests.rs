@@ -6685,13 +6685,13 @@ fn not_connected_message_offers_the_next_step_for_each_state() {
 /// Point an `App`'s on-exit persistence at a scratch dir so a run-loop
 /// test never writes the operator's real ~/.local/share/pgman.
 fn scratch_persistence(app: &mut App) {
+    // A counter, not the clock: tests run in parallel, and on macOS two
+    // could read the same microsecond and share one scratch dir.
+    static NEXT_SCRATCH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
         "pgman-apptest-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+        NEXT_SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     app.draft_file = dir.join("draft.sql");
     app.history_file = dir.join("history.log");

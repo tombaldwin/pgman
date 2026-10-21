@@ -383,14 +383,14 @@ fn settled_app() -> App {
     );
     // Random key sequences reach Ctrl-S / Enter, which persists saved
     // queries — never to the operator's real ~/.local/share/pgman.
+    // A counter, not the clock: tests run in parallel, and on macOS two
+    // could read the same microsecond and share one scratch dir.
+    static NEXT_SCRATCH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let scratch = std::env::temp_dir().join(format!(
         "pgman-{}-{}-{}",
         "props",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+        NEXT_SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     a.draft_file = scratch.join("draft.sql");
     a.history_file = scratch.join("history.log");
