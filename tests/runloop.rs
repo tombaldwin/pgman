@@ -30,13 +30,13 @@ fn settled_app() -> App {
     // The run loop persists the draft, history and saved queries on
     // exit. Point all three at a scratch dir: these tests must never
     // write to the operator's real ~/.local/share/pgman.
+    // A counter, not the clock: tests run in parallel, and on macOS two
+    // could read the same microsecond and share one draft file.
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let scratch = std::env::temp_dir().join(format!(
         "pgman-runloop-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     a.draft_file = scratch.join("draft.sql");
     a.history_file = scratch.join("history.log");

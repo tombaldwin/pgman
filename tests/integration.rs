@@ -9,6 +9,10 @@
 //! The DSN is hard-wired to the host:port in the compose file. The
 //! tests cover the batch mode end-to-end (exit code + stdout shape)
 //! since that's the path real users can't exercise without Postgres.
+//!
+//! A test names what it creates with [`it_name`] (`pgman_it_<what>_<pid>`),
+//! and the binary drops all of it when it exits, along with anything a
+//! killed run left. `PGMAN_IT_KEEP_TABLES=1` keeps them for a post-mortem.
 
 #![cfg(feature = "integration")]
 
@@ -33,6 +37,117 @@ const DSN: &str = "postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?s
 /// DSN of the compose file's streaming standby of [`DSN`].
 const STANDBY_DSN: &str =
     "postgres://pgman_test:pgman_test@127.0.0.1:55433/pgman_test?sslmode=disable";
+
+/// `pgman_it_<what>_<pid>`: the name a test gives a table, sequence or
+/// view it creates. The pid makes runs in parallel (two worktrees) keep
+/// apart, and it is how [`drop_test_relations`] knows what to drop.
+fn it_name(what: &str) -> String {
+    format!("pgman_it_{what}_{}", std::process::id())
+}
+
+/// The pid a `pgman_it_<what>_<pid>[_…]` relation was made under: the
+/// first all-digit segment after the prefix. Not the last, since a test
+/// may add its own numbered suffix (`…_<pid>_ev_24`).
+fn test_relation_pid(name: &str) -> Option<u32> {
+    name.strip_prefix("pgman_it_")?
+        .split('_')
+        .find(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit()))?
+        .parse()
+        .ok()
+}
+
+#[test]
+fn test_relation_pid_reads_the_first_number_after_the_prefix() {
+    assert_eq!(test_relation_pid("pgman_it_ct_123"), Some(123));
+    assert_eq!(test_relation_pid("pgman_it_x_123_ev_24"), Some(123));
+    assert_eq!(test_relation_pid("pgman_it_q--b_123"), Some(123));
+    assert_eq!(test_relation_pid("pgman_it_versions"), None);
+    assert_eq!(test_relation_pid("other_123"), None);
+}
+
+/// Drop the `pgman_it_*` relations this process made, and any left by a
+/// run that is no longer running (killed, or from before this existed).
+/// A live pid's are left alone, so a run in parallel keeps its tables.
+/// The compose database is throwaway in CI, but a developer's copy
+/// otherwise fills with them, crowding the schema browser and
+/// completion when testing by hand. Errors are ignored: this is
+/// housekeeping, and it runs at exit where nothing can report them.
+async fn drop_test_relations() {
+    let Ok(dsn) = pgman::conn::Dsn::parse(DSN) else {
+        return;
+    };
+    // Writable: `connect_via` opens the read-only session pgman defaults to.
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let Ok((client, _task)) =
+        pgman::conn::connect_only(dsn, false, 3_000, notice_tx, notification_tx).await
+    else {
+        return;
+    };
+    let Ok(rows) = client
+        .query(
+            "SELECT c.relname, c.relkind::text FROM pg_class c \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'public' AND c.relname LIKE 'pgman\\_it\\_%' \
+               AND c.relkind IN ('r', 'p', 'v', 'S') AND NOT c.relispartition",
+            &[],
+        )
+        .await
+    else {
+        return;
+    };
+    let me = std::process::id();
+    let alive = |pid: u32| {
+        pid != me
+            && Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+    };
+    let mut doomed: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+        .filter(|(name, _)| test_relation_pid(name).is_some_and(|pid| !alive(pid)))
+        .collect();
+    // Views before the tables under them; sequences last, since a
+    // table's CASCADE may already have taken its own.
+    doomed.sort_by_key(|(_, kind)| match kind.as_str() {
+        "v" => 0,
+        "S" => 2,
+        _ => 1,
+    });
+    for (name, kind) in doomed {
+        let what = match kind.as_str() {
+            "v" => "VIEW",
+            "S" => "SEQUENCE",
+            _ => "TABLE",
+        };
+        let name = name.replace('"', "\"\"");
+        let _ = client
+            .batch_execute(&format!("DROP {what} IF EXISTS \"{name}\" CASCADE"))
+            .await;
+    }
+}
+
+/// Runs [`drop_test_relations`] when the test binary exits, after every
+/// test. At exit parts of std are already shut down on the main thread,
+/// so the work gets a thread and a runtime of its own.
+#[ctor::dtor]
+unsafe fn drop_test_relations_at_exit() {
+    if std::env::var_os("PGMAN_IT_KEEP_TABLES").is_some() {
+        return;
+    }
+    let worker = std::thread::spawn(|| {
+        if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            rt.block_on(drop_test_relations());
+        }
+    });
+    let _ = worker.join();
+}
 
 /// A read-only probe connection to `dsn`.
 async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
@@ -518,6 +633,7 @@ fn table_exists(home: &std::path::Path, table: &str) -> bool {
 #[test]
 fn batch_refuses_a_drop_hidden_behind_a_dollar_in_an_identifier() {
     let home = scratch_home("dollar", WRITABLE_PROFILE);
+    let t = it_name("repro_dollar");
     // `a$b$c` is one identifier to Postgres. The splitter used to read `$b$`
     // as opening a dollar-quote, swallow the rest of the script into a
     // fragment that classified as SELECT, and hand the ORIGINAL string to
@@ -527,7 +643,7 @@ fn batch_refuses_a_drop_hidden_behind_a_dollar_in_an_identifier() {
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_repro_dollar (id int)",
+            &format!("CREATE TABLE IF NOT EXISTS {t} (id int)"),
         ],
     );
     assert!(
@@ -540,7 +656,7 @@ fn batch_refuses_a_drop_hidden_behind_a_dollar_in_an_identifier() {
         &home,
         &[
             "--sql",
-            "SELECT 1; SELECT 1 AS a$b$c; DROP TABLE pgman_repro_dollar",
+            &format!("SELECT 1; SELECT 1 AS a$b$c; DROP TABLE {t}"),
         ],
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -553,18 +669,16 @@ fn batch_refuses_a_drop_hidden_behind_a_dollar_in_an_identifier() {
         stderr.contains("blocked by safety") && stderr.contains("DROP"),
         "the refusal must name the DROP: {stderr}"
     );
-    assert!(
-        table_exists(&home, "pgman_repro_dollar"),
-        "the table must still be there"
-    );
+    assert!(table_exists(&home, &t), "the table must still be there");
 
-    let _ = batch_with_home(&home, &["--yes", "--sql", "TRUNCATE pgman_repro_dollar"]);
+    let _ = batch_with_home(&home, &["--yes", "--sql", &format!("DROP TABLE {t}")]);
 }
 
 #[test]
 fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
     let home = scratch_home("quoted", WRITABLE_PROFILE);
-    // `"a--b"` is one identifier; the `--` inside it is part of the name. The
+    let (q, t) = (it_name("q--b"), it_name("repro_quoted"));
+    // `"…q--b…"` is one identifier; the `--` inside it is part of the name. The
     // comment stripper used to eat it as a line comment along with the rest
     // of the line, and the DROP came back attached to a SELECT fragment.
     //
@@ -576,7 +690,9 @@ fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
         &[
             "--yes",
             "--sql",
-            r#"CREATE TABLE IF NOT EXISTS "a--b" (id int); CREATE TABLE IF NOT EXISTS pgman_repro_quoted (id int)"#,
+            &format!(
+                r#"CREATE TABLE IF NOT EXISTS "{q}" (id int); CREATE TABLE IF NOT EXISTS {t} (id int)"#
+            ),
         ],
     );
     assert!(
@@ -589,7 +705,7 @@ fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
         &home,
         &[
             "--sql",
-            r#"SELECT 1; SELECT * FROM "a--b"; DROP TABLE pgman_repro_quoted"#,
+            &format!(r#"SELECT 1; SELECT * FROM "{q}"; DROP TABLE {t}"#),
         ],
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -602,9 +718,14 @@ fn batch_refuses_a_drop_hidden_behind_a_quoted_identifier() {
         stderr.contains("blocked by safety") && stderr.contains("DROP"),
         "the refusal must name the DROP: {stderr}"
     );
-    assert!(
-        table_exists(&home, "pgman_repro_quoted"),
-        "the table must still be there"
+    assert!(table_exists(&home, &t), "the table must still be there");
+    let _ = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!(r#"DROP TABLE {t}; DROP TABLE "{q}""#),
+        ],
     );
 }
 
@@ -666,7 +787,7 @@ fn batch_refuses_a_drop_hidden_behind_a_two_byte_identifier_character() {
     assert_a_drop_hidden_behind_a_non_ascii_identifier_is_refused(
         "nonascii2",
         "é",
-        "pgman_repro_nonascii_two",
+        &it_name("repro_nonascii_two"),
     );
 }
 
@@ -675,7 +796,7 @@ fn batch_refuses_a_drop_hidden_behind_a_three_byte_identifier_character() {
     assert_a_drop_hidden_behind_a_non_ascii_identifier_is_refused(
         "nonascii3",
         "中",
-        "pgman_repro_nonascii_three",
+        &it_name("repro_nonascii_three"),
     );
 }
 
@@ -859,14 +980,17 @@ fn batch_read_only_transaction_refusal_without_a_profile_says_how_to_get_one() {
 #[test]
 fn batch_cannot_widen_a_where_clause_through_a_trailing_comment() {
     let home = scratch_home("trailing-comment", WRITABLE_PROFILE);
+    let t = it_name("repro_tc");
     let setup = batch_with_home(
         &home,
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_repro_tc (id int, v text); \
-             DELETE FROM pgman_repro_tc WHERE true; \
-             INSERT INTO pgman_repro_tc VALUES (1,'a'),(2,'b'),(3,'c')",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {t} (id int, v text); \
+                 DELETE FROM {t} WHERE true; \
+                 INSERT INTO {t} VALUES (1,'a'),(2,'b'),(3,'c')"
+            ),
         ],
     );
     assert!(
@@ -880,7 +1004,7 @@ fn batch_cannot_widen_a_where_clause_through_a_trailing_comment() {
         &[
             "--yes",
             "--sql",
-            "UPDATE pgman_repro_tc SET v='PWNED' WHERE id=1 --\n; OR true",
+            &format!("UPDATE {t} SET v='PWNED' WHERE id=1 --\n; OR true"),
         ],
     );
     // Either refused outright, or the second fragment (`OR true`) is a
@@ -890,7 +1014,7 @@ fn batch_cannot_widen_a_where_clause_through_a_trailing_comment() {
         &home,
         &[
             "--sql",
-            "SELECT count(*) FROM pgman_repro_tc WHERE v = 'PWNED'",
+            &format!("SELECT count(*) FROM {t} WHERE v = 'PWNED'"),
             "--format",
             "csv",
         ],
@@ -908,14 +1032,17 @@ fn batch_cannot_widen_a_where_clause_through_a_trailing_comment() {
 #[test]
 fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
     let home = scratch_home("trailing-comment-ok", WRITABLE_PROFILE);
+    let t = it_name("repro_tc2");
     let setup = batch_with_home(
         &home,
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_repro_tc2 (id int); \
-             DELETE FROM pgman_repro_tc2 WHERE true; \
-             INSERT INTO pgman_repro_tc2 VALUES (1),(2)",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {t} (id int); \
+                 DELETE FROM {t} WHERE true; \
+                 INSERT INTO {t} VALUES (1),(2)"
+            ),
         ],
     );
     assert!(
@@ -928,7 +1055,7 @@ fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
         &[
             "--yes",
             "--sql",
-            "DELETE FROM pgman_repro_tc2 WHERE id=1 --x\n; INSERT INTO pgman_repro_tc2 VALUES (3)",
+            &format!("DELETE FROM {t} WHERE id=1 --x\n; INSERT INTO {t} VALUES (3)"),
         ],
     );
     assert!(
@@ -940,7 +1067,7 @@ fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
         &home,
         &[
             "--sql",
-            "SELECT string_agg(id::text, ',' ORDER BY id) FROM pgman_repro_tc2",
+            &format!("SELECT string_agg(id::text, ',' ORDER BY id) FROM {t}"),
             "--format",
             "csv",
         ],
@@ -1316,12 +1443,13 @@ fn mcp_query_returns_typed_rows_and_says_when_it_truncated() {
 #[test]
 fn mcp_query_is_read_only_even_under_a_writable_profile() {
     let home = mcp_home("mcp-ro");
+    let seq = it_name("mcp_seq");
     let setup = batch_with_home(
         &home,
         &[
             "--yes",
             "--sql",
-            "CREATE SEQUENCE IF NOT EXISTS pgman_mcp_seq",
+            &format!("CREATE SEQUENCE IF NOT EXISTS {seq}"),
         ],
     );
     assert!(
@@ -1338,7 +1466,7 @@ fn mcp_query_is_read_only_even_under_a_writable_profile() {
                 1,
                 "query",
                 serde_json::json!({"connection": "test",
-                "sql": "SELECT nextval('pgman_mcp_seq')"}),
+                "sql": format!("SELECT nextval('{seq}')")}),
             ),
             tool_call(
                 2,
@@ -1404,12 +1532,13 @@ fn mcp_discovered_connections_need_the_flag() {
 #[tokio::test(flavor = "multi_thread")]
 async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
     let home = mcp_home("mcp-locks");
+    let t = it_name("mcp_locked");
     let setup = batch_with_home(
         &home,
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_mcp_locked (id int)",
+            &format!("CREATE TABLE IF NOT EXISTS {t} (id int)"),
         ],
     );
     assert!(
@@ -1426,7 +1555,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
         .await
         .unwrap();
     holder
-        .batch_execute("BEGIN; LOCK TABLE pgman_mcp_locked IN SHARE MODE")
+        .batch_execute(&format!("BEGIN; LOCK TABLE {t} IN SHARE MODE"))
         .await
         .unwrap();
     let pid: i32 = holder
@@ -1436,6 +1565,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
         .get(0);
 
     let home2 = home.clone();
+    let t2 = t.clone();
     let frames = tokio::task::spawn_blocking(move || {
         mcp_session(
             &home2,
@@ -1446,7 +1576,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
                     1,
                     "sessions_locks",
                     serde_json::json!({"connection": "test",
-                    "tables": ["pgman_mcp_locked"], "min_xact_age_secs": 3600}),
+                    "tables": [t2], "min_xact_age_secs": 3600}),
                 ),
                 tool_call(
                     2,
@@ -1458,7 +1588,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
                     3,
                     "sessions_locks",
                     serde_json::json!({"connection": "test",
-                    "tables": ["x'; DROP TABLE pgman_mcp_locked; --"]}),
+                    "tables": [format!("x'; DROP TABLE {t2}; --")]}),
                 ),
             ],
         )
@@ -1481,7 +1611,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
         row["locks_on_tables"]
             .as_str()
             .unwrap()
-            .contains("pgman_mcp_locked ShareLock"),
+            .contains(&format!("{t} ShareLock")),
         "{row}"
     );
 
@@ -1496,7 +1626,7 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
         is_error && text.contains("not a plain table name"),
         "{text}"
     );
-    assert!(table_exists(&home, "pgman_mcp_locked"));
+    assert!(table_exists(&home, &t));
 }
 
 /// `pending_patches` end to end: a version table holding 1 and 2, and a
@@ -1504,14 +1634,17 @@ async fn mcp_sessions_locks_reports_a_lock_holder_on_the_named_table() {
 #[test]
 fn mcp_pending_patches_reports_what_the_database_has_not_recorded() {
     let home = mcp_home("mcp-patches");
+    let t = it_name("dbversion");
     let setup = batch_with_home(
         &home,
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_dbversion (scriptId int, description text); \
-             DELETE FROM pgman_dbversion WHERE TRUE; \
-             INSERT INTO pgman_dbversion VALUES (1, 'one'), (2, 'two')",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {t} (scriptId int, description text); \
+                 DELETE FROM {t} WHERE TRUE; \
+                 INSERT INTO {t} VALUES (1, 'one'), (2, 'two')"
+            ),
         ],
     );
     assert!(
@@ -1525,14 +1658,14 @@ fn mcp_pending_patches_reports_what_the_database_has_not_recorded() {
     std::fs::create_dir_all(checkout.join(".pgman")).unwrap();
     std::fs::write(
         checkout.join(".pgman/pgman.toml"),
-        "[patches]\ndir = \"schema_updates\"\ntable = \"pgman_dbversion\"\ncolumn = \"scriptId\"\n",
+        format!("[patches]\ndir = \"schema_updates\"\ntable = \"{t}\"\ncolumn = \"scriptId\"\n"),
     )
     .unwrap();
     for (file, body) in [
-        ("001-a.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (1, 'a');"),
-        ("002-b.sql", "INSERT INTO pgman_dbversion (scriptId, description) VALUES (2, 'b');"),
-        ("003-c.sql", "-- pending\nINSERT INTO pgman_dbversion (scriptId, description)\n  VALUES (3, 'c, with a comma');"),
-        ("004-d.sql", "ALTER TABLE x ADD COLUMN y int;"),
+        ("001-a.sql", format!("INSERT INTO {t} (scriptId, description) VALUES (1, 'a');")),
+        ("002-b.sql", format!("INSERT INTO {t} (scriptId, description) VALUES (2, 'b');")),
+        ("003-c.sql", format!("-- pending\nINSERT INTO {t} (scriptId, description)\n  VALUES (3, 'c, with a comma');")),
+        ("004-d.sql", "ALTER TABLE x ADD COLUMN y int;".to_string()),
     ] {
         std::fs::write(dir.join(file), body).unwrap();
     }
@@ -1809,6 +1942,7 @@ fn mcp_environments_lists_rds_instances_with_their_replicas() {
 #[test]
 fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
     let home = scratch_home("mcp-roles", WRITABLE_PROFILE);
+    let t = it_name("dbversion_roles");
     std::fs::write(
         home.join(".config/pgman/connections.toml"),
         format!(
@@ -1822,9 +1956,11 @@ fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
         &[
             "--yes",
             "--sql",
-            "CREATE TABLE IF NOT EXISTS pgman_dbversion_roles (scriptId int); \
-             DELETE FROM pgman_dbversion_roles WHERE TRUE; \
-             INSERT INTO pgman_dbversion_roles VALUES (1)",
+            &format!(
+                "CREATE TABLE IF NOT EXISTS {t} (scriptId int); \
+                 DELETE FROM {t} WHERE TRUE; \
+                 INSERT INTO {t} VALUES (1)"
+            ),
         ],
     );
     assert!(
@@ -1836,15 +1972,15 @@ fn mcp_roles_primary_verifies_patches_and_a_false_replica_is_flagged() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("001-a.sql"),
-        "INSERT INTO pgman_dbversion_roles (scriptId) VALUES (1);",
+        format!("INSERT INTO {t} (scriptId) VALUES (1);"),
     )
     .unwrap();
     std::fs::write(
         dir.join("002-b.sql"),
-        "INSERT INTO pgman_dbversion_roles (scriptId) VALUES (2);",
+        format!("INSERT INTO {t} (scriptId) VALUES (2);"),
     )
     .unwrap();
-    let patches = serde_json::json!({"dir": "patches", "table": "pgman_dbversion_roles", "column": "scriptId"});
+    let patches = serde_json::json!({"dir": "patches", "table": t, "column": "scriptId"});
     let mut on_primary = patches.clone();
     on_primary["connection"] = "primary".into();
     let mut on_replica = patches;

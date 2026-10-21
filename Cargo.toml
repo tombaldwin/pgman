@@ -91,6 +91,8 @@ integration = []
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+# `#[dtor]`: the integration suite drops its tables when the test binary exits.
+ctor = "0.8"
 insta = "1"
 proptest = "1"
 
