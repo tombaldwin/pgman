@@ -4672,3 +4672,48 @@ fn backslash_df_query_lists_and_filters_functions() {
     let system = run(Some("pg_catalog.now"));
     assert!(system.contains("pg_catalog"), "{system}");
 }
+
+/// The schema fetch learns which table each index is on, its
+/// definition, and which is unique or the primary key.
+#[test]
+fn schema_fetch_reads_each_tables_indexes() {
+    let home = scratch_home("indexes", WRITABLE_PROFILE);
+    let t = format!("pgman_it_ix_{}", std::process::id());
+    let sql = format!(
+        "CREATE TABLE {t} (id int PRIMARY KEY, email text, tag text); \
+         CREATE UNIQUE INDEX {t}_email ON {t} (email); \
+         CREATE INDEX {t}_tag ON {t} (tag) WHERE tag IS NOT NULL"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let cache = rt.block_on(async {
+        let client = pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+            .await
+            .unwrap();
+        pgman::query::schema::fetch(&client).await
+    });
+    let ixs = cache
+        .indexes_by_table
+        .get(&("public".to_string(), t.clone()))
+        .expect("indexes for the table");
+    let names: Vec<&str> = ixs.iter().map(|i| i.name.as_str()).collect();
+    let (email, pkey, tag) = (
+        format!("{t}_email"),
+        format!("{t}_pkey"),
+        format!("{t}_tag"),
+    );
+    assert_eq!(names, vec![email.as_str(), pkey.as_str(), tag.as_str()]);
+    assert!(ixs[0].unique && !ixs[0].primary);
+    assert!(ixs[1].unique && ixs[1].primary);
+    assert!(!ixs[2].unique);
+    assert!(
+        ixs[2].definition.contains("WHERE (tag IS NOT NULL)"),
+        "{}",
+        ixs[2].definition
+    );
+}

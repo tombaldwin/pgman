@@ -5998,6 +5998,106 @@ fn schema_browser_table_row_carries_column_and_constraint_counts() {
     }
 }
 
+fn index_meta(name: &str, unique: bool, primary: bool) -> crate::query::schema::IndexMeta {
+    crate::query::schema::IndexMeta {
+        name: name.into(),
+        definition: format!("CREATE INDEX {name} ON public.users USING btree (email)"),
+        unique,
+        primary,
+    }
+}
+
+/// `app_with_schemas` with two indexes on `public.users`, both
+/// `public` and `public.users` expanded.
+fn app_with_user_indexes() -> App {
+    let mut a = app_with_schemas();
+    a.schema_cache.indexes_by_table.insert(
+        ("public".into(), "users".into()),
+        vec![
+            index_meta("users_email_idx", false, false),
+            index_meta("users_pkey", true, true),
+        ],
+    );
+    a.schema_browser.expanded.insert("public".into());
+    a.schema_browser
+        .expanded
+        .insert(schema_browser_table_key("public", "users"));
+    a
+}
+
+#[test]
+fn schema_browser_lists_a_tables_indexes_after_its_columns() {
+    let a = app_with_user_indexes();
+    let rows = a.flattened_schema_browser();
+    let users = rows
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "users"))
+        .expect("users row");
+    let tail = |rows: &[SchemaBrowserRow]| -> Vec<String> {
+        rows[users + 1..]
+            .iter()
+            .map(|r| match r {
+                SchemaBrowserRow::Column { name, .. } => format!("col {name}"),
+                SchemaBrowserRow::Constraint { name, .. } => format!("con {name}"),
+                SchemaBrowserRow::Index { table, name, .. } => format!("idx {table}.{name}"),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        tail(&rows),
+        vec![
+            "col id",
+            "col email",
+            "idx users.users_email_idx",
+            "idx users.users_pkey"
+        ]
+    );
+    // The primary key's index carries the constraint's name: it lists
+    // once, as the constraint.
+    let mut a = a;
+    a.schema_cache
+        .constraints
+        .push(crate::query::schema::ConstraintMeta {
+            schema: "public".into(),
+            table: "users".into(),
+            name: "users_pkey".into(),
+        });
+    assert_eq!(
+        tail(&a.flattened_schema_browser()),
+        vec![
+            "col id",
+            "col email",
+            "con users_pkey",
+            "idx users.users_email_idx"
+        ]
+    );
+}
+
+#[test]
+fn schema_browser_filter_finds_an_index_and_keeps_its_table() {
+    let mut a = app_with_user_indexes();
+    a.schema_browser.filter = Some("email_idx".into());
+    let rows = a.flattened_schema_browser();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert!(matches!(&rows[1], SchemaBrowserRow::Table { name, .. } if name == "users"));
+    assert!(matches!(&rows[2], SchemaBrowserRow::Index { name, .. } if name == "users_email_idx"));
+}
+
+#[test]
+fn schema_browser_index_row_targets_its_table() {
+    let mut a = app_with_user_indexes();
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Index { .. }))
+        .unwrap();
+    assert_eq!(
+        a.focused_schema_browser_table(),
+        Some(("public".into(), "users".into()))
+    );
+}
+
 #[test]
 fn start_schema_browser_with_empty_cache_surfaces_hint() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());

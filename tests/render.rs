@@ -453,6 +453,46 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
     );
 }
 
+/// An expanded table lists its indexes under its constraints; the
+/// detail pane for an index shows its kind and its full definition,
+/// and the table's own pane lists them with theirs.
+#[test]
+fn schema_browser_shows_a_tables_indexes() {
+    use pgman::app::SchemaBrowserRow;
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.expanded.insert("public".into());
+    a.schema_browser.expanded.insert("public.orders".into());
+    let rows = a.flattened_schema_browser();
+    a.schema_browser.cursor = rows
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
+        .unwrap();
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(rendered.contains("⌁ orders_user_id_idx"), "{rendered}");
+    // The primary key's index lists once, as the constraint.
+    assert!(rendered.contains("◆ orders_pkey"), "{rendered}");
+    assert!(!rendered.contains("⌁ orders_pkey"), "{rendered}");
+    assert!(rendered.contains("indexes (2)"), "{rendered}");
+    assert!(
+        rendered.contains("· orders_pkey  primary key"),
+        "{rendered}"
+    );
+    a.schema_browser.cursor = rows
+        .iter()
+        .position(
+            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "orders_user_id_idx"),
+        )
+        .unwrap();
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id)"),
+        "{rendered}"
+    );
+}
+
 #[test]
 fn param_prompt_renders_progress_and_entered_values() {
     let mut a = settle_app();

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use crate::app::{App, ConnState, DatabaseInfo};
 use crate::conn::Dsn;
 use crate::grid::Grid;
-use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, SchemaCache, TableMeta};
+use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, IndexMeta, SchemaCache, TableMeta};
 use crate::safety::SafetyConfig;
 use crate::saved::SavedQuery;
 use crate::tap::{TapEvent, TapKind};
@@ -761,13 +761,51 @@ fn schema_cache() -> SchemaCache {
         },
     ];
 
+    // Each table's primary-key index, plus the two FK-column indexes a
+    // real schema like this one would have.
+    let index = |table: &str, name: &str, cols: &str, primary: bool| {
+        (
+            key(table),
+            IndexMeta {
+                name: name.into(),
+                definition: format!(
+                    "CREATE {}INDEX {name} ON public.{table} USING btree ({cols})",
+                    if primary { "UNIQUE " } else { "" }
+                ),
+                unique: primary,
+                primary,
+            },
+        )
+    };
+    let mut indexes_by_table: HashMap<(String, String), Vec<IndexMeta>> = HashMap::new();
+    for (k, ix) in [
+        index("order_items", "order_items_order_id_idx", "order_id", false),
+        index("order_items", "order_items_pkey", "id", true),
+        index("orders", "orders_pkey", "id", true),
+        index("orders", "orders_user_id_idx", "user_id", false),
+        index("users", "users_pkey", "id", true),
+    ] {
+        indexes_by_table.entry(k).or_default().push(ix);
+    }
+    let mut indexes: Vec<TableMeta> = indexes_by_table
+        .values()
+        .flatten()
+        .map(|ix| TableMeta {
+            schema: "public".into(),
+            name: ix.name.clone(),
+        })
+        .collect();
+    indexes.sort_by(|a, b| a.name.cmp(&b.name));
+
     SchemaCache {
         schemas: vec!["public".into()],
         tables,
+        indexes,
         columns_by_table,
         columns_meta_by_table,
         constraints,
         fk_edges,
+        indexes_by_table,
         ..SchemaCache::default()
     }
 }

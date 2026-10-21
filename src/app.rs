@@ -524,6 +524,7 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             SchemaBrowserRow::Table { name, .. } => name.as_str(),
             SchemaBrowserRow::Column { name, .. } => name.as_str(),
             SchemaBrowserRow::Constraint { name, .. } => name.as_str(),
+            SchemaBrowserRow::Index { name, .. } => name.as_str(),
             SchemaBrowserRow::Partitions { .. } => "",
             SchemaBrowserRow::Partition { name, .. } => name.as_str(),
         };
@@ -535,6 +536,7 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             SchemaBrowserRow::Table { .. } => 1,
             SchemaBrowserRow::Column { .. }
             | SchemaBrowserRow::Constraint { .. }
+            | SchemaBrowserRow::Index { .. }
             | SchemaBrowserRow::Partitions { .. } => 2,
             SchemaBrowserRow::Partition { .. } => 3,
         }
@@ -571,7 +573,8 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
 /// Pure: walk the cache and emit visible rows in display order
 /// (schemas alphabetical; under each expanded schema, its tables
 /// alphabetical; under each expanded table, its columns in catalog
-/// order followed by its unique/PK constraints alphabetical).
+/// order, then its unique/PK constraints alphabetical, then its
+/// indexes alphabetical).
 /// `expanded` is keyed by schema name and `"schema.table"` for
 /// tables — see `schema_browser_table_key`. Empty `expanded` →
 /// every node collapsed.
@@ -650,6 +653,16 @@ pub fn flatten_schema_browser(
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
             let constraints = cons_by_table.get(&(s, t)).cloned().unwrap_or_default();
+            // A unique or primary-key constraint's own index has the
+            // constraint's name; it would list twice. The table's detail
+            // pane still lists every index.
+            let indexes = cache
+                .indexes_by_table
+                .get(&(s.to_string(), t.to_string()))
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+                .iter()
+                .filter(|ix| !constraints.contains(&ix.name.as_str()));
             let table_key = schema_browser_table_key(s, t);
             let table_expanded = expanded.contains(&table_key);
             out.push(SchemaBrowserRow::Table {
@@ -674,6 +687,13 @@ pub fn flatten_schema_browser(
                     schema: s.to_string(),
                     table: t.to_string(),
                     name: cn.to_string(),
+                });
+            }
+            for ix in indexes {
+                out.push(SchemaBrowserRow::Index {
+                    schema: s.to_string(),
+                    table: t.to_string(),
+                    name: ix.name.clone(),
                 });
             }
             if let Some(parts) = partitions.get(&(s.to_string(), t.to_string())) {

@@ -531,6 +531,12 @@ pub enum SchemaBrowserRow {
         table: String,
         name: String,
     },
+    /// One index on `table`, after its constraints.
+    Index {
+        schema: String,
+        table: String,
+        name: String,
+    },
     /// The folded group of a partitioned table's partitions.
     Partitions {
         schema: String,

@@ -143,7 +143,8 @@ impl App {
         match rows.get(self.schema_browser.cursor)? {
             SchemaBrowserRow::Table { schema, name, .. } => Some((schema.clone(), name.clone())),
             SchemaBrowserRow::Column { schema, table, .. } => Some((schema.clone(), table.clone())),
-            SchemaBrowserRow::Constraint { schema, table, .. } => {
+            SchemaBrowserRow::Constraint { schema, table, .. }
+            | SchemaBrowserRow::Index { schema, table, .. } => {
                 Some((schema.clone(), table.clone()))
             }
             SchemaBrowserRow::Partitions { schema, table, .. } => {

@@ -207,7 +207,7 @@ don't list beside their table: an expanded partitioned table shows one
 
 | Key | Action |
 |---|---|
-| `j` / `k` / `↓` / `↑` | Navigate schemas / tables / columns / constraints |
+| `j` / `k` / `↓` / `↑` | Navigate schemas / tables / columns / constraints / indexes (an index shows its kind and its full `CREATE INDEX` definition) |
 | `Enter` / `Space` / `←` / `→` | Expand / collapse the focused schema, table or partitions group |
 | `[` / `]` | Jump to previous / next schema (skips past table internals) |
 | `+` / `=` | Expand all (cursor stays put) |
