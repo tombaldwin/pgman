@@ -401,6 +401,73 @@ fn notice_grid() -> Grid {
     }
 }
 
+/// The schema browser's DDL copy in `--demo`: built from the demo
+/// schema the way the catalog would answer for it — `id` a
+/// `bigserial` primary key, each FK edge a `FOREIGN KEY` constraint,
+/// and the indexes no constraint owns. `None` for a table the demo
+/// doesn't have.
+pub fn table_ddl(
+    cache: &SchemaCache,
+    schema: &str,
+    table: &str,
+) -> Option<crate::query::ddl::TableDdl> {
+    use crate::app::quote_ident;
+    use crate::query::ddl::{DdlColumn, DdlKind, TableDdl};
+    let key = (schema.to_string(), table.to_string());
+    let columns = cache
+        .columns_meta_by_table
+        .get(&key)?
+        .iter()
+        .map(|c| {
+            let serial = c.name == "id";
+            DdlColumn {
+                name: quote_ident(&c.name),
+                type_name: c.type_name.clone(),
+                not_null: c.not_null,
+                default: serial.then(|| format!("nextval('{table}_id_seq'::regclass)")),
+                owns_sequence: serial,
+                ..DdlColumn::default()
+            }
+        })
+        .collect();
+    let primary = cache
+        .constraints
+        .iter()
+        .filter(|c| c.schema == schema && c.table == table)
+        .map(|c| (quote_ident(&c.name), "PRIMARY KEY (id)".to_string()));
+    let foreign = cache
+        .fk_edges
+        .iter()
+        .filter(|e| e.child_schema == schema && e.child_table == table)
+        .map(|e| {
+            (
+                quote_ident(&format!("{table}_{}_fkey", e.child_column)),
+                format!(
+                    "FOREIGN KEY ({}) REFERENCES {}({})",
+                    quote_ident(&e.child_column),
+                    quote_ident(&e.parent_table),
+                    quote_ident(&e.parent_column)
+                ),
+            )
+        });
+    let indexes = cache
+        .indexes_by_table
+        .get(&key)
+        .into_iter()
+        .flatten()
+        .filter(|ix| !ix.primary)
+        .map(|ix| ix.definition.clone())
+        .collect();
+    Some(TableDdl {
+        qualified_name: format!("{}.{}", quote_ident(schema), quote_ident(table)),
+        kind: DdlKind::Table,
+        columns,
+        constraints: primary.chain(foreign).collect(),
+        partition_key: None,
+        indexes,
+    })
+}
+
 /// `\df`'s answer in `--demo`: the demo schema's functions, in the
 /// columns the live catalog query returns, filtered by `pattern` the
 /// way the server would filter them (psql wildcards, `schema.`

@@ -155,6 +155,13 @@ pub enum AppMsg {
     /// so tap events are NOT generation-tagged — they always
     /// process. `generation()` returns 0 for this variant.
     TapEvent { event: crate::tap::TapEvent },
+    /// The schema browser's DDL copy (`d`) read its table's pieces
+    /// (or didn't). `table` is `schema.table`, for the status line.
+    DdlLoaded {
+        generation: u64,
+        table: String,
+        result: Result<crate::query::ddl::TableDdl, String>,
+    },
     /// `:readonly on|off` was applied to the live session (or wasn't).
     ReadOnlyApplied {
         generation: u64,
@@ -187,6 +194,7 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::TapEvent { .. }
             | AppMsg::UpdateCheck(_)

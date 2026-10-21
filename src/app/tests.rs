@@ -3062,6 +3062,76 @@ fn schema_browser_p_previews_five_rows_of_the_focused_table() {
 }
 
 #[test]
+fn schema_browser_d_copies_the_focused_tables_ddl_in_demo() {
+    let mut a = demo_browser_on("orders");
+    crate::app::yank::take_test_clipboard();
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    let copied = crate::app::yank::take_test_clipboard().expect("copied");
+    assert_eq!(
+        copied,
+        "CREATE TABLE public.orders (\n\
+         \x20   id bigserial NOT NULL,\n\
+         \x20   user_id bigint NOT NULL,\n\
+         \x20   status varchar(20) NOT NULL,\n\
+         \x20   total_cents integer NOT NULL,\n\
+         \x20   created_at timestamptz NOT NULL,\n\
+         \x20   CONSTRAINT orders_pkey PRIMARY KEY (id),\n\
+         \x20   CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id)\n\
+         );\n\
+         \n\
+         CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id);\n"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("copied the DDL of public.orders · 11 line(s)")
+    );
+    assert_eq!(
+        a.mode,
+        Mode::SchemaBrowser,
+        "a copy doesn't close the browser"
+    );
+}
+
+#[test]
+fn schema_browser_d_refusals_copy_nothing() {
+    let mut a = demo_browser_on("orders");
+    a.schema_browser.cursor = 0;
+    crate::app::yank::take_test_clipboard();
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(a.last_error.is_some());
+    let mut a = app_with_schemas();
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = 2;
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+    assert_eq!(crate::app::yank::take_test_clipboard(), None);
+}
+
+#[test]
+fn ddl_loaded_failure_and_a_stale_answer() {
+    let mut a = app_with_schemas();
+    a.on_msg(AppMsg::DdlLoaded {
+        generation: a.generation,
+        table: "public.users".into(),
+        result: Err("permission denied for table users".into()),
+    });
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("DDL of public.users: permission denied for table users")
+    );
+    // An answer from an earlier connection is dropped, not copied.
+    a.last_error = None;
+    a.on_msg(AppMsg::DdlLoaded {
+        generation: a.generation + 1,
+        table: "public.users".into(),
+        result: Err("old".into()),
+    });
+    assert_eq!(a.last_error, None);
+}
+
+#[test]
 fn schema_browser_p_on_a_schema_row_stays_put_with_an_error() {
     let mut a = demo_browser_on("users");
     a.schema_browser.cursor = 0;

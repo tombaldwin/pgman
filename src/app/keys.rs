@@ -1272,6 +1272,7 @@ impl App {
             KeyCode::Char('s') => self.yank_schema_browser_select(),
             KeyCode::Char('i') => self.yank_schema_browser_insert(),
             KeyCode::Char('p') => self.preview_schema_browser_rows(),
+            KeyCode::Char('d') => self.yank_schema_browser_ddl(),
             KeyCode::Char('r') => self.reload_schema(),
             KeyCode::Char('/') => self.start_schema_browser_filter(),
             _ => {}

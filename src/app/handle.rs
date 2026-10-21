@@ -245,6 +245,7 @@ impl App {
                 }
             }
             AppMsg::SlowQueriesLoaded { result, .. } => self.on_slow_queries_loaded(result),
+            AppMsg::DdlLoaded { table, result, .. } => self.on_ddl_loaded(&table, result),
             AppMsg::EnvironmentsLoaded(result) => {
                 self.environments.loading = false;
                 match result {

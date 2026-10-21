@@ -218,6 +218,7 @@ don't list beside their table: an expanded partitioned table shows one
 | `s` | Yank `SELECT * FROM <schema>.<table> LIMIT 100` template |
 | `i` | Yank `INSERT INTO … (cols) VALUES (NULL, …)` template |
 | `p` | Preview: run `SELECT * FROM <schema>.<table> LIMIT 5` and close onto the grid it lands in (a partition previews itself) |
+| `d` | Copy the focused table's (or view's) `CREATE` statement, rebuilt from the catalog: columns with defaults, identity and generated expressions (`serial` where the column owns its sequence), its own primary / unique / check / exclusion / foreign keys, `PARTITION BY` / `PARTITION OF`, then a `CREATE INDEX` per index no constraint owns. Not a `pg_dump`: owners, grants, comments and triggers are left out |
 | `r` | Reload the schema — picks up tables other sessions made since you connected (`S`, `\d` and `W` also reload by themselves when the cache is empty while connected) |
 | `Esc` / `q` | Close (also drops the in-tree filter) |
 
