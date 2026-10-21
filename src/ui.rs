@@ -2428,6 +2428,10 @@ pub(crate) fn help_body(
         row("    \\dt / \\dn       open schema browser (default view)"),
         &mut lines,
     );
+    push(
+        row("    \\df [pattern]    list functions (psql patterns: * ? schema.)"),
+        &mut lines,
+    );
     push(row("    \\?  / \\h        open this help"), &mut lines);
     push(row("    \\q              quit"), &mut lines);
     push(

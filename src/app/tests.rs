@@ -6647,6 +6647,66 @@ fn demo_unknown_statement_yields_one_row_notice() {
 }
 
 #[test]
+fn demo_backslash_df_lists_the_demo_functions_and_honours_a_pattern() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "\\df");
+    assert_eq!(
+        a.grid.columns,
+        vec!["schema", "name", "result", "arguments", "type"]
+    );
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["order_total", "refresh_user_stats", "user_order_count"]
+    );
+    assert_eq!(a.last_status.as_deref(), Some("\\df → 3 function(s)"));
+    run_in_demo(&mut a, "\\df User*");
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(names, vec!["user_order_count"]);
+    // A pattern reaches the system schemas, as psql's does.
+    run_in_demo(&mut a, "\\df now");
+    assert_eq!(a.grid.rows.len(), 1);
+    assert_eq!(a.grid.rows[0][0], "pg_catalog");
+    run_in_demo(&mut a, "\\df nothing_like_this");
+    assert!(a.grid.rows.is_empty());
+    assert_eq!(a.last_status.as_deref(), Some("\\df → 0 function(s)"));
+}
+
+#[test]
+fn backslash_df_without_a_connection_says_so() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\df".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+    assert!(!a.query_running);
+}
+
+#[test]
+fn generated_select_waits_for_a_running_query() {
+    let mut a = app_with_schemas();
+    a.query_running = true;
+    a.run_generated_select("SELECT 1".into());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("a query is already running · ctrl-c cancels it")
+    );
+}
+
+#[test]
+fn generated_select_refuses_what_the_guard_does_not_allow() {
+    // A generator bug that produced a write must not reach the
+    // server, nor a confirm prompt the operator never asked for.
+    let mut a = crate::demo::app(Theme::default());
+    a.run_generated_select("DELETE FROM users".into());
+    assert!(a.last_error.is_some());
+    assert_ne!(a.mode, Mode::Confirm);
+    assert!(a.msg_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
 fn demo_confirmed_write_is_answered_synthetically() {
     // A guarded write in --demo reaches the confirm modal like a live
     // session; answering `y` must produce a demo result, not the
@@ -7225,14 +7285,17 @@ fn command_bar_tab_completes_a_unique_name_and_lists_ambiguous_ones() {
     a.on_key(KeyEvent::from(KeyCode::Char('d')));
     a.on_key(KeyEvent::from(KeyCode::Tab));
     assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("d"));
-    assert_eq!(a.command_bar_completions.as_deref(), Some("d · dn · dt"));
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("d · df · dn · dt")
+    );
 }
 
 #[test]
 fn command_candidates_and_common_prefix_are_pure_and_total() {
     use crate::app::cmd::{command_candidates, longest_common_prefix, COMMAND_NAMES};
     assert_eq!(command_candidates("rea"), vec!["readonly"]);
-    assert_eq!(command_candidates("d"), vec!["d", "dn", "dt"]);
+    assert_eq!(command_candidates("d"), vec!["d", "df", "dn", "dt"]);
     assert!(command_candidates("zzz").is_empty());
     assert_eq!(command_candidates("").len(), COMMAND_NAMES.len());
     assert_eq!(longest_common_prefix(&[]), "");

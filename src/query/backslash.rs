@@ -23,6 +23,10 @@ pub enum BackslashCmd {
     ListTables,
     /// `\dn` — list schemas. Routes to schema browser too.
     ListSchemas,
+    /// `\df` / `\df <pattern>` — list functions as a result grid.
+    /// The pattern is psql's: `*` and `?` wildcards, an optional
+    /// `schema.` prefix, folded to lower case unless double-quoted.
+    ListFunctions(Option<String>),
     /// `\?` — open the help cheatsheet.
     Help,
     /// `\q` — quit.
@@ -91,6 +95,7 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
         "d" => BackslashCmd::Describe(arg1.map(str::to_string)),
         "dt" => BackslashCmd::ListTables,
         "dn" => BackslashCmd::ListSchemas,
+        "df" => BackslashCmd::ListFunctions(arg1.map(str::to_string)),
         "?" | "h" => BackslashCmd::Help,
         "q" | "quit" => BackslashCmd::Quit,
         "timing" => BackslashCmd::Timing(match arg1.map(str::to_ascii_lowercase).as_deref() {
@@ -117,6 +122,113 @@ pub fn parse_backslash_command(buf: &str) -> Option<BackslashCmd> {
         "i" => BackslashCmd::Include(arg1.map(str::to_string)),
         _ => BackslashCmd::Unknown(raw),
     })
+}
+
+/// The catalog query behind `\df`. With no pattern it lists what the
+/// operator wrote — everything outside `pg_catalog` and
+/// `information_schema` — the way psql does; a pattern searches every
+/// schema, system ones included, which is how psql answers `\df now`.
+///
+/// The pattern becomes anchored POSIX regexes ([`psql_pattern_regex`])
+/// compared with `~`, inside `E''` literals so the backslashes the
+/// escaping adds mean the same whatever `standard_conforming_strings`
+/// is set to.
+pub fn list_functions_sql(pattern: Option<&str>) -> String {
+    let mut sql = String::from(
+        "SELECT n.nspname AS schema, p.proname AS name, \
+pg_catalog.pg_get_function_result(p.oid) AS result, \
+pg_catalog.pg_get_function_arguments(p.oid) AS arguments, \
+CASE p.prokind WHEN 'a' THEN 'agg' WHEN 'w' THEN 'window' WHEN 'p' THEN 'proc' ELSE 'func' END AS type \
+FROM pg_catalog.pg_proc p \
+JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace",
+    );
+    match pattern.map(str::trim).filter(|p| !p.is_empty()) {
+        None => sql.push_str(" WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')"),
+        Some(p) => {
+            let (schema, name) = split_pattern(p);
+            sql.push_str(&format!(
+                " WHERE p.proname ~ {}",
+                e_literal(&psql_pattern_regex(&name))
+            ));
+            if let Some(schema) = schema {
+                sql.push_str(&format!(
+                    " AND n.nspname ~ {}",
+                    e_literal(&psql_pattern_regex(&schema))
+                ));
+            }
+        }
+    }
+    sql.push_str(" ORDER BY 1, 2, 4");
+    sql
+}
+
+/// Split a psql pattern into its optional schema part and its name
+/// part at the last `.` outside double quotes, folding unquoted text
+/// to lower case and dropping the quotes (`""` inside quotes is one
+/// `"`). `"MySchema".f*` gives `(Some("MySchema"), "f*")`.
+pub fn split_pattern(pattern: &str) -> (Option<String>, String) {
+    let mut parts = vec![String::new()];
+    let mut quoted = false;
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        let part = parts.last_mut().expect("parts is never empty");
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                chars.next();
+                part.push('"');
+            }
+            '"' => quoted = !quoted,
+            '.' if !quoted => parts.push(String::new()),
+            c if quoted => part.push(c),
+            c => part.extend(c.to_lowercase()),
+        }
+    }
+    let name = parts.pop().unwrap_or_default();
+    // `db.schema.name`: psql takes the part before the name as the schema.
+    let schema = parts.pop();
+    (schema, name)
+}
+
+/// One psql pattern part as an anchored POSIX regex: `*` is any run,
+/// `?` one character, and everything else is literal.
+pub fn psql_pattern_regex(part: &str) -> String {
+    let mut out = String::from("^(");
+    for c in part.chars() {
+        match c {
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            c if "\\.^$|()[]{}+".contains(c) => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push_str(")$");
+    out
+}
+
+/// `s` as an `E'…'` string literal: backslashes and quotes doubled.
+fn e_literal(s: &str) -> String {
+    format!("E'{}'", s.replace('\\', "\\\\").replace('\'', "''"))
+}
+
+/// Whether `name` matches one psql pattern part, the way
+/// [`psql_pattern_regex`] would on the server. Used where there is no
+/// server to ask (`--demo`). Folding is the caller's: see
+/// [`split_pattern`].
+pub fn glob_matches(part: &str, name: &str) -> bool {
+    fn go(p: &[char], n: &[char]) -> bool {
+        match p.split_first() {
+            None => n.is_empty(),
+            Some(('*', rest)) => (0..=n.len()).any(|i| go(rest, &n[i..])),
+            Some(('?', rest)) => !n.is_empty() && go(rest, &n[1..]),
+            Some((c, rest)) => n.first() == Some(c) && go(rest, &n[1..]),
+        }
+    }
+    let p: Vec<char> = part.chars().collect();
+    let n: Vec<char> = name.chars().collect();
+    go(&p, &n)
 }
 
 /// Message for a `\c` whose argument is more than one bare word.
@@ -455,5 +567,87 @@ mod tests {
             parse_backslash_command(buf),
             Some(BackslashCmd::Describe(Some("users".into())))
         );
+    }
+
+    #[test]
+    fn parse_df_with_and_without_a_pattern() {
+        assert_eq!(
+            parse_backslash_command("\\df"),
+            Some(BackslashCmd::ListFunctions(None))
+        );
+        assert_eq!(
+            parse_backslash_command("\\df  app.calc*"),
+            Some(BackslashCmd::ListFunctions(Some("app.calc*".into())))
+        );
+    }
+
+    #[test]
+    fn split_pattern_folds_unquoted_text_and_takes_the_last_dot() {
+        assert_eq!(split_pattern("Calc*"), (None, "calc*".into()));
+        assert_eq!(
+            split_pattern("App.Calc"),
+            (Some("app".into()), "calc".into())
+        );
+        assert_eq!(
+            split_pattern("\"MySchema\".\"Odd.Name\""),
+            (Some("MySchema".into()), "Odd.Name".into())
+        );
+        assert_eq!(split_pattern("\"a\"\"b\""), (None, "a\"b".into()));
+        assert_eq!(split_pattern("db.s.f"), (Some("s".into()), "f".into()));
+    }
+
+    #[test]
+    fn psql_pattern_regex_anchors_and_escapes() {
+        assert_eq!(psql_pattern_regex("calc"), "^(calc)$");
+        assert_eq!(psql_pattern_regex("calc*"), "^(calc.*)$");
+        assert_eq!(psql_pattern_regex("f?o"), "^(f.o)$");
+        // A literal `.` / `$` / `(` must not be a regex operator.
+        assert_eq!(psql_pattern_regex("a.b$(c)"), "^(a\\.b\\$\\(c\\))$");
+    }
+
+    #[test]
+    fn list_functions_sql_without_a_pattern_hides_system_schemas() {
+        let sql = list_functions_sql(None);
+        assert!(sql.contains("NOT IN ('pg_catalog', 'information_schema')"));
+        assert!(!sql.contains(" ~ "));
+        assert!(list_functions_sql(Some("  ")).contains("NOT IN"));
+    }
+
+    #[test]
+    fn list_functions_sql_with_a_pattern_matches_name_and_schema() {
+        let sql = list_functions_sql(Some("app.calc*"));
+        assert!(sql.contains("p.proname ~ E'^(calc.*)$'"), "{sql}");
+        assert!(sql.contains("n.nspname ~ E'^(app)$'"), "{sql}");
+        assert!(!sql.contains("NOT IN"));
+    }
+
+    #[test]
+    fn list_functions_sql_quotes_cannot_escape_the_literal() {
+        // A `'` in the pattern is doubled, and the escaping backslash
+        // is doubled inside E'' — the statement stays one SELECT.
+        let sql = list_functions_sql(Some("x'; DROP TABLE t; --.f"));
+        assert!(sql.contains("E'^(x''; drop table t; --)$'"), "{sql}");
+        let sql = list_functions_sql(Some("a.b\\c"));
+        assert!(sql.contains("E'^(b\\\\\\\\c)$'"), "{sql}");
+        let statements = crate::safety::split_verified(&sql).expect("one statement");
+        assert_eq!(statements.len(), 1);
+    }
+
+    #[test]
+    fn list_functions_sql_is_allowed_by_the_safety_guard() {
+        let sql = list_functions_sql(Some("public.f*"));
+        let decision =
+            crate::safety::evaluate(&crate::safety::SafetyConfig::default(), "prod", &sql);
+        assert_eq!(decision.guard, crate::safety::Guard::Allow);
+    }
+
+    #[test]
+    fn glob_matches_follows_psql_wildcards() {
+        assert!(glob_matches("calc*", "calc_total"));
+        assert!(glob_matches("calc*", "calc"));
+        assert!(!glob_matches("calc", "calc_total"));
+        assert!(glob_matches("c?lc", "calc"));
+        assert!(!glob_matches("c?lc", "clc"));
+        assert!(glob_matches("*total", "calc_total"));
     }
 }

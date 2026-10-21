@@ -20,6 +20,15 @@ behaviour without being parsed as backslash text.
   "list tables" is folded into the one browser view).
 - `\dn` — open the schema browser (same as `\dt`; psql's "list schemas"
   likewise folds into the browser).
+- `\df` — list functions as a result grid: schema, name, result type,
+  arguments and kind (`func`, `proc`, `agg`, `window`). With no pattern it
+  lists everything outside `pg_catalog` and `information_schema`.
+- `\df <pattern>` — psql's patterns: `*` and `?` wildcards, an optional
+  `schema.` prefix (`\df billing.calc*`), unquoted text folded to lower
+  case, `"Quoted"` text kept as written. A pattern searches the system
+  schemas too, so `\df now` finds `pg_catalog.now`. The query runs like
+  any other statement (it lands in history); `--demo` answers from its own
+  three functions.
 
 ## Database / connection
 
@@ -90,6 +99,7 @@ the buffer. Opening the bar over a guarded-run confirmation cancels that run
 | `:l` | `\l` | List databases (name + size). |
 | `:x [on\|off]` | `\x` | Expanded (row-detail) output. |
 | `:dt` / `:dn` | `\dt` / `\dn` | Open the schema browser. |
+| `:df [PATTERN]` | `\df` | List functions, optionally matching a psql pattern. |
 | `:d [NAME]` | `\d` | Schema browser, filtered to `NAME` when given. |
 | `:i PATH` | `\i` | Load a SQL file into the editor (doesn't run it). |
 | `:timing [on\|off]` | `\timing` | Elapsed-ms in the status footer. |

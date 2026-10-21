@@ -384,6 +384,53 @@ fn notice_grid() -> Grid {
     }
 }
 
+/// `\df`'s answer in `--demo`: the demo schema's functions, in the
+/// columns the live catalog query returns, filtered by `pattern` the
+/// way the server would filter them (psql wildcards, `schema.`
+/// prefix, unquoted text folded). With no pattern only `public` is
+/// listed, as live; the one `pg_catalog` row is there so `\df now`
+/// shows a pattern reaching system schemas.
+pub fn functions_grid(pattern: Option<&str>) -> Grid {
+    use crate::query::backslash::{glob_matches, split_pattern};
+    const FUNCTIONS: &[[&str; 5]] = &[
+        ["pg_catalog", "now", "timestamp with time zone", "", "func"],
+        [
+            "public",
+            "order_total",
+            "bigint",
+            "p_order_id bigint",
+            "func",
+        ],
+        ["public", "refresh_user_stats", "void", "", "proc"],
+        [
+            "public",
+            "user_order_count",
+            "integer",
+            "p_user_id bigint",
+            "func",
+        ],
+    ];
+    let wanted = pattern.map(str::trim).filter(|p| !p.is_empty());
+    let rows = FUNCTIONS
+        .iter()
+        .filter(|[schema, name, ..]| match wanted {
+            None => *schema != "pg_catalog",
+            Some(p) => {
+                let (s, n) = split_pattern(p);
+                glob_matches(&n, name) && s.is_none_or(|s| glob_matches(&s, schema))
+            }
+        })
+        .map(|f| row(f))
+        .collect();
+    Grid {
+        columns: ["schema", "name", "result", "arguments", "type"]
+            .map(String::from)
+            .to_vec(),
+        rows,
+        truncated: false,
+    }
+}
+
 /// A canned `EXPLAIN (FORMAT JSON)` answer, shaped exactly like the
 /// one-column / one-row grid Postgres returns — so
 /// `AppMsg::QueryOk`'s handler parses it and opens `Mode::ExplainTree`

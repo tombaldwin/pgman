@@ -5,8 +5,8 @@ use super::*;
 /// psql muscle memory (`:q`) are deliberately absent — Tab on `:q`
 /// completes to `:quit`, which is the same command spelled in full.
 pub const COMMAND_NAMES: &[&str] = &[
-    "about", "connect", "d", "dn", "dt", "error", "fixture", "help", "i", "l", "notify", "quit",
-    "readonly", "report", "tap", "timing", "update", "x",
+    "about", "connect", "d", "df", "dn", "dt", "error", "fixture", "help", "i", "l", "notify",
+    "quit", "readonly", "report", "tap", "timing", "update", "x",
 ];
 
 /// `\i`'s ceiling. The file becomes one editor buffer, drawn and
@@ -177,6 +177,7 @@ impl App {
                 self.mode = Mode::SchemaBrowser;
                 self.last_status = Some("schema browser".into());
             }
+            BackslashCmd::ListFunctions(pattern) => self.dispatch_list_functions(pattern),
             BackslashCmd::Help => self.open_help_from(Mode::Editor),
             BackslashCmd::Quit => self.should_quit = true,
             BackslashCmd::Timing(target) => {
@@ -437,6 +438,57 @@ impl App {
                 result,
             });
         });
+    }
+
+    /// `\df` handler. Live, it runs the catalog SELECT from
+    /// [`crate::query::backslash::list_functions_sql`] like any other
+    /// statement; `--demo` has no catalog to ask, so it answers from
+    /// the demo's own functions, filtered by the same pattern.
+    fn dispatch_list_functions(&mut self, pattern: Option<String>) {
+        if self.demo && self.client.is_none() {
+            let grid = crate::demo::functions_grid(pattern.as_deref());
+            let n = grid.rows.len();
+            self.grid = grid;
+            self.grid_state.select((n > 0).then_some(0));
+            self.reset_grid_view();
+            self.last_status = Some(format!("\\df → {n} function(s)"));
+            return;
+        }
+        let sql = crate::query::backslash::list_functions_sql(pattern.as_deref());
+        self.run_generated_select(sql);
+    }
+
+    /// Run a SELECT pgman wrote (`\df`, the schema browser's sample
+    /// rows) through the same guard and spawn path as one the operator
+    /// typed: one query at a time, the safety decision, `--demo`'s
+    /// synthetic answer. Anything but `Guard::Allow` is refused rather
+    /// than prompted — a generated read that needs a confirmation is a
+    /// bug in the generator, not something to put to the operator.
+    pub(super) fn run_generated_select(&mut self, sql: String) {
+        if self.query_running {
+            self.last_status = Some("a query is already running · ctrl-c cancels it".into());
+            return;
+        }
+        let demo_no_client = self.demo && self.client.is_none();
+        if self.client.is_none() && !demo_no_client {
+            self.last_error = Some(self.not_connected_message());
+            return;
+        }
+        let db = self
+            .dsn
+            .as_ref()
+            .map(|d| d.dbname.as_str())
+            .unwrap_or("default");
+        let decision = safety::evaluate(&self.safety_config, db, &sql);
+        if decision.guard != Guard::Allow {
+            self.last_error = Some(blocked_by_safety_message(&decision, db));
+            return;
+        }
+        if demo_no_client {
+            self.spawn_run_demo(sql, RunKind::Run);
+        } else {
+            self.spawn_run(sql, RunKind::Run, decision, false);
+        }
     }
 
     /// `\l` handler. Renders `App.databases` — every database on the

@@ -1312,7 +1312,7 @@ fn command_bar_tab_shows_the_candidates_beside_the_input() {
     let buf = render(&mut a, 120, 16);
     let footer = row_text(&buf, 15);
     assert!(
-        footer.contains(":") && footer.contains("about · connect · d · dn · dt"),
+        footer.contains(":") && footer.contains("about · connect · d · df · dn · dt"),
         "{footer:?}"
     );
 }

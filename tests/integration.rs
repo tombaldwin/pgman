@@ -4633,3 +4633,42 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
     let err = r.error.expect("refused");
     assert!(err.contains("is a standby"), "{err}");
 }
+
+/// `\df`'s catalog query runs on a real server: no pattern lists a
+/// function the session made, a pattern narrows to it, and a pattern
+/// with a quote in it is a search, not a second statement.
+#[test]
+fn backslash_df_query_lists_and_filters_functions() {
+    let home = scratch_home("df", WRITABLE_PROFILE);
+    let f = format!("pgman_it_fn_{}", std::process::id());
+    let setup =
+        format!("CREATE OR REPLACE FUNCTION {f}(a int) RETURNS int LANGUAGE sql AS 'SELECT a + 1'");
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = |pattern: Option<&str>| {
+        let sql = pgman::query::backslash::list_functions_sql(pattern);
+        let out = batch_with_home(&home, &["--sql", &sql]);
+        assert!(
+            out.status.success(),
+            "{sql}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let all = run(None);
+    assert!(all.contains(&f), "{all}");
+    assert!(all.contains("a integer"), "{all}");
+    assert!(!all.contains("pg_catalog"), "{all}");
+    let narrowed = run(Some(&format!("public.{}*", &f[..f.len() - 2])));
+    assert!(narrowed.contains(&f), "{narrowed}");
+    let upper = run(Some(&f.to_uppercase()));
+    assert!(upper.contains(&f), "unquoted patterns fold: {upper}");
+    let none = run(Some("no_such_fn'; SELECT 1; --"));
+    assert!(!none.contains(&f), "{none}");
+    let system = run(Some("pg_catalog.now"));
+    assert!(system.contains("pg_catalog"), "{system}");
+}
