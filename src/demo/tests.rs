@@ -613,3 +613,20 @@ fn log_errors_group_the_repeats() {
     assert_eq!(dup.count, 3);
     assert!(errors.iter().any(|e| e.level == "FATAL"));
 }
+
+/// The demo's views are marked as views, so the schema wizard opens on
+/// real findings rather than asking the `reporting` views for a
+/// primary key.
+#[test]
+fn demo_views_are_not_flagged_for_a_missing_primary_key() {
+    let c = cache();
+    assert_eq!(c.views.len(), 3, "{:?}", c.views);
+    let lint001: Vec<String> = crate::query::lint::tables_without_pk_or_unique(&c)
+        .into_iter()
+        .map(|f| f.object)
+        .collect();
+    assert!(
+        !lint001.iter().any(|o| o.starts_with("reporting.")),
+        "{lint001:?}"
+    );
+}

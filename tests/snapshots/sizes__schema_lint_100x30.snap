@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
@@ -12,19 +11,19 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  F╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────╮   │
-│  W│  SEV    CODE     object                                            title                 │   │
-│  O│  HIGH   LINT001  reporting.mrr_by_month                            table without PRIMARY…│   │
-│   │  HIGH   LINT001  reporting.overdue_invoices                        table without PRIMARY…│   │
-╰───│  HIGH   LINT001  reporting.revenue_daily                           table without PRIMARY…│───╯
+│  W│no findings — schema looks clean                                                          │   │
+│  O│                                                                                          │   │
+│   │                                                                                          │   │
+╰───│                                                                                          │───╯
 ╭[ ◆│                                                                                          │───╮
 │num│                                                                                          │   │
 │INV│                                                                                          │   │
 │INV│                                                                                          │   │
 │INV│                                                                                          │   │
-│INV│  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                │   │
-│INV│  object: reporting.mrr_by_month                                                          │   │
-│   │  no UNIQUE / PRIMARY KEY constraint found for reporting.mrr_by_month                     │   │
-│   │  suggest: ALTER TABLE reporting.mrr_by_month ADD PRIMARY KEY (...);                      │   │
+│INV│                                                                                          │   │
+│INV│                                                                                          │   │
+│   │                                                                                          │   │
+│   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

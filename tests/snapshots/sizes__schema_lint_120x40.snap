@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
@@ -13,10 +12,10 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
 │  WH╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ──────────────────────────────────────────────╮    │
-│  OR│  SEV    CODE     object                                            title                                   │    │
-│    │  HIGH   LINT001  reporting.mrr_by_month                            table without PRIMARY KEY or UNIQUE con…│    │
-╰────│  HIGH   LINT001  reporting.overdue_invoices                        table without PRIMARY KEY or UNIQUE con…│────╯
-╭[ ◆ │  HIGH   LINT001  reporting.revenue_daily                           table without PRIMARY KEY or UNIQUE con…│────╮
+│  OR│no findings — schema looks clean                                                                            │    │
+│    │                                                                                                            │    │
+╰────│                                                                                                            │────╯
+╭[ ◆ │                                                                                                            │────╮
 │numb│                                                                                                            │    │
 │INV-│                                                                                                            │    │
 │INV-│                                                                                                            │    │
@@ -30,10 +29,10 @@ expression: dump(&buf)
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
-│    │  LINT001 · table without PRIMARY KEY or UNIQUE constraint                                                  │    │
-│    │  object: reporting.mrr_by_month                                                                            │    │
-│    │  no UNIQUE / PRIMARY KEY constraint found for reporting.mrr_by_month                                       │    │
-│    │  suggest: ALTER TABLE reporting.mrr_by_month ADD PRIMARY KEY (...);                                        │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
+│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

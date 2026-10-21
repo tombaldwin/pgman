@@ -814,6 +814,11 @@ pub(super) fn schema_cache() -> SchemaCache {
         constraints,
         partition_parent,
         indexes_by_table,
+        views: RELATIONS
+            .iter()
+            .filter(|r| matches!(r.kind, Kind::View { .. }))
+            .map(key)
+            .collect(),
     }
 }
 

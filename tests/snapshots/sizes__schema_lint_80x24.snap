@@ -1,6 +1,5 @@
 ---
 source: tests/sizes.rs
-assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
@@ -12,15 +11,15 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
-│  │  SEV    CODE     object                                            tit│   │
-│  │  HIGH   LINT001  reporting.mrr_by_month                            ta…│   │
-╰──│  HIGH   LINT001  reporting.overdue_invoices                        ta…│───╯
-╭[ │  HIGH   LINT001  reporting.revenue_daily                           ta…│───╮
+│  │no findings — schema looks clean                                       │   │
+│  │                                                                       │   │
+╰──│                                                                       │───╯
+╭[ │                                                                       │───╮
 │nu│                                                                       │   │
-│IN│  LINT001 · table without PRIMARY KEY or UNIQUE constraint             │   │
-│IN│  object: reporting.mrr_by_month                                       │   │
-│IN│  no UNIQUE / PRIMARY KEY constraint found for reporting.mrr_by_month  │   │
-│IN│  suggest: ALTER TABLE reporting.mrr_by_month ADD PRIMARY KEY (...);   │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
+│IN│                                                                       │   │
 │IN│                                                                       │   │
 │  │                                                                       │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │

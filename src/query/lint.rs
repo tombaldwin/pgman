@@ -68,10 +68,14 @@ pub fn run_all(cache: &SchemaCache) -> Vec<Finding> {
 /// LINT001 — tables with no PRIMARY KEY or UNIQUE constraint.
 /// Tables with no uniqueness contract can't be safely updated /
 /// deduped by Postgres; they're frequently a forgotten constraint
-/// rather than a deliberate "event log" shape.
+/// rather than a deliberate "event log" shape. Views, materialized
+/// views and foreign tables can't carry one, so they're left out.
 pub fn tables_without_pk_or_unique(cache: &SchemaCache) -> Vec<Finding> {
     let mut out = Vec::new();
     for t in &cache.tables {
+        if cache.views.contains(&(t.schema.clone(), t.name.clone())) {
+            continue;
+        }
         let has_constraint = cache.constraints.iter().any(|c| {
             c.schema.eq_ignore_ascii_case(&t.schema) && c.table.eq_ignore_ascii_case(&t.name)
         });
@@ -805,6 +809,15 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].object, "public.events");
         assert_eq!(findings[0].severity, Severity::High);
+    }
+
+    #[test]
+    fn tables_without_pk_or_unique_leaves_out_views() {
+        let mut c = cache_with(vec![("reporting", "mrr"), ("public", "events")]);
+        c.views.insert(("reporting".into(), "mrr".into()));
+        let findings = tables_without_pk_or_unique(&c);
+        let objects: Vec<_> = findings.iter().map(|f| f.object.as_str()).collect();
+        assert_eq!(objects, ["public.events"]);
     }
 
     #[test]
