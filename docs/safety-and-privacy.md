@@ -38,11 +38,12 @@
   keyword, and checks whether the statement carries a `WHERE`. It is
   deliberately over-cautious on ambiguous input — a CTE fronting a
   `DELETE`, or `EXPLAIN ANALYZE` on DML, is classified as the
-  dangerous inner statement, not as a harmless read. One documented
-  imprecision: `has_where` is a whole-statement token check, so a
-  `DELETE` whose only `WHERE` sits inside a subquery is treated as a
-  guarded delete (`Confirm`) rather than an unqualified one
-  (`Block`) — a real SQL parser would fix this (see `BACKLOG.md`).
+  dangerous inner statement, not as a harmless read. Only a `WHERE`
+  outside every parenthesis counts, so a `DELETE` whose only `WHERE`
+  sits inside a subquery is the unqualified delete it is (`Block`).
+  One documented imprecision: behind a CTE (`WITH … DELETE …`) the
+  check is whole-statement, so a `WHERE` anywhere in it counts and the
+  delete is `Confirm`ed rather than `Block`ed.
   `MERGE` (PG15+) has no dedicated classification; it maps to `Other`,
   which is always treated as a write and guarded (`Confirm` by
   default) rather than allowed through as if it were a `SELECT`.

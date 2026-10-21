@@ -10,10 +10,10 @@
 //! by design: a false "this is dangerous" only costs a keypress, a false "this
 //! is safe" costs production data.
 //!
-//! One known imprecision: `has_where` is a whole-statement keyword check, so a
-//! `DELETE` whose only `WHERE` sits in a subquery is treated as a guarded
-//! delete rather than an unqualified one. It is still flagged (`Confirm`), just
-//! not `Block`ed. A real SQL parser would fix this — see BACKLOG.md.
+//! `has_where` counts only a `WHERE` outside every parenthesis, so a `DELETE`
+//! whose only `WHERE` sits in a subquery is the unqualified delete it is. One
+//! known imprecision remains: behind a CTE (`WITH … DELETE …`) the check is
+//! still whole-statement, because the CTE's own DML sits in parentheses too.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -276,8 +276,10 @@ pub fn classify(sql: &str) -> StatementKind {
         .to_ascii_lowercase();
     // Keywords are only keywords in code. `UPDATE t SET note = 'where'` has no
     // WHERE clause, and reading one there would downgrade the guard from
-    // `update_without_where` (Block) to `update` (Confirm).
-    let has_where = word_present_in_code(&stripped, "where");
+    // `update_without_where` (Block) to `update` (Confirm). Nor is a WHERE
+    // in a subquery the statement's own: `DELETE FROM t USING (SELECT … WHERE
+    // …) s` deletes every row of `t`.
+    let has_where = word_present_at_top_level(&stripped, "where");
 
     let kind = match first.as_str() {
         "select" | "table" | "values" | "show" => StatementKind::Select,
@@ -305,7 +307,7 @@ pub fn classify(sql: &str) -> StatementKind {
         "explain" => classify(strip_explain_prefix(trimmed)),
         // A CTE can front any DML. Over-guard: if the body mentions a
         // destructive verb, treat the whole statement as that verb.
-        "with" => classify_cte(&stripped, has_where),
+        "with" => classify_cte(&stripped, word_present_in_code(&stripped, "where")),
         "" => StatementKind::Other,
         _ => StatementKind::Other,
     };
@@ -1416,6 +1418,35 @@ pub(crate) fn word_present_in_code(sql: &str, word: &str) -> bool {
         .any(|s| word_present(&sql[s.start..s.end], word))
 }
 
+/// `true` if `word` appears as a whole token in the code of `sql` outside
+/// every parenthesis. Parentheses count only in code, so one inside a string
+/// or comment moves nothing. Only unbalanced parentheses can mislead it, and
+/// the server rejects those statements anyway.
+pub(crate) fn word_present_at_top_level(sql: &str, word: &str) -> bool {
+    let mut depth = 0usize;
+    for span in scan(sql).into_iter().filter(|s| s.kind == SpanKind::Code) {
+        let text = &sql[span.start..span.end];
+        let mut seg_start = 0;
+        for (i, c) in text.char_indices() {
+            if c == '(' || c == ')' {
+                if depth == 0 && word_present(&text[seg_start..i], word) {
+                    return true;
+                }
+                depth = if c == '(' {
+                    depth + 1
+                } else {
+                    depth.saturating_sub(1)
+                };
+                seg_start = i + 1;
+            }
+        }
+        if depth == 0 && word_present(&text[seg_start..], word) {
+            return true;
+        }
+    }
+    false
+}
+
 /// The lower-cased identifier-ish tokens of `sql`'s code spans, in order,
 /// plus each `"…"` quoted identifier as one token with its quotes removed.
 /// String literals, dollar-quoted bodies and comments contribute nothing, so
@@ -1493,6 +1524,41 @@ mod ident_token_tests {
         }
         // The name inside a string literal is data.
         assert_eq!(classify("SELECT 'pg_read_file'"), StatementKind::Select);
+    }
+
+    #[test]
+    fn a_where_inside_parentheses_is_not_the_statements_own() {
+        for sql in [
+            "DELETE FROM t USING (SELECT id FROM u WHERE u.x = 1) s",
+            "UPDATE t SET a = (SELECT b FROM c WHERE c.id = 1)",
+            "DELETE FROM t USING (SELECT ')' AS p WHERE true) s",
+            "DELETE FROM t USING (SELECT 1 /* ) */ WHERE true) s",
+        ] {
+            assert!(
+                !word_present_at_top_level(sql, "where"),
+                "{sql} has no WHERE of its own"
+            );
+        }
+        for sql in [
+            "DELETE FROM t WHERE id IN (SELECT id FROM u)",
+            "DELETE FROM t USING (SELECT 1) s WHERE t.id = s.id",
+            "UPDATE t SET a = (1) WHERE id = 2",
+        ] {
+            assert!(word_present_at_top_level(sql, "where"), "{sql}");
+        }
+        assert_eq!(
+            classify("DELETE FROM t USING (SELECT id FROM u WHERE u.x = 1) s"),
+            StatementKind::Delete { has_where: false }
+        );
+        assert_eq!(
+            classify("UPDATE t SET a = (SELECT b FROM c WHERE c.id = 1)"),
+            StatementKind::Update { has_where: false }
+        );
+        // Behind a CTE the check stays whole-statement (see the module docs).
+        assert_eq!(
+            classify("WITH d AS (DELETE FROM t WHERE id = 1 RETURNING *) SELECT * FROM d"),
+            StatementKind::Delete { has_where: true }
+        );
     }
 
     #[test]
