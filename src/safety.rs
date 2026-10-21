@@ -1128,8 +1128,10 @@ fn dollar_tag_at(b: &[u8], i: usize) -> Option<usize> {
             return Some(j + 1 - i);
         }
         let first = j == i + 1;
-        // Tag rules: a letter or `_` first, digits allowed after.
-        let ok = c == b'_' || c.is_ascii_alphabetic() || (!first && c.is_ascii_digit());
+        // Postgres's `dolq_start` is `[A-Za-z\200-\377_]` and `dolq_cont`
+        // adds `0-9`: every byte from 0x80 up counts, so a multibyte tag
+        // (`$é$`, `$函数$`) opens a quote exactly as it does on the server.
+        let ok = (c != b'$' && is_ident_byte(c)) && (!first || !c.is_ascii_digit());
         if !ok {
             return None;
         }
@@ -2128,6 +2130,22 @@ mod tests {
         let parts = split_statements(sql);
         assert_eq!(parts.len(), 2);
         assert_eq!(classify(&parts[1]), StatementKind::Drop);
+    }
+
+    #[test]
+    fn a_multibyte_tag_opens_a_dollar_quote_as_postgres_does() {
+        // `$é$` and `$函数$` are legal tags (`dolq_start` takes every byte
+        // from 0x80 up), so the `;` inside is data and the body stays whole.
+        for tag in ["$é$", "$函数$", "$_é1$"] {
+            let sql = format!("DO {tag} BEGIN PERFORM 1; END {tag}; DROP TABLE users");
+            let parts = split_statements(&sql);
+            assert_eq!(parts.len(), 2, "{tag}: {parts:?}");
+            assert!(parts[0].ends_with(tag), "{tag}: {parts:?}");
+            assert_eq!(classify(&parts[1]), StatementKind::Drop);
+        }
+        // A digit still cannot lead, multibyte or not.
+        let parts = split_statements("SELECT $1é$ ; DROP TABLE users");
+        assert_eq!(parts.len(), 2);
     }
 
     #[test]
