@@ -145,7 +145,9 @@ impl Redactor {
                 .map(|r| &name[r])
                 .filter(|s| !is_generic(s))
                 .collect();
-            if segs.is_empty() {
+            // A one- or two-letter name (`u`) would black out that word
+            // all over the screen, the same as a short segment would.
+            if segs.is_empty() || name.chars().count() < MIN_SEGMENT {
                 continue;
             }
             for s in segs {
@@ -783,6 +785,8 @@ mod tests {
         let r = Redactor::new(["ab-prod"]);
         assert_eq!(r.redact("ab-prod"), "▓▓-prod");
         assert_eq!(r.redact("ab cd"), "ab cd");
+        // A short name on its own is not a name to hunt for.
+        assert_eq!(Redactor::new(["u", "ab"]).redact("u ab x"), "u ab x");
     }
 
     #[test]
