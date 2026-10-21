@@ -4131,6 +4131,113 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(child.wait().unwrap().success());
 }
 
+/// `apply_patches` (and the overview's `P`, which shares `plan_for` /
+/// `apply_for`) finds an `rds` environment's server through the RDS
+/// listing — with its secret — and never asks for upgrade targets,
+/// which the overview needs and patching doesn't. The `l` twin of this
+/// is `mcp_environment_logs_reads_only_listed_servers`.
+#[cfg(unix)]
+#[test]
+fn apply_patches_finds_an_rds_server_without_asking_for_upgrade_targets() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-rds", WRITABLE_PROFILE);
+    let vt = format!("pgman_it_rds_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-rds\"\n\
+             source = {{ kind = \"rds\", instances = [\"ledger-db\"], region = \"us-west-1\", account = \"210987654321\" }}\n\
+             sslmode = \"disable\"\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n\
+             [environments.secrets]\n\"ledger-db\" = \"demo/database/ledger/credentials\"\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    // The instance's endpoint is the compose postgres.
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "ledger-db", "Engine": "postgres", "EngineVersion": "16.10",
+          "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+          "Endpoint": {"Address": "127.0.0.1", "Port": 55432}, "DBName": "pgman_test"}]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let mut child = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("PATH", path)
+        .env("FAKE_AWS_ACCOUNT", "210987654321")
+        .env("FAKE_RDS_JSON", &rds)
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args = serde_json::json!({"environment": "it-rds", "server": "ledger-db",
+        "database": "pgman_test", "mode": "dry_run"});
+    writeln!(stdin, "{}", tool_call(2, "apply_patches", args)).unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(message.contains("002-x.sql"), "{message}");
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"],
+            "result": {"action": "accept", "content": {"apply": true}}})
+    )
+    .unwrap();
+    let (text, is_error) = reply(&[next()], 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["mode"], "dry_run", "{text}");
+    assert!(!table_has_id(&home, &vt, 2), "a dry run keeps nothing");
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        calls.contains("rds describe-db-instances") && calls.contains("get-secret-value"),
+        "the server and its secret come from AWS: {calls}"
+    );
+    assert!(
+        !calls.contains("describe-db-engine-versions"),
+        "finding the server needs no upgrade targets: {calls}"
+    );
+}
+
 fn table_has_id(home: &std::path::Path, table: &str, id: i64) -> bool {
     let out = batch_with_home(
         home,
