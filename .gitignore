@@ -15,3 +15,6 @@
 *.swp
 .idea/
 .vscode/
+
+# insta writes these for a failed snapshot; never commit one
+*.snap.new
