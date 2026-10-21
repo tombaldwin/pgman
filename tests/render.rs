@@ -1755,3 +1755,69 @@ fn slash_and_q_on_the_start_card_say_why_nothing_opened() {
         );
     }
 }
+
+/// Redaction mode: on a real-looking RDS environment, the host, account,
+/// cluster id, user and environment name are blocked out of the whole
+/// frame, the generic parts (`prod`, the region, `rds.amazonaws.com`)
+/// and the schema are not, and the footer says it is on. Off, it all
+/// shows — so the test can't pass on a frame that never had them.
+#[test]
+fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
+    use pgman::inventory::{EnvReport, Target};
+    use pgman::mcp::connections::Role;
+    let host = "examplecorp-prod.c9abc1.eu-west-2.rds.amazonaws.com";
+    let mut a = settle_app();
+    a.dsn = Some(Dsn::parse(&format!("postgres://ledger_app@{host}:5432/ledger")).unwrap());
+    a.environments.reports = vec![EnvReport {
+        name: "examplecorp-prod".into(),
+        source: "RDS 210987654321 eu-west-2".into(),
+        targets: vec![Target {
+            database: "ledger".into(),
+            server: "examplecorp-prod".into(),
+            role: Role::Primary,
+            replica_of: None,
+            host: Some(host.into()),
+            port: Some(5432),
+            engine: Some("postgres 16.4".into()),
+            status: Some("available".into()),
+            class: Some("db.t4g.medium".into()),
+            multi_az: Some(false),
+            connect: Err("no secret".into()),
+        }],
+        error: None,
+        probe: None,
+    }];
+    a.environments.probes = vec![vec![pgman::app::ProbeState::Off]];
+    a.mode = Mode::Environments;
+    a.last_error = Some(
+        "arn:aws:rds:eu-west-2:210987654321:db:examplecorp-prod refused from 10.20.30.40".into(),
+    );
+    let leaks = [
+        "examplecorp",
+        "210987654321",
+        "c9abc1",
+        "ledger",
+        "10.20.30.40",
+    ];
+
+    let off = dump(&render(&mut a, 140, 30));
+    for leak in leaks {
+        assert!(off.contains(leak), "{leak} never on screen:\n{off}");
+    }
+    assert!(!off.contains("REDACT"));
+
+    a.redact = true;
+    let on = dump(&render(&mut a, 140, 30));
+    for leak in leaks {
+        assert!(!on.contains(leak), "{leak} leaked:\n{on}");
+    }
+    for kept in [
+        "REDACT",
+        "-prod",
+        "eu-west-2",
+        "rds.amazonaws.com",
+        "arn:aws:rds",
+    ] {
+        assert!(on.contains(kept), "{kept} missing:\n{on}");
+    }
+}
