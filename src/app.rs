@@ -1078,6 +1078,9 @@ pub struct App {
     /// can't clobber the operator's real session state. Populated
     /// by `crate::demo::app`.
     pub demo: bool,
+    /// `--demo` only: the tap burst still to arrive (see
+    /// [`DemoTapFeed`]). `None` everywhere else.
+    pub demo_tap_feed: Option<DemoTapFeed>,
     pub conn_state: ConnState,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
@@ -1489,6 +1492,7 @@ impl App {
             theme,
             mode,
             demo: false,
+            demo_tap_feed: None,
             conn_state: ConnState::Disconnected,
             dsn,
             dsn_origin: None,
@@ -1685,6 +1689,7 @@ impl App {
                     // are cheap (one Instant::now per frame).
                     self.tick_watch();
                     self.tick_auto_refresh();
+                    self.tick_demo_tap(Instant::now());
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
@@ -1822,6 +1827,27 @@ impl App {
             || matches!(self.conn_state, ConnState::Connecting)
             || (self.auto_refresh && matches!(self.mode, Mode::SlowQueries | Mode::Sessions))
             || (self.environments.auto_probe && self.mode == Mode::Environments)
+            || self.demo_tap_feed.is_some()
+    }
+
+    /// One frame of `--demo`'s tap feed: from its `due` time on, the
+    /// next event arrives through [`Self::on_tap_event`], as a live
+    /// tap's would. The feed is dropped with its last event, which
+    /// also stops it holding the frame clock awake.
+    pub fn tick_demo_tap(&mut self, now: Instant) {
+        let Some(feed) = self.demo_tap_feed.as_mut() else {
+            return;
+        };
+        if now < feed.due {
+            return;
+        }
+        let next = feed.pending.pop_front();
+        if feed.pending.is_empty() {
+            self.demo_tap_feed = None;
+        }
+        if let Some(event) = next {
+            self.on_tap_event(event);
+        }
     }
 
     /// Fold one [`crate::tap::TapEvent`] into the app state.

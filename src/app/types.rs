@@ -1642,6 +1642,17 @@ pub struct TapBaseline {
     pub hotspots: Vec<crate::tap::Hotspot>,
 }
 
+/// `--demo`'s tap burst, still to arrive. From `due` on, one event is
+/// delivered per frame through [`super::App::on_tap_event`] — the live
+/// tap's path — so the demo opens with the tap quiet and the `TAP` /
+/// `N+1` badges light as its queries come in, rather than pre-lit
+/// before anything happened.
+#[derive(Debug, Clone)]
+pub struct DemoTapFeed {
+    pub due: std::time::Instant,
+    pub pending: std::collections::VecDeque<crate::tap::TapEvent>,
+}
+
 /// Liveness + backpressure-loss snapshot, fed by tap heartbeats
 /// and updated each time any tap event lands. Lets the chrome
 /// badge distinguish "JAR connected, no traffic" from "JAR

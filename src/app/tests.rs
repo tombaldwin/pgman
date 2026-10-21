@@ -11246,3 +11246,22 @@ fn a_written_file_is_named_first_and_its_directory_shortened() {
         "wrote report to r.md · in /Users/someone2"
     );
 }
+
+/// The frame clock is what delivers `--demo`'s tap burst: it must run
+/// while the feed is pending and stop once the feed is drained.
+#[test]
+fn demo_tap_feed_holds_the_frame_clock_until_drained() {
+    let mut a = crate::demo::launch_app(Theme::default());
+    a.splash_visible = false;
+    assert!(a.wants_animation(), "a pending feed needs frames");
+    let due = a.demo_tap_feed.as_ref().unwrap().due;
+    // Bounded: a feed that never lets go must fail here, not hang.
+    for _ in 0..1_000 {
+        a.tick_demo_tap(due);
+    }
+    assert!(a.demo_tap_feed.is_none(), "the feed outlived its events");
+    assert!(
+        !a.wants_animation(),
+        "a drained feed must let the clock idle"
+    );
+}

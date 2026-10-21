@@ -160,8 +160,22 @@ pub fn launch_app(theme: Theme) -> App {
             size: "3.4 GB".into(),
         },
     ];
+    // Nothing has happened at launch, so the tap is quiet: the burst
+    // arrives a couple of seconds in, an event a frame, and the TAP /
+    // N+1 badges light as it lands — the live tap's story, not a card
+    // pre-lit before anything ran.
+    let pending = std::mem::take(&mut a.tap_events);
+    a.tap_health = Default::default();
+    a.bump_tap_generation();
+    a.demo_tap_feed = Some(crate::app::DemoTapFeed {
+        due: std::time::Instant::now() + DEMO_TAP_DELAY,
+        pending,
+    });
     a
 }
+
+/// How long `--demo` keeps the tap quiet before its burst arrives.
+pub const DEMO_TAP_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Answer a query synthetically — no client, no network, called from
 /// `App::spawn_run_demo` on `Guard::Allow` in `--demo` mode.
@@ -1271,9 +1285,44 @@ mod tests {
              `e` then paste, and a paste appended to the pre-filled SELECT: {:?}",
             a.editor.buffer
         );
-        // Everything else app() sets up is untouched.
+        // Everything else app() sets up is untouched, bar the tap.
         assert_eq!(a.schema_cache.tables.len(), 3);
-        assert!(!a.tap_events.is_empty());
+    }
+
+    /// `--demo` opens with the tap quiet — no events, no TAP / N+1
+    /// badges — and the burst arrives after `DEMO_TAP_DELAY`, one event
+    /// a frame, until the N+1 finding is there and the feed is gone.
+    #[test]
+    fn launch_app_tap_is_quiet_until_the_burst_arrives() {
+        let mut a = launch_app(Theme::default());
+        assert!(a.tap_events.is_empty() && a.tap_health.query_count == 0);
+        assert!(a.current_nplus1().is_empty());
+        let feed = a.demo_tap_feed.as_ref().expect("a pending burst");
+        let (due, total) = (feed.due, feed.pending.len());
+        assert_eq!(total, tap_events().len());
+
+        // Before it's due: nothing arrives.
+        a.tick_demo_tap(due - std::time::Duration::from_millis(1));
+        assert!(a.tap_events.is_empty());
+
+        // From then on, one event per frame.
+        a.tick_demo_tap(due);
+        assert_eq!(a.tap_events.len(), 1);
+        for _ in 1..total {
+            a.tick_demo_tap(due);
+        }
+        assert_eq!(a.tap_events.len(), total);
+        assert!(a.tap_health.query_count > 0);
+        assert!(
+            a.demo_tap_feed.is_none(),
+            "the feed must go with its last event, or it holds the frame clock awake"
+        );
+        assert!(
+            a.current_nplus1()
+                .iter()
+                .any(|f| f.fingerprint.contains("order_items")),
+            "the delivered burst trips the detector, as app()'s pre-filled ring does"
+        );
     }
 
     #[test]
