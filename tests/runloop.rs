@@ -177,3 +177,23 @@ async fn run_loop_saves_the_tail_of_a_typing_burst_without_another_key() {
         "the draft file held {saved:?} before exit"
     );
 }
+
+/// `AppMsg::Terminate` (what SIGHUP / SIGTERM become) quits through
+/// the normal exit path: the draft is written as on `q`, though the
+/// event channel is still open and no key arrived.
+#[tokio::test]
+async fn run_loop_terminate_quits_and_saves_the_session() {
+    let mut app = settled_app();
+    app.mode = Mode::Editor;
+    app.editor.buffer = "select 2;".into();
+    let draft = app.draft_file.clone();
+    let msgs = app.msg_tx_clone();
+    let mut tui = HeadlessTui::default();
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    msgs.send(pgman::app::AppMsg::Terminate).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), app.run_with(&mut tui, rx))
+        .await
+        .expect("Terminate did not end the loop")
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "select 2;");
+}

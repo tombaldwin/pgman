@@ -10,6 +10,7 @@ impl App {
             msg,
             AppMsg::TapEvent { .. }
                 | AppMsg::UpdateCheck(_)
+                | AppMsg::Terminate
                 | AppMsg::EnvironmentsLoaded(_)
                 | AppMsg::EnvSecretResolved { .. }
                 | AppMsg::EnvDiscovered(_)
@@ -26,6 +27,10 @@ impl App {
             return;
         }
         match msg {
+            AppMsg::Terminate => {
+                tracing::info!("hangup or terminate signal: quitting");
+                self.should_quit = true;
+            }
             AppMsg::Booted {
                 server_version,
                 grid,

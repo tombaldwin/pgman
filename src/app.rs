@@ -1689,8 +1689,35 @@ impl App {
                 }
             }
         });
+        self.spawn_quit_on_signal();
         self.run_with(tui, event_rx).await
     }
+
+    /// Turn SIGHUP (the terminal closed) and SIGTERM into
+    /// [`AppMsg::Terminate`]. Their default action kills the process
+    /// on the spot, skipping the exit path that saves the session.
+    #[cfg(unix)]
+    fn spawn_quit_on_signal(&self) {
+        use tokio::signal::unix::{signal, SignalKind};
+        let tx = self.msg_tx.clone();
+        let (Ok(mut hup), Ok(mut term)) = (
+            signal(SignalKind::hangup()),
+            signal(SignalKind::terminate()),
+        ) else {
+            tracing::warn!("could not listen for SIGHUP / SIGTERM");
+            return;
+        };
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = hup.recv() => {}
+                _ = term.recv() => {}
+            }
+            let _ = tx.send(AppMsg::Terminate);
+        });
+    }
+
+    #[cfg(not(unix))]
+    fn spawn_quit_on_signal(&self) {}
 
     /// Generic loop body — drives any [`TuiHost`] from any `Event`
     /// source. Production passes the real `Tui` + a channel fed by

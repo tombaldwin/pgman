@@ -175,6 +175,10 @@ pub enum AppMsg {
     /// generation-tagged. `generation()` returns 0 for this
     /// variant.
     UpdateCheck(Option<crate::update_check::LatestRelease>),
+    /// The terminal hung up (SIGHUP, a closed tab) or the process was
+    /// asked to stop (SIGTERM). Quits through the normal exit path, so
+    /// the draft, history and saved queries are written as on `q`.
+    Terminate,
 }
 
 impl AppMsg {
@@ -198,6 +202,7 @@ impl AppMsg {
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::TapEvent { .. }
             | AppMsg::UpdateCheck(_)
+            | AppMsg::Terminate
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }
             | AppMsg::EnvDiscovered(_)
