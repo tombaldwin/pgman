@@ -1,8 +1,9 @@
 //! Schema-quality checks (the "schema wizard" — `W` key).
 //!
-//! Pure analysis over the `SchemaCache` snapshot — no live queries
-//! here, so the panel opens in microseconds and is safe against any
-//! database (read-only). Each `Finding` carries:
+//! Two passes. LINT001-004 are pure analysis over the `SchemaCache`
+//! snapshot, so the panel opens in microseconds. LINT101-107 come from
+//! [`fetch_live`]: read-only catalog and statistics queries, merged into
+//! the same list when they land. Each `Finding` carries:
 //!
 //!   - `severity` — colour-coded triage signal
 //!   - `code` — short stable identifier (`LINT001`) so operators
@@ -11,12 +12,6 @@
 //!   - `suggestion` — optional remediation hint (an SQL snippet or
 //!     a rule of thumb)
 //!
-//! Live-query checks (FK without index, unused indexes, bloated
-//! tables, missing comments, table sizes, dead-tuple ratio) are
-//! follow-ups — they need `pg_index` / `pg_stat_user_indexes` /
-//! `pg_stat_user_tables` fetches that the cache doesn't carry yet.
-//! Adding them is a separate vertical: a new async snapshot,
-//! merged into the findings list.
 
 use crate::query::schema::SchemaCache;
 
