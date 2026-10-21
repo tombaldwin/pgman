@@ -214,7 +214,7 @@ impl App {
         };
         let label = format!("{schema}.{table}");
         if self.demo && self.client.is_none() {
-            let result = crate::demo::table_ddl(&self.schema_cache, &schema, &table)
+            let result = crate::demo::table_ddl(&schema, &table)
                 .ok_or_else(|| format!("{label}: no DDL in --demo"));
             self.on_ddl_loaded(&label, result);
             return;

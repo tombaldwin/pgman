@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: callers · sort: total time · v cycle · Shift-B baseline · s sort · c clear · q close ───────────────────────────────────────────────╮       │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: callers · sort: total time · v cycle · Shift-B baseline · s sort · c clear · q close ──────────────────────────────────────────────╮       │
 │       │   CALLS    ERR        P50        P95   FPS  CALLER · LAST FINGERPRINT                                                                                                                │       │
-╰───────│       6      0      450µs      495µs     1  OrderService.loadItems:88 · select * from order_items where order_id = ?                                                                 │───────╯
-╭[ ◆ res│       1      0      1.8ms      1.8ms     1  OrderService.listOpen:54 · select id, user_id, status from orders where status = ?                                                       │───────╮
-│id  ema│       1      0      310µs      310µs     1  UserController.show:31 · select id, email, plan from users where id = ?                                                                  │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│                                                                                                                                                                                      │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
+╰───────│       8      0      465µs      525µs     1  InvoiceService.loadLines:112 · select id, description, quantity, unit_amount, amount from invoice_…                                      │───────╯
+╭[ ◆ res│       1      0      2.3ms      2.3ms     1  DunningJob.advance:77 · update subscriptions set status = ?, current_period_end = ? where i…                                             │───────╮
+│number │       1      0      1.8ms      1.8ms     1  InvoiceController.list:58 · select id, number, status, total, due_at from invoices where custom…                                         │       │
+│INV-004│       1      0      290µs      290µs     1  CustomerRepository.findById:41 · select id, name, billing_email, currency from customers where id = ?                                    │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│INV-004│                                                                                                                                                                                      │       │
+│       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │

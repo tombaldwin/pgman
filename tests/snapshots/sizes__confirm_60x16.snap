@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
+│  FROM invoices                                           │
 │  WHERE ╭[ ◆ confirm ◆ ]─────────────────────────╮        │
 │  ORDER │run (DELETE without WHERE) · Postgres   │        │
 ╰────────│will refuse it — this session is        │────────╯
 ╭[ ◆ resu│read-only                               │────────╮
-│id  emai│                                        │        │
-│1   ada@│DELETE FROM orders                      │00+00   │
-│2   linu│                                        │00+00   │
-│3   grac│y = send it anyway · n / esc = cancel   │00+00   │
-│4   alan╰────────────────────────────────────────╯00+00   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│number  │                                        │due_at  │
+│INV-0048│DELETE FROM orders                      │2026-10-│
+│INV-0048│                                        │2026-10-│
+│INV-0048│y = send it anyway · n / esc = cancel   │2026-10-│
+│INV-0048╰────────────────────────────────────────╯2026-10-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   y run · n / esc cancel

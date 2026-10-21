@@ -3,8 +3,8 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭──────────────────────────────────────────────────────────╮
 │                                                          │
 │ pgman — keys (? / F1 help · : commands · ! / F2 error    │
@@ -15,7 +15,7 @@ expression: dump(&buf)
 │     esc           back to the environments overview,     │
 │                   when environments are configured       │
 │     ? / F1        toggle this help (both work from every │
-│ ↓ 357 more below                                         │
+│ ↓ 360 more below                                         │
 │                                                          │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

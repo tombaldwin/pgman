@@ -324,8 +324,8 @@ fn scr_landing_databases() -> App {
 fn scr_normal_filter() -> App {
     let mut a = base();
     a.mode = Mode::Normal;
-    a.grid_view.filter = Some("pro".into());
-    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("pro"));
+    a.grid_view.filter = Some("gbp".into());
+    a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, Some("gbp"));
     a.grid_state.select(Some(0));
     a
 }
@@ -513,9 +513,9 @@ fn scr_grid_filter() -> App {
     let mut a = base();
     a.mode = Mode::Normal;
     a.on_key(key('/'));
+    a.on_key(key('g'));
+    a.on_key(key('b'));
     a.on_key(key('p'));
-    a.on_key(key('r'));
-    a.on_key(key('o'));
     assert_eq!(a.mode, Mode::GridFilter);
     a
 }
@@ -524,9 +524,9 @@ fn scr_grid_find() -> App {
     let mut a = base();
     a.mode = Mode::Normal;
     a.on_key(key('f'));
+    a.on_key(key('g'));
+    a.on_key(key('b'));
     a.on_key(key('p'));
-    a.on_key(key('r'));
-    a.on_key(key('o'));
     assert_eq!(a.mode, Mode::GridFind);
     a
 }
@@ -635,10 +635,11 @@ fn scr_sessions() -> App {
 }
 
 fn scr_schema_lint() -> App {
+    // Opened with `W`, as an operator would, so the demo's live checks
+    // are in the frame as well as the catalog-only ones.
     let mut a = base();
-    a.schema_lint.findings = pgman::query::lint::run_all(&a.schema_cache);
-    a.schema_lint.cursor = 0;
-    a.mode = Mode::SchemaLint;
+    a.on_key(key('W'));
+    assert_eq!(a.mode, Mode::SchemaLint);
     a
 }
 
@@ -716,14 +717,20 @@ fn scr_result_diff() -> App {
     a.on_key(key('D')); // pin A
                         // Mutate the grid so B differs from A: change a cell, drop a
                         // row, add a row.
-    a.grid.rows[0][1] = "ada+updated@example.com".into();
+    a.grid.rows[0][4] = "5512.00".into();
     a.grid.rows.remove(1);
-    a.grid.rows.push(vec![
-        "7".into(),
-        "nathan@example.com".into(),
-        "free".into(),
-        "2026-04-01 00:00:00+00".into(),
-    ]);
+    a.grid.rows.push(
+        [
+            "INV-004833",
+            "2103",
+            "open",
+            "USD",
+            "249.00",
+            "2026-11-01 09:00:00+00",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
     a.on_key(key('D')); // diff B against A
     assert_eq!(a.mode, Mode::ResultDiff);
     a

@@ -44,6 +44,12 @@ struct Cli {
     #[arg(long)]
     demo: bool,
 
+    /// Block out hosts, IPs, account IDs, ARNs and known server names
+    /// on screen, for screenshots; schema and data stay visible.
+    /// `:redact` toggles it; `redact_default = true` in config.toml.
+    #[arg(long)]
+    redact: bool,
+
     /// Write a commented default safety.toml under the config dir, then exit.
     #[arg(long)]
     init_config: bool,
@@ -250,6 +256,9 @@ async fn main() -> anyhow::Result<()> {
     if cli.demo {
         tracing::info!("starting in --demo mode (synthetic data, no database)");
         let mut application = pgman::demo::launch_app(theme);
+        // `--redact` only: the demo reads no operator config.
+        application.redact = cli.redact;
+        application.redact_env_names = pgman::redact::env_names();
         // `--demo --log` opens on the log's queries, as without `--demo`;
         // the demo used to ignore it and land on the start card.
         if let Some(text) = read_log_arg_cli(cli.log.as_deref(), log_stdin) {
@@ -393,6 +402,13 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.dsn_origin = dsn_origin;
+    let (redact_default, redact_warn) = pgman::redact::config_default();
+    application.redact = cli.redact || redact_default;
+    application.redact_env_names = pgman::redact::env_names();
+    if let Some(w) = redact_warn {
+        tracing::warn!("{w}");
+        application.last_error = Some(w);
+    }
     // Environments are home when there are any and no --dsn named a
     // connection: the overview opens first, on the row used last time.
     let env_state = pgman::util::data_dir().join("environments-last");

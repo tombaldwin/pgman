@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││          PostgreSQL   save query │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││          PostgreSQL   save query │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DESC;                                                                       │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
+│  WHERE status = 'open'                                                                           │
+│  ORDER BY due_at;                                                                                │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
-│id  email                  plan  created_at                                                       │
-│1   ada@exampl╭[ ◆ save query · enter persist · esc cancel ◆ ]─────────────────────╮              │
-│2   linus@exam│name:                                                               │              │
-│3   grace@exam│select-id-email-plan-created_at                                     │              │
-│4   alan@examp│                                                                    │              │
-│5   edsger@exa╰────────────────────────────────────────────────────────────────────╯              │
-│6   katherine@example.com  pro   2026-03-21 16:40:00+00                                           │
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
+│number      customer_id  status  currency  total     due_at                                       │
+│INV-004822  21╭[ ◆ save query · enter persist · esc cancel ◆ ]─────────────────────╮              │
+│INV-004824  21│name:                                                               │              │
+│INV-004827  21│select-number-customer_id-status-curr                               │              │
+│INV-004829  21│                                                                    │              │
+│INV-004831  21╰────────────────────────────────────────────────────────────────────╯              │
+│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

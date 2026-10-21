@@ -126,6 +126,10 @@ pub struct SchemaCache {
     /// `indexes` above has every index's name for completion; this has
     /// which table each belongs to, for the schema browser.
     pub indexes_by_table: HashMap<(String, String), Vec<IndexMeta>>,
+    /// The entries of `tables` that are views, materialized views or
+    /// foreign tables, keyed `(schema, name)`: relations that can carry
+    /// no primary key, so the schema wizard doesn't ask them for one.
+    pub views: std::collections::HashSet<(String, String)>,
 }
 
 /// Pretty-print a byte count using IEC units (KiB, MiB, GiB).
@@ -392,7 +396,10 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
                 // r, v, m, p, f all live in `tables` — completion
                 // doesn't distinguish them today, and the column
                 // shapes match.
-                _ => {
+                kind => {
+                    if matches!(kind, b'v' | b'm' | b'f') {
+                        cache.views.insert(key.clone());
+                    }
                     cache.tables.push(meta);
                     cache.columns_by_table.entry(key.clone()).or_default();
                     cache.columns_meta_by_table.entry(key.clone()).or_default();

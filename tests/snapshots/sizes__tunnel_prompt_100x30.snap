@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││         PostgreSQL   connections │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││         PostgreSQL   connections │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DESC;                                                                       │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
+│  WHERE status = 'open'                                                                           │
+│  ORDER BY due_at;                                                                                │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
-│id  email                  plan  created_at                                                       │
-│1   ada@example.com        pro   2026-01-04 09:12:00+00                                           │
-│2   linus@ex╭[ ◆ open an ssh tunnel? ◆ ]─────────────────────────────────────────────╮            │
-│3   grace@ex│  ssh tom@bastion.example.com → db.internal:5432                        │            │
-│4   alan@exa│                                                                        │            │
-│5   edsger@e│  picked project data source 'via-bastion' wants an ssh session first.  │            │
-│6   katherin│  pgman runs the system ssh binary with your keys, agent and            │            │
+╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────────────────────────────────────────────╮
+│number      customer_id  status  currency  total     due_at                                       │
+│INV-004822  2102         open    EUR       5712.00   2026-10-01 09:00:00+00                       │
+│INV-004824  ╭[ ◆ open an ssh tunnel? ◆ ]─────────────────────────────────────────────╮            │
+│INV-004827  │  ssh tom@bastion.example.com → db.internal:5432                        │            │
+│INV-004829  │                                                                        │            │
+│INV-004831  │  picked project data source 'via-bastion' wants an ssh session first.  │            │
+│            │  pgman runs the system ssh binary with your keys, agent and            │            │
 │            │  ~/.ssh/config — before any Postgres traffic, so a failed              │            │
 │            │  database login would not stop it.                                     │            │
 │            │                                                                        │            │

@@ -4,32 +4,32 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││         PostgreSQL   schema lint │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││         PostgreSQL   schema lint │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  F╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────╮   │
-│  W│no findings — schema looks clean                                                          │   │
-│  O│                                                                                          │   │
-│   │                                                                                          │   │
-╰───│                                                                                          │───╯
-╭[ ◆│                                                                                          │───╮
-│id │                                                                                          │   │
-│1  │                                                                                          │   │
-│2  │                                                                                          │   │
-│3  │                                                                                          │   │
-│4  │                                                                                          │   │
-│5  │                                                                                          │   │
-│6  │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
+│  W│  SEV    CODE     object                                            title                 │   │
+│  O│  HIGH   LINT101  public.accounts.accounts_customer_id_fkey         FK column not the lea…│   │
+│   │  HIGH   LINT101  public.audit_log.audit_log_actor_user_id_fkey     FK column not the lea…│   │
+╰───│  HIGH   LINT101  public.credit_notes.credit_notes_invoice_id_fkey  FK column not the lea…│───╯
+╭[ ◆│  HIGH   LINT101  public.customers.customers_tax_rate_id_fkey       FK column not the lea…│───╮
+│num│  HIGH   LINT101  public.invoice_lines.invoice_lines_tax_rate_id_…  FK column not the lea…│   │
+│INV│  HIGH   LINT101  public.invoices.invoices_subscription_id_fkey     FK column not the lea…│   │
+│INV│  HIGH   LINT101  public.refunds.refunds_payment_id_fkey            FK column not the lea…│   │
+│INV│  HIGH   LINT101  public.subscription_items.subscription_items_pl…  FK column not the lea…│   │
+│INV│  LINT101 · FK column not the leading column of any index                                 │   │
+│INV│  object: public.accounts.accounts_customer_id_fkey                                       │   │
+│   │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (cust  │   │
+│   │  omer_id) — no index leads with the first FK column, so cascade / lookup queries will s  │   │
+│   │  equential-scan                                                                          │   │
+│   │  suggest: CREATE INDEX ON public.accounts (customer_id);                                 │   │
 │   │                                                                                          │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · q / esc close · ? help
+ RO   TAP   N+1 ×1   tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys

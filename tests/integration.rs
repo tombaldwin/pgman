@@ -4854,6 +4854,44 @@ fn schema_fetch_reads_each_tables_indexes() {
     );
 }
 
+/// The schema fetch marks views and materialized views, and the schema
+/// wizard's missing-primary-key check (LINT001) leaves them out: they
+/// can't carry one.
+#[test]
+fn schema_fetch_marks_views_so_lint001_skips_them() {
+    let home = scratch_home("views", WRITABLE_PROFILE);
+    let (t, v, m) = (it_name("vt"), it_name("vv"), it_name("vm"));
+    let sql = format!(
+        "CREATE TABLE {t} (a int); \
+         CREATE VIEW {v} AS SELECT a FROM {t}; \
+         CREATE MATERIALIZED VIEW {m} AS SELECT a FROM {t}"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let cache = rt.block_on(async {
+        let client = pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+            .await
+            .unwrap();
+        pgman::query::schema::fetch(&client).await
+    });
+    let key = |n: &str| ("public".to_string(), n.to_string());
+    assert!(cache.views.contains(&key(&v)), "view marked");
+    assert!(cache.views.contains(&key(&m)), "matview marked");
+    assert!(!cache.views.contains(&key(&t)), "table not marked");
+    let flagged: Vec<String> = pgman::query::lint::tables_without_pk_or_unique(&cache)
+        .into_iter()
+        .map(|f| f.object)
+        .collect();
+    assert!(flagged.contains(&format!("public.{t}")), "{flagged:?}");
+    assert!(!flagged.contains(&format!("public.{v}")), "{flagged:?}");
+    assert!(!flagged.contains(&format!("public.{m}")), "{flagged:?}");
+}
+
 /// The schema browser's DDL copy round-trips: drop the table, run the
 /// statement pgman wrote (through pgman's own batch path), and the
 /// catalog gives back the same DDL. Covers serial, identity, generated

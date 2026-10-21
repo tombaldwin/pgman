@@ -4,25 +4,25 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││      PostgreSQL   confirm │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││      PostgreSQL   confirm │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
-│  FROM users                                                                  │
-│  WHERE plan = 'pro'                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  FROM invoices                                                               │
+│  WHERE status = 'open'                                                       │
 │  ORDER BY ╭[ ◆ confirm ◆ ]───────────────────────────────────────╮           │
 ╰───────────│run (DELETE without WHERE) · Postgres will refuse it —│───────────╯
 ╭[ ◆ result │this session is read-only                             │───────────╮
-│id  email  │                                                      │           │
-│1   ada@exa│DELETE FROM orders                                    │           │
-│2   linus@e│                                                      │           │
-│3   grace@e│y = send it anyway · n / esc = cancel                 │           │
-│4   alan@ex╰──────────────────────────────────────────────────────╯           │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00                       │
-│6   katherine@example.com  pro   2026-03-21 16:40:00+00                       │
+│number     │                                                      │           │
+│INV-004822 │DELETE FROM orders                                    │00:00+00   │
+│INV-004824 │                                                      │00:00+00   │
+│INV-004827 │y = send it anyway · n / esc = cancel                 │00:00+00   │
+│INV-004829 ╰──────────────────────────────────────────────────────╯00:00+00   │
+│INV-004831  2111         open    GBP       298.80    2026-10-28 09:00:00+00   │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

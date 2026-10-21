@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ environments · log errors ◆ ] q back · j/k scroll ────╮
 │  staging · staging — recent errors from its RDS log      │
 │                                                          │
-│  FATAL ×1 · last 2026-03-02 09:31:12 UTC ·               │
+│  FATAL ×1 · last 2026-10-21 09:31:12 UTC ·               │
 │    [unknown]@[unknown]                                   │
-│      password authentication failed for user "report"    │
-│  ERROR ×2 · last 2026-03-02 09:20:40 UTC · shop@shop     │
+│      password authentication failed for user "finance_ro"│
+│  ERROR ×1 · last 2026-10-21 09:20:40 UTC · billing@ledger│
+│      insert or update on table "usage_events_2026_10"    │
+│        violates foreign key constraint                   │
+│        "usage_events_subscription_item_id_fkey"          │
+│  ERROR ×3 · last 2026-10-21 09:12:48 UTC · billing@ledger│
 │      duplicate key value violates unique constraint      │
-│        "orders_pkey"                                     │
-│                                                          │
-│                                                          │
-│                                                          │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · ? +5 more

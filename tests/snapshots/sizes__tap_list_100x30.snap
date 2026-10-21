@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││            PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││            PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  F╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · … ──╮   │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  F╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · … ─╮   │
 │  W│    DURATION       ROWS  APP                   SQL / KIND                                 │   │
-│  O│       1.8ms          1  shop-api              SELECT id, user_id, status FROM orders WHE…│   │
-│   │       420µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-╰───│       435µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───╯
-╭[ ◆│       450µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│───╮
-│id │       465µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│1  │       480µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│2  │       495µs          1  shop-api              SELECT * FROM order_items WHERE order_id =…│   │
-│3  │       310µs          1  shop-api              SELECT id, email, plan FROM users WHERE id…│   │
-│4  │                                                                                          │   │
-│5  │                                                                                          │   │
-│6  │                                                                                          │   │
+│  O│       290µs          1  billing-api           SELECT id, name, billing_email, currency F…│   │
+│   │       1.8ms          1  billing-api           SELECT id, number, status, total, due_at F…│   │
+╰───│       420µs          1  billing-api           SELECT id, description, quantity, unit_amo…│───╯
+╭[ ◆│       435µs          1  billing-api           SELECT id, description, quantity, unit_amo…│───╮
+│num│       450µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│INV│       465µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│INV│       480µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│INV│       495µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│INV│       510µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│INV│       525µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
+│   │       2.3ms          1  billing-api           UPDATE subscriptions SET status = ?, curre…│   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │
 │   │                                                                                          │   │

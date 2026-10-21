@@ -3,12 +3,12 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
-│  WHERE plan = 'pro'                                      │
-│  ORDER BY created_at DESC;                               │
+│  FROM invoices                                           │
+│  WHERE status = 'open'                                   │
+│  ORDER BY due_at;                                        │
 ╰──────────────────────────────────────────────────────────╯
 ╭╭[ ◆ open an ssh tunnel? ◆ ]─────────────────────────────╮╮
 ││  ssh tom@bastion.example.com → db.internal:5432        ││

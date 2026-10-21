@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                   PostgreSQL   JDBC tap │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                   PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
-│  WH╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · Shift-B baseline ·╮    │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WH╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · view: hotspots · sort: total time · v cycle · Shift-B baseline ╮    │
 │  OR│   CALLS    ERR        P50        P95        P99  FINGERPRINT · LAST CALLER                                 │    │
-│    │       6      0      450µs      495µs      495µs  select * from order_items wh… · OrderService.loadItems:88 │    │
-╰────│       1      0      1.8ms      1.8ms      1.8ms  select id, user_id, status f… · OrderService.listOpen:54  │────╯
-╭[ ◆ │       1      0      310µs      310µs      310µs  select id, email, plan from … · UserController.show:31    │────╮
-│id  │                                                                                                            │    │
-│1   │                                                                                                            │    │
-│2   │                                                                                                            │    │
-│3   │                                                                                                            │    │
-│4   │                                                                                                            │    │
-│5   │                                                                                                            │    │
-│6   │                                                                                                            │    │
+│    │       8      0      465µs      525µs      525µs  select id, description, quan… · InvoiceService.loadLines:1│    │
+╰────│       1      0      2.3ms      2.3ms      2.3ms  update subscriptions set sta… · DunningJob.advance:77     │────╯
+╭[ ◆ │       1      0      1.8ms      1.8ms      1.8ms  select id, number, status, t… · InvoiceController.list:58 │────╮
+│numb│       1      0      290µs      290µs      290µs  select id, name, billing_ema… · CustomerRepository.findByI│    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

@@ -45,16 +45,18 @@ and breaking changes.
   with `:param` prompts, `$EDITOR`, `\watch`, DBUnit fixture apply and
   capture.
 - **Safety** — read-only by default, `statement_timeout`, per-database
-  guards (block / confirm / allow) on every statement, DML wrapped in a
-  rollback transaction, `EXPLAIN ANALYZE` always rolled back, and a
+  guards (block / confirm / allow) on every statement, DML left in an
+  open transaction until you commit or roll it back, `EXPLAIN ANALYZE`
+  always rolled back, and a
   project's `[safety]` block can only tighten yours.
 - **DBA panels** — schema browser, schema-lint wizard, EXPLAIN tree,
   slow queries, sessions and locks, result diff, `\l`, `\x`, `\c`, `\i`,
   the `\d` family, `\timing`.
 - **MCP server** — `pgman mcp serve` gives Claude Code (or any MCP
-  client) read-only tools: `query`, `sessions_locks` (a pre-flight before
-  a schema change), `pending_patches`, `connections`, `environments` and
-  `doctor`. Every session is read-only whatever `safety.toml` says;
+  client) tools: `query`, `sessions_locks` (a pre-flight before a schema
+  change), `pending_patches`, `connections`, `environments` and `doctor`,
+  with more below. Every session is read-only whatever `safety.toml`
+  says, except `apply_patches` (see Applying patches below);
   personal connections can tunnel and read their password from AWS
   Secrets Manager; a `primary` connection serves only the lock check.
 - **Environments overview** — `E` lists every database in each
@@ -214,7 +216,18 @@ and breaking changes.
   which channel installed it; an update check at most every six hours
   that never delays the first frame (`--no-update-check`).
 - **`--demo`** — the whole tool against synthetic data, no database,
-  answering queries through the real guards.
+  answering queries through the real guards. Its database is `ledger`,
+  the billing database of a made-up subscriptions product: 26 relations
+  across `public` and `reporting` (partitioned usage events, views,
+  identity keys, partial indexes), answers that honour a WHERE's
+  `column = value` terms, EXPLAIN plans from its row estimates, and
+  four environments — production with a replica, staging, a stopped
+  dev, a local container — whose versions, drift, pending patches,
+  log errors, sessions and slow queries tell one story.
+- **Redaction mode** — `--redact`, `:redact` or `redact_default = true`
+  blocks out hosts, IPs, account IDs, ARNs and every server, environment
+  and secret name pgman knows, on every screen, for screenshots of a
+  real database; schema and data stay visible.
 
 ### Hardening before release
 

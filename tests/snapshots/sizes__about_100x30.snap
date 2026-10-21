@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││               PostgreSQL   about │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││               PostgreSQL   about │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
-│  FROM users                                                                                      │
-│  WHERE plan = 'pro'                                                                              │
-│  ORDER BY created_at DES╭[ ◆ about ◆ ]─────────────────────────────────╮                         │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
+│  FROM invoices                                                                                   │
+│  WHERE status = 'open'                                                                           │
+│  ORDER BY due_at;       ╭[ ◆ about ◆ ]─────────────────────────────────╮                         │
 │                         │                                              │                         │
 ╰─────────────────────────│                                              │─────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]│              pgman X.X.X · beta              │─────────────────────────╮
-│id  email                │       installed via a standalone binary      │                         │
-│1   ada@example.com      │   k9s-style Postgres TUI for Java/AWS shops  │                         │
-│2   linus@example.com    │            server: pg 16.2 (demo)            │                         │
-│3   grace@example.com    │                                              │                         │
-│4   alan@example.com     │       by Tom Baldwin / Polymorphism Ltd      │                         │
-│5   edsger@example.com   │          license: MIT OR Apache-2.0          │                         │
-│6   katherine@example.com│                                              │                         │
+╭[ ◆ result · 5 row(s) ◆ ]│              pgman X.X.X · beta              │─────────────────────────╮
+│number      customer_id  │       installed via a standalone binary      │                         │
+│INV-004822  2102         │   k9s-style Postgres TUI for Java/AWS shops  │00                       │
+│INV-004824  2104         │            server: pg 16.4 (demo)            │00                       │
+│INV-004827  2107         │                                              │00                       │
+│INV-004829  2109         │       by Tom Baldwin / Polymorphism Ltd      │00                       │
+│INV-004831  2111         │          license: MIT OR Apache-2.0          │00                       │
+│                         │                                              │                         │
 │                         │           esc / enter / A to close           │                         │
 │                         │                                              │                         │
 │                         ╰──────────────────────────────────────────────╯                         │

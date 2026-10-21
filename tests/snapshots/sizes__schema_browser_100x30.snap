@@ -4,30 +4,30 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││              PostgreSQL   schema │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││              PostgreSQL   schema │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                              │
+│> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  FRO╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────╮     │
-│  WHE│▼ public  (3)                     public.order_items                                  │     │
-│  ORD│  ▼ order_items  (5 col, 1 cons)                                                      │     │
-│     │      · id : bigint NOT NULL      columns (5)                                         │     │
-╰─────│      · order_id : bigint NOT NU…   · id                                              │─────╯
-╭[ ◆ r│      · sku : varchar(40) NOT NU…   · order_id                                        │─────╮
-│id  e│      · qty : integer NOT NULL      · sku                                             │     │
-│1   a│      · price_cents : integer NO…   · qty                                             │     │
-│2   l│      ◆ order_items_pkey            · price_cents                                     │     │
-│3   g│      ⌁ order_items_order_id_idx                                                      │     │
-│4   a│  ▼ orders  (5 col, 1 cons)       constraints (1)                                     │     │
-│5   e│      · id : bigint NOT NULL        · order_items_pkey                                │     │
-│6   k│      · user_id : bigint NOT NULL                                                     │     │
-│     │      · status : varchar(20) NOT… indexes (2)                                         │     │
-│     │      · total_cents : integer NO…   · order_items_order_id_idx  index                 │     │
-│     │      · created_at : timestamptz…   · order_items_pkey  primary key                   │     │
-│     │      ◆ orders_pkey                                                                   │     │
+│  WHE│▼ public  (20)                    schema: public                                      │     │
+│  ORD│  ▼ accounts  (5 col, 1 cons)                                                         │     │
+│     │      · id : bigint NOT NULL      20 table(s)                                         │     │
+╰─────│      · customer_id : bigint NOT…                                                     │─────╯
+╭[ ◆ r│      · balance : numeric(12,2) … enter to expand — then arrow / j/k into the tables  │─────╮
+│numbe│      · currency : character(3) …                                                     │     │
+│INV-0│      · updated_at : timestamp w…                                                     │     │
+│INV-0│      ◆ accounts_pkey                                                                 │     │
+│INV-0│  ▼ audit_log  (7 col, 1 cons)                                                        │     │
+│INV-0│      · id : bigint NOT NULL                                                          │     │
+│INV-0│      · actor_user_id : bigint                                                        │     │
+│     │      · action : text NOT NULL                                                        │     │
+│     │      · entity : text NOT NULL                                                        │     │
+│     │      · entity_id : bigint NOT N…                                                     │     │
+│     │      · changes : jsonb NOT NULL                                                      │     │
+│     │      · at : timestamp with time…                                                     │     │
 │     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │

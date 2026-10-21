@@ -4,26 +4,31 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                             PostgreSQL   schema lint │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                             PostgreSQL   schema lint │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
-│       │no findings — schema looks clean                                                                                                                                                      │       │
-╰───────│                                                                                                                                                                                      │───────╯
-╭[ ◆ res│                                                                                                                                                                                      │───────╮
-│id  ema│                                                                                                                                                                                      │       │
-│1   ada│                                                                                                                                                                                      │       │
-│2   lin│                                                                                                                                                                                      │       │
-│3   gra│                                                                                                                                                                                      │       │
-│4   ala│                                                                                                                                                                                      │       │
-│5   eds│                                                                                                                                                                                      │       │
-│6   kat│                                                                                                                                                                                      │       │
+│       │  SEV    CODE     object                                            title                                                                                                             │       │
+╰───────│  HIGH   LINT101  public.accounts.accounts_customer_id_fkey         FK column not the leading column of any index                                                                     │───────╯
+╭[ ◆ res│  HIGH   LINT101  public.audit_log.audit_log_actor_user_id_fkey     FK column not the leading column of any index                                                                     │───────╮
+│number │  HIGH   LINT101  public.credit_notes.credit_notes_invoice_id_fkey  FK column not the leading column of any index                                                                     │       │
+│INV-004│  HIGH   LINT101  public.customers.customers_tax_rate_id_fkey       FK column not the leading column of any index                                                                     │       │
+│INV-004│  HIGH   LINT101  public.invoice_lines.invoice_lines_tax_rate_id_…  FK column not the leading column of any index                                                                     │       │
+│INV-004│  HIGH   LINT101  public.invoices.invoices_subscription_id_fkey     FK column not the leading column of any index                                                                     │       │
+│INV-004│  HIGH   LINT101  public.refunds.refunds_payment_id_fkey            FK column not the leading column of any index                                                                     │       │
+│INV-004│  HIGH   LINT101  public.subscription_items.subscription_items_pl…  FK column not the leading column of any index                                                                     │       │
+│       │  HIGH   LINT101  public.subscription_items.subscription_items_su…  FK column not the leading column of any index                                                                     │       │
+│       │  HIGH   LINT101  public.subscriptions.subscriptions_coupon_id_fk…  FK column not the leading column of any index                                                                     │       │
+│       │  HIGH   LINT101  public.subscriptions.subscriptions_plan_id_fkey   FK column not the leading column of any index                                                                     │       │
+│       │  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK column not the leading column of any index                                                                     │       │
+│       │  MED    LINT102  public.audit_log.audit_log_entity_idx             index never scanned since last stats reset                                                                        │       │
+│       │  MED    LINT104  public.webhook_deliveries                         high dead-tuple ratio (table bloat)                                                                               │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
@@ -34,16 +39,11 @@ expression: dump(&buf)
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
-│       │                                                                                                                                                                                      │       │
+│       │  LINT101 · FK column not the leading column of any index                                                                                                                             │       │
+│       │  object: public.accounts.accounts_customer_id_fkey                                                                                                                                   │       │
+│       │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (customer_id) — no index leads with the first FK column, so cascade / lookup queries will sequent  │       │
+│       │  ial-scan                                                                                                                                                                            │       │
+│       │  suggest: CREATE INDEX ON public.accounts (customer_id);                                                                                                                             │       │
 │       │                                                                                                                                                                                      │       │
 │       │                                                                                                                                                                                      │       │
 │       ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · q / esc close · ? help
+ RO   TAP   N+1 ×1   tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys

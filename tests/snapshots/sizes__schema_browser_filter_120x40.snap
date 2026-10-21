@@ -4,42 +4,42 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                     PostgreSQL   schema │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                     PostgreSQL   schema │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
 │  WHER╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
-│  ORDE│▼ public  (3)                            schema: public                                                │       │
-│      │  ▼ orders  (5 col, 1 cons)                                                                            │       │
-╰──────│      · user_id : bigint NOT NULL        3 table(s)                                                    │───────╯
-╭[ ◆ re│      · status : varchar(20) NOT NULL                                                                  │───────╮
-│id  em│      ⌁ orders_user_id_idx               enter to expand — then arrow / j/k into the tables            │       │
-│1   ad│  ▼ users  (4 col, 1 cons)                                                                             │       │
-│2   li│      ◆ users_pkey                                                                                     │       │
-│3   gr│                                                                                                       │       │
-│4   al│                                                                                                       │       │
-│5   ed│                                                                                                       │       │
-│6   ka│                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
-│      │                                                                                                       │       │
+│  ORDE│▼ public  (20)                           schema: public                                                │       │
+│      │  ▼ accounts  (5 col, 1 cons)                                                                          │       │
+╰──────│      · customer_id : bigint NOT NULL    20 table(s)                                                   │───────╯
+╭[ ◆ re│  ▼ audit_log  (7 col, 1 cons)                                                                         │───────╮
+│number│      · actor_user_id : bigint           enter to expand — then arrow / j/k into the tables            │       │
+│INV-00│  ▼ customers  (10 col, 2 cons)                                                                        │       │
+│INV-00│      · status : text NOT NULL                                                                         │       │
+│INV-00│      ◆ customers_pkey                                                                                 │       │
+│INV-00│      ◆ customers_public_id_key                                                                        │       │
+│INV-00│  ▼ invoices  (12 col, 2 cons)                                                                         │       │
+│      │      · customer_id : bigint NOT NULL                                                                  │       │
+│      │      · status : text NOT NULL                                                                         │       │
+│      │      ⌁ invoices_customer_id_issued_at_…                                                               │       │
+│      │  ▼ payments  (8 col, 2 cons)                                                                          │       │
+│      │      · status : text NOT NULL                                                                         │       │
+│      │  ▼ subscriptions  (9 col, 1 cons)                                                                     │       │
+│      │      · customer_id : bigint NOT NULL                                                                  │       │
+│      │      · status : text NOT NULL                                                                         │       │
+│      │      ⌁ subscriptions_customer_id_idx                                                                  │       │
+│      │  ▼ tax_rates  (5 col, 1 cons)                                                                         │       │
+│      │      · inclusive : boolean NOT NULL                                                                   │       │
+│      │  ▼ usage_events  (6 col, 1 cons)                                                                      │       │
+│      │      ◆ usage_events_pkey                                                                              │       │
+│      │      ⌁ usage_events_subscription_item_…                                                               │       │
 │      ╰───────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 7 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear

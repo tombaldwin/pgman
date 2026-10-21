@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││ PostgreSQL   environments │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││ PostgreSQL   environments │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ environments ◆ ] enter connect · q close · l logs · v drift · P patches ──╮
-│  staging · RDS 123456789012 eu-west-2                                        │
-│    DATABASE  ROLE     SERVER             STATUS     SCHEMA     LAG       SES…│
-│    shop      primary  staging            available  v251 (+1)               …│
-│    shop      replica  └ staging-replica  available  v251 (+1)  lag 0.4s     …│
+│  production · RDS 210987654321 eu-west-2                                     │
+│    DATABASE   ROLE     SERVER                 STATUS     SCHEMA       LAG   …│
+│    ledger     primary  ledger-prod            available  v318 (+3)          …│
+│    ledger     replica  └ ledger-prod-replica  available  v318 (+3)    lag 0.…│
+│    ledgerlog  primary  ledger-prod            available  flyway 1.42        …│
+│    ledgerlog  replica  └ ledger-prod-replica  available  flyway 1.42  lag 0.…│
 │                                                                              │
-│  qa · RDS 123456789012 eu-west-2                                             │
-│    DATABASE  ROLE     SERVER             STATUS     ENGINE                   │
-│    shop      direct   qa                 stopped    postgres 16.4            │
+│  staging · RDS 210987654321 eu-west-2                                        │
+│    DATABASE   ROLE     SERVER                 STATUS     SCHEMA       LAG   …│
+│    ledger     direct   ledger-staging         available  v318 (+3)          …│
+│    ledgerlog  direct   ledger-staging         available  flyway 1.43        …│
 │                                                                              │
-│  local · connections.toml                                                    │
-│    DATABASE  ROLE     SERVER             STATUS     ENGINE                   │
-│    shop      direct   shop-local         —          —                        │
-│                                                                              │
-│                                                                              │
-│  staging-replica/shop · replica of staging · db.t4g.medium · single-AZ       │
+│  dev · RDS 210987654321 eu-west-2                                            │
+│    DATABASE   ROLE     SERVER                 STATUS     ENGINE              │
+│  ledger-prod-replica/ledger · replica of ledger-prod · db.r6g.2xlarge        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

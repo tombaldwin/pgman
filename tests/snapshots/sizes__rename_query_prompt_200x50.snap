@@ -4,44 +4,44 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                           PostgreSQL   saved queries │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                           PostgreSQL   saved queries │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY ╭[ ◆ saved queries ◆ ] enter load · r rename · d delete · / search · q close ──────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-│           │  pro-users                     SELECT id, email, created_at FROM users WHERE plan = 'pro' ORDER BY created_at D                                                              │           │
-╰───────────│  order-by-id                   SELECT * FROM orders WHERE id = :order_id;                                                                                                    │───────────╯
-╭[ ◆ result │  daily-revenue                 SELECT date_trunc('day', created_at) AS day,        sum(total_cents) / 100.0 AS                                                               │───────────╮
-│id  email  │                                                                                                                                                                              │           │
-│1   ada@exa│                                                                                                                                                                              │           │
-│2   linus@e│                                                                                                                                                                              │           │
-│3   grace@e│                                                                                                                                                                              │           │
-│4   alan@ex│                                                                                                                                                                              │           │
-│5   edsger@│                                                                                                                                                                              │           │
-│6   katheri│                                                                                                                                                                              │           │
+│           │  overdue-invoices              SELECT number, customer_id, currency, total, due_at FROM invoices WHERE status =                                                              │           │
+╰───────────│  customer-invoices             SELECT number, status, total, due_at FROM invoices WHERE customer_id = :customer                                                              │───────────╯
+╭[ ◆ result │  mrr-by-month                  SELECT month, currency, mrr, customers FROM reporting.mrr_by_month ORDER BY mont                                                              │───────────╮
+│number     │  failing-webhooks-24h          SELECT webhook_id, status_code, count(*) FROM webhook_deliveries WHERE status_co                                                              │           │
+│INV-004822 │                                                                                                                                                                              │           │
+│INV-004824 │                                                                                                                                                                              │           │
+│INV-004827 │                                                                                                                                                                              │           │
+│INV-004829 │                                                                                                                                                                              │           │
+│INV-004831 │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
-│           │                                                    ╭[ ◆ rename 'pro-users' · enter save · esc cancel ◆ ]────────────────╮                                                    │           │
+│           │                                                                                                                                                                              │           │
+│           │                                                    ╭[ ◆ rename 'overdue-invoices' · enter save · esc cancel ◆ ]─────────╮                                                    │           │
 │           │                                                    │new name:                                                           │                                                    │           │
-│           │                                                    │pro-users                                                           │                                                    │           │
+│           │                                                    │overdue-invoices                                                    │                                                    │           │
 │           │                                                    │                                                                    │                                                    │           │
 │           │                                                    ╰────────────────────────────────────────────────────────────────────╯                                                    │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
-│           │  pro-users                                                                                                                                                                   │           │
-│           │  SELECT id, email, created_at                                                                                                                                                │           │
-│           │  FROM users                                                                                                                                                                  │           │
-│           │  WHERE plan = 'pro'                                                                                                                                                          │           │
-│           │  ORDER BY created_at DESC;                                                                                                                                                   │           │
-│           │                                                                                                                                                                              │           │
+│           │  overdue-invoices                                                                                                                                                            │           │
+│           │  SELECT number, customer_id, currency, total, due_at                                                                                                                         │           │
+│           │  FROM invoices                                                                                                                                                               │           │
+│           │  WHERE status = 'open'                                                                                                                                                       │           │
+│           │  AND due_at < now()                                                                                                                                                          │           │
+│           │  ORDER BY due_at;                                                                                                                                                            │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │
 │           │                                                                                                                                                                              │           │

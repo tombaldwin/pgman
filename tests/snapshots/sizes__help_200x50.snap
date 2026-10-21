@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                                                                     ││                                                    PostgreSQL   help │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                    PostgreSQL   help │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
 │ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
- 1 SELECT id, email,…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                                                                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                                                                                                  │
-│  FROM users                                                                                                                                                                                          │
-│  WHERE plan = 'pro'                                                                                                                                                                                  │
-│  ORDER BY created_at DESC;                                                                                                                                                                           │
+│> SELECT number, customer_id, status, currency, total, due_at                                                                                                                                         │
+│  FROM invoices                                                                                                                                                                                       │
+│  WHERE status = 'open'                                                                                                                                                                               │
+│  ORDER BY due_at;                                                                                                                                                                                    │
 │                                                                                                                                                                                                      │
 ╰─────────────────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮─────────────────────────────╯
-╭[ ◆ result · 6 row(s) ◆ ]────│                                                                                                                                          │─────────────────────────────╮
-│id  email                  pl│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
-│1   ada@example.com        pr│                                                                                                                                          │                             │
-│2   linus@example.com      fr│   grid                                                                                                                                   │                             │
-│3   grace@example.com      pr│     q             quit                                                                                                                   │                             │
-│4   alan@example.com       te│     esc           back to the environments overview, when environments are configured                                                    │                             │
-│5   edsger@example.com     fr│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
-│6   katherine@example.com  pr│     :             command bar — see the ': commands' section                                                                             │                             │
+╭[ ◆ result · 5 row(s) ◆ ]────│                                                                                                                                          │─────────────────────────────╮
+│number      customer_id  stat│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                                                │                             │
+│INV-004822  2102         open│                                                                                                                                          │                             │
+│INV-004824  2104         open│   grid                                                                                                                                   │                             │
+│INV-004827  2107         open│     q             quit                                                                                                                   │                             │
+│INV-004829  2109         open│     esc           back to the environments overview, when environments are configured                                                    │                             │
+│INV-004831  2111         open│     ? / F1        toggle this help (both work from every non-typing mode)                                                                │                             │
+│                             │     :             command bar — see the ': commands' section                                                                             │                             │
 │                             │     A             about pgman (version, credits)                                                                                         │                             │
 │                             │     e / i / tab   focus editor                                                                                                           │                             │
 │                             │     c             change connection (opens the picker mid-session)                                                                       │                             │
@@ -42,7 +42,7 @@ expression: dump(&buf)
 │                             │     F             follow FK on focused cell → new tab with SELECT * FROM parent WHERE pk=value                                           │                             │
 │                             │     Y             copy the (filtered) grid to clipboard as CSV                                                                           │                             │
 │                             │     I             yank focused row as INSERT (single-table SELECTs)                                                                      │                             │
-│                             │ ↓ 219 more below                                                                                                                         │                             │
+│                             │ ↓ 221 more below                                                                                                                         │                             │
 │                             │                                                                                                                                          │                             │
 │                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                             │
 │                                                                                                                                                                                                      │

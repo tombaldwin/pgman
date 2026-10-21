@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ e╭[ ◆ about ◆ ]─────────────────────────────────╮─────╮
 │  FRO│                                              │     │
 │  WHE│              pgman X.X.X · beta              │     │
 │  ORD│       installed via a standalone binary      │     │
 ╰─────│   k9s-style Postgres TUI for Java/AWS shops  │─────╯
-╭[ ◆ r│            server: pg 16.2 (demo)            │─────╮
-│id  e│                                              │     │
-│1   a│       by Tom Baldwin / Polymorphism Ltd      │00   │
-│2   l│          license: MIT OR Apache-2.0          │00   │
-│3   g│                                              │00   │
-│4   a│           esc / enter / A to close           │00   │
-│5   e╰──────────────────────────────────────────────╯00   │
+╭[ ◆ r│            server: pg 16.4 (demo)            │─────╮
+│numbe│                                              │_at  │
+│INV-0│       by Tom Baldwin / Polymorphism Ltd      │6-10-│
+│INV-0│          license: MIT OR Apache-2.0          │6-10-│
+│INV-0│                                              │6-10-│
+│INV-0│           esc / enter / A to close           │6-10-│
+│INV-0╰──────────────────────────────────────────────╯6-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / enter / A close · ? help

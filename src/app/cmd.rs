@@ -6,7 +6,7 @@ use super::*;
 /// completes to `:quit`, which is the same command spelled in full.
 pub const COMMAND_NAMES: &[&str] = &[
     "about", "connect", "d", "df", "dn", "dt", "error", "fixture", "help", "i", "l", "notify",
-    "quit", "readonly", "report", "tap", "timing", "update", "x",
+    "quit", "readonly", "redact", "report", "tap", "timing", "update", "x",
 ];
 
 /// `\i`'s ceiling. The file becomes one editor buffer, drawn and
@@ -272,6 +272,7 @@ impl App {
             "update" => self.show_update_status(),
             "help" => self.dispatch_help_topic(arg),
             "readonly" => self.dispatch_read_only(arg),
+            "redact" => self.dispatch_redact(arg),
             // The command-bar spellings of F2 / F3 / F4, for keyboards
             // where those take fn.
             "error" => self.open_error_detail(),
@@ -354,6 +355,26 @@ impl App {
                 ));
             }
         }
+    }
+
+    /// `:redact [on|off]` — redaction mode for screenshots; bare
+    /// `:redact` toggles it, as `\timing` does.
+    fn dispatch_redact(&mut self, arg: Option<String>) {
+        let want = match arg.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None => !self.redact,
+            Some("on") => true,
+            Some("off") => false,
+            Some(_) => {
+                self.last_error = Some("usage: :redact [on|off]".into());
+                return;
+            }
+        };
+        self.redact = want;
+        self.last_status = Some(if want {
+            "redact on · hosts, accounts and known names are blocked out on screen".into()
+        } else {
+            "redact off".into()
+        });
     }
 
     /// `:readonly on|off` — set the read-only flag pgman opens

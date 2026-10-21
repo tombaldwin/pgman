@@ -25,6 +25,23 @@ application changes — with N+1 detection built in. Sibling project to
 
 At a glance:
 
+- **Every environment on one screen** — `E` lists each environment's
+  databases (dev, staging, prod…) with replicas under their primary, from
+  RDS, docker or hand-listed connections, without connecting. `Enter`
+  connects (replicas read-only, the password read from AWS Secrets Manager
+  at that moment, through the bastion when there is one); opt-in probes add
+  versions, migration level, pending patches, lag, sessions and size;
+  `pgman env discover` proposes the whole file from an AWS account. See
+  [`docs/environments.md`](docs/environments.md).
+- **Applying patches** — `P` plans an environment's pending patches
+  read-only, checks each against your guard rails, and after you confirm
+  runs each in its own transaction; a dry run or a throwaway copy rehearses
+  it first. `l` shows the RDS server's recent errors.
+- **For your coding agent** — `pgman mcp serve` gives Claude Code (or any
+  MCP client) read-only tools for queries, lock pre-flights, pending
+  patches, schema lint and environments, plus `apply_patches`, the one
+  that writes to a database, confirmed by you. See
+  [`docs/mcp.md`](docs/mcp.md).
 - **Connect fast** — auto-discovers datasources from Spring
   `application*.yml`/`.properties`, IntelliJ `.idea/dataSources.xml`, and a
   committed `.pgman/pgman.toml`.
@@ -33,13 +50,16 @@ At a glance:
   runnable SQL" below.
 - **Safe by default** — read-only connections, `statement_timeout`, and
   per-database guard rails on every statement.
-- **Editor** — syntax highlighting, `pg_format`, history, saved queries
-  (`:param` prompts, rename, search), DBUnit fixture apply + capture.
+- **Editor** — syntax highlighting, completion, formatting, history, saved
+  queries (`:param` prompts, rename, search), DBUnit fixture apply + capture.
 - **DBA panels** — schema browser, EXPLAIN tree, slow queries, active
   sessions/locks, schema-lint wizard, result diff.
-- **JDBC tap** — live app-side query observability via OpenTelemetry (works
-  today, any JVM); a richer route with per-caller / per-pool rollups is in
-  development.
+- **JDBC tap** — live app-side queries from any JVM over OpenTelemetry, with
+  hotspots and live N+1 detection. A dedicated Java library adding
+  per-caller, per-pool and per-transaction views is planned.
+- **Screenshots** — `--demo` runs the whole tool against a synthetic billing
+  database, and `--redact` blocks out hosts, accounts and server names on a
+  real one.
 
 ## Logs and pasted code → runnable SQL
 

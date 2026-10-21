@@ -3,14 +3,14 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ environments · schema drift ◆ ] v / q back ───────────╮
 │  schema version by environment — yellow: behind, differs,│
 │                                                          │
-│    DATABASE  STAGING    QA  LOCAL                        │
-│    shop      v251 (+1)  —   —                            │
-│                                                          │
+│    DATABASE   PRODUCTION   STAGING      DEV  LOCAL       │
+│    ledger     v318 (+3)    v318 (+3)    —    v321        │
+│    ledgerlog  flyway 1.42  flyway 1.43  —    —           │
 │                                                          │
 │                                                          │
 │                                                          │

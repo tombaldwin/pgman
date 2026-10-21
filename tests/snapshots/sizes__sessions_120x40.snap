@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                   PostgreSQL   sessions │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                   PostgreSQL   sessions │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
 │  WH╭[ ◆ active sessions ◆ ] pg_stat_activity — r refresh · q close ─────────────────────────────────────────────╮    │
 │  OR│     PID  USER/APP              STATE         AGE(S)   BLOCKED  QUERY                                       │    │
 │    │    1234  alice/psql            active          12.5      5678  UPDATE accounts SET balance = 0             │    │
 ╰────│    5678  bob/pgman             idle in tx     300.0         -  BEGIN                                       │────╯
 ╭[ ◆ │                                                                                                            │────╮
-│id  │                                                                                                            │    │
-│1   │                                                                                                            │    │
-│2   │                                                                                                            │    │
-│3   │                                                                                                            │    │
-│4   │                                                                                                            │    │
-│5   │                                                                                                            │    │
-│6   │                                                                                                            │    │
+│numb│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│INV-│                                                                                                            │    │
+│    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │
 │    │                                                                                                            │    │

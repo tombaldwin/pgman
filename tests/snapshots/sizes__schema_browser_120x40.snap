@@ -4,39 +4,39 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo                  ││                     PostgreSQL   schema │
-│ Status: connected · pg 16.2  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                     PostgreSQL   schema │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
 │ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
- 1 SELECT id, email,…                                                            ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                                                                  │
-│  FROM users                                                                                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
 │  WHER╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
-│  ORDE│▼ public  (3)                            public.order_items                                            │       │
-│      │  ▼ order_items  (5 col, 1 cons)                                                                       │       │
-╰──────│      · id : bigint NOT NULL             columns (5)                                                   │───────╯
-╭[ ◆ re│      · order_id : bigint NOT NULL         · id                                                        │───────╮
-│id  em│      · sku : varchar(40) NOT NULL         · order_id                                                  │       │
-│1   ad│      · qty : integer NOT NULL             · sku                                                       │       │
-│2   li│      · price_cents : integer NOT NULL     · qty                                                       │       │
-│3   gr│      ◆ order_items_pkey                   · price_cents                                               │       │
-│4   al│      ⌁ order_items_order_id_idx                                                                       │       │
-│5   ed│  ▼ orders  (5 col, 1 cons)              constraints (1)                                               │       │
-│6   ka│      · id : bigint NOT NULL               · order_items_pkey                                          │       │
-│      │      · user_id : bigint NOT NULL                                                                      │       │
-│      │      · status : varchar(20) NOT NULL    indexes (2)                                                   │       │
-│      │      · total_cents : integer NOT NULL     · order_items_order_id_idx  index                           │       │
-│      │      · created_at : timestamptz NOT NU…   · order_items_pkey  primary key                             │       │
-│      │      ◆ orders_pkey                                                                                    │       │
-│      │      ⌁ orders_user_id_idx                                                                             │       │
-│      │  ▼ users  (4 col, 1 cons)                                                                             │       │
+│  ORDE│▼ public  (20)                           schema: public                                                │       │
+│      │  ▼ accounts  (5 col, 1 cons)                                                                          │       │
+╰──────│      · id : bigint NOT NULL             20 table(s)                                                   │───────╯
+╭[ ◆ re│      · customer_id : bigint NOT NULL                                                                  │───────╮
+│number│      · balance : numeric(12,2) NOT NULL enter to expand — then arrow / j/k into the tables            │       │
+│INV-00│      · currency : character(3) NOT NULL                                                               │       │
+│INV-00│      · updated_at : timestamp with tim…                                                               │       │
+│INV-00│      ◆ accounts_pkey                                                                                  │       │
+│INV-00│  ▼ audit_log  (7 col, 1 cons)                                                                         │       │
+│INV-00│      · id : bigint NOT NULL                                                                           │       │
+│      │      · actor_user_id : bigint                                                                         │       │
+│      │      · action : text NOT NULL                                                                         │       │
+│      │      · entity : text NOT NULL                                                                         │       │
+│      │      · entity_id : bigint NOT NULL                                                                    │       │
+│      │      · changes : jsonb NOT NULL                                                                       │       │
+│      │      · at : timestamp with time zone N…                                                               │       │
+│      │      ◆ audit_log_pkey                                                                                 │       │
+│      │      ⌁ audit_log_entity_idx                                                                           │       │
+│      │  ▼ coupons  (6 col, 2 cons)                                                                           │       │
 │      │      · id : bigint NOT NULL                                                                           │       │
-│      │      · email : varchar(255) NOT NULL                                                                  │       │
-│      │      · plan : varchar(20) NOT NULL                                                                    │       │
-│      │      · created_at : timestamptz NOT NU…                                                               │       │
-│      │      ◆ users_pkey                                                                                     │       │
-│      │                                                                                                       │       │
+│      │      · code : text NOT NULL                                                                           │       │
+│      │      · percent_off : numeric(5,2)                                                                     │       │
+│      │      · amount_off : numeric(12,2)                                                                     │       │
+│      │      · valid_until : timestamp with ti…                                                               │       │
 │      ╰───────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                      │
 │                                                                                                                      │

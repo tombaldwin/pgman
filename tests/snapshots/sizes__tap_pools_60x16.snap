@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
+│ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
 │ │  CONNS   PEAK   CALLS    ERR        BUSY        P95 │  │
-│ │      3      1       8      0       4.9ms      1.8ms │  │
+│ │      3      1      11      0       8.2ms      2.3ms │  │
 ╰─│                                                     │──╯
 ╭[│                                                     │──╮
-│i│                                                     │  │
-│1│                                                     │  │
-│2│                                                     │  │
-│3│                                                     │  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│n│                                                     │  │
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I│                                                     │0-│
+│I╰─────────────────────────────────────────────────────╯0-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · ? +5 more

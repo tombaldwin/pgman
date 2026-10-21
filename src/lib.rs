@@ -21,6 +21,7 @@ pub mod inventory;
 pub mod mcp;
 pub mod project;
 pub mod query;
+pub mod redact;
 /// Release metadata derived from `CHANGELOG.md` at build time.
 ///
 /// `build.rs` is the real consumer and reaches this file through

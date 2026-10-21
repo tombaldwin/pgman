@@ -430,25 +430,27 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
     let mut a = pgman::demo::app(Theme::default());
     a.splash_visible = false;
     a.splash_until = None;
-    // Normal: the users result grid.
+    // Normal: the open-invoices result grid.
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("ada@example.com"),
+        rendered.contains("INV-004822"),
         "grid data missing:\n{rendered}"
     );
-    // Schema browser opens against the fixture cache (3 tables,
-    // collapsed under the public schema node).
+    // Schema browser opens against the fixture cache (two schemas,
+    // collapsed).
     a.mode = Mode::SchemaBrowser;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("public") && rendered.contains("3 table(s)"),
+        rendered.contains("public")
+            && rendered.contains("reporting")
+            && rendered.contains("20 table(s)"),
         "schema browser missing:\n{rendered}"
     );
     // Tap monitor shows the synthetic events.
     a.mode = Mode::TapMonitor;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("order_items"),
+        rendered.contains("invoice_lines"),
         "tap events missing:\n{rendered}"
     );
 }
@@ -464,31 +466,42 @@ fn schema_browser_shows_a_tables_indexes() {
     a.splash_until = None;
     a.mode = Mode::SchemaBrowser;
     a.schema_browser.expanded.insert("public".into());
-    a.schema_browser.expanded.insert("public.orders".into());
+    a.schema_browser.expanded.insert("public.payments".into());
     let rows = a.flattened_schema_browser();
     a.schema_browser.cursor = rows
         .iter()
-        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "payments"))
         .unwrap();
-    let rendered = dump(&render(&mut a, 140, 30));
-    assert!(rendered.contains("⌁ orders_user_id_idx"), "{rendered}");
-    // The primary key's index lists once, as the constraint.
-    assert!(rendered.contains("◆ orders_pkey"), "{rendered}");
-    assert!(!rendered.contains("⌁ orders_pkey"), "{rendered}");
-    assert!(rendered.contains("indexes (2)"), "{rendered}");
+    let rendered = dump(&render(&mut a, 140, 60));
+    assert!(rendered.contains("⌁ payments_invoice_id_idx"), "{rendered}");
+    // A primary key's or unique constraint's index lists once, as the
+    // constraint.
+    assert!(rendered.contains("◆ payments_pkey"), "{rendered}");
+    assert!(!rendered.contains("⌁ payments_pkey"), "{rendered}");
     assert!(
-        rendered.contains("· orders_pkey  primary key"),
+        rendered.contains("◆ payments_provider_ref_key"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("⌁ payments_provider_ref_key"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("indexes (3)"), "{rendered}");
+    assert!(
+        rendered.contains("· payments_pkey  primary key"),
         "{rendered}"
     );
     a.schema_browser.cursor = rows
         .iter()
         .position(
-            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "orders_user_id_idx"),
+            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "payments_invoice_id_idx"),
         )
         .unwrap();
-    let rendered = dump(&render(&mut a, 140, 30));
+    let rendered = dump(&render(&mut a, 180, 60));
     assert!(
-        rendered.contains("CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id)"),
+        rendered.contains(
+            "CREATE INDEX payments_invoice_id_idx ON public.payments USING btree (invoice_id)"
+        ),
         "{rendered}"
     );
 }
@@ -1754,4 +1767,87 @@ fn slash_and_q_on_the_start_card_say_why_nothing_opened() {
             "{key}: {want:?} not on screen:\n{text}"
         );
     }
+}
+
+/// Redaction mode: on a real-looking RDS environment, the host, account,
+/// cluster id, user and environment name are blocked out of the whole
+/// frame, the generic parts (`prod`, the region, `rds.amazonaws.com`)
+/// and the schema are not, and the footer says it is on. Off, it all
+/// shows — so the test can't pass on a frame that never had them.
+#[test]
+fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
+    use pgman::inventory::{EnvReport, Target};
+    use pgman::mcp::connections::Role;
+    let host = "examplecorp-prod.c9abc1.eu-west-2.rds.amazonaws.com";
+    let mut a = settle_app();
+    a.dsn = Some(Dsn::parse(&format!("postgres://ledger_app@{host}:5432/ledger")).unwrap());
+    a.environments.reports = vec![EnvReport {
+        name: "examplecorp-prod".into(),
+        source: "RDS 210987654321 eu-west-2".into(),
+        targets: vec![Target {
+            database: "ledger".into(),
+            server: "examplecorp-prod".into(),
+            role: Role::Primary,
+            replica_of: None,
+            host: Some(host.into()),
+            port: Some(5432),
+            engine: Some("postgres 16.4".into()),
+            status: Some("available".into()),
+            class: Some("db.t4g.medium".into()),
+            multi_az: Some(false),
+            connect: Err("no secret".into()),
+        }],
+        error: None,
+        probe: None,
+    }];
+    a.environments.probes = vec![vec![pgman::app::ProbeState::Off]];
+    a.mode = Mode::Environments;
+    a.last_error = Some(
+        "arn:aws:rds:eu-west-2:210987654321:db:examplecorp-prod refused from 10.20.30.40".into(),
+    );
+    let leaks = [
+        "examplecorp",
+        "210987654321",
+        "c9abc1",
+        "ledger",
+        "10.20.30.40",
+    ];
+
+    let off = dump(&render(&mut a, 140, 30));
+    for leak in leaks {
+        assert!(off.contains(leak), "{leak} never on screen:\n{off}");
+    }
+    assert!(!off.contains("REDACT"));
+
+    a.redact = true;
+    let on = dump(&render(&mut a, 140, 30));
+    for leak in leaks {
+        assert!(!on.contains(leak), "{leak} leaked:\n{on}");
+    }
+    for kept in [
+        "REDACT",
+        "-prod",
+        "eu-west-2",
+        "rds.amazonaws.com",
+        "arn:aws:rds",
+    ] {
+        assert!(on.contains(kept), "{kept} missing:\n{on}");
+    }
+}
+
+/// A long RDS endpoint is cut in the header so the fields after it keep
+/// their place: Database at 80 columns (User drops first, as before),
+/// and both at 120, where the old line dropped User.
+#[test]
+fn header_keeps_database_and_user_beside_a_long_rds_endpoint() {
+    let host = "examplecorp-prod.c9abc1def2gh.eu-west-2.rds.amazonaws.com";
+    let mut a = settle_app();
+    a.dsn = Some(Dsn::parse(&format!("postgres://ledger_app@{host}:5432/ledger")).unwrap());
+    let line = row_text(&render(&mut a, 80, 24), 1);
+    assert!(line.contains("Server: examplecorp-pro"), "{line}");
+    assert!(line.contains("Database: ledger"), "{line}");
+    let line = row_text(&render(&mut a, 120, 30), 1);
+    assert!(line.contains("…:5432"), "{line}");
+    assert!(line.contains("Database: ledger"), "{line}");
+    assert!(line.contains("User: ledger_app"), "{line}");
 }

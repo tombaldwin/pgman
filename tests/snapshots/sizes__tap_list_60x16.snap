@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│ ╭[ ◆ JDBC tap ◆ ] 8 queries · 0 heartbeats · … ───────╮  │
+│ ╭[ ◆ JDBC tap ◆ ] 11 queries · 0 heartbeats · … ──────╮  │
 │ │    DURATION       ROWS  APP                   SQL / │  │
-│ │       1.8ms          1  shop-api              SELEC…│  │
-╰─│       420µs          1  shop-api              SELEC…│──╯
-╭[│       435µs          1  shop-api              SELEC…│──╮
-│i│       450µs          1  shop-api              SELEC…│  │
-│1│       465µs          1  shop-api              SELEC…│  │
-│2│       480µs          1  shop-api              SELEC…│  │
-│3│       495µs          1  shop-api              SELEC…│  │
-│4╰─────────────────────────────────────────────────────╯  │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│ │       290µs          1  billing-api           SELEC…│  │
+╰─│       1.8ms          1  billing-api           SELEC…│──╯
+╭[│       420µs          1  billing-api           SELEC…│──╮
+│n│       435µs          1  billing-api           SELEC…│  │
+│I│       450µs          1  billing-api           SELEC…│0-│
+│I│       465µs          1  billing-api           SELEC…│0-│
+│I│       480µs          1  billing-api           SELEC…│0-│
+│I╰─────────────────────────────────────────────────────╯0-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · ? +5 more

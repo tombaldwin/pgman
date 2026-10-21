@@ -4,11 +4,11 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5432  •  Database: shop  •  User: demo     ││                PostgreSQL   help │
-│ Status: connected · pg 16.2  •  Session:  read-only          ││            <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger                  ││                PostgreSQL   help │
+│ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
 │ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
- 1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
@@ -29,7 +29,7 @@ expression: dump(&buf)
 │     L             active sessions + locks (pg_stat_activity)                                     │
 │     E             environments overview (no connection needed)                                   │
 │     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                    │
-│ ↓ 227 more below                                                                                 │
+│ ↓ 229 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

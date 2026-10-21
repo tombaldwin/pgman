@@ -36,7 +36,18 @@ use tap::draw_tap_monitor;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// Render one frame — and, in redaction mode, block out the
+/// infrastructure names in all of it (`redact::apply`), so no panel
+/// has to remember to.
 pub fn draw(f: &mut Frame, app: &mut App) {
+    draw_frame(f, app);
+    if app.redact {
+        let r = crate::redact::Redactor::new(crate::redact::app_names(app));
+        crate::redact::apply(f.buffer_mut(), &r);
+    }
+}
+
+fn draw_frame(f: &mut Frame, app: &mut App) {
     if app.splash_visible {
         draw_splash(f, app);
         return;
@@ -656,6 +667,17 @@ pub(crate) fn footer_badges_with(
     dropped_at_listener: u64,
 ) -> Vec<Span<'static>> {
     let mut out: Vec<Span<'static>> = Vec::new();
+    // First, so a screenshot shows it was taken redacted.
+    if app.redact {
+        out.push(Span::styled(
+            " REDACT ",
+            Style::default()
+                .bg(theme.accent)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
     if app.read_only {
         out.push(Span::styled(
             " RO ",
@@ -2519,6 +2541,14 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("                    database read-only."), &mut lines);
+    push(
+        row("    :redact [on|off] block out hosts, accounts and known names on screen, for"),
+        &mut lines,
+    );
+    push(
+        row("                    screenshots (= --redact); schema and data stay visible."),
+        &mut lines,
+    );
     push(
         row("    :connect [NAME] the picker, or the named data source (= \\c). Quote a name"),
         &mut lines,

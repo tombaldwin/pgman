@@ -3,19 +3,19 @@ source: tests/sizes.rs
 assertion_line: 250
 expression: dump(&buf)
 ---
- pgman X.X.X │ shop  connected · pg 16.2
- 1 SELECT id, email,…               ] [ switch · ctrl-t new
+ pgman X.X.X │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
-│  FROM users                                              │
+│  FROM invoices                                           │
 │  W╭[ ◆ error detail ◆ ] F2 / esc / q close ─────────╮    │
 │  O│ ERROR · SQLSTATE 23505                          │    │
 ╰───│                                                 │────╯
 ╭[ ◆│    message: duplicate key value violates uniqu  │────╮
-│id │             e constraint "users_email_key"      │    │
-│1  │     detail: Key (email)=(ada@example.com) alre  │0   │
-│2  │             ady exists.                         │0   │
-│3  │      where: SQL statement "INSERT INTO users (  │0   │
-│4  ╰─────────────────────────────────────────────────╯0   │
-│5   edsger@example.com     free  2026-03-03 11:22:00+00   │
+│num│             e constraint "users_email_key"      │at  │
+│INV│     detail: Key (email)=(ada@example.com) alre  │-10-│
+│INV│             ady exists.                         │-10-│
+│INV│      where: SQL statement "INSERT INTO users (  │-10-│
+│INV╰─────────────────────────────────────────────────╯-10-│
+│INV-00483  2111       open    GBP       298.80    2026-10-│
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   ⚠ … "users_email_key" · ! detail

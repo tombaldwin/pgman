@@ -4,26 +4,26 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5432  •  Database: shop       ││  PostgreSQL   schema lint │
-│ Status: connected · pg 16.2                     ││     <?> help  <:> command │
+│ Server: localhost:5433  •  Database: ledger     ││  PostgreSQL   schema lint │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
 │ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
- 1 SELECT id, email,…                    ] [ switch · ctrl-t new · ctrl-w close
+ 1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
-│> SELECT id, email, plan, created_at                                          │
+│> SELECT number, customer_id, status, currency, total, due_at                 │
 │  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
-│  │no findings — schema looks clean                                       │   │
-│  │                                                                       │   │
-╰──│                                                                       │───╯
-╭[ │                                                                       │───╮
-│id│                                                                       │   │
-│1 │                                                                       │   │
-│2 │                                                                       │   │
-│3 │                                                                       │   │
-│4 │                                                                       │   │
-│5 │                                                                       │   │
-│6 │                                                                       │   │
+│  │  SEV    CODE     object                                            tit│   │
+│  │  HIGH   LINT101  public.accounts.accounts_customer_id_fkey         FK…│   │
+╰──│  HIGH   LINT101  public.audit_log.audit_log_actor_user_id_fkey     FK…│───╯
+╭[ │  HIGH   LINT101  public.credit_notes.credit_notes_invoice_id_fkey  FK…│───╮
+│nu│  HIGH   LINT101  public.customers.customers_tax_rate_id_fkey       FK…│   │
+│IN│  LINT101 · FK column not the leading column of any index              │   │
+│IN│  object: public.accounts.accounts_customer_id_fkey                    │   │
+│IN│  constraint `accounts_customer_id_fkey` on `public.accounts` referen  │   │
+│IN│  ces column(s) (customer_id) — no index leads with the first FK colu  │   │
+│IN│  mn, so cascade / lookup queries will sequential-scan                 │   │
+│  │  suggest: CREATE INDEX ON public.accounts (customer_id);              │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   j/k navigate · y yank suggestion · r refresh · ? +2 more
+ RO   TAP   N+1 ×1   tip · … first) · y yanks SQL suggestion · ? full keys
