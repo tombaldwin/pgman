@@ -217,6 +217,7 @@ don't list beside their table: an expanded partitioned table shows one
 | `/` | In-tree filter (live; ancestors of a match stay visible) |
 | `s` | Yank `SELECT * FROM <schema>.<table> LIMIT 100` template |
 | `i` | Yank `INSERT INTO … (cols) VALUES (NULL, …)` template |
+| `p` | Preview: run `SELECT * FROM <schema>.<table> LIMIT 5` and close onto the grid it lands in (a partition previews itself) |
 | `r` | Reload the schema — picks up tables other sessions made since you connected (`S`, `\d` and `W` also reload by themselves when the cache is empty while connected) |
 | `Esc` / `q` | Close (also drops the in-tree filter) |
 

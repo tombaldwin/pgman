@@ -217,10 +217,27 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
         // about the statement — projecting it would be nonsense.
         None => return notice_grid(),
     };
-    match select_list_of(sql) {
+    let mut grid = match select_list_of(sql) {
         Some(list) => project_columns(list, full),
         None => full,
+    };
+    if let Some(n) = trailing_limit(sql) {
+        grid.rows.truncate(n);
     }
+    grid
+}
+
+/// `n` when `sql` ends `LIMIT n` (an optional `;` after it), so a
+/// demo answer is no longer than the statement asked for — the
+/// schema browser's `p` asks for five rows and `users` has six.
+fn trailing_limit(sql: &str) -> Option<usize> {
+    let sql = sql.trim().trim_end_matches(';');
+    let mut words = sql.split_whitespace().rev();
+    let n = words.next()?.parse().ok()?;
+    words
+        .next()
+        .filter(|w| w.eq_ignore_ascii_case("limit"))
+        .map(|_| n)
 }
 
 /// The SELECT list of `sql` — the text between a leading `SELECT` and
@@ -1546,5 +1563,26 @@ mod tests {
         // And the "no table I know" notice is never projected.
         let notice = answer("select nothing from mystery", &cache);
         assert_eq!(notice.columns, vec!["demo".to_string()]);
+    }
+
+    #[test]
+    fn answer_honours_a_trailing_limit() {
+        let cache = schema_cache();
+        assert_eq!(answer("select * from users", &cache).rows.len(), 6);
+        assert_eq!(answer("SELECT * FROM users LIMIT 2;", &cache).rows.len(), 2);
+        assert_eq!(answer("select * from orders limit 1", &cache).rows.len(), 1);
+        assert_eq!(answer("select * from users limit 50", &cache).rows.len(), 6);
+        assert_eq!(trailing_limit("select 1"), None);
+        assert_eq!(trailing_limit("select * from t limit x"), None);
+        assert_eq!(trailing_limit("select * from t where id = 3"), None);
+    }
+
+    #[test]
+    fn functions_grid_has_the_live_columns() {
+        let g = functions_grid(None);
+        assert_eq!(g.columns, ["schema", "name", "result", "arguments", "type"]);
+        assert!(g.rows.iter().all(|r| r.len() == g.columns.len()));
+        assert_eq!(functions_grid(Some("public.order_*")).rows.len(), 1);
+        assert_eq!(functions_grid(Some("audit.order_*")).rows.len(), 0);
     }
 }

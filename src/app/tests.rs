@@ -3019,6 +3019,71 @@ fn schema_browser_s_on_schema_row_surfaces_error_not_garbage() {
 }
 
 #[test]
+fn build_sample_rows_sql_quotes_only_where_needed() {
+    assert_eq!(
+        build_sample_rows_sql("public", "users"),
+        "SELECT * FROM public.users LIMIT 5"
+    );
+    assert_eq!(
+        build_sample_rows_sql("Audit", "odd name"),
+        "SELECT * FROM \"Audit\".\"odd name\" LIMIT 5"
+    );
+}
+
+/// The demo app with the schema browser open on `table`'s row.
+fn demo_browser_on(table: &str) -> App {
+    let mut a = crate::demo::app(Theme::default());
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == table))
+        .expect("table row");
+    a
+}
+
+#[test]
+fn schema_browser_p_previews_five_rows_of_the_focused_table() {
+    let mut a = demo_browser_on("users");
+    a.schema_browser.filter = Some("us".into());
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "users"))
+        .unwrap();
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::Normal, "the browser closes onto the grid");
+    assert_eq!(a.schema_browser.filter, None, "closed the way Esc closes");
+    pump_one_demo_msg(&mut a);
+    assert_eq!(a.grid.columns, vec!["id", "email", "plan", "created_at"]);
+    assert_eq!(a.grid.rows.len(), SAMPLE_ROWS);
+    assert_eq!(a.last_error, None);
+}
+
+#[test]
+fn schema_browser_p_on_a_schema_row_stays_put_with_an_error() {
+    let mut a = demo_browser_on("users");
+    a.schema_browser.cursor = 0;
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    assert!(a.last_error.is_some());
+    assert!(a.msg_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
+fn schema_browser_p_without_a_connection_stays_in_the_browser() {
+    let mut a = app_with_schemas();
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = 2; // public.orders
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+}
+
+#[test]
 fn schema_browser_i_with_no_cached_columns_surfaces_error() {
     let mut a = app_with_schemas();
     // public.orders has no columns_by_table entry.

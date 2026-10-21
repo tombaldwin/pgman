@@ -1563,7 +1563,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · ↑↓ jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
-                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · r reload · q close",
+                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · p preview · r reload · q close",
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
@@ -2302,6 +2302,10 @@ pub(crate) fn help_body(
     );
     push(
         row("    i             yank INSERT INTO … (cols) VALUES (NULL, …) template"),
+        &mut lines,
+    );
+    push(
+        row("    p             preview: run SELECT * … LIMIT 5 and show it in the grid"),
         &mut lines,
     );
     push(

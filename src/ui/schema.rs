@@ -304,7 +304,7 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
             }
             right_lines.push(Line::from(""));
             right_lines.push(clamped_line(
-                "s SELECT · i INSERT",
+                "s SELECT · i INSERT · p preview rows",
                 Style::default().fg(theme.muted),
                 detail_width,
                 theme,

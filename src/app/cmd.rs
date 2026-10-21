@@ -458,21 +458,38 @@ impl App {
         self.run_generated_select(sql);
     }
 
+    /// `p` in the schema browser: run [`build_sample_rows_sql`] for the
+    /// focused table and close the browser onto the grid it lands in.
+    /// The browser closes the way Esc closes it (filter dropped), and
+    /// only once the query is sent — a refusal leaves the operator
+    /// where they were, with the reason in the footer.
+    pub(super) fn preview_schema_browser_rows(&mut self) {
+        let Some((schema, table)) = self.focused_schema_browser_table() else {
+            self.last_error = Some("focus a table, column, or constraint first".into());
+            return;
+        };
+        if self.run_generated_select(build_sample_rows_sql(&schema, &table)) {
+            self.schema_browser.filter = None;
+            self.mode = Mode::Normal;
+        }
+    }
+
     /// Run a SELECT pgman wrote (`\df`, the schema browser's sample
     /// rows) through the same guard and spawn path as one the operator
     /// typed: one query at a time, the safety decision, `--demo`'s
     /// synthetic answer. Anything but `Guard::Allow` is refused rather
     /// than prompted — a generated read that needs a confirmation is a
     /// bug in the generator, not something to put to the operator.
-    pub(super) fn run_generated_select(&mut self, sql: String) {
+    /// `true` when the query was sent.
+    pub(super) fn run_generated_select(&mut self, sql: String) -> bool {
         if self.query_running {
             self.last_status = Some("a query is already running · ctrl-c cancels it".into());
-            return;
+            return false;
         }
         let demo_no_client = self.demo && self.client.is_none();
         if self.client.is_none() && !demo_no_client {
             self.last_error = Some(self.not_connected_message());
-            return;
+            return false;
         }
         let db = self
             .dsn
@@ -482,13 +499,14 @@ impl App {
         let decision = safety::evaluate(&self.safety_config, db, &sql);
         if decision.guard != Guard::Allow {
             self.last_error = Some(blocked_by_safety_message(&decision, db));
-            return;
+            return false;
         }
         if demo_no_client {
             self.spawn_run_demo(sql, RunKind::Run);
         } else {
             self.spawn_run(sql, RunKind::Run, decision, false);
         }
+        true
     }
 
     /// `\l` handler. Renders `App.databases` — every database on the

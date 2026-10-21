@@ -946,6 +946,20 @@ pub fn build_select_all_template(schema: &str, table: &str) -> String {
     )
 }
 
+/// How many rows `p` in the schema browser previews.
+pub const SAMPLE_ROWS: usize = 5;
+
+/// The schema browser's sample-rows query (`p`): the first
+/// [`SAMPLE_ROWS`] rows of `schema.table`, identifiers quoted only
+/// where they need it.
+pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT * FROM {}.{} LIMIT {SAMPLE_ROWS}",
+        quote_ident(schema),
+        quote_ident(table),
+    )
+}
+
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
 /// NULL, …);` template. One placeholder per column; the operator
 /// fills in real values in the editor. Returns an empty string if
