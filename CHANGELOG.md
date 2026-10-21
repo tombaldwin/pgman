@@ -52,9 +52,10 @@ and breaking changes.
   slow queries, sessions and locks, result diff, `\l`, `\x`, `\c`, `\i`,
   the `\d` family, `\timing`.
 - **MCP server** — `pgman mcp serve` gives Claude Code (or any MCP
-  client) read-only tools: `query`, `sessions_locks` (a pre-flight before
-  a schema change), `pending_patches`, `connections`, `environments` and
-  `doctor`. Every session is read-only whatever `safety.toml` says;
+  client) tools: `query`, `sessions_locks` (a pre-flight before a schema
+  change), `pending_patches`, `connections`, `environments` and `doctor`,
+  with more below. Every session is read-only whatever `safety.toml`
+  says, except `apply_patches` (see Applying patches below);
   personal connections can tunnel and read their password from AWS
   Secrets Manager; a `primary` connection serves only the lock check.
 - **Environments overview** — `E` lists every database in each
