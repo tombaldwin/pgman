@@ -1834,3 +1834,20 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
         assert!(on.contains(kept), "{kept} missing:\n{on}");
     }
 }
+
+/// A long RDS endpoint is cut in the header so the fields after it keep
+/// their place: Database at 80 columns (User drops first, as before),
+/// and both at 120, where the old line dropped User.
+#[test]
+fn header_keeps_database_and_user_beside_a_long_rds_endpoint() {
+    let host = "examplecorp-prod.c9abc1def2gh.eu-west-2.rds.amazonaws.com";
+    let mut a = settle_app();
+    a.dsn = Some(Dsn::parse(&format!("postgres://ledger_app@{host}:5432/ledger")).unwrap());
+    let line = row_text(&render(&mut a, 80, 24), 1);
+    assert!(line.contains("Server: examplecorp-pro"), "{line}");
+    assert!(line.contains("Database: ledger"), "{line}");
+    let line = row_text(&render(&mut a, 120, 30), 1);
+    assert!(line.contains("…:5432"), "{line}");
+    assert!(line.contains("Database: ledger"), "{line}");
+    assert!(line.contains("User: ledger_app"), "{line}");
+}

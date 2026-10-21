@@ -67,6 +67,37 @@ fn state(app: &App) -> (String, Color) {
     }
 }
 
+/// Columns the header's `Server` value gets: what's left of `width`
+/// after its label and the fields after it (`rest`), but never under
+/// [`MIN_SERVER`] — past that, later fields drop instead — nor more
+/// than the line holds. Pure.
+fn server_budget(width: usize, label: usize, rest: usize) -> usize {
+    const MIN_SERVER: usize = 16;
+    let line = width.saturating_sub(label);
+    line.saturating_sub(rest).max(MIN_SERVER).min(line)
+}
+
+/// `host:port` cut to `budget` columns: whole leading DNS labels, then
+/// `…` and the port (`ledger-prod.c9abc1…:5432`), so what's kept still
+/// names the server. With no label short enough, an end cut. Pure.
+fn fit_server(server: &str, budget: usize) -> String {
+    if display_width(server) <= budget {
+        return server.to_string();
+    }
+    let (host, port) = server.rsplit_once(':').unwrap_or((server, ""));
+    let tail = if port.is_empty() {
+        "…".to_string()
+    } else {
+        format!("…:{port}")
+    };
+    let labels: Vec<&str> = host.split('.').collect();
+    (1..labels.len())
+        .rev()
+        .map(|k| format!("{}{tail}", labels[..k].join(".")))
+        .find(|s| display_width(s) <= budget)
+        .unwrap_or_else(|| crate::grid::truncate_cell(server, budget))
+}
+
 pub(crate) fn draw_tall_header(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     let c = chrome(theme);
@@ -98,6 +129,16 @@ pub(crate) fn draw_tall_header(f: &mut Frame, area: Rect, app: &App) {
         ),
         None => (dash.clone(), dash.clone(), dash.clone()),
     };
+    // A long RDS endpoint is cut (at a dot) so Database and User keep
+    // their place, rather than the whole line dropping them.
+    let rest: usize = [kv("Database", &database, &c), kv("User", &user, &c)]
+        .iter()
+        .map(|g| g.iter().map(Span::width).sum::<usize>() + tui_common::chrome::SEP_WIDTH)
+        .sum();
+    let server = fit_server(
+        &server,
+        server_budget(width as usize, "Server: ".len(), rest),
+    );
     let line1 = join_fields_to_fit(
         vec![
             kv("Server", &server, &c),
@@ -209,6 +250,26 @@ mod tests {
         assert_eq!(header_rows(24), TALL_HEADER_ROWS);
         assert_eq!(header_rows(23), 1);
         assert_eq!(header_rows(16), 1);
+    }
+
+    #[test]
+    fn fit_server_keeps_whole_labels_and_the_port() {
+        let rds = "ledger-prod.c9abc1def2gh.eu-west-2.rds.amazonaws.com:5432";
+        assert_eq!(fit_server("localhost:5433", 20), "localhost:5433");
+        assert_eq!(fit_server(rds, 30), "ledger-prod.c9abc1def2gh…:5432");
+        assert_eq!(fit_server(rds, 20), "ledger-prod…:5432");
+        let cut = fit_server(rds, 10);
+        assert_eq!(display_width(&cut), 10, "{cut}");
+        assert!(cut.starts_with("ledger-pr"), "{cut}");
+    }
+
+    #[test]
+    fn server_budget_leaves_room_for_the_later_fields() {
+        // 47 columns, "Server: " 8, Database + User 25 → 14, floored at 16.
+        assert_eq!(server_budget(47, 8, 25), 16);
+        assert_eq!(server_budget(100, 8, 25), 67);
+        // Never wider than the line itself.
+        assert_eq!(server_budget(20, 8, 25), 12);
     }
 
     #[test]
