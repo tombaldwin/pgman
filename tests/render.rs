@@ -1253,13 +1253,22 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
     for width in [60u16, 100] {
         let buf = render(&mut a, width, 24);
         let text = dump(&buf);
-        let logs_row = text
-            .lines()
-            .find(|l| l.contains("logs"))
+        // The logs row and its continuation rows (padded under the
+        // label): the file name may wrap onto the next one.
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("logs"))
             .unwrap_or_else(|| panic!("no logs row at {width}:\n{text}"));
+        let logs_rows: String = lines[at..]
+            .iter()
+            .enumerate()
+            .take_while(|(i, l)| *i == 0 || l.chars().skip(1).take(10).all(|c| c == ' '))
+            .map(|(_, l)| l.trim_matches(|c| c == '│' || c == ' '))
+            .collect();
         assert!(
-            logs_row.contains("pgman.log."),
-            "the dated file name must be on the logs row at {width}: {logs_row:?}"
+            logs_rows.contains("pgman.log."),
+            "the dated file name must be under the logs label at {width}: {logs_rows:?}\n{text}"
         );
         assert!(
             !text.contains("pgman.log\n") && !text.contains("pgman.log "),
@@ -1267,8 +1276,8 @@ fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
         );
         assert!(
             text.lines()
-                .any(|l| l.contains("r retry") && l.contains("q quit")),
-            "actions row lost at {width}:\n{text}"
+                .any(|l| l.starts_with('│') && l.contains("r retry") && l.contains("q quit")),
+            "the card's actions row was cut off at {width}x24:\n{text}"
         );
     }
     // Narrow: the path is wrapped whole — no `…` — onto continuation

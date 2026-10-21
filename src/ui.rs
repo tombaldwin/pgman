@@ -555,6 +555,13 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         fit_hints(&actions, inner_width, "?"),
         label,
     )));
+    // On a short terminal the card is cut at the bottom, which is
+    // where the log path and the actions are. The blank spacer rows
+    // go first.
+    let rows = area.height.saturating_sub(2) as usize;
+    if lines.len() > rows {
+        lines.retain(|l| l.width() > 0);
+    }
 
     f.render_widget(
         Paragraph::new(Text::from(lines))
