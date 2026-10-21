@@ -1214,6 +1214,12 @@ pub struct App {
     /// psql `\timing` toggle — when on, the QueryOk handler
     /// appends an elapsed-ms marker to the status footer.
     pub timing_on: bool,
+    /// Redaction mode (`--redact`, `:redact`, `redact_default`): every
+    /// frame goes through `redact::apply` before it is drawn.
+    pub redact: bool,
+    /// `redact::env_names()`, read once at startup: redaction's names
+    /// from the process environment (`AWS_PROFILE`, the login name).
+    pub redact_env_names: Vec<String>,
     /// psql `\x` toggle — when on, the QueryOk handler opens the
     /// existing row-detail view (`Mode::RowDetail`) for the first
     /// row of a new result instead of leaving it in the grid.
@@ -1573,6 +1579,8 @@ impl App {
             help: HelpUi::default(),
             mode_seen: std::collections::HashSet::new(),
             timing_on: false,
+            redact: false,
+            redact_env_names: Vec::new(),
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
             // Read here rather than threaded in from `main` — the

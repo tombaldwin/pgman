@@ -228,6 +228,7 @@ typed choice and behaves as it always has.
 | File | Contains |
 | --- | --- |
 | `~/.config/pgman/safety.toml` | Your personal guard-rail configuration. No secrets. |
+| `~/.config/pgman/config.toml` | UI defaults (`redact_default`). No secrets; pgman never writes it. |
 | `<repo>/.pgman/pgman.toml` | Project-committed connection URLs (host/port/dbname/user) and safety overrides. **Never a resolved password** — only an optional `password_env` variable *name*. |
 | `~/.local/share/pgman/draft.sql` | The editor buffer, auto-saved on quit and restored on next launch — whatever SQL you last had open, including any literal values you typed into it. |
 | `~/.local/share/pgman/history.log` | Up to the last 50 statements you've run, one per line (multi-line entries escaped onto one line). Same caveat: literal values in your `WHERE`/`INSERT` bodies persist here. |
@@ -416,6 +417,57 @@ percent-decoded.
 Discovery logging (project connections, Spring picks, IntelliJ picks)
 always goes through one of these redactors before being written, so
 the daily `pgman.log.YYYY-MM-DD` never carries a resolved password.
+
+## Redaction mode (for screenshots)
+
+`pgman --redact`, `:redact`, or `redact_default = true` in
+`config.toml` block out where a database lives, so a screenshot of a
+real one can be shared. What is in the database stays readable: that
+is the point of the screenshot.
+
+It works on the finished frame, after every panel has drawn, so a
+hostname in an error footer, the connection card, the environments
+overview, an RDS log line or a patch plan is caught the same way, and a
+new panel can't forget to. Each redacted column becomes `▓`, so the
+layout doesn't move. A `REDACT` badge sits first in the footer.
+
+**Blocked out:**
+
+- AWS account IDs (a 12-digit number on its own, or `1234-5678-9012`);
+- IPv4 and IPv6 addresses, except loopback and `0.0.0.0`;
+- hostnames under `amazonaws.com` and ARNs;
+- the user (and any unmasked password) in a `scheme://user@host` URL;
+- your login name (from `HOME` and `USER`), and so your home directory
+  in a path;
+- every name pgman holds for the session: the connection's host, user,
+  database and ssh bastion; the picker's data sources; the environments
+  overview's environments, servers, hosts, databases, secrets, AWS
+  profiles and password variables; an open discovery's proposals; and
+  `AWS_PROFILE`. A name is matched case-insensitively as a whole word,
+  and so is each distinctive part of it, so a truncated `examplecorp-pr…`
+  is still caught.
+
+Generic parts stay, so a screenshot still says which database it is:
+`examplecorp-prod-replica` shows as `▓▓▓▓▓▓▓▓▓▓▓-prod-replica`, and an
+RDS host keeps its region and `rds.amazonaws.com`. The generic words
+are environment and role words (`prod`, `staging`, `replica`,
+`primary`…), AWS region parts, service words and digits.
+
+**Not blocked out, by design:** schema (tables, columns, functions) and
+data (result rows, SQL in the editor). A table named after a client
+shows as it is.
+
+**Limits.** Matching is on what is drawn. A known name cut short by the
+layout is caught by its parts, but an *unknown* host or account ID cut
+short (`2109876543…`) no longer matches its pattern. Free text from the
+server (an error message naming a host pgman has never been told
+about) is caught only by the patterns above. A segment under three
+characters is blocked out inside its full name but not on its own. Look
+at a screenshot before you share it.
+
+Display only: what `y` copies, the editor's text, the log file, reports
+and exports are the real values. The TUI only: `--batch`, `pgman
+query`, the `env` commands and `pgman mcp serve` print unredacted.
 
 ## Reporting a vulnerability
 

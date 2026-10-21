@@ -7397,6 +7397,26 @@ fn command_readonly_moves_the_flag_when_the_profile_does_not_pin_it() {
 }
 
 #[test]
+fn command_redact_sets_toggles_and_refuses_other_words() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    assert!(!a.redact, "off unless asked for");
+    run_command(&mut a, "redact on");
+    assert!(a.redact);
+    run_command(&mut a, "redact on");
+    assert!(a.redact, "`on` sets, it doesn't toggle");
+    run_command(&mut a, "redact");
+    assert!(!a.redact, "bare :redact toggles");
+    run_command(&mut a, "REDACT");
+    assert!(a.redact);
+    run_command(&mut a, "redact off");
+    assert!(!a.redact);
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    run_command(&mut a, "redact maybe");
+    assert!(!a.redact);
+    assert_eq!(a.last_error.as_deref(), Some("usage: :redact [on|off]"));
+}
+
+#[test]
 fn connect_in_demo_changes_nothing_before_it_refuses() {
     // `start_connect` refuses `--demo` — but `connect_to_pick` had
     // already swapped the dsn, its origin, the safety profile and the
@@ -8320,7 +8340,7 @@ fn tab_on_an_empty_command_bar_lists_every_command_beside_the_bar() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     assert_eq!(
         a.command_bar_completions.as_deref(),
-        Some("readonly · report")
+        Some("readonly · redact · report")
     );
     a.on_key(KeyEvent::from(KeyCode::Esc));
     assert!(a.command_bar_completions.is_none());

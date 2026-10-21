@@ -222,6 +222,10 @@ and breaking changes.
   four environments — production with a replica, staging, a stopped
   dev, a local container — whose versions, drift, pending patches,
   log errors, sessions and slow queries tell one story.
+- **Redaction mode** — `--redact`, `:redact` or `redact_default = true`
+  blocks out hosts, IPs, account IDs, ARNs and every server, environment
+  and secret name pgman knows, on every screen, for screenshots of a
+  real database; schema and data stay visible.
 
 ### Hardening before release
 
