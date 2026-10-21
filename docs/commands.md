@@ -104,7 +104,7 @@ An unrecognised name answers `unknown command :foo · :help lists them`.
 pgman [OPTIONS] [DSN]
 ```
 
-pgman is a TUI: every path except `--batch`, `--init-config`, `--upgrade`,
+pgman is a TUI: every path except `--batch` (and `pgman query`), `--init-config`, `--upgrade`,
 `--version`, and `--help` needs a real terminal on both stdin and stdout. A
 launch from a pipe or script without one is refused with `pgman needs a
 terminal. For pipes and scripts use --batch (see pgman --help).` (exit code
@@ -132,6 +132,15 @@ surface.
 | `--upgrade` | Upgrade this install in place, then exit: `git pull` + `cargo install --path .` for a git checkout, `cargo install` for a crates.io install, or the Homebrew formula; prints the GitHub releases page for anything else. An install made with `cargo install --git …` isn't one of these: re-run that command to upgrade it. |
 | `--no-tap` | Don't start the JDBC tap listener, not even the one a Java project in the working directory turns on by default. |
 | `--no-update-check` | Skip the startup check for a newer release on crates.io (same effect as the `PGMAN_NO_UPDATE_CHECK` env var). Without either, pgman makes at most one crates.io request every six hours, sending only the running version and a user-agent string. |
+
+`pgman query 'SQL' [--json]` is `--batch` spelled the way ebman's
+subcommands are: `pgman --batch --sql 'SQL'`, with `--json` short for
+`--format json`. With no SQL it reads stdin, and every `--batch` flag
+applies (`--dsn`, `--format`, `--discovered`, `--yes`):
+
+```
+pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb
+```
 
 `pgman mcp serve [--read-only] [--project-connections]` runs the stdio
 MCP server instead of the TUI — read-only queries, plus `apply_patches`

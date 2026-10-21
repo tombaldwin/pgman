@@ -16,7 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (public beta)",
-    after_help = "MCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -142,7 +142,17 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let cli = Cli::parse();
+    // `pgman query 'SQL' [--json]` — ebman's spelling of `--batch`,
+    // rewritten to it so everything below sees one command line.
+    let cli = if argv.get(1).map(String::as_str) == Some("query") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", batch::QUERY_USAGE);
+            return Ok(());
+        }
+        Cli::parse_from(batch::query_alias_argv(&argv[2..]))
+    } else {
+        Cli::parse()
+    };
 
     // `--upgrade` is the only flag that doesn't enter the TUI. Handle it
     // before we set up logging / probe the terminal.

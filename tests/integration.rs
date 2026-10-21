@@ -35,6 +35,30 @@ fn pgman_binary() -> &'static str {
     env!("CARGO_BIN_EXE_pgman")
 }
 
+/// `pgman query 'SQL' --json` is `--batch --sql 'SQL' --format json`:
+/// typed JSON rows on stdout, exit 0.
+#[test]
+fn query_alias_runs_one_statement_as_json() {
+    let home = std::env::temp_dir().join(format!("pgman-query-alias-{}", std::process::id()));
+    let out = Command::new(pgman_binary())
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["query", "SELECT 1 AS one, 'a' AS s", "--json", "--dsn", DSN])
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        out.status.success(),
+        "exit {:?}, stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    assert_eq!(rows, serde_json::json!([{"one": 1, "s": "a"}]));
+}
+
 #[test]
 fn batch_select_1_emits_csv_and_exits_zero() {
     let out = Command::new(pgman_binary())
