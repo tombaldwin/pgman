@@ -18,9 +18,9 @@ expression: dump(&buf)
 ╰───────────│  ▼ orders  (5 col, 1 cons)                                                                                                                                                   │───────────╯
 ╭[ ◆ result │      · user_id : bigint NOT NULL                                    3 table(s)                                                                                               │───────────╮
 │id  email  │      · status : varchar(20) NOT NULL                                                                                                                                         │           │
-│1   ada@exa│  ▼ users  (4 col, 1 cons)                                           enter to expand — then arrow / j/k into the tables                                                       │           │
-│2   linus@e│      ◆ users_pkey                                                                                                                                                            │           │
-│3   grace@e│                                                                                                                                                                              │           │
+│1   ada@exa│      ⌁ orders_user_id_idx                                           enter to expand — then arrow / j/k into the tables                                                       │           │
+│2   linus@e│  ▼ users  (4 col, 1 cons)                                                                                                                                                    │           │
+│3   grace@e│      ◆ users_pkey                                                                                                                                                            │           │
 │4   alan@ex│                                                                                                                                                                              │           │
 │5   edsger@│                                                                                                                                                                              │           │
 │6   katheri│                                                                                                                                                                              │           │
@@ -52,4 +52,4 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 6 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 7 row(s) · enter accept · esc clear

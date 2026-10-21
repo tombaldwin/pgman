@@ -143,7 +143,8 @@ impl App {
         match rows.get(self.schema_browser.cursor)? {
             SchemaBrowserRow::Table { schema, name, .. } => Some((schema.clone(), name.clone())),
             SchemaBrowserRow::Column { schema, table, .. } => Some((schema.clone(), table.clone())),
-            SchemaBrowserRow::Constraint { schema, table, .. } => {
+            SchemaBrowserRow::Constraint { schema, table, .. }
+            | SchemaBrowserRow::Index { schema, table, .. } => {
                 Some((schema.clone(), table.clone()))
             }
             SchemaBrowserRow::Partitions { schema, table, .. } => {
@@ -201,4 +202,90 @@ impl App {
             Err(e) => self.last_error = Some(format!("yank failed: {e}")),
         }
     }
+
+    /// `d` in the schema browser: copy the focused table's `CREATE`
+    /// statement. Live, the pieces come from the catalog
+    /// (`query::ddl::fetch`, answered by `AppMsg::DdlLoaded`); `--demo`
+    /// builds them from its own schema at once.
+    pub(super) fn yank_schema_browser_ddl(&mut self) {
+        let Some((schema, table)) = self.focused_schema_browser_table() else {
+            self.last_error = Some("focus a table, column, or constraint first".into());
+            return;
+        };
+        let label = format!("{schema}.{table}");
+        if self.demo && self.client.is_none() {
+            let result = crate::demo::table_ddl(&self.schema_cache, &schema, &table)
+                .ok_or_else(|| format!("{label}: no DDL in --demo"));
+            self.on_ddl_loaded(&label, result);
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            self.last_error = Some(self.not_connected_message());
+            return;
+        };
+        let tx = self.msg_tx.clone();
+        let generation = self.generation;
+        self.last_status = Some(format!("reading the DDL of {label}…"));
+        tokio::spawn(async move {
+            let result = crate::query::ddl::fetch(&client, &schema, &table).await;
+            let _ = tx.send(AppMsg::DdlLoaded {
+                generation,
+                table: label,
+                result,
+            });
+        });
+    }
+
+    /// The DDL arrived: copy the statement, or say why there isn't one.
+    pub(super) fn on_ddl_loaded(
+        &mut self,
+        table: &str,
+        result: Result<crate::query::ddl::TableDdl, String>,
+    ) {
+        let ddl = match result {
+            Ok(ddl) => ddl,
+            Err(e) => {
+                self.last_error = Some(format!("DDL of {table}: {e}"));
+                return;
+            }
+        };
+        let sql = crate::query::ddl::create_statement(&ddl);
+        match write_clipboard(&sql) {
+            Ok(()) => {
+                self.last_status = Some(format!(
+                    "copied the DDL of {table} · {} line(s)",
+                    sql.lines().count()
+                ));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
+        }
+    }
+}
+
+/// Put `text` on the system clipboard. Unit tests never touch the real
+/// one: under `cfg(test)` the text goes to a per-thread slot that
+/// [`take_test_clipboard`] reads back.
+#[cfg(not(test))]
+pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut cb| cb.set_text(text.to_string()))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
+    TEST_CLIPBOARD.with(|c| *c.borrow_mut() = Some(text.to_string()));
+    Ok(())
+}
+
+/// What the last [`write_clipboard`] on this thread wrote, taken.
+#[cfg(test)]
+pub(crate) fn take_test_clipboard() -> Option<String> {
+    TEST_CLIPBOARD.with(|c| c.borrow_mut().take())
 }

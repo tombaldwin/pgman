@@ -18,7 +18,8 @@
 #   runs a statement that ends with `;`) → rows land in the grid → quit.
 #
 # Targets `pgman --demo`, the synthetic-data mode baked into the binary,
-# so there's no database and the frame is identical on every render.
+# so there's no database and every render plays the same: the start card
+# opens with the tap quiet, and its burst lights TAP / N+1 two seconds in.
 # `--demo` has no real connection (`App::client` stays `None`), but
 # request_run still runs the statement through the same safety::evaluate
 # guard a live session would, then answers synthetically via

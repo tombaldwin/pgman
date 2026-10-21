@@ -171,6 +171,23 @@ and breaking changes.
   recursively, Java and Kotlin migrations included. Long lines in the
   patch and log views wrap instead of being cut, the detail line cuts
   an endpoint at a dot, and the pickers sit centred.
+- **The backlog pass.** `\df [pattern]` lists functions with psql's
+  patterns. In the schema browser, tables list their indexes, `p`
+  previews five rows and `d` copies the `CREATE` statement rebuilt from
+  the catalog. LINT107 flags a serial or identity column nothing keeps
+  unique. Right after `JOIN … ON`, completion offers the foreign-key
+  predicate. `pgman query 'SQL' [--json]` runs one statement without
+  the TUI. `sslmode=verify-ca` checks the certificate chain but not the
+  hostname, as libpq does. Safety: a `WHERE` inside a subquery no
+  longer qualifies an `UPDATE` / `DELETE`, and a non-ASCII dollar-quote
+  tag is read as Postgres reads it. The `T` / `L` panels show numeric,
+  date, interval and array values instead of `?`. A long error wraps
+  onto up to three footer rows; the connection-failure card wraps its
+  paths whole so they can be copied; `--demo` opens with the tap quiet
+  and its burst arrives two seconds in. The update check caps a
+  response while reading it; `--upgrade` refuses rather than running
+  from the temp directory; `--batch` repairs pgman's directories to
+  owner-only as the TUI does.
 - **`schema_lint` over MCP** — the schema wizard's findings (missing
   primary keys, unindexed foreign keys, unused indexes, bloat, …) for an
   agent to work through.

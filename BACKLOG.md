@@ -62,16 +62,25 @@ small-UX, correctness and environments findings landed on branch
 `robustness-ux` (PLAN.md); these remain:
 - **Flyway `classpath:` locations** are refused, not resolved: pgman
   doesn't know a project's root, so the error names the directory to
-  give instead. Resolving them needs the project root from discovery.
+  give instead. Resolving them needs a project root, and environments
+  have none: pgman's working directory would silently match any
+  environment to whatever project it was started in. Wants a
+  per-environment `project = "~/src/app"` key — Tom's call.
 - **Aurora on a real cluster**: readers sit under their writer from
   `describe-db-clusters`, tested against fixtures only. Whether a
   reader answers the lag probe's `pg_last_wal_receive_lsn` /
   `pg_stat_wal_receiver` usefully is unverified.
-- **`P` resolving its server through RDS has no guard test**: `l` has
-  one (the integration suite's logs test); `P`'s `resolve` path isn't
-  reached by any integration test.
-- **`demo.gif` predates the robustness UX**: it shows the old start
-  card (no TAP line) and the old pickers. Re-record with `vhs demo.tape`.
+- **Integration tests leak their tables.** Most create
+  `pgman_it_<what>_<pid>` relations and never drop them; CI's database
+  is throwaway, but a developer's compose database had ~400 by
+  2026-10-21, crowding the schema browser and completion when testing
+  by hand. Either a drop guard per test, or a sweep that drops the
+  ones whose pid is no longer running (safe beside a parallel run).
+  The sweep was written in the backlog pass but not run: it deletes
+  tables, so it waits for Tom's go-ahead.
+- **JOIN … ON with a multi-column foreign key** offers one predicate
+  per column pair: the cached `FkEdge` carries no constraint name, so
+  the pairs can't be grouped into one `a = b AND c = d` candidate.
 - **MCP, informational**: on a read-only session `pg_advisory_lock`,
   `pg_notify`, `pg_logical_emit_message` and `txid_current` still run
   (no data changes; transient). Left off the denylist deliberately.
@@ -82,51 +91,15 @@ small-UX, correctness and environments findings landed on branch
 ### From the release panel (2026-09-03) — post-release
 - **From the Fable panel, tolerated for 0.1.0**: the help overlay is
   300+ lines at 80 columns (needs sections that collapse or a topic
-  picker); `Q` with nothing saved and `/` with no grid are silent
-  no-ops (say so in the status line); the connect-failure card
-  middle-elides the log path so it cannot be copied (wrap it instead)
-  and its wrapped hint line is unindented; `--demo`'s start card is
-  pre-lit with `TAP` / `N+1` badges before anything happened; `--tap-
-  listen` auto-enable is loopback-only but a ~500 MB retained ceiling
-  under a deliberate flood is the honest number; `dollar_tag_at` is
-  ASCII-only (fail-safe: over-splits); `--upgrade` with neither `HOME`
-  nor `XDG_CACHE_HOME` still falls back to the temp dir.
-- **ebman parity, deferred**: a `pgman query 'SQL' --json` subcommand
-  alias for `--batch --sql … --format json`; a `--read-write` opt-in flag
-  mirroring ebman's `--read-only`; the `D` key means describe in ebman
-  and diff here; a Ctrl-K command palette on top of the `:` bar.
-- **Tap aggregate memo on a real generation counter.** The memo added
-  by the security batch keys on a content fingerprint (length + first
-  and last timestamps) from a `thread_local`, because the ring's push
-  and clear sites were outside that task's file scope. A `ring_generation:
-  u64` bumped on every mutation is the stronger design; the fingerprint
-  cannot false-hit but goes cold when a task migrates workers.
-- **Update-check response cap is not streaming.** The 64 KiB cap checks
-  `Content-Length` before and the body length after; a chunked response
-  with no length buffers before the check. Needs reqwest's `stream`
-  feature and a `take` — one Cargo feature away.
-- **`has_where` is a whole-statement keyword check**, so a `DELETE` whose
-  only `WHERE` is inside a subquery classifies as `with WHERE` (Confirm,
-  not Block). Needs a real parser; documented in
-  `docs/safety-and-privacy.md`.
-- **`--tap-record` permission verification** was inconclusive in the
-  sandbox (the agent's filesystem view and the subprocess's did not line
-  up); the code mirrors `write_private`. Verify by hand on Linux.
-- **Batch mode skips the directory-permission repair** that the TUI's
-  `init_logging` does (data/config dirs stay at whatever mode they had).
+  picker — `:help <topic>` jumps, but the overlay is still one page);
+  `--tap-listen` auto-enable is loopback-only but a ~500 MB retained
+  ceiling under a deliberate flood is the honest number.
+- **ebman parity, deferred**: a `--read-write` opt-in flag mirroring
+  ebman's `--read-only`; the `D` key means describe in ebman and diff
+  here; a Ctrl-K command palette on top of the `:` bar.
 
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
-
-### Connection & chrome
-- IntelliJ `dataSources.local.xml` password parsing — the
-  `parse_local_passwords` referenced in `creds::intellij`'s doc
-  comment doesn't exist yet. Today `PGPASSWORD` fills the gap.
-- NUMERIC / unknown-type cell rendering in `conn::cell_to_string` —
-  currently best-effort `Debug`-style for unknown OIDs.
-- TLS `verify-ca` hostname-skip via a custom rustls verifier — the
-  `sslmode=verify-ca` URL param currently behaves like `verify-full`
-  because we don't override the hostname check.
 
 ### Credentials & config
 - `${...}` placeholder resolution. (Blocked — needs real-world
@@ -162,26 +135,6 @@ batch.
   to carry PK columns (same gap as "Indexes under each table").
   The heuristic already covers the common id-column case.
 
-### Schema browser — follow-ups
-- DDL preview pane (live `pg_get_tabledef`-ish query) for the
-  focused table.
-- Sample-rows preview (live `SELECT * FROM tbl LIMIT 5`).
-- **Indexes under each table** — needs a new fetch query
-  (`pg_index → pg_class.indrelid → owning relation`) since the
-  current `cache.indexes` only carries `(schema, name)` with no
-  table linkage. Columns + PK/UK constraints already drill down.
-- One-key DDL preview (copy CREATE-TABLE statement) on a focused
-  table. Needs a live `pg_get_tabledef`-shaped query — separate
-  from the now-shipped SELECT / INSERT template yanks.
-
-### Schema wizard — live-query checks
-The pure-cache pass (LINT001-004) + the live pass (LINT101-106)
-now cover most painful real-world schema sins. Last one:
-- **LINT107 — `serial` columns on tables with no PK using that
-  column.** Common Hibernate-generated shape where a serial id
-  isn't actually a PK — silently grows duplicate keys. Needs
-  pg_depend traversal to detect the implicit sequence linkage.
-
 ### Performance / DBA — follow-ups
 - **Page beyond `MAX_ROWS`.** v1 streaming landed (rows fetched
   via `query_raw` and capped at `grid::MAX_ROWS` so huge SELECTs
@@ -195,6 +148,9 @@ now cover most painful real-world schema sins. Last one:
   `SchemaBrowserFilter`) still hand-roll append-only editing and
   could adopt the same `text_input::TextInput` widget (cursor
   movement, Home/End, Ctrl-W word-delete, paste) for consistency.
+  Tried in the backlog pass (2026-10-21) and skipped: it retypes five
+  state fields used ~90 times across 14 files — an architecture item
+  wanting its own design note, not a drive-by.
 
 ### JDBC tap — layered build
 The committed observability path. **pgman-tap is not a
@@ -651,8 +607,6 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
-- **Real `:about` command** once a typed-command palette lands. The
-  `A` keybinding works in the meantime.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs
@@ -662,44 +616,26 @@ the list for the cases where it can't reach.
   targeting (each tab pointing at its own DSN) is the v2 — needs
   threading the active client through every query-spawn site,
   separate schema caches, separate cancel tokens.
-- **Multi-line error footer.** `last_error` still renders one
-  line and truncates at the right edge. Rich detail is now in
-  the F2 overlay, so the footer staying one line is less
-  painful, but wrapping to 2-3 lines would still help.
 - **Vim-style bookmarks — persisted variant.** Session-local
   shipped (`m<a-z>` / `'<a-z>` over the grid (row, col)).
   Persisting them with the auto-save draft so they survive
   restart is a follow-up — would need a JSON-able snapshot
   that also carries the SQL fingerprint to detect re-runs.
-- **psql backslash command routing — extras.** `\d` / `\dt` /
-  `\dn` / `\?` / `\q` / `\timing` / `\l` / `\x` shipped (see
-  Done → Editor). Remaining: `\df` (functions) — needs a
-  list-functions catalog query.
-
-### Completion — next round
-- **JOIN ON FK suggestions** — in `JOIN orders o ON `, look at
-  `pg_constraint` FK rows linking in-scope tables and offer
-  `users.id = orders.user_id`-style predicates as multi-token
-  candidates. Catalog fetch needs a new query for foreign-key edges.
-  Higher-value, bigger scope than the other completion items here.
-
 ### Reuse from the sibling `ebman` project
-Survey is in [Done]. Lift as the milestones reach them:
+Already shared through `tb-tui-common`: chrome, splash, overlay,
+`TextInput`, theme, font probe and the path helpers. pgman has its own
+update check and `:` command registry (`COMMAND_NAMES`, feeding Tab
+completion and help). Still to lift, as features reach them:
 - `shell.rs` — PTY wrapper + key→bytes; verbatim. Use for `psql` /
-  `pg_dump` / `claude` handoff (M2 / advisor / snapshots).
-- Toast stack, Braille spinner, pill-chain widgets (`ui.rs`) — lift
-  as chrome is built out.
-- `state.rs` — line-oriented persisted state; adapt for saved
-  connections / query history.
+  `pg_dump` / `claude` handoff (snapshots / advisor).
+- Toast stack (`ui.rs`).
+- `state.rs` — line-oriented persisted state.
 - `mode_action.rs` — `ConfirmModal` + countdown state machine; adapt
-  for `safety::Guard::Confirm` prompts and backup / restore.
-- `commands.rs` — `:command` registry feeding help + Ctrl-K palette.
+  for backup / restore.
 - `form.rs` — multi-field modal; connection editor + safety.toml
   editor.
 - `mode_detail.rs` — tabbed drill-down pattern.
-- Smaller: `keys.rs`, `plugins.rs`, `update_check.rs`, `control.rs`,
-  `cost_cache.rs` (→ schema / plan cache), `report_bug.rs` (PII
-  scrubber).
+- `report_bug.rs` (PII scrubber), `cost_cache.rs` (→ plan cache).
 - Skip (AWS-specific): `profiles.rs`, `sso.rs`, `aws.rs`.
 
 ## v2 — AWS (not started)

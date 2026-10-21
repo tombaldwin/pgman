@@ -249,6 +249,19 @@ fn external_edit_scratch_dir_removed_on_spawn_failure() {
 
 use std::process::{Command, Stdio};
 
+/// `pgman` with `HOME` and the XDG directories pointed at a scratch
+/// directory, so no test reads, creates or re-permissions the real
+/// `~/.config/pgman` and friends. A test that sets them again wins.
+fn pgman() -> Command {
+    let home = std::env::temp_dir().join(format!("pgman-test-home-{}", std::process::id()));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pgman"));
+    cmd.env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"));
+    cmd
+}
+
 #[test]
 fn non_tty_launch_prints_the_batch_hint_and_exits_2() {
     // No --batch / --upgrade / --init-config, so this reaches the
@@ -257,10 +270,7 @@ fn non_tty_launch_prints_the_batch_hint_and_exits_2() {
     // before it ever touches the alternate screen (the old behaviour
     // was a raw `Error: Device not configured (os error 6)` from
     // inside crossterm).
-    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
-        .stdin(Stdio::null())
-        .output()
-        .expect("spawn pgman");
+    let out = pgman().stdin(Stdio::null()).output().expect("spawn pgman");
     assert_eq!(
         out.status.code(),
         Some(2),
@@ -276,10 +286,7 @@ fn non_tty_launch_prints_the_batch_hint_and_exits_2() {
 
 #[test]
 fn help_output_fits_a_screen_and_names_no_rust_types() {
-    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
-        .arg("--help")
-        .output()
-        .expect("spawn pgman");
+    let out = pgman().arg("--help").output().expect("spawn pgman");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -293,7 +300,7 @@ fn help_output_fits_a_screen_and_names_no_rust_types() {
 
 #[test]
 fn positional_dsn_and_dsn_flag_must_agree() {
-    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -316,7 +323,7 @@ fn init_config_writes_a_default_and_refuses_to_overwrite() {
     std::fs::create_dir_all(&home).unwrap();
 
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_pgman"))
+        pgman()
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -355,6 +362,42 @@ fn init_config_writes_a_default_and_refuses_to_overwrite() {
     assert!(stderr.contains("already exists"), "got: {stderr}");
 }
 
+/// `--batch` repairs pgman's directories to owner-only the way the
+/// TUI's startup does, even on a run that stops at its arguments.
+#[cfg(unix)]
+#[test]
+fn batch_repairs_the_private_directories_like_the_tui() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("pgman-batch-dirs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let dirs = [".config/pgman", ".local/share/pgman", ".cache/pgman"].map(|d| home.join(d));
+    for d in &dirs {
+        std::fs::create_dir_all(d).unwrap();
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args([
+            "--batch",
+            "--dsn",
+            "postgres://x@127.0.0.1:1/x",
+            "--sql",
+            " ",
+        ])
+        .output()
+        .expect("spawn pgman");
+    let modes: Vec<u32> = dirs
+        .iter()
+        .map(|d| std::fs::metadata(d).unwrap().permissions().mode() & 0o777)
+        .collect();
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out.status.code(), Some(2), "stops at the empty SQL");
+    assert_eq!(modes, [0o700; 3], "config, data, cache: {modes:?}");
+}
+
 #[test]
 fn log_over_64mb_is_refused_before_being_read() {
     let dir = std::env::temp_dir().join(format!("pgman-log-cap-{}", std::process::id()));
@@ -365,7 +408,7 @@ fn log_over_64mb_is_refused_before_being_read() {
         let f = std::fs::File::create(&path).unwrap();
         f.set_len(65 * 1024 * 1024).unwrap();
     }
-    let out = Command::new(env!("CARGO_BIN_EXE_pgman"))
+    let out = pgman()
         .args(["--log", path.to_str().unwrap()])
         .stdin(Stdio::null())
         .output()

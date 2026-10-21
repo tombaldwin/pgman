@@ -17,6 +17,15 @@ fn clamped_line(text: &str, style: Style, width: usize, theme: &Theme) -> Line<'
     }
 }
 
+/// What kind of index `ix` is, in a word or two. Pure.
+pub(crate) fn index_kind(ix: &crate::query::schema::IndexMeta) -> &'static str {
+    match (ix.primary, ix.unique) {
+        (true, _) => "primary key",
+        (false, true) => "unique",
+        (false, false) => "index",
+    }
+}
+
 /// Schema browser modal. Two panes inside a centered overlay:
 /// the left holds the schema → table tree, the right holds the
 /// columns / constraints for the focused table (or a one-line
@@ -124,6 +133,7 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             SchemaBrowserRow::Constraint { name, .. } => format!("      ◆ {name}"),
+            SchemaBrowserRow::Index { name, .. } => format!("      ⌁ {name}"),
             SchemaBrowserRow::Partitions {
                 count, expanded, ..
             } => {
@@ -237,6 +247,43 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 theme,
             ));
         }
+        Some(SchemaBrowserRow::Index {
+            schema,
+            table,
+            name,
+        }) => {
+            right_lines.push(clamped_line(
+                &format!("{schema}.{table} · {name}"),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+                detail_width,
+                theme,
+            ));
+            right_lines.push(Line::from(""));
+            let meta = app
+                .schema_cache
+                .indexes_by_table
+                .get(&(schema.clone(), table.clone()))
+                .and_then(|v| v.iter().find(|m| m.name == *name));
+            if let Some(m) = meta {
+                right_lines.push(clamped_line(
+                    index_kind(m),
+                    Style::default().fg(theme.text),
+                    detail_width,
+                    theme,
+                ));
+                right_lines.push(Line::from(""));
+                // The definition is the one thing here worth reading in
+                // full, so it wraps instead of being cut.
+                for chunk in wrap_value(&m.definition, detail_width.max(1)) {
+                    right_lines.push(Line::from(Span::styled(
+                        chunk,
+                        Style::default().fg(theme.muted),
+                    )));
+                }
+            }
+        }
         Some(SchemaBrowserRow::Partitions {
             schema,
             table,
@@ -304,7 +351,7 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
             }
             right_lines.push(Line::from(""));
             right_lines.push(clamped_line(
-                "s SELECT · i INSERT",
+                "s SELECT · i INSERT · p preview rows · d DDL",
                 Style::default().fg(theme.muted),
                 detail_width,
                 theme,
@@ -384,6 +431,31 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 for c in cons {
                     right_lines.push(clamped_line(
                         &format!("  · {}", c.name),
+                        Style::default().fg(theme.text),
+                        detail_width,
+                        theme,
+                    ));
+                }
+            }
+            let indexes = app
+                .schema_cache
+                .indexes_by_table
+                .get(&(schema.clone(), name.clone()))
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            if !indexes.is_empty() {
+                right_lines.push(Line::from(""));
+                right_lines.push(clamped_line(
+                    &format!("indexes ({})", indexes.len()),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                    detail_width,
+                    theme,
+                ));
+                for ix in indexes {
+                    right_lines.push(clamped_line(
+                        &format!("  · {}  {}", ix.name, index_kind(ix)),
                         Style::default().fg(theme.text),
                         detail_width,
                         theme,

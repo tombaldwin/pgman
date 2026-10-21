@@ -335,6 +335,22 @@ highlight and the header's column cursor are there in the editor and
 after Esc alike (checked in tmux against `--demo`). The few that
 remain are under "From the robustness pass" in BACKLOG.md.
 
+## Backlog pass — 2026-10-21 · behaviour · **done** (`backlog-work`)
+
+Tom: "work through the backlog". The tractable open items, in three
+worktree batches (polish, correctness, schema / editor) plus the main
+line; the detail is in CHANGELOG → The backlog pass and the archive.
+Every guard has a CAUGHT.
+
+Killed by evidence: `Q` / `/` silent no-ops, the tap memo counter,
+`:about`, IntelliJ local passwords (see the archive). Skipped, each
+with its reason in BACKLOG.md: Flyway `classpath:` (wants a
+per-environment `project` key), TextInput adoption (architecture),
+copying a live database (Tom's decision). Not attempted, as features
+that each want a design note: cell editing, paging past `MAX_ROWS`,
+per-tab connections, keymap customisation, the help overlay's
+sections, the JDBC tap layers, v2.
+
 ## Release day
 
 ```

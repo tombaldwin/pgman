@@ -5,8 +5,9 @@
 //! / `order_items`), a result grid, saved queries (including a
 //! `:param` one), and a burst of JDBC-tap events that trips the
 //! live N+1 detector. Used for screenshots, the README demo gif
-//! (`vhs demo.tape`), and talks, so the frame is identical on every
-//! launch and never touches a real server.
+//! (`vhs demo.tape`), and talks, so the frames are the same on every
+//! launch (the tap burst lands at the same moment each time) and it
+//! never touches a real server.
 //!
 //! `App::demo` is set so the run loop skips the connection and
 //! skips persisting draft / history / saved-queries to disk — a
@@ -17,7 +18,7 @@ use std::collections::HashMap;
 use crate::app::{App, ConnState, DatabaseInfo};
 use crate::conn::Dsn;
 use crate::grid::Grid;
-use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, SchemaCache, TableMeta};
+use crate::query::schema::{ColumnMeta, ConstraintMeta, FkEdge, IndexMeta, SchemaCache, TableMeta};
 use crate::safety::SafetyConfig;
 use crate::saved::SavedQuery;
 use crate::tap::{TapEvent, TapKind};
@@ -132,12 +133,13 @@ pub fn app(theme: Theme) -> App {
 /// starts with an empty grid so the F8 / F4 hint is the first thing
 /// on screen, not a result the operator hasn't asked for yet.
 ///
-/// Everything else — schema cache, saved queries, history, tap
-/// events — is identical to [`app`]; only the grid (cleared back to
+/// Everything else — schema cache, saved queries, history — is
+/// identical to [`app`]; only the grid (cleared back to
 /// `Grid::default()`, same as a fresh, query-less connection), the
 /// editor (empty: the walkthrough says `e` then paste, and a paste
-/// appended to the pre-filled SELECT) and `databases` (populated, so
-/// the start card's databases line isn't blank) differ.
+/// appended to the pre-filled SELECT), `databases` (populated, so the
+/// start card's databases line isn't blank) and the tap (quiet until
+/// its burst arrives, `DEMO_TAP_DELAY` in) differ.
 pub fn launch_app(theme: Theme) -> App {
     let mut a = app(theme);
     a.grid = Grid::default();
@@ -160,8 +162,22 @@ pub fn launch_app(theme: Theme) -> App {
             size: "3.4 GB".into(),
         },
     ];
+    // Nothing has happened at launch, so the tap is quiet: the burst
+    // arrives a couple of seconds in, an event a frame, and the TAP /
+    // N+1 badges light as it lands — the live tap's story, not a card
+    // pre-lit before anything ran.
+    let pending = std::mem::take(&mut a.tap_events);
+    a.tap_health = Default::default();
+    a.bump_tap_generation();
+    a.demo_tap_feed = Some(crate::app::DemoTapFeed {
+        due: std::time::Instant::now() + DEMO_TAP_DELAY,
+        pending,
+    });
     a
 }
+
+/// How long `--demo` keeps the tap quiet before its burst arrives.
+pub const DEMO_TAP_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Answer a query synthetically — no client, no network, called from
 /// `App::spawn_run_demo` on `Guard::Allow` in `--demo` mode.
@@ -201,10 +217,27 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
         // about the statement — projecting it would be nonsense.
         None => return notice_grid(),
     };
-    match select_list_of(sql) {
+    let mut grid = match select_list_of(sql) {
         Some(list) => project_columns(list, full),
         None => full,
+    };
+    if let Some(n) = trailing_limit(sql) {
+        grid.rows.truncate(n);
     }
+    grid
+}
+
+/// `n` when `sql` ends `LIMIT n` (an optional `;` after it), so a
+/// demo answer is no longer than the statement asked for — the
+/// schema browser's `p` asks for five rows and `users` has six.
+fn trailing_limit(sql: &str) -> Option<usize> {
+    let sql = sql.trim().trim_end_matches(';');
+    let mut words = sql.split_whitespace().rev();
+    let n = words.next()?.parse().ok()?;
+    words
+        .next()
+        .filter(|w| w.eq_ignore_ascii_case("limit"))
+        .map(|_| n)
 }
 
 /// The SELECT list of `sql` — the text between a leading `SELECT` and
@@ -364,6 +397,120 @@ fn notice_grid() -> Grid {
     Grid {
         columns: vec!["demo".to_string()],
         rows: vec![vec!["this is --demo mode, no database".to_string()]],
+        truncated: false,
+    }
+}
+
+/// The schema browser's DDL copy in `--demo`: built from the demo
+/// schema the way the catalog would answer for it — `id` a
+/// `bigserial` primary key, each FK edge a `FOREIGN KEY` constraint,
+/// and the indexes no constraint owns. `None` for a table the demo
+/// doesn't have.
+pub fn table_ddl(
+    cache: &SchemaCache,
+    schema: &str,
+    table: &str,
+) -> Option<crate::query::ddl::TableDdl> {
+    use crate::app::quote_ident;
+    use crate::query::ddl::{DdlColumn, DdlKind, TableDdl};
+    let key = (schema.to_string(), table.to_string());
+    let columns = cache
+        .columns_meta_by_table
+        .get(&key)?
+        .iter()
+        .map(|c| {
+            let serial = c.name == "id";
+            DdlColumn {
+                name: quote_ident(&c.name),
+                type_name: c.type_name.clone(),
+                not_null: c.not_null,
+                default: serial.then(|| format!("nextval('{table}_id_seq'::regclass)")),
+                owns_sequence: serial,
+                ..DdlColumn::default()
+            }
+        })
+        .collect();
+    let primary = cache
+        .constraints
+        .iter()
+        .filter(|c| c.schema == schema && c.table == table)
+        .map(|c| (quote_ident(&c.name), "PRIMARY KEY (id)".to_string()));
+    let foreign = cache
+        .fk_edges
+        .iter()
+        .filter(|e| e.child_schema == schema && e.child_table == table)
+        .map(|e| {
+            (
+                quote_ident(&format!("{table}_{}_fkey", e.child_column)),
+                format!(
+                    "FOREIGN KEY ({}) REFERENCES {}({})",
+                    quote_ident(&e.child_column),
+                    quote_ident(&e.parent_table),
+                    quote_ident(&e.parent_column)
+                ),
+            )
+        });
+    let indexes = cache
+        .indexes_by_table
+        .get(&key)
+        .into_iter()
+        .flatten()
+        .filter(|ix| !ix.primary)
+        .map(|ix| ix.definition.clone())
+        .collect();
+    Some(TableDdl {
+        qualified_name: format!("{}.{}", quote_ident(schema), quote_ident(table)),
+        kind: DdlKind::Table,
+        columns,
+        constraints: primary.chain(foreign).collect(),
+        partition_key: None,
+        indexes,
+    })
+}
+
+/// `\df`'s answer in `--demo`: the demo schema's functions, in the
+/// columns the live catalog query returns, filtered by `pattern` the
+/// way the server would filter them (psql wildcards, `schema.`
+/// prefix, unquoted text folded). With no pattern only `public` is
+/// listed, as live; the one `pg_catalog` row is there so `\df now`
+/// shows a pattern reaching system schemas.
+pub fn functions_grid(pattern: Option<&str>) -> Grid {
+    use crate::query::backslash::{glob_matches, split_pattern};
+    const FUNCTIONS: &[[&str; 5]] = &[
+        ["pg_catalog", "now", "timestamp with time zone", "", "func"],
+        [
+            "public",
+            "order_total",
+            "bigint",
+            "p_order_id bigint",
+            "func",
+        ],
+        ["public", "refresh_user_stats", "void", "", "proc"],
+        [
+            "public",
+            "user_order_count",
+            "integer",
+            "p_user_id bigint",
+            "func",
+        ],
+    ];
+    let wanted = pattern.map(str::trim).filter(|p| !p.is_empty());
+    let rows = FUNCTIONS
+        .iter()
+        .filter(|[schema, name, ..]| match wanted {
+            None => *schema != "pg_catalog",
+            Some(p) => {
+                let (s, n) = split_pattern(p);
+                glob_matches(&n, name) && s.is_none_or(|s| glob_matches(&s, schema))
+            }
+        })
+        .map(|f| row(f))
+        .collect();
+    Grid {
+        columns: ["schema", "name", "result", "arguments", "type"]
+            .map(String::from)
+            .to_vec(),
+        rows,
         truncated: false,
     }
 }
@@ -681,13 +828,51 @@ fn schema_cache() -> SchemaCache {
         },
     ];
 
+    // Each table's primary-key index, plus the two FK-column indexes a
+    // real schema like this one would have.
+    let index = |table: &str, name: &str, cols: &str, primary: bool| {
+        (
+            key(table),
+            IndexMeta {
+                name: name.into(),
+                definition: format!(
+                    "CREATE {}INDEX {name} ON public.{table} USING btree ({cols})",
+                    if primary { "UNIQUE " } else { "" }
+                ),
+                unique: primary,
+                primary,
+            },
+        )
+    };
+    let mut indexes_by_table: HashMap<(String, String), Vec<IndexMeta>> = HashMap::new();
+    for (k, ix) in [
+        index("order_items", "order_items_order_id_idx", "order_id", false),
+        index("order_items", "order_items_pkey", "id", true),
+        index("orders", "orders_pkey", "id", true),
+        index("orders", "orders_user_id_idx", "user_id", false),
+        index("users", "users_pkey", "id", true),
+    ] {
+        indexes_by_table.entry(k).or_default().push(ix);
+    }
+    let mut indexes: Vec<TableMeta> = indexes_by_table
+        .values()
+        .flatten()
+        .map(|ix| TableMeta {
+            schema: "public".into(),
+            name: ix.name.clone(),
+        })
+        .collect();
+    indexes.sort_by(|a, b| a.name.cmp(&b.name));
+
     SchemaCache {
         schemas: vec!["public".into()],
         tables,
+        indexes,
         columns_by_table,
         columns_meta_by_table,
         constraints,
         fk_edges,
+        indexes_by_table,
         ..SchemaCache::default()
     }
 }
@@ -1271,9 +1456,44 @@ mod tests {
              `e` then paste, and a paste appended to the pre-filled SELECT: {:?}",
             a.editor.buffer
         );
-        // Everything else app() sets up is untouched.
+        // Everything else app() sets up is untouched, bar the tap.
         assert_eq!(a.schema_cache.tables.len(), 3);
-        assert!(!a.tap_events.is_empty());
+    }
+
+    /// `--demo` opens with the tap quiet — no events, no TAP / N+1
+    /// badges — and the burst arrives after `DEMO_TAP_DELAY`, one event
+    /// a frame, until the N+1 finding is there and the feed is gone.
+    #[test]
+    fn launch_app_tap_is_quiet_until_the_burst_arrives() {
+        let mut a = launch_app(Theme::default());
+        assert!(a.tap_events.is_empty() && a.tap_health.query_count == 0);
+        assert!(a.current_nplus1().is_empty());
+        let feed = a.demo_tap_feed.as_ref().expect("a pending burst");
+        let (due, total) = (feed.due, feed.pending.len());
+        assert_eq!(total, tap_events().len());
+
+        // Before it's due: nothing arrives.
+        a.tick_demo_tap(due - std::time::Duration::from_millis(1));
+        assert!(a.tap_events.is_empty());
+
+        // From then on, one event per frame.
+        a.tick_demo_tap(due);
+        assert_eq!(a.tap_events.len(), 1);
+        for _ in 1..total {
+            a.tick_demo_tap(due);
+        }
+        assert_eq!(a.tap_events.len(), total);
+        assert!(a.tap_health.query_count > 0);
+        assert!(
+            a.demo_tap_feed.is_none(),
+            "the feed must go with its last event, or it holds the frame clock awake"
+        );
+        assert!(
+            a.current_nplus1()
+                .iter()
+                .any(|f| f.fingerprint.contains("order_items")),
+            "the delivered burst trips the detector, as app()'s pre-filled ring does"
+        );
     }
 
     #[test]
@@ -1448,5 +1668,26 @@ mod tests {
         // And the "no table I know" notice is never projected.
         let notice = answer("select nothing from mystery", &cache);
         assert_eq!(notice.columns, vec!["demo".to_string()]);
+    }
+
+    #[test]
+    fn answer_honours_a_trailing_limit() {
+        let cache = schema_cache();
+        assert_eq!(answer("select * from users", &cache).rows.len(), 6);
+        assert_eq!(answer("SELECT * FROM users LIMIT 2;", &cache).rows.len(), 2);
+        assert_eq!(answer("select * from orders limit 1", &cache).rows.len(), 1);
+        assert_eq!(answer("select * from users limit 50", &cache).rows.len(), 6);
+        assert_eq!(trailing_limit("select 1"), None);
+        assert_eq!(trailing_limit("select * from t limit x"), None);
+        assert_eq!(trailing_limit("select * from t where id = 3"), None);
+    }
+
+    #[test]
+    fn functions_grid_has_the_live_columns() {
+        let g = functions_grid(None);
+        assert_eq!(g.columns, ["schema", "name", "result", "arguments", "type"]);
+        assert!(g.rows.iter().all(|r| r.len() == g.columns.len()));
+        assert_eq!(functions_grid(Some("public.order_*")).rows.len(), 1);
+        assert_eq!(functions_grid(Some("audit.order_*")).rows.len(), 0);
     }
 }

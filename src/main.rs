@@ -16,7 +16,7 @@ use std::io::IsTerminal;
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
     about = "k9s-style Postgres TUI for Java/AWS shops (public beta)",
-    after_help = "MCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -142,7 +142,17 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let cli = Cli::parse();
+    // `pgman query 'SQL' [--json]` — ebman's spelling of `--batch`,
+    // rewritten to it so everything below sees one command line.
+    let cli = if argv.get(1).map(String::as_str) == Some("query") {
+        if pgman::mcp::wants_help(&argv[2..]) {
+            println!("{}", batch::QUERY_USAGE);
+            return Ok(());
+        }
+        Cli::parse_from(batch::query_alias_argv(&argv[2..]))
+    } else {
+        Cli::parse()
+    };
 
     // `--upgrade` is the only flag that doesn't enter the TUI. Handle it
     // before we set up logging / probe the terminal.
@@ -157,8 +167,10 @@ async fn main() -> anyhow::Result<()> {
 
     // `--batch` is the other non-TUI path. Don't init the rolling-file
     // logger either — keep tracing quiet so script output isn't
-    // polluted; errors go to stderr in run().
+    // polluted; errors go to stderr in run(). The directory repair
+    // `init_logging` does still applies.
     if cli.batch {
+        repair_private_dirs();
         let code = run_batch(&cli).await;
         std::process::exit(code);
     }
@@ -1166,19 +1178,23 @@ fn dev_tty_opens() -> bool {
         .is_ok()
 }
 
-fn init_logging() {
-    let dir = util::cache_dir();
-    // `ensure_private_dir`, not `create_dir_all_private`: this is one
-    // of the three directories pgman actually owns (unlike an
-    // arbitrary `\report` destination), so repair a pre-existing
-    // looser mode here rather than only setting it on first
-    // creation. `data_dir()` / `config_dir()` get the same repair —
-    // this is the one place on the normal startup path (TUI, not
-    // `--batch`) that's guaranteed to run before anything under them
-    // is touched.
-    let _ = util::ensure_private_dir(&dir);
+/// Create pgman's three directories owner-only, and repair one that
+/// already exists looser. `ensure_private_dir`, not
+/// `create_dir_all_private`: these are the directories pgman actually
+/// owns (unlike an arbitrary `\report` destination), so a pre-existing
+/// looser mode is repaired here rather than only set on first creation.
+/// Every startup path runs this before anything under them is touched:
+/// the TUI, `mcp` and `env` through `init_logging`, `--batch` directly
+/// (it keeps the log quiet, but reads and writes the same files).
+fn repair_private_dirs() {
+    let _ = util::ensure_private_dir(&util::cache_dir());
     let _ = util::ensure_private_dir(&util::data_dir());
     let _ = util::ensure_private_dir(&util::config_dir());
+}
+
+fn init_logging() {
+    let dir = util::cache_dir();
+    repair_private_dirs();
     // Daily rolling files (`pgman.log.YYYY-MM-DD`) instead of one
     // ever-growing file — the tap listeners can log at a bounded but
     // non-trivial rate (throttled malformed-frame warnings, drop

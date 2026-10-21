@@ -118,6 +118,11 @@ diff, all of which are also dispatched from this mode.
 
 Typing a space right after `FROM`, `JOIN`, `INNER`, `LEFT`, `RIGHT`, `FULL`,
 `CROSS`, `INTO`, `WHERE`, `AND`, `OR` or `ON` also auto-triggers completion.
+Right after `JOIN … ON` the popup leads with the whole predicate from each
+foreign key between the table just joined and the ones before it, in either
+direction and named the way the query names them (`users u JOIN orders o ON`
+offers `o.user_id = u.id`); typing the alias narrows to its own. A
+multi-column key offers one predicate per column pair.
 
 A newline inherits the previous line's indentation, plus one level (`[editor]
 indent`, default 2) when that line ends with `(`, `,` or a clause keyword such
@@ -207,7 +212,7 @@ don't list beside their table: an expanded partitioned table shows one
 
 | Key | Action |
 |---|---|
-| `j` / `k` / `↓` / `↑` | Navigate schemas / tables / columns / constraints |
+| `j` / `k` / `↓` / `↑` | Navigate schemas / tables / columns / constraints / indexes (an index shows its kind and its full `CREATE INDEX` definition) |
 | `Enter` / `Space` / `←` / `→` | Expand / collapse the focused schema, table or partitions group |
 | `[` / `]` | Jump to previous / next schema (skips past table internals) |
 | `+` / `=` | Expand all (cursor stays put) |
@@ -217,15 +222,17 @@ don't list beside their table: an expanded partitioned table shows one
 | `/` | In-tree filter (live; ancestors of a match stay visible) |
 | `s` | Yank `SELECT * FROM <schema>.<table> LIMIT 100` template |
 | `i` | Yank `INSERT INTO … (cols) VALUES (NULL, …)` template |
+| `p` | Preview: run `SELECT * FROM <schema>.<table> LIMIT 5` and close onto the grid it lands in (a partition previews itself) |
+| `d` | Copy the focused table's (or view's) `CREATE` statement, rebuilt from the catalog: columns with defaults, identity and generated expressions (`serial` where the column owns its sequence), its own primary / unique / check / exclusion / foreign keys, `PARTITION BY` / `PARTITION OF`, then a `CREATE INDEX` per index no constraint owns. Not a `pg_dump`: owners, grants, comments and triggers are left out |
 | `r` | Reload the schema — picks up tables other sessions made since you connected (`S`, `\d` and `W` also reload by themselves when the cache is empty while connected) |
 | `Esc` / `q` | Close (also drops the in-tree filter) |
 
 ## Schema wizard
 
 Opened with `W`. Pure checks (LINT001–004: missing PK, mixed-case, reserved
-word, mixed naming) run over the cached schema; live checks (LINT101–106: FK
+word, mixed naming) run over the cached schema; live checks (LINT101–107: FK
 without index, unused index, duplicate indexes, bloat, no comment, mixed
-timestamp/timestamptz) query the database.
+timestamp/timestamptz, a serial or identity column nothing keeps unique) query the database.
 
 | Key | Action |
 |---|---|

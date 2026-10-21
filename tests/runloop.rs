@@ -145,3 +145,55 @@ async fn run_loop_external_edit_flag_triggers_suspend_resume() {
         app.last_status
     );
 }
+
+/// A typing burst inside the auto-save throttle is still saved once
+/// the window closes, with no further key to wake the loop. Before,
+/// only the burst's first key reached the draft file until the next
+/// event, so closing the terminal lost the rest.
+#[tokio::test]
+async fn run_loop_saves_the_tail_of_a_typing_burst_without_another_key() {
+    let mut app = settled_app();
+    app.mode = Mode::Editor;
+    let draft = app.draft_file.clone();
+    let mut tui = HeadlessTui::default();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    for c in "select 1;".chars() {
+        tx.send(key(KeyCode::Char(c))).unwrap();
+    }
+    let observe = async move {
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        let saved = std::fs::read_to_string(&draft).unwrap_or_default();
+        drop(tx); // ends the loop
+        saved
+    };
+    let (run, saved) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(app.run_with(&mut tui, rx), observe)
+    })
+    .await
+    .expect("loop hung");
+    run.unwrap();
+    assert_eq!(
+        saved, "select 1;",
+        "the draft file held {saved:?} before exit"
+    );
+}
+
+/// `AppMsg::Terminate` (what SIGHUP / SIGTERM become) quits through
+/// the normal exit path: the draft is written as on `q`, though the
+/// event channel is still open and no key arrived.
+#[tokio::test]
+async fn run_loop_terminate_quits_and_saves_the_session() {
+    let mut app = settled_app();
+    app.mode = Mode::Editor;
+    app.editor.buffer = "select 2;".into();
+    let draft = app.draft_file.clone();
+    let msgs = app.msg_tx_clone();
+    let mut tui = HeadlessTui::default();
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    msgs.send(pgman::app::AppMsg::Terminate).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), app.run_with(&mut tui, rx))
+        .await
+        .expect("Terminate did not end the loop")
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "select 2;");
+}

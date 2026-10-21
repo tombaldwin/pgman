@@ -453,6 +453,46 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
     );
 }
 
+/// An expanded table lists its indexes under its constraints; the
+/// detail pane for an index shows its kind and its full definition,
+/// and the table's own pane lists them with theirs.
+#[test]
+fn schema_browser_shows_a_tables_indexes() {
+    use pgman::app::SchemaBrowserRow;
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.expanded.insert("public".into());
+    a.schema_browser.expanded.insert("public.orders".into());
+    let rows = a.flattened_schema_browser();
+    a.schema_browser.cursor = rows
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "orders"))
+        .unwrap();
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(rendered.contains("⌁ orders_user_id_idx"), "{rendered}");
+    // The primary key's index lists once, as the constraint.
+    assert!(rendered.contains("◆ orders_pkey"), "{rendered}");
+    assert!(!rendered.contains("⌁ orders_pkey"), "{rendered}");
+    assert!(rendered.contains("indexes (2)"), "{rendered}");
+    assert!(
+        rendered.contains("· orders_pkey  primary key"),
+        "{rendered}"
+    );
+    a.schema_browser.cursor = rows
+        .iter()
+        .position(
+            |r| matches!(r, SchemaBrowserRow::Index { name, .. } if name == "orders_user_id_idx"),
+        )
+        .unwrap();
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(
+        rendered.contains("CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id)"),
+        "{rendered}"
+    );
+}
+
 #[test]
 fn param_prompt_renders_progress_and_entered_values() {
     let mut a = settle_app();
@@ -1199,11 +1239,12 @@ fn a_failed_panel_load_leaves_the_start_card_in_place() {
 }
 
 /// The connection-failure card names the log file that exists
-/// (`pgman.log.YYYY-MM-DD`, not `pgman.log`), keeps it on one fitted
-/// row rather than wrapping the path across the border, and — with no
-/// password in the DSN — suggests supplying one.
+/// (`pgman.log.YYYY-MM-DD`, not `pgman.log`), wraps a long path whole
+/// under its label rather than eliding it (it is there to be copied)
+/// or wrapping it flush against the border, and — with no password in
+/// the DSN — suggests supplying one.
 #[test]
-fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
+fn connection_failure_card_names_the_dated_log_and_wraps_it_whole() {
     let mut a = settle_app();
     a.mode = Mode::Normal;
     a.conn_state = ConnState::Failed(
@@ -1212,13 +1253,22 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
     for width in [60u16, 100] {
         let buf = render(&mut a, width, 24);
         let text = dump(&buf);
-        let logs_row = text
-            .lines()
-            .find(|l| l.contains("logs"))
+        // The logs row and its continuation rows (padded under the
+        // label): the file name may wrap onto the next one.
+        let lines: Vec<&str> = text.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.contains("logs"))
             .unwrap_or_else(|| panic!("no logs row at {width}:\n{text}"));
+        let logs_rows: String = lines[at..]
+            .iter()
+            .enumerate()
+            .take_while(|(i, l)| *i == 0 || l.chars().skip(1).take(10).all(|c| c == ' '))
+            .map(|(_, l)| l.trim_matches(|c| c == '│' || c == ' '))
+            .collect();
         assert!(
-            logs_row.contains("pgman.log."),
-            "the dated file name must be on the logs row at {width}: {logs_row:?}"
+            logs_rows.contains("pgman.log."),
+            "the dated file name must be under the logs label at {width}: {logs_rows:?}\n{text}"
         );
         assert!(
             !text.contains("pgman.log\n") && !text.contains("pgman.log "),
@@ -1226,18 +1276,54 @@ fn connection_failure_card_names_the_dated_log_on_one_fitted_row() {
         );
         assert!(
             text.lines()
-                .any(|l| l.contains("r retry") && l.contains("q quit")),
-            "actions row lost at {width}:\n{text}"
+                .any(|l| l.starts_with('│') && l.contains("r retry") && l.contains("q quit")),
+            "the card's actions row was cut off at {width}x24:\n{text}"
         );
     }
-    // Narrow: the path is middle-ellipsised on its row, never wrapped
-    // onto an unpadded continuation row. Rendered tall enough that the
-    // card keeps its logs row under the five-line editor — at 30
-    // columns every other row wraps, and the card does not shrink.
-    let text = dump(&render(&mut a, 30, 34));
-    let logs_row = text.lines().find(|l| l.contains("logs")).unwrap();
-    assert!(logs_row.contains('…'), "{logs_row:?}");
-    // The hint knows no password was supplied.
+    // Narrow: the path is wrapped whole — no `…` — onto continuation
+    // rows padded under the label, so all of it can be copied. Rendered
+    // tall enough that the card keeps its logs rows under the five-line
+    // editor: at 30 columns every other row wraps too.
+    let text = dump(&render(&mut a, 30, 40));
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines.iter().position(|l| l.contains("logs")).unwrap();
+    assert!(!lines[at].contains('…'), "{:?}", lines[at]);
+    let mut path = String::new();
+    for (i, l) in lines[at..].iter().enumerate() {
+        let body: String = l.chars().skip(1).collect(); // the left border
+        if i > 0 && !body.starts_with("          ") {
+            break;
+        }
+        let value: String = body.chars().skip(10).collect();
+        path.push_str(value.trim_end_matches('│').trim_end());
+    }
+    let dir = pgman::util::cache_dir().display().to_string();
+    assert!(
+        path.starts_with(&dir) && path.contains("pgman.log."),
+        "the wrapped rows should rebuild the whole path under {dir}: {path:?}\n{text}"
+    );
+    // At 30 columns the error and the hint wrap, and every row keeps
+    // its indent rather than starting flush against the border. The
+    // hint knows no password was supplied.
+    for heading in ["  error", "  hint"] {
+        let at = lines.iter().position(|l| l.contains(heading)).unwrap();
+        let rows: Vec<String> = lines[at + 1..]
+            .iter()
+            .map(|l| l.chars().skip(1).collect::<String>())
+            .take_while(|body| !body.trim_end_matches('│').trim().is_empty())
+            .collect();
+        assert!(rows.len() > 1, "{heading} should wrap at 30:\n{text}");
+        for body in &rows {
+            assert!(
+                body.starts_with("    "),
+                "{heading} row unindented: {body:?}\n{text}"
+            );
+            assert!(
+                body.trim_end_matches('│').ends_with("  "),
+                "{heading} row runs into the border: {body:?}\n{text}"
+            );
+        }
+    }
     let text = dump(&render(&mut a, 100, 24));
     assert!(text.contains("PGPASSWORD"), "{text}");
 }
@@ -1275,7 +1361,7 @@ fn command_bar_tab_shows_the_candidates_beside_the_input() {
     let buf = render(&mut a, 120, 16);
     let footer = row_text(&buf, 15);
     assert!(
-        footer.contains(":") && footer.contains("about · connect · d · dn · dt"),
+        footer.contains(":") && footer.contains("about · connect · d · df · dn · dt"),
         "{footer:?}"
     );
 }
@@ -1588,4 +1674,84 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
         !buf[(x, y)].modifier.contains(Modifier::UNDERLINED),
         "rows aren't"
     );
+}
+
+/// An error too long for the footer row wraps onto up to two more,
+/// taken from the body, with the detail pointer ending the last; on a
+/// cramped terminal, and under the error overlay that already shows
+/// it, the footer stays one row.
+#[test]
+fn a_long_error_wraps_the_footer_but_not_on_a_cramped_terminal() {
+    use pgman::conn::QueryErrDetail;
+    let msg = "column \"created_at\" of relation \"order_items\" does not exist \
+               · hint: perhaps you meant to reference the column \"orders.created_at\"";
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.last_error = Some(msg.into());
+    a.last_error_detail = Some(QueryErrDetail {
+        code: Some("42703".into()),
+        severity: Some("ERROR".into()),
+        detail: None,
+        hint: None,
+        r#where: None,
+        schema: None,
+        table: None,
+        column: None,
+        data_type: None,
+        constraint: None,
+    });
+    let buf = render(&mut a, 60, 24);
+    let rows: Vec<String> = (21..24).map(|y| row_text(&buf, y)).collect();
+    assert!(rows[0].contains("⚠ column \"created_at\""), "{rows:?}");
+    assert!(rows[2].ends_with("! detail"), "{rows:?}");
+    // Every word of the message is on screen: nothing was elided.
+    let joined = rows.join(" ");
+    for word in msg.split_whitespace() {
+        assert!(joined.contains(word), "{word:?} missing: {rows:?}");
+    }
+    // The continuation rows sit under the message, not the badges.
+    let byte = rows[0].find("column").unwrap();
+    let text_col = rows[0][..byte].chars().count(); // `⚠` is one column
+    assert!(
+        rows[1].starts_with(&" ".repeat(text_col)),
+        "continuation not indented: {rows:?}"
+    );
+    // The body gave the rows up: the result block's bottom border now
+    // sits on row 20.
+    assert!(row_text(&buf, 20).starts_with('╰'), "{}", dump(&buf));
+
+    // Cramped (a body under 12 rows): one row, cut, the pointer kept.
+    let buf = render(&mut a, 80, 14);
+    assert!(row_text(&buf, 12).starts_with('╰'), "{}", dump(&buf));
+    let footer = row_text(&buf, 13);
+    assert!(
+        footer.contains('…') && footer.ends_with("! detail"),
+        "{footer:?}"
+    );
+
+    // Under the overlay: one row too.
+    a.mode = Mode::ErrorDetail;
+    let buf = render(&mut a, 80, 24);
+    let footer = row_text(&buf, 23);
+    assert!(
+        footer.contains('⚠') && footer.ends_with("! detail"),
+        "the error starts on the last row: {}",
+        dump(&buf)
+    );
+}
+
+/// `/` with no grid and `Q` with nothing saved open nothing; the footer
+/// says why rather than leaving the key looking dead.
+#[test]
+fn slash_and_q_on_the_start_card_say_why_nothing_opened() {
+    for (key, want) in [('/', "nothing to filter"), ('Q', "no saved queries")] {
+        let mut a = settle_app();
+        a.mode = Mode::Normal;
+        a.on_key(KeyEvent::from(KeyCode::Char(key)));
+        let text = dump(&render(&mut a, 100, 30));
+        assert!(
+            text.contains(want),
+            "{key}: {want:?} not on screen:\n{text}"
+        );
+    }
 }

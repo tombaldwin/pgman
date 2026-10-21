@@ -20,14 +20,14 @@ expression: dump(&buf)
 │id  e│      · qty : integer NOT NULL      · sku                                             │     │
 │1   a│      · price_cents : integer NO…   · qty                                             │     │
 │2   l│      ◆ order_items_pkey            · price_cents                                     │     │
-│3   g│  ▼ orders  (5 col, 1 cons)                                                           │     │
-│4   a│      · id : bigint NOT NULL      constraints (1)                                     │     │
-│5   e│      · user_id : bigint NOT NULL   · order_items_pkey                                │     │
-│6   k│      · status : varchar(20) NOT…                                                     │     │
-│     │      · total_cents : integer NO…                                                     │     │
-│     │      · created_at : timestamptz…                                                     │     │
+│3   g│      ⌁ order_items_order_id_idx                                                      │     │
+│4   a│  ▼ orders  (5 col, 1 cons)       constraints (1)                                     │     │
+│5   e│      · id : bigint NOT NULL        · order_items_pkey                                │     │
+│6   k│      · user_id : bigint NOT NULL                                                     │     │
+│     │      · status : varchar(20) NOT… indexes (2)                                         │     │
+│     │      · total_cents : integer NO…   · order_items_order_id_idx  index                 │     │
+│     │      · created_at : timestamptz…   · order_items_pkey  primary key                   │     │
 │     │      ◆ orders_pkey                                                                   │     │
-│     │  ▼ users  (4 col, 1 cons)                                                            │     │
 │     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │

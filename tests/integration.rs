@@ -14,6 +14,19 @@
 
 use std::process::Command;
 
+/// `pgman` with `HOME` and the XDG directories pointed at a scratch
+/// directory, so no test reads, creates or re-permissions the real
+/// `~/.config/pgman` and friends. A test that sets them again wins.
+fn pgman() -> Command {
+    let home = std::env::temp_dir().join(format!("pgman-test-home-{}", std::process::id()));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_pgman"));
+    cmd.env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"));
+    cmd
+}
+
 /// DSN of the docker-compose postgres. Matches docker-compose.test.yml.
 const DSN: &str = "postgres://pgman_test:pgman_test@127.0.0.1:55432/pgman_test?sslmode=disable";
 
@@ -28,16 +41,33 @@ async fn probe_client(dsn: &str) -> std::sync::Arc<tokio_postgres::Client> {
         .unwrap_or_else(|e| panic!("{dsn}: {e} (is the compose file's standby up?)"))
 }
 
-/// Path to the freshly-built `pgman` binary. Cargo sets this env var
-/// when compiling integration tests so we don't have to guess the
-/// path or shell out to `cargo run`.
-fn pgman_binary() -> &'static str {
-    env!("CARGO_BIN_EXE_pgman")
+/// `pgman query 'SQL' --json` is `--batch --sql 'SQL' --format json`:
+/// typed JSON rows on stdout, exit 0.
+#[test]
+fn query_alias_runs_one_statement_as_json() {
+    let home = std::env::temp_dir().join(format!("pgman-query-alias-{}", std::process::id()));
+    let out = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .args(["query", "SELECT 1 AS one, 'a' AS s", "--json", "--dsn", DSN])
+        .output()
+        .expect("spawn pgman");
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        out.status.success(),
+        "exit {:?}, stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    assert_eq!(rows, serde_json::json!([{"one": 1, "s": "a"}]));
 }
 
 #[test]
 fn batch_select_1_emits_csv_and_exits_zero() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -62,7 +92,7 @@ fn batch_select_1_emits_csv_and_exits_zero() {
 
 #[test]
 fn batch_json_shape() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -89,7 +119,7 @@ fn batch_json_types_null_bool_numbers_and_text() {
     // collapse into the same `""` an empty string gets, and numbers /
     // booleans must come back as JSON numbers/booleans rather than
     // stringified text.
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -139,7 +169,7 @@ fn batch_multistatement_routes_through_simple_query_protocol() {
 
 #[test]
 fn batch_query_failure_exits_one_and_writes_stderr() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -328,7 +358,7 @@ async fn every_connection_identifies_itself_as_pgman_in_pg_stat_activity() {
 
 #[test]
 fn batch_expanded_format_renders_one_record_per_block() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -422,7 +452,7 @@ fn scratch_home_without_profile(name: &str) -> std::path::PathBuf {
 
 /// Run `pgman --batch` with `HOME` pointed at a scratch profile.
 fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(pgman_binary())
+    pgman()
         .env("HOME", home)
         // The GitHub runner exports XDG_CONFIG_HOME, and pgman honours
         // it over $HOME — so point all three XDG dirs at the scratch
@@ -438,7 +468,7 @@ fn batch_with_home(home: &std::path::Path, args: &[&str]) -> std::process::Outpu
 
 /// `batch_with_home`, against `dsn` instead of the default database.
 fn batch_with_home_dsn(home: &std::path::Path, dsn: &str, args: &[&str]) -> std::process::Output {
-    Command::new(pgman_binary())
+    pgman()
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -740,7 +770,7 @@ fn batch_connect_failure_carries_the_same_hint_the_tui_shows() {
     // silently succeeding.
     let wrong =
         "postgres://pgman_test:definitely-the-wrong-password@127.0.0.1:55432/pgman_test?sslmode=disable";
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args(["--batch", "--dsn", wrong, "--sql", "SELECT 1"])
         .output()
         .expect("spawn pgman");
@@ -930,7 +960,7 @@ fn batch_runs_a_script_whose_statement_ends_in_a_line_comment() {
 /// money, inet — in the grid and in the CSV alike.
 #[test]
 fn batch_csv_renders_every_common_column_type_as_psql_prints_it() {
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .args([
             "--batch",
             "--dsn",
@@ -1089,6 +1119,37 @@ async fn typed_capped_runner_stops_at_the_cap_and_says_so() {
     assert_eq!(typed.rows, vec![vec![Some("1".to_string())]]);
 }
 
+/// The panel loads (`T`, `L`) read through `run_query`, which used to
+/// decode the binary wire itself and showed `?` for every type it had no
+/// decoder for — NUMERIC (`pg_stat_statements` on some versions), dates,
+/// arrays. Over the text wire each arrives as the server prints it.
+#[tokio::test]
+async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
+    let (client, _tunnel) = lib_client().await;
+    let grid = pgman::conn::run_query(
+        &client,
+        "SELECT 1.50::numeric AS n, DATE '2024-05-06' AS d, \
+         ARRAY[1,2] AS a, INTERVAL '90 minutes' AS i, NULL::numeric AS z, \
+         2::int4 AS k, true AS b",
+    )
+    .await
+    .expect("query runs");
+    assert_eq!(grid.columns, ["n", "d", "a", "i", "z", "k", "b"]);
+    assert_eq!(
+        grid.rows,
+        vec![vec![
+            "1.50",
+            "2024-05-06",
+            "{1,2}",
+            "01:30:00",
+            "",
+            "2",
+            "t"
+        ]]
+    );
+    assert!(!grid.truncated);
+}
+
 /// Drive `pgman mcp serve` over stdio: send `requests` (one frame each),
 /// close stdin, and return every frame it wrote. Every stdout line must
 /// parse as JSON — stdout is protocol only.
@@ -1110,7 +1171,7 @@ fn mcp_session_env(
     requests: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
     use std::io::Write;
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -1152,7 +1213,7 @@ fn mcp_session_env_sequential(
     requests: &[serde_json::Value],
 ) -> Vec<serde_json::Value> {
     use std::io::{BufRead, Write};
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .envs(env.iter().map(|(k, v)| (k, v)))
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
@@ -1856,7 +1917,7 @@ fn env_discover_proposes_then_appends_on_save() {
     .unwrap();
     let (path, log) = fake_aws(&home);
     let run = |args: &[&str]| {
-        Command::new(pgman_binary())
+        pgman()
             .env("PATH", &path)
             .env("FAKE_AWS_ACCOUNT", "210987654321")
             .env("FAKE_RDS_JSON", &rds)
@@ -2073,7 +2134,7 @@ fn env_discover_save_waits_for_another_process_holding_the_lock() {
         .open(home.join(".config/pgman/.environments.toml.lock"))
         .unwrap();
     lock.lock().unwrap();
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .env("PATH", &path)
         .env("FAKE_AWS_ACCOUNT", "210987654321")
         .env("FAKE_RDS_JSON", &rds)
@@ -4025,7 +4086,7 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
         ),
     )
     .unwrap();
-    let mut child = Command::new(pgman_binary())
+    let mut child = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_DATA_HOME", home.join(".local/share"))
@@ -4098,6 +4159,113 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(!table_has_id(&home, &vt, 3));
     drop(stdin);
     assert!(child.wait().unwrap().success());
+}
+
+/// `apply_patches` (and the overview's `P`, which shares `plan_for` /
+/// `apply_for`) finds an `rds` environment's server through the RDS
+/// listing — with its secret — and never asks for upgrade targets,
+/// which the overview needs and patching doesn't. The `l` twin of this
+/// is `mcp_environment_logs_reads_only_listed_servers`.
+#[cfg(unix)]
+#[test]
+fn apply_patches_finds_an_rds_server_without_asking_for_upgrade_targets() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-rds", WRITABLE_PROFILE);
+    let vt = format!("pgman_it_rds_{}", std::process::id());
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-rds\"\n\
+             source = {{ kind = \"rds\", instances = [\"ledger-db\"], region = \"us-west-1\", account = \"210987654321\" }}\n\
+             sslmode = \"disable\"\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n\
+             [environments.secrets]\n\"ledger-db\" = \"demo/database/ledger/credentials\"\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    // The instance's endpoint is the compose postgres.
+    let rds = home.join("rds.json");
+    std::fs::write(
+        &rds,
+        r#"{"DBInstances": [{"DBInstanceIdentifier": "ledger-db", "Engine": "postgres", "EngineVersion": "16.10",
+          "DBInstanceStatus": "available", "DBInstanceClass": "db.t4g.medium",
+          "Endpoint": {"Address": "127.0.0.1", "Port": 55432}, "DBName": "pgman_test"}]}"#,
+    )
+    .unwrap();
+    let (path, log) = fake_aws(&home);
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .env("PATH", path)
+        .env("FAKE_AWS_ACCOUNT", "210987654321")
+        .env("FAKE_RDS_JSON", &rds)
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args = serde_json::json!({"environment": "it-rds", "server": "ledger-db",
+        "database": "pgman_test", "mode": "dry_run"});
+    writeln!(stdin, "{}", tool_call(2, "apply_patches", args)).unwrap();
+    let ask = next();
+    assert_eq!(ask["method"], "elicitation/create", "{ask}");
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(message.contains("002-x.sql"), "{message}");
+    writeln!(
+        stdin,
+        "{}",
+        serde_json::json!({"jsonrpc": "2.0", "id": ask["id"],
+            "result": {"action": "accept", "content": {"apply": true}}})
+    )
+    .unwrap();
+    let (text, is_error) = reply(&[next()], 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["mode"], "dry_run", "{text}");
+    assert!(!table_has_id(&home, &vt, 2), "a dry run keeps nothing");
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        calls.contains("rds describe-db-instances") && calls.contains("get-secret-value"),
+        "the server and its secret come from AWS: {calls}"
+    );
+    assert!(
+        !calls.contains("describe-db-engine-versions"),
+        "finding the server needs no upgrade targets: {calls}"
+    );
 }
 
 fn table_has_id(home: &std::path::Path, table: &str, id: i64) -> bool {
@@ -4341,7 +4509,7 @@ fn mcp_query_cuts_a_huge_cell() {
 fn a_host_that_never_answers_fails_within_the_connect_timeout() {
     let home = scratch_home("connect-timeout", "");
     let started = std::time::Instant::now();
-    let out = Command::new(pgman_binary())
+    let out = pgman()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
@@ -4464,4 +4632,281 @@ fn patches_are_refused_on_a_standby_the_inventory_calls_direct() {
     ));
     let err = r.error.expect("refused");
     assert!(err.contains("is a standby"), "{err}");
+}
+
+/// `\df`'s catalog query runs on a real server: no pattern lists a
+/// function the session made, a pattern narrows to it, and a pattern
+/// with a quote in it is a search, not a second statement.
+#[test]
+fn backslash_df_query_lists_and_filters_functions() {
+    let home = scratch_home("df", WRITABLE_PROFILE);
+    let f = format!("pgman_it_fn_{}", std::process::id());
+    let setup =
+        format!("CREATE OR REPLACE FUNCTION {f}(a int) RETURNS int LANGUAGE sql AS 'SELECT a + 1'");
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = |pattern: Option<&str>| {
+        let sql = pgman::query::backslash::list_functions_sql(pattern);
+        let out = batch_with_home(&home, &["--sql", &sql]);
+        assert!(
+            out.status.success(),
+            "{sql}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let all = run(None);
+    assert!(all.contains(&f), "{all}");
+    assert!(all.contains("a integer"), "{all}");
+    assert!(!all.contains("pg_catalog"), "{all}");
+    let narrowed = run(Some(&format!("public.{}*", &f[..f.len() - 2])));
+    assert!(narrowed.contains(&f), "{narrowed}");
+    let upper = run(Some(&f.to_uppercase()));
+    assert!(upper.contains(&f), "unquoted patterns fold: {upper}");
+    let none = run(Some("no_such_fn'; SELECT 1; --"));
+    assert!(!none.contains(&f), "{none}");
+    let system = run(Some("pg_catalog.now"));
+    assert!(system.contains("pg_catalog"), "{system}");
+}
+
+/// The schema fetch learns which table each index is on, its
+/// definition, and which is unique or the primary key.
+#[test]
+fn schema_fetch_reads_each_tables_indexes() {
+    let home = scratch_home("indexes", WRITABLE_PROFILE);
+    let t = format!("pgman_it_ix_{}", std::process::id());
+    let sql = format!(
+        "CREATE TABLE {t} (id int PRIMARY KEY, email text, tag text); \
+         CREATE UNIQUE INDEX {t}_email ON {t} (email); \
+         CREATE INDEX {t}_tag ON {t} (tag) WHERE tag IS NOT NULL"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &sql]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let cache = rt.block_on(async {
+        let client = pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+            .await
+            .unwrap();
+        pgman::query::schema::fetch(&client).await
+    });
+    let ixs = cache
+        .indexes_by_table
+        .get(&("public".to_string(), t.clone()))
+        .expect("indexes for the table");
+    let names: Vec<&str> = ixs.iter().map(|i| i.name.as_str()).collect();
+    let (email, pkey, tag) = (
+        format!("{t}_email"),
+        format!("{t}_pkey"),
+        format!("{t}_tag"),
+    );
+    assert_eq!(names, vec![email.as_str(), pkey.as_str(), tag.as_str()]);
+    assert!(ixs[0].unique && !ixs[0].primary);
+    assert!(ixs[1].unique && ixs[1].primary);
+    assert!(!ixs[2].unique);
+    assert!(
+        ixs[2].definition.contains("WHERE (tag IS NOT NULL)"),
+        "{}",
+        ixs[2].definition
+    );
+}
+
+/// The schema browser's DDL copy round-trips: drop the table, run the
+/// statement pgman wrote (through pgman's own batch path), and the
+/// catalog gives back the same DDL. Covers serial, identity, generated
+/// and defaulted columns, primary / unique / check / foreign keys, a
+/// plain index, a partitioned table and a partition, and a view.
+#[test]
+fn ddl_copy_recreates_the_table_it_was_read_from() {
+    let home = scratch_home("ddl", WRITABLE_PROFILE);
+    let p = format!("pgman_it_ddlp_{}", std::process::id());
+    let t = format!("pgman_it_ddl_{}", std::process::id());
+    let setup = format!(
+        "CREATE TABLE {p} (id int PRIMARY KEY); \
+         CREATE TABLE {t} ( \
+           id bigserial PRIMARY KEY, \
+           code int GENERATED BY DEFAULT AS IDENTITY, \
+           parent_id int REFERENCES {p}(id) ON DELETE CASCADE, \
+           \"Mixed Case\" text DEFAULT 'x' NOT NULL, \
+           qty int CHECK (qty > 0), \
+           price numeric(10,2), \
+           total numeric GENERATED ALWAYS AS (qty * price) STORED, \
+           UNIQUE (code)); \
+         CREATE INDEX {t}_qty ON {t} (qty) WHERE qty IS NOT NULL; \
+         CREATE TABLE {t}_ev (at date NOT NULL, n int CHECK (n >= 0)) PARTITION BY RANGE (at); \
+         CREATE INDEX {t}_ev_n ON {t}_ev (n); \
+         CREATE TABLE {t}_ev_24 PARTITION OF {t}_ev FOR VALUES FROM ('2024-01-01') TO ('2025-01-01'); \
+         CREATE VIEW {t}_v AS SELECT id, qty FROM {t} WHERE qty > 1"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let ddl_of = |name: &str| {
+        rt.block_on(async {
+            let client = probe_client(DSN).await;
+            let ddl = pgman::query::ddl::fetch(&client, "public", name)
+                .await
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            pgman::query::ddl::create_statement(&ddl)
+        })
+    };
+    // The drop goes straight to the server: the default profile blocks
+    // DROP, and the statement under test is the CREATE.
+    let drop = |sql: &str| {
+        rt.block_on(async { raw("pgman_test").await.batch_execute(sql).await.unwrap() })
+    };
+    let recreate = |name: &str, drop_sql: &str| {
+        let before = ddl_of(name);
+        drop(drop_sql);
+        let out = batch_with_home(&home, &["--yes", "--sql", &before]);
+        assert!(
+            out.status.success(),
+            "{before}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(ddl_of(name), before, "{name} round-trips");
+        before
+    };
+    // The view depends on the table; it goes first and comes back last.
+    let view = ddl_of(&format!("{t}_v"));
+    let table = recreate(&t, &format!("DROP VIEW {t}_v; DROP TABLE {t}"));
+    assert!(table.contains("id bigserial NOT NULL"), "{table}");
+    assert!(
+        table.contains("code integer GENERATED BY DEFAULT AS IDENTITY NOT NULL"),
+        "{table}"
+    );
+    assert!(
+        table.contains("\"Mixed Case\" text DEFAULT 'x'::text NOT NULL"),
+        "{table}"
+    );
+    assert!(
+        table.contains("total numeric GENERATED ALWAYS AS (((qty)::numeric * price)) STORED"),
+        "{table}"
+    );
+    assert!(table.contains("ON DELETE CASCADE"), "{table}");
+    assert!(
+        table.contains(&format!("CREATE INDEX {t}_qty ON public.{t}")),
+        "{table}"
+    );
+    assert!(
+        !table.contains(&format!("CREATE UNIQUE INDEX {t}_pkey")),
+        "a constraint's index is the constraint's: {table}"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &view]);
+    assert!(
+        out.status.success(),
+        "{view}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(ddl_of(&format!("{t}_v")), view);
+    assert!(
+        view.starts_with(&format!("CREATE VIEW public.{t}_v AS\n")),
+        "{view}"
+    );
+
+    let parent = ddl_of(&format!("{t}_ev"));
+    assert!(parent.contains(") PARTITION BY RANGE (at);"), "{parent}");
+    recreate(&format!("{t}_ev_24"), &format!("DROP TABLE {t}_ev_24"));
+    let child = ddl_of(&format!("{t}_ev_24"));
+    assert!(
+        child.contains(&format!(
+            "PARTITION OF public.{t}_ev\n    FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');"
+        )),
+        "{child}"
+    );
+    // The parent's CHECK and index are the parent's to declare.
+    assert!(
+        !child.contains("CHECK") && !child.contains("CREATE INDEX"),
+        "{child}"
+    );
+    assert!(
+        parent.contains("CHECK (n >= 0)") && parent.contains(&format!("CREATE INDEX {t}_ev_n")),
+        "{parent}"
+    );
+    rt.block_on(async {
+        let client = probe_client(DSN).await;
+        let err = pgman::query::ddl::fetch(&client, "public", &format!("{t}_id_seq"))
+            .await
+            .unwrap_err();
+        assert!(err.contains("is a sequence"), "{err}");
+        let err = pgman::query::ddl::fetch(&client, "public", "pgman_it_no_such")
+            .await
+            .unwrap_err();
+        assert!(err.contains("isn't in the catalog"), "{err}");
+    });
+}
+
+/// LINT107 finds a sequence-filled column nothing keeps unique — with
+/// no primary key, beside another primary key, as an identity, under
+/// a partial unique index — and leaves the covered shapes alone.
+#[test]
+fn lint107_finds_sequence_columns_nothing_keeps_unique() {
+    let home = scratch_home("lint107", WRITABLE_PROFILE);
+    let s = format!("pgman_it_l7_{}", std::process::id());
+    let setup = format!(
+        "CREATE TABLE {s}_nopk (id serial, x int); \
+         CREATE TABLE {s}_other (k int PRIMARY KEY, seq_no bigserial); \
+         CREATE TABLE {s}_ident (id int GENERATED ALWAYS AS IDENTITY, x int); \
+         CREATE TABLE {s}_partial (id serial); \
+         CREATE UNIQUE INDEX {s}_partial_u ON {s}_partial (id) WHERE id > 0; \
+         CREATE TABLE {s}_pk (id serial PRIMARY KEY); \
+         CREATE TABLE {s}_uniq (id serial UNIQUE); \
+         CREATE TABLE {s}_comp (tenant int, id serial, PRIMARY KEY (tenant, id)); \
+         CREATE TABLE {s}_incl (id serial, x int); \
+         CREATE UNIQUE INDEX {s}_incl_u ON {s}_incl (id) INCLUDE (x)"
+    );
+    let out = batch_with_home(&home, &["--yes", "--sql", &setup]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let findings = rt.block_on(async {
+        let client = probe_client(DSN).await;
+        pgman::query::lint::fetch_live(&client).await.unwrap()
+    });
+    let mut ours: Vec<(String, String)> = findings
+        .iter()
+        .filter(|f| f.code == "LINT107" && f.object.contains(&s))
+        .map(|f| {
+            (
+                f.object.trim_start_matches("public.").to_string(),
+                f.suggestion.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    ours.sort();
+    assert_eq!(
+        ours,
+        vec![
+            (
+                format!("{s}_ident.id"),
+                format!("ALTER TABLE public.{s}_ident ADD PRIMARY KEY (id);")
+            ),
+            (
+                format!("{s}_nopk.id"),
+                format!("ALTER TABLE public.{s}_nopk ADD PRIMARY KEY (id);")
+            ),
+            (
+                format!("{s}_other.seq_no"),
+                format!("ALTER TABLE public.{s}_other ADD UNIQUE (seq_no);")
+            ),
+            (
+                format!("{s}_partial.id"),
+                format!("ALTER TABLE public.{s}_partial ADD PRIMARY KEY (id);")
+            ),
+        ]
+    );
 }

@@ -38,11 +38,12 @@
   keyword, and checks whether the statement carries a `WHERE`. It is
   deliberately over-cautious on ambiguous input — a CTE fronting a
   `DELETE`, or `EXPLAIN ANALYZE` on DML, is classified as the
-  dangerous inner statement, not as a harmless read. One documented
-  imprecision: `has_where` is a whole-statement token check, so a
-  `DELETE` whose only `WHERE` sits inside a subquery is treated as a
-  guarded delete (`Confirm`) rather than an unqualified one
-  (`Block`) — a real SQL parser would fix this (see `BACKLOG.md`).
+  dangerous inner statement, not as a harmless read. Only a `WHERE`
+  outside every parenthesis counts, so a `DELETE` whose only `WHERE`
+  sits inside a subquery is the unqualified delete it is (`Block`).
+  One documented imprecision: behind a CTE (`WITH … DELETE …`) the
+  check is whole-statement, so a `WHERE` anywhere in it counts and the
+  delete is `Confirm`ed rather than `Block`ed.
   `MERGE` (PG15+) has no dedicated classification; it maps to `Other`,
   which is always treated as a write and guarded (`Confirm` by
   default) rather than allowed through as if it were a `SELECT`.
@@ -257,8 +258,8 @@ rather than following the link and re-permissioning a directory it
 does not own; if you point `~/.cache/pgman` at a shared volume, its
 mode stays yours to set. `pgman --upgrade` runs its subprocesses from
 `$HOME`, or from that cache directory when `$HOME` is unusable, never
-from a shared temp directory (with neither usable it falls back to the
-system temp directory, and says so in the log) — `cargo` and `brew` search upward from
+from a shared temp directory (with neither usable it refuses, before
+running anything, and says to set `HOME`) — `cargo` and `brew` search upward from
 the working directory for a `.cargo/config.toml`, and one in a
 world-writable `/tmp` would be anyone's to write. That's a floor, not a
 substitute for filesystem hygiene: if your `~` itself isn't otherwise
@@ -351,7 +352,7 @@ above).
 | `allow` | yes if the server demands it, otherwise no | no. Same wire outcome as `prefer` — pgman makes a single connection attempt, so it can't preserve libpq's "try plaintext, retry with TLS" negotiation order; that order has no observable effect once the server states its own requirement anyway. |
 | `prefer` (default when unset) | yes, falls back to plaintext if the server refuses | no |
 | `require` | yes, connection fails if the server refuses | no |
-| `verify-ca` | yes | yes — currently collapsed onto the same check as `verify-full`, i.e. **including hostname**. This makes pgman's `verify-ca` strictly *stricter* than libpq's (which checks the chain but not the hostname for `verify-ca`) — deliberate, and safe in the sense that it can only reject a connection libpq's `verify-ca` would accept, never the reverse. A `verify-ca`-without-hostname-check custom verifier, to match libpq exactly, is a tracked follow-up (`BACKLOG.md`) |
+| `verify-ca` | yes | the chain to a trusted root, but **not** the hostname — as libpq. Useful through an ssh tunnel (the host is `localhost`) or by IP; an untrusted or expired certificate is still refused |
 | `verify-full` | yes | yes, including hostname |
 
 For `prefer`/`require`/`allow`, pgman installs a rustls verifier that

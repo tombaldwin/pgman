@@ -7,6 +7,26 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-10-21 backlog pass *(all done, see CHANGELOG → The backlog pass)*
+- `\df [pattern]`; schema-browser indexes, `p` sample rows, `d` DDL
+  copy (covers both DDL items); LINT107; JOIN … ON foreign-key
+  completion.
+- `sslmode=verify-ca` chain-only verifier; NUMERIC / date / array cells
+  in the `T` / `L` panels (text protocol); non-ASCII dollar-quote tags;
+  `has_where` counts only a top-level `WHERE`; streaming update-check
+  cap; `P`'s RDS resolve guard test.
+- Release-panel polish: multi-line error footer, connection card paths
+  wrapped whole, `--demo` tap quiet at launch, `--upgrade` refuses with
+  no private directory, `--batch` repairs directory permissions,
+  `pgman query 'SQL' [--json]`.
+- Killed by evidence: `Q` / `/` silent no-ops (already said so; now
+  guarded by a render test); the tap memo's generation counter (already
+  `App::tap_generation`); `:about` (exists); IntelliJ local passwords
+  (IntelliJ keeps them in the OS keychain, never the XML).
+- Verified by hand: `--tap-record` creates its file 0600 and new
+  directories 0700, and tightens a pre-existing 0644 file (macOS; the
+  same `open(2)` / `fchmod` calls on Linux).
+
 ### 2026-09-02 grooming catch-up
 - **psql backslash command routing — extras.** `\l` (database list) and
   `\x` (expanded row view) now ship alongside `\d` / `\dt` / `\dn` / `\?`

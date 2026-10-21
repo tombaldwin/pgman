@@ -71,13 +71,18 @@ fn run_checkout() -> anyhow::Result<()> {
 }
 
 /// Pick a working directory for an upgrade subprocess: `home` if it's
-/// a directory that actually exists, otherwise `fallback`. Pure — the
-/// impure caller (`run_step`) resolves `$HOME` and the fallback
-/// directory and passes them in, so this stays testable without
-/// touching the filesystem or environment.
-fn choose_working_dir(home: Option<PathBuf>, home_is_dir: bool, fallback: PathBuf) -> PathBuf {
+/// a directory that actually exists, otherwise `fallback` — `None`
+/// when there is no fallback either. Pure — the impure caller
+/// (`upgrade_working_dir`) resolves `$HOME` and the fallback directory
+/// and passes them in, so this stays testable without touching the
+/// filesystem or environment.
+fn choose_working_dir(
+    home: Option<PathBuf>,
+    home_is_dir: bool,
+    fallback: Option<PathBuf>,
+) -> Option<PathBuf> {
     match home {
-        Some(p) if home_is_dir => p,
+        Some(p) if home_is_dir => Some(p),
         _ => fallback,
     }
 }
@@ -98,11 +103,22 @@ fn choose_working_dir(home: Option<PathBuf>, home_is_dir: bool, fallback: PathBu
 /// which reopened the same hole from a different directory: `/tmp` is
 /// world-writable on Linux, and cargo searches upward, so any local
 /// user could plant `/tmp/.cargo/config.toml` with a
-/// `build.rustc-wrapper` and own the upgrade.
-fn home_or_temp_dir() -> PathBuf {
+/// `build.rustc-wrapper` and own the upgrade. With neither directory
+/// to be had the upgrade is refused, before anything runs.
+fn upgrade_working_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let home_is_dir = home.as_deref().is_some_and(Path::is_dir);
-    choose_working_dir(home, home_is_dir, private_fallback_dir())
+    choose_working_dir(home, home_is_dir, private_fallback_dir()).ok_or_else(no_private_dir)
+}
+
+/// The refusal when there is no private directory to upgrade from.
+fn no_private_dir() -> anyhow::Error {
+    anyhow::anyhow!(
+        "not upgrading: there is no private directory to run the upgrade from \
+         ($HOME is unset or not a directory, and so is $XDG_CACHE_HOME). \
+         Running it from a shared one like /tmp would let any local user's \
+         .cargo/config.toml take it over. Set HOME and run `pgman --upgrade` again."
+    )
 }
 
 /// pgman's cache directory, created owner-only — a working directory
@@ -110,32 +126,31 @@ fn home_or_temp_dir() -> PathBuf {
 ///
 /// `util::cache_dir()` degrades to `.` when neither `XDG_CACHE_HOME`
 /// nor `HOME` is set, and `.` is the invoking working directory, which
-/// is the one place this must never be. In that single case — no
-/// `HOME`, no XDG override, so pgman has no private directory anywhere
-/// — there is nothing better than the old temp-dir behaviour.
-fn private_fallback_dir() -> PathBuf {
-    fallback_from(crate::util::cache_dir(), std::env::temp_dir())
+/// is the one place this must never be. In that case — no `HOME`, no
+/// XDG override, so pgman has no private directory anywhere — there is
+/// none, and the upgrade is refused rather than run from a shared one.
+fn private_fallback_dir() -> Option<PathBuf> {
+    fallback_from(crate::util::cache_dir())
 }
 
-/// `cache` when it is a real directory pgman can make owner-only,
-/// else `temp`. Split out so a test can drive both arms without
-/// mutating the process environment.
-fn fallback_from(cache: PathBuf, temp: PathBuf) -> PathBuf {
-    if cache != Path::new(".") && crate::util::ensure_private_dir(&cache).is_ok() {
-        return cache;
-    }
-    temp
+/// `cache` when it is a real directory pgman can make owner-only, else
+/// `None`. Split out so a test can drive both arms without mutating
+/// the process environment.
+fn fallback_from(cache: PathBuf) -> Option<PathBuf> {
+    (cache != Path::new(".") && crate::util::ensure_private_dir(&cache).is_ok()).then_some(cache)
 }
 
 /// Run one upgrade subprocess with inherited stdio, echoing the command
 /// first so the operator sees exactly what ran. Runs from `$HOME` (or
 /// pgman's own cache directory) rather than pgman's working directory —
-/// see `home_or_temp_dir` for why. `Err` on a failed spawn or a non-zero exit.
+/// see `upgrade_working_dir` for why. `Err` with neither, on a failed
+/// spawn, or on a non-zero exit.
 fn run_step(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    let dir = upgrade_working_dir()?;
     eprintln!("→ {program} {}", args.join(" "));
     let status = Command::new(program)
         .args(args)
-        .current_dir(home_or_temp_dir())
+        .current_dir(dir)
         .status()
         .map_err(|e| anyhow::anyhow!("could not run {program}: {e}"))?;
     if !status.success() {
@@ -209,7 +224,7 @@ mod tests {
         let cache = scratch.join("pgman");
         let temp = PathBuf::from("/tmp");
 
-        let dir = fallback_from(cache.clone(), temp.clone());
+        let dir = fallback_from(cache.clone()).expect("a private cache dir");
         assert_eq!(dir, cache, "the fallback must be pgman's cache directory");
         assert_ne!(dir, temp, "and never the shared temp directory");
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
@@ -222,10 +237,10 @@ mod tests {
         // The one case with no private directory to be had: neither
         // `XDG_CACHE_HOME` nor `HOME` set, so `cache_dir()` degraded to
         // `.` — the invoking working directory, which is the one place
-        // this must never run. Temp is the least-bad answer there.
+        // this must never run. There is no fallback: not `.`, not temp.
         assert_eq!(
-            fallback_from(PathBuf::from("."), temp.clone()),
-            temp,
+            fallback_from(PathBuf::from(".")),
+            None,
             "`.` is the caller's cwd and must never be chosen"
         );
 
@@ -235,22 +250,45 @@ mod tests {
     #[test]
     fn choose_working_dir_prefers_home_when_it_is_a_real_directory() {
         let home = PathBuf::from("/Users/tester");
-        let temp = PathBuf::from("/tmp");
-        assert_eq!(choose_working_dir(Some(home.clone()), true, temp), home);
+        let cache = PathBuf::from("/Users/tester/.cache/pgman");
+        assert_eq!(
+            choose_working_dir(Some(home.clone()), true, Some(cache)),
+            Some(home)
+        );
     }
 
     #[test]
-    fn choose_working_dir_falls_back_to_temp_when_home_unset() {
-        let temp = PathBuf::from("/tmp");
-        assert_eq!(choose_working_dir(None, false, temp.clone()), temp);
+    fn choose_working_dir_falls_back_to_the_cache_when_home_unset() {
+        let cache = PathBuf::from("/xdg/cache/pgman");
+        assert_eq!(
+            choose_working_dir(None, false, Some(cache.clone())),
+            Some(cache)
+        );
     }
 
     #[test]
-    fn choose_working_dir_falls_back_to_temp_when_home_is_not_a_directory() {
+    fn choose_working_dir_falls_back_when_home_is_not_a_directory() {
         // HOME set but pointing at something that doesn't exist (or
         // isn't a directory) — e.g. a stale/misconfigured env.
         let home = PathBuf::from("/Users/tester");
-        let temp = PathBuf::from("/tmp");
-        assert_eq!(choose_working_dir(Some(home), false, temp.clone()), temp);
+        let cache = PathBuf::from("/xdg/cache/pgman");
+        assert_eq!(
+            choose_working_dir(Some(home), false, Some(cache.clone())),
+            Some(cache)
+        );
+    }
+
+    /// No `HOME` and no private cache directory: no working directory
+    /// at all, and the refusal says what to set.
+    #[test]
+    fn with_no_private_directory_the_upgrade_is_refused() {
+        assert_eq!(choose_working_dir(None, false, None), None);
+        assert_eq!(
+            choose_working_dir(Some(PathBuf::from("/nope")), false, None),
+            None
+        );
+        let msg = no_private_dir().to_string();
+        assert!(msg.starts_with("not upgrading"), "{msg}");
+        assert!(msg.contains("Set HOME"), "{msg}");
     }
 }

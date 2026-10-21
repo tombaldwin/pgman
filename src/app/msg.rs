@@ -155,6 +155,13 @@ pub enum AppMsg {
     /// so tap events are NOT generation-tagged — they always
     /// process. `generation()` returns 0 for this variant.
     TapEvent { event: crate::tap::TapEvent },
+    /// The schema browser's DDL copy (`d`) read its table's pieces
+    /// (or didn't). `table` is `schema.table`, for the status line.
+    DdlLoaded {
+        generation: u64,
+        table: String,
+        result: Result<crate::query::ddl::TableDdl, String>,
+    },
     /// `:readonly on|off` was applied to the live session (or wasn't).
     ReadOnlyApplied {
         generation: u64,
@@ -168,6 +175,10 @@ pub enum AppMsg {
     /// generation-tagged. `generation()` returns 0 for this
     /// variant.
     UpdateCheck(Option<crate::update_check::LatestRelease>),
+    /// The terminal hung up (SIGHUP, a closed tab) or the process was
+    /// asked to stop (SIGTERM). Quits through the normal exit path, so
+    /// the draft, history and saved queries are written as on `q`.
+    Terminate,
 }
 
 impl AppMsg {
@@ -187,9 +198,11 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::TapEvent { .. }
             | AppMsg::UpdateCheck(_)
+            | AppMsg::Terminate
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }
             | AppMsg::EnvDiscovered(_)

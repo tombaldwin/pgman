@@ -68,6 +68,18 @@ pub struct ConstraintMeta {
     pub name: String,
 }
 
+/// One index on a table, as the schema browser lists it under the
+/// table. `definition` is `pg_get_indexdef` — the `CREATE INDEX`
+/// statement that rebuilds it — so the detail pane shows the columns,
+/// method and predicate without a second query.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IndexMeta {
+    pub name: String,
+    pub definition: String,
+    pub unique: bool,
+    pub primary: bool,
+}
+
 /// Snapshot of the live database catalog used by completion. Empty is a
 /// valid state (means "no info; offer nothing"); built once and only
 /// replaced on explicit refresh.
@@ -110,6 +122,10 @@ pub struct SchemaCache {
     /// Each partition's direct parent, keyed `(schema, partition)`.
     /// The schema browser folds partitions under their table.
     pub partition_parent: HashMap<(String, String), (String, String)>,
+    /// Each table's indexes, keyed `(schema, table)`, sorted by name.
+    /// `indexes` above has every index's name for completion; this has
+    /// which table each belongs to, for the schema browser.
+    pub indexes_by_table: HashMap<(String, String), Vec<IndexMeta>>,
 }
 
 /// Pretty-print a byte count using IEC units (KiB, MiB, GiB).
@@ -297,6 +313,18 @@ JOIN pg_namespace n ON n.oid = c.relnamespace \
 WHERE c.relkind = 'r' \
   AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')";
 
+/// Every index with the table it's on (`pg_index.indrelid`), its
+/// definition, and whether it is unique / the primary key.
+pub const TABLE_INDEXES_SQL: &str = "\
+SELECT n.nspname, t.relname, i.relname, \
+       pg_catalog.pg_get_indexdef(x.indexrelid), x.indisunique, x.indisprimary \
+FROM pg_catalog.pg_index x \
+JOIN pg_catalog.pg_class i ON i.oid = x.indexrelid \
+JOIN pg_catalog.pg_class t ON t.oid = x.indrelid \
+JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+ORDER BY 1, 2, 3";
+
 /// Query that fetches unique + primary-key constraint names, scoped
 /// by their owning table. Run separately from `SCHEMA_SQL` so a
 /// permission gap on `pg_constraint` (rare) doesn't take down the
@@ -318,12 +346,13 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one
     // (e.g. pg_constraint) degrades that feature without killing the cache.
-    let (schema_res, constraint_res, size_res, fk_res, part_res) = tokio::join!(
+    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res) = tokio::join!(
         client.query(SCHEMA_SQL, &[]),
         client.query(CONSTRAINTS_SQL, &[]),
         client.query(TABLE_SIZES_SQL, &[]),
         client.query(FK_EDGES_SQL, &[]),
         client.query(PARTITIONS_SQL, &[]),
+        client.query(TABLE_INDEXES_SQL, &[]),
     );
     let rows = match schema_res {
         Ok(rows) => rows,
@@ -454,6 +483,29 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
             }
         }
         Err(e) => tracing::warn!("partitions fetch failed: {e}; partitions list as tables"),
+    }
+    match index_res {
+        Ok(rows) => {
+            for row in &rows {
+                let get = |i: usize| row.try_get::<usize, String>(i).ok();
+                let flag = |i: usize| row.try_get::<usize, bool>(i).unwrap_or(false);
+                if let (Some(s), Some(t), Some(name), Some(definition)) =
+                    (get(0), get(1), get(2), get(3))
+                {
+                    cache
+                        .indexes_by_table
+                        .entry((s, t))
+                        .or_default()
+                        .push(IndexMeta {
+                            name,
+                            definition,
+                            unique: flag(4),
+                            primary: flag(5),
+                        });
+                }
+            }
+        }
+        Err(e) => tracing::warn!("index fetch failed: {e}; the schema browser lists no indexes"),
     }
     match fk_res {
         Ok(rows) => {

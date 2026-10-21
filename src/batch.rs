@@ -11,6 +11,38 @@ use crate::conn::{self, Dsn, QueryErr};
 use crate::grid::Grid;
 use tokio_postgres::types::Type;
 
+/// `pgman query --help`.
+pub const QUERY_USAGE: &str = "\
+usage: pgman query ['SQL'] [--json] [--dsn DSN] [--batch flags]
+
+Run one statement without the TUI and exit: the same as
+`pgman --batch --sql 'SQL'`, with `--json` short for `--format json`.
+With no SQL, it is read from stdin. Every --batch flag applies
+(--dsn, --format, --discovered, --yes); see `pgman --help`.
+
+  pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb";
+
+/// The `pgman` argument list `pgman query …` stands for, from the
+/// arguments after `query`: `--batch`, a leading non-flag argument as
+/// `--sql`, and `--json` as `--format json`; everything else passed
+/// through for clap to check as usual. Pure.
+pub fn query_alias_argv(rest: &[String]) -> Vec<String> {
+    let mut argv = vec!["pgman".to_string(), "--batch".to_string()];
+    let mut rest = rest.iter();
+    let mut first = rest.next();
+    if let Some(sql) = first.filter(|a| !a.starts_with('-')) {
+        argv.extend(["--sql".to_string(), sql.clone()]);
+        first = None;
+    }
+    for arg in first.into_iter().chain(rest) {
+        match arg.as_str() {
+            "--json" => argv.extend(["--format".to_string(), "json".to_string()]),
+            _ => argv.push(arg.clone()),
+        }
+    }
+    argv
+}
+
 /// Output formats. Mirrors the names psql exposes for `\pset format`
 /// but pared to the four most useful for scripted output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -732,6 +764,46 @@ pub fn format_expanded(grid: &Grid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn argv(s: &[&str]) -> Vec<String> {
+        s.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn query_alias_argv_is_batch_with_sql_and_json() {
+        assert_eq!(
+            query_alias_argv(&argv(&["SELECT 1", "--json", "--dsn", "postgres://h/d"])),
+            argv(&[
+                "pgman",
+                "--batch",
+                "--sql",
+                "SELECT 1",
+                "--format",
+                "json",
+                "--dsn",
+                "postgres://h/d"
+            ])
+        );
+        // No leading SQL: read from stdin, as `--batch` does.
+        assert_eq!(
+            query_alias_argv(&argv(&["--json"])),
+            argv(&["pgman", "--batch", "--format", "json"])
+        );
+        // Only the first argument is the SQL; a later bare word is
+        // passed through (clap takes it as the positional DSN).
+        assert_eq!(
+            query_alias_argv(&argv(&["SELECT 1", "postgres://h/d", "--yes"])),
+            argv(&[
+                "pgman",
+                "--batch",
+                "--sql",
+                "SELECT 1",
+                "postgres://h/d",
+                "--yes"
+            ])
+        );
+        assert_eq!(query_alias_argv(&[]), argv(&["pgman", "--batch"]));
+    }
 
     fn grid(columns: &[&str], rows: &[&[&str]]) -> Grid {
         Grid {

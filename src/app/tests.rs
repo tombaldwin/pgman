@@ -3019,6 +3019,141 @@ fn schema_browser_s_on_schema_row_surfaces_error_not_garbage() {
 }
 
 #[test]
+fn build_sample_rows_sql_quotes_only_where_needed() {
+    assert_eq!(
+        build_sample_rows_sql("public", "users"),
+        "SELECT * FROM public.users LIMIT 5"
+    );
+    assert_eq!(
+        build_sample_rows_sql("Audit", "odd name"),
+        "SELECT * FROM \"Audit\".\"odd name\" LIMIT 5"
+    );
+}
+
+/// The demo app with the schema browser open on `table`'s row.
+fn demo_browser_on(table: &str) -> App {
+    let mut a = crate::demo::app(Theme::default());
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == table))
+        .expect("table row");
+    a
+}
+
+#[test]
+fn schema_browser_p_previews_five_rows_of_the_focused_table() {
+    let mut a = demo_browser_on("users");
+    a.schema_browser.filter = Some("us".into());
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "users"))
+        .unwrap();
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::Normal, "the browser closes onto the grid");
+    assert_eq!(a.schema_browser.filter, None, "closed the way Esc closes");
+    pump_one_demo_msg(&mut a);
+    assert_eq!(a.grid.columns, vec!["id", "email", "plan", "created_at"]);
+    assert_eq!(a.grid.rows.len(), SAMPLE_ROWS);
+    assert_eq!(a.last_error, None);
+}
+
+#[test]
+fn schema_browser_d_copies_the_focused_tables_ddl_in_demo() {
+    let mut a = demo_browser_on("orders");
+    crate::app::yank::take_test_clipboard();
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    let copied = crate::app::yank::take_test_clipboard().expect("copied");
+    assert_eq!(
+        copied,
+        "CREATE TABLE public.orders (\n\
+         \x20   id bigserial NOT NULL,\n\
+         \x20   user_id bigint NOT NULL,\n\
+         \x20   status varchar(20) NOT NULL,\n\
+         \x20   total_cents integer NOT NULL,\n\
+         \x20   created_at timestamptz NOT NULL,\n\
+         \x20   CONSTRAINT orders_pkey PRIMARY KEY (id),\n\
+         \x20   CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id)\n\
+         );\n\
+         \n\
+         CREATE INDEX orders_user_id_idx ON public.orders USING btree (user_id);\n"
+    );
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("copied the DDL of public.orders · 11 line(s)")
+    );
+    assert_eq!(
+        a.mode,
+        Mode::SchemaBrowser,
+        "a copy doesn't close the browser"
+    );
+}
+
+#[test]
+fn schema_browser_d_refusals_copy_nothing() {
+    let mut a = demo_browser_on("orders");
+    a.schema_browser.cursor = 0;
+    crate::app::yank::take_test_clipboard();
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(a.last_error.is_some());
+    let mut a = app_with_schemas();
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = 2;
+    a.on_key(KeyEvent::from(KeyCode::Char('d')));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+    assert_eq!(crate::app::yank::take_test_clipboard(), None);
+}
+
+#[test]
+fn ddl_loaded_failure_and_a_stale_answer() {
+    let mut a = app_with_schemas();
+    a.on_msg(AppMsg::DdlLoaded {
+        generation: a.generation,
+        table: "public.users".into(),
+        result: Err("permission denied for table users".into()),
+    });
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("DDL of public.users: permission denied for table users")
+    );
+    // An answer from an earlier connection is dropped, not copied.
+    a.last_error = None;
+    a.on_msg(AppMsg::DdlLoaded {
+        generation: a.generation + 1,
+        table: "public.users".into(),
+        result: Err("old".into()),
+    });
+    assert_eq!(a.last_error, None);
+}
+
+#[test]
+fn schema_browser_p_on_a_schema_row_stays_put_with_an_error() {
+    let mut a = demo_browser_on("users");
+    a.schema_browser.cursor = 0;
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    assert!(a.last_error.is_some());
+    assert!(a.msg_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
+fn schema_browser_p_without_a_connection_stays_in_the_browser() {
+    let mut a = app_with_schemas();
+    a.schema_browser.expanded.insert("public".into());
+    a.mode = Mode::SchemaBrowser;
+    a.schema_browser.cursor = 2; // public.orders
+    a.on_key(KeyEvent::from(KeyCode::Char('p')));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+}
+
+#[test]
 fn schema_browser_i_with_no_cached_columns_surfaces_error() {
     let mut a = app_with_schemas();
     // public.orders has no columns_by_table entry.
@@ -5933,6 +6068,106 @@ fn schema_browser_table_row_carries_column_and_constraint_counts() {
     }
 }
 
+fn index_meta(name: &str, unique: bool, primary: bool) -> crate::query::schema::IndexMeta {
+    crate::query::schema::IndexMeta {
+        name: name.into(),
+        definition: format!("CREATE INDEX {name} ON public.users USING btree (email)"),
+        unique,
+        primary,
+    }
+}
+
+/// `app_with_schemas` with two indexes on `public.users`, both
+/// `public` and `public.users` expanded.
+fn app_with_user_indexes() -> App {
+    let mut a = app_with_schemas();
+    a.schema_cache.indexes_by_table.insert(
+        ("public".into(), "users".into()),
+        vec![
+            index_meta("users_email_idx", false, false),
+            index_meta("users_pkey", true, true),
+        ],
+    );
+    a.schema_browser.expanded.insert("public".into());
+    a.schema_browser
+        .expanded
+        .insert(schema_browser_table_key("public", "users"));
+    a
+}
+
+#[test]
+fn schema_browser_lists_a_tables_indexes_after_its_columns() {
+    let a = app_with_user_indexes();
+    let rows = a.flattened_schema_browser();
+    let users = rows
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Table { name, .. } if name == "users"))
+        .expect("users row");
+    let tail = |rows: &[SchemaBrowserRow]| -> Vec<String> {
+        rows[users + 1..]
+            .iter()
+            .map(|r| match r {
+                SchemaBrowserRow::Column { name, .. } => format!("col {name}"),
+                SchemaBrowserRow::Constraint { name, .. } => format!("con {name}"),
+                SchemaBrowserRow::Index { table, name, .. } => format!("idx {table}.{name}"),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        tail(&rows),
+        vec![
+            "col id",
+            "col email",
+            "idx users.users_email_idx",
+            "idx users.users_pkey"
+        ]
+    );
+    // The primary key's index carries the constraint's name: it lists
+    // once, as the constraint.
+    let mut a = a;
+    a.schema_cache
+        .constraints
+        .push(crate::query::schema::ConstraintMeta {
+            schema: "public".into(),
+            table: "users".into(),
+            name: "users_pkey".into(),
+        });
+    assert_eq!(
+        tail(&a.flattened_schema_browser()),
+        vec![
+            "col id",
+            "col email",
+            "con users_pkey",
+            "idx users.users_email_idx"
+        ]
+    );
+}
+
+#[test]
+fn schema_browser_filter_finds_an_index_and_keeps_its_table() {
+    let mut a = app_with_user_indexes();
+    a.schema_browser.filter = Some("email_idx".into());
+    let rows = a.flattened_schema_browser();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert!(matches!(&rows[1], SchemaBrowserRow::Table { name, .. } if name == "users"));
+    assert!(matches!(&rows[2], SchemaBrowserRow::Index { name, .. } if name == "users_email_idx"));
+}
+
+#[test]
+fn schema_browser_index_row_targets_its_table() {
+    let mut a = app_with_user_indexes();
+    a.schema_browser.cursor = a
+        .flattened_schema_browser()
+        .iter()
+        .position(|r| matches!(r, SchemaBrowserRow::Index { .. }))
+        .unwrap();
+    assert_eq!(
+        a.focused_schema_browser_table(),
+        Some(("public".into(), "users".into()))
+    );
+}
+
 #[test]
 fn start_schema_browser_with_empty_cache_surfaces_hint() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -6647,6 +6882,66 @@ fn demo_unknown_statement_yields_one_row_notice() {
 }
 
 #[test]
+fn demo_backslash_df_lists_the_demo_functions_and_honours_a_pattern() {
+    let mut a = crate::demo::app(Theme::default());
+    run_in_demo(&mut a, "\\df");
+    assert_eq!(
+        a.grid.columns,
+        vec!["schema", "name", "result", "arguments", "type"]
+    );
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["order_total", "refresh_user_stats", "user_order_count"]
+    );
+    assert_eq!(a.last_status.as_deref(), Some("\\df → 3 function(s)"));
+    run_in_demo(&mut a, "\\df User*");
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    assert_eq!(names, vec!["user_order_count"]);
+    // A pattern reaches the system schemas, as psql's does.
+    run_in_demo(&mut a, "\\df now");
+    assert_eq!(a.grid.rows.len(), 1);
+    assert_eq!(a.grid.rows[0][0], "pg_catalog");
+    run_in_demo(&mut a, "\\df nothing_like_this");
+    assert!(a.grid.rows.is_empty());
+    assert_eq!(a.last_status.as_deref(), Some("\\df → 0 function(s)"));
+}
+
+#[test]
+fn backslash_df_without_a_connection_says_so() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = "\\df".into();
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("not connected"), "got: {err}");
+    assert!(!a.query_running);
+}
+
+#[test]
+fn generated_select_waits_for_a_running_query() {
+    let mut a = app_with_schemas();
+    a.query_running = true;
+    a.run_generated_select("SELECT 1".into());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("a query is already running · ctrl-c cancels it")
+    );
+}
+
+#[test]
+fn generated_select_refuses_what_the_guard_does_not_allow() {
+    // A generator bug that produced a write must not reach the
+    // server, nor a confirm prompt the operator never asked for.
+    let mut a = crate::demo::app(Theme::default());
+    a.run_generated_select("DELETE FROM users".into());
+    assert!(a.last_error.is_some());
+    assert_ne!(a.mode, Mode::Confirm);
+    assert!(a.msg_rx.as_mut().unwrap().try_recv().is_err());
+}
+
+#[test]
 fn demo_confirmed_write_is_answered_synthetically() {
     // A guarded write in --demo reaches the confirm modal like a live
     // session; answering `y` must produce a demo result, not the
@@ -7225,14 +7520,17 @@ fn command_bar_tab_completes_a_unique_name_and_lists_ambiguous_ones() {
     a.on_key(KeyEvent::from(KeyCode::Char('d')));
     a.on_key(KeyEvent::from(KeyCode::Tab));
     assert_eq!(a.command_bar.as_ref().map(|b| b.input.text()), Some("d"));
-    assert_eq!(a.command_bar_completions.as_deref(), Some("d · dn · dt"));
+    assert_eq!(
+        a.command_bar_completions.as_deref(),
+        Some("d · df · dn · dt")
+    );
 }
 
 #[test]
 fn command_candidates_and_common_prefix_are_pure_and_total() {
     use crate::app::cmd::{command_candidates, longest_common_prefix, COMMAND_NAMES};
     assert_eq!(command_candidates("rea"), vec!["readonly"]);
-    assert_eq!(command_candidates("d"), vec!["d", "dn", "dt"]);
+    assert_eq!(command_candidates("d"), vec!["d", "df", "dn", "dt"]);
     assert!(command_candidates("zzz").is_empty());
     assert_eq!(command_candidates("").len(), COMMAND_NAMES.len());
     assert_eq!(longest_common_prefix(&[]), "");
@@ -8360,6 +8658,27 @@ fn enter_on_a_backslash_command_runs_it() {
     let mut a = editor_with("\\l");
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "", "the backslash command was dispatched");
+}
+
+#[test]
+fn tab_after_join_on_completes_the_foreign_key_predicate() {
+    let mut a = crate::demo::app(Theme::default());
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM users u JOIN orders o ON o");
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let popup = a.completion.as_ref().expect("a popup");
+    assert_eq!(popup.candidates[0].insert, "o.user_id = u.id");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(
+        a.editor.buffer,
+        "SELECT * FROM users u JOIN orders o ON o.user_id = u.id"
+    );
+    // Tab on the space after ON shows it first too.
+    a.completion = None;
+    set_editor(&mut a, "SELECT * FROM orders o JOIN order_items i ON ");
+    a.on_key(KeyEvent::from(KeyCode::Tab));
+    let popup = a.completion.as_ref().expect("a popup");
+    assert_eq!(popup.candidates[0].insert, "i.order_id = o.id");
 }
 
 fn popup_with(a: &mut App, selected: Option<usize>) {
@@ -11244,5 +11563,24 @@ fn a_written_file_is_named_first_and_its_directory_shortened() {
             Some(home)
         ),
         "wrote report to r.md · in /Users/someone2"
+    );
+}
+
+/// The frame clock is what delivers `--demo`'s tap burst: it must run
+/// while the feed is pending and stop once the feed is drained.
+#[test]
+fn demo_tap_feed_holds_the_frame_clock_until_drained() {
+    let mut a = crate::demo::launch_app(Theme::default());
+    a.splash_visible = false;
+    assert!(a.wants_animation(), "a pending feed needs frames");
+    let due = a.demo_tap_feed.as_ref().unwrap().due;
+    // Bounded: a feed that never lets go must fail here, not hang.
+    for _ in 0..1_000 {
+        a.tick_demo_tap(due);
+    }
+    assert!(a.demo_tap_feed.is_none(), "the feed outlived its events");
+    assert!(
+        !a.wants_animation(),
+        "a drained feed must let the clock idle"
     );
 }

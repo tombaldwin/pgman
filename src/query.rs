@@ -13,6 +13,7 @@ pub mod apply;
 pub mod backslash;
 pub mod clause;
 pub mod complete;
+pub mod ddl;
 pub mod explain;
 pub mod format;
 pub mod from_parse;

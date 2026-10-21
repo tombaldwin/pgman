@@ -60,6 +60,21 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Everything between the header row (and tab bar) and the footer
     // row is the editor's and the grid's to share — see `pane_split`.
     let body_height = area.height.saturating_sub(header_h + 1 + tabbar_height);
+    // An error that does not fit one footer row takes up to two more,
+    // out of the body — never so many that the body drops under
+    // `CRAMPED_BODY` (the `!` / F2 overlay still has all of it), and
+    // not while that overlay is open and showing it already.
+    let spare = if app.mode == Mode::ErrorDetail {
+        0
+    } else {
+        body_height
+            .saturating_sub(CRAMPED_BODY)
+            .min(ERROR_FOOTER_MAX_ROWS - 1)
+    };
+    let footer_h = footer_error_rows(app, area.width, 1 + spare as usize)
+        .len()
+        .max(1) as u16;
+    let body_height = body_height.saturating_sub(footer_h - 1);
     let editor_lines = app.editor.buffer.matches('\n').count() + 1;
     let zoom = app.zoomed.then(|| zoomed_pane(app));
     let (editor_height, results_height) =
@@ -71,7 +86,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Constraint::Length(tabbar_height),  // optional tab bar
         Constraint::Length(editor_height),  // editor pane (border + lines + border)
         Constraint::Length(results_height), // results grid
-        Constraint::Length(1),              // footer
+        Constraint::Length(footer_h),       // footer
     ])
     .split(area);
     if header_h > 1 {
@@ -453,13 +468,30 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
     let value = Style::default().fg(theme.text);
     let red = Style::default().fg(theme.health_red);
 
-    // Every labelled row is fitted to the card's inner width (borders
-    // off) rather than left to `Paragraph`'s wrap: a path or DSN has
-    // no space to break at, so the wrap cut it mid-token and dropped
-    // the remainder flush against the border, unpadded.
-    let inner_width = area.width.saturating_sub(2) as usize;
+    // Every row is fitted to the card's inner width (borders off)
+    // rather than left to `Paragraph`'s wrap, which cut a path mid-token
+    // and dropped the rest flush against the border, unpadded. The DSN
+    // is middle-cut; a path (source, logs) is wrapped at its `/`s under
+    // its label, so all of it is there to copy; prose (error, hint) is
+    // wrapped on words under its own indent. Two columns are kept clear
+    // on the right, matching the labels' two on the left, so no word
+    // runs into the border.
+    let inner_width = (area.width.saturating_sub(2) as usize).saturating_sub(2);
     const LABEL_WIDTH: usize = 10; // `"  target  "`
-    let fit_value = |v: &str| middle_ellipsis(v, inner_width.saturating_sub(LABEL_WIDTH));
+    let value_width = inner_width.saturating_sub(LABEL_WIDTH);
+    let fit_value = |v: &str| middle_ellipsis(v, value_width);
+    let labelled_path = |name: &'static str, path: &str| -> Vec<Line<'static>> {
+        wrap_path(path, value_width)
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let lead = if i == 0 { name } else { "          " };
+                Line::from(vec![Span::styled(lead, label), Span::styled(row, value)])
+            })
+            .collect()
+    };
+    const PROSE_INDENT: usize = 4;
+    let prose_width = inner_width.saturating_sub(PROSE_INDENT).max(10);
 
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
         "connection failed",
@@ -476,17 +508,14 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         ]));
     }
     if let Some(origin) = &app.dsn_origin {
-        lines.push(Line::from(vec![
-            Span::styled("  source  ", label),
-            Span::styled(fit_value(origin), value),
-        ]));
+        lines.extend(labelled_path("  source  ", origin));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("  error", label)));
-    for chunk in err.split('\n') {
+    for row in wrap_words(err, prose_width) {
         lines.push(Line::from(vec![
             Span::styled("    ", label),
-            Span::styled(chunk.to_string(), red),
+            Span::styled(row, red),
         ]));
     }
 
@@ -494,15 +523,15 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         if let Some(hint) = crate::conn::connect_hint(err, dsn) {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  hint", label)));
-            lines.push(Line::from(vec![
-                Span::styled("    ", label),
-                Span::styled(
-                    hint,
-                    Style::default()
-                        .fg(theme.accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
+            let style = Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD);
+            for row in wrap_words(&hint, prose_width) {
+                lines.push(Line::from(vec![
+                    Span::styled("    ", label),
+                    Span::styled(row, style),
+                ]));
+            }
         }
     }
 
@@ -516,10 +545,7 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let log_path = crate::util::cache_dir().join(dated_log_file_name(now));
-    lines.push(Line::from(vec![
-        Span::styled("  logs    ", label),
-        Span::styled(fit_value(&log_path.display().to_string()), value),
-    ]));
+    lines.extend(labelled_path("  logs    ", &log_path.display().to_string()));
     let mut actions = String::from("  r retry");
     if !app.conn_pick.picks.is_empty() {
         actions.push_str(" · p change connection");
@@ -529,6 +555,13 @@ fn draw_connection_failed(f: &mut Frame, area: Rect, app: &App, err: &str) {
         fit_hints(&actions, inner_width, "?"),
         label,
     )));
+    // On a short terminal the card is cut at the bottom, which is
+    // where the log path and the actions are. The blank spacer rows
+    // go first.
+    let rows = area.height.saturating_sub(2) as usize;
+    if lines.len() > rows {
+        lines.retain(|l| l.width() > 0);
+    }
 
     f.render_widget(
         Paragraph::new(Text::from(lines))
@@ -756,6 +789,78 @@ pub(crate) fn footer_text(s: &str) -> String {
         out.push(if c.is_control() { ' ' } else { c });
     }
     out
+}
+
+/// The footer's error marker.
+const ERROR_ICON: &str = " ⚠ ";
+
+/// Most rows the footer grows to for an error that does not fit one.
+pub(crate) const ERROR_FOOTER_MAX_ROWS: u16 = 3;
+
+/// The pointer to the error overlay that ends the footer's error: `!`
+/// where no character is being typed; F2 (fn-F2 on a Mac) in the
+/// editor and the prompts, where `!` is a character. Empty when there
+/// is no detail to open.
+fn error_pointer(app: &App) -> &'static str {
+    match app.last_error_detail {
+        Some(_) if app.mode.is_text_input() => " · F2 detail",
+        Some(_) => " · ! detail",
+        None => "",
+    }
+}
+
+/// The footer's error rows at `width` columns, at most `max_rows` of
+/// them — empty when the footer is not showing an error (none, or the
+/// `:` bar or the tx prompt owns the footer). `draw` sizes the footer
+/// from this and `draw_footer` renders it, so the two cannot disagree.
+fn footer_error_rows(app: &App, width: u16, max_rows: usize) -> Vec<String> {
+    let bar_open = app.command_bar.is_some() && app.mode == Mode::CommandBar;
+    let Some(err) = app
+        .last_error
+        .as_ref()
+        .filter(|_| app.mode != Mode::TxDecision && !bar_open)
+    else {
+        return Vec::new();
+    };
+    let badge_width: usize = footer_badges(app, &app.theme)
+        .iter()
+        .map(|s| display_width(&s.content))
+        .sum();
+    let room = (width as usize).saturating_sub(badge_width + display_width(ERROR_ICON));
+    error_footer_rows(&footer_text(err), error_pointer(app), room, max_rows)
+}
+
+/// An error wrapped on words into at most `max_rows` rows of `width`
+/// columns, `pointer` ending the last. What does not fit is cut on the
+/// last row by [`fit_status`], which keeps the pointer — the way to
+/// the rest. With one row this is the old single-line footer. A
+/// multi-line server error arrives folded into ` · ` segments by
+/// [`footer_text`]; the overlay keeps its original lines. Pure.
+pub(crate) fn error_footer_rows(
+    msg: &str,
+    pointer: &str,
+    width: usize,
+    max_rows: usize,
+) -> Vec<String> {
+    let full = format!("{msg}{pointer}");
+    if width == 0 || max_rows <= 1 || display_width(&full) <= width {
+        return vec![fit_status(&full, width)];
+    }
+    let mut rows = wrap_words(msg, width);
+    if rows.len() > max_rows {
+        let rest = rows.split_off(max_rows - 1).join(" ");
+        rows.push(rest);
+    }
+    let last = rows.pop().unwrap_or_default();
+    if display_width(&last) + display_width(pointer) <= width {
+        rows.push(format!("{last}{pointer}"));
+    } else if rows.len() + 2 <= max_rows {
+        rows.push(last);
+        rows.push(fit_status(pointer.trim_start_matches(" · "), width));
+    } else {
+        rows.push(fit_status(&format!("{last}{pointer}"), width));
+    }
+    rows
 }
 
 /// Rows the editor block takes — its two border rows included — for a
@@ -1054,6 +1159,39 @@ fn word_ellipsis(s: &str, target_len: usize) -> Option<String> {
     (display_width(&out) <= target_len).then_some(out)
 }
 
+/// `path` as rows of at most `width` columns, broken after a `/` where
+/// one fits and inside a name only when that name alone is wider than
+/// a row. The rows concatenate back to `path`: nothing is elided, so
+/// the whole path is on screen to copy. Pure / testable.
+pub(crate) fn wrap_path(path: &str, width: usize) -> Vec<String> {
+    if width == 0 || display_width(path) <= width {
+        return vec![path.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut row = String::new();
+    let mut row_w = 0;
+    for piece in path.split_inclusive('/') {
+        let piece_w = display_width(piece);
+        if row_w > 0 && row_w + piece_w > width {
+            out.push(std::mem::take(&mut row));
+            row_w = 0;
+        }
+        for c in piece.chars() {
+            let cw = char_width(c);
+            if row_w > 0 && row_w + cw > width {
+                out.push(std::mem::take(&mut row));
+                row_w = 0;
+            }
+            row.push(c);
+            row_w += cw;
+        }
+    }
+    if !row.is_empty() {
+        out.push(row);
+    }
+    out
+}
+
 /// Ellipsise `s` down to `target_len` columns, keeping both ends.
 /// Prose is cut at word boundaries ([`word_ellipsis`]): the first
 /// words and the last one — a footer that read `DELETE w…hout WHERE`
@@ -1273,6 +1411,8 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .command_bar
         .as_ref()
         .filter(|_| app.mode == Mode::CommandBar);
+    // Rows under the first, for an error wrapped over a taller footer.
+    let mut extra_rows: Vec<Line<'static>> = Vec::new();
     let line = if let Some(bar) = bar {
         let mut spans = vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
@@ -1299,44 +1439,44 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             }
         }
         Line::from(spans)
-    } else if let Some(err) = &app.last_error {
-        let icon = " ⚠ ";
-        // The "F2 detail" pointer is the load-bearing part of this line
-        // when it's present — it's how the operator finds the rich error
-        // view — so it's appended as `fit_status`'s protected last
-        // segment (joined with the same " · " it uses to split on)
-        // rather than as a separate span that could get truncated away
-        // by a raw cell-width clip.
-        // `!` where no character is being typed; F2 (fn-F2 on a Mac)
-        // in the editor and the prompts, where `!` is a character.
-        let pointer = match app.last_error_detail {
-            Some(_) if app.mode.is_text_input() => " · F2 detail",
-            Some(_) => " · ! detail",
-            None => "",
-        };
-        // One row: a multi-line server error (message + `hint:`
-        // continuation) is folded into ` · ` segments here; F2 keeps
-        // the original lines.
-        let full = format!("{}{pointer}", footer_text(err));
-        let available = area
-            .width
-            .saturating_sub(badge_width)
-            .saturating_sub(display_width(icon) as u16) as usize;
-        let fitted = fit_status(&full, available);
-        let spans = if !pointer.is_empty() && fitted.ends_with(pointer) {
-            let msg_part = &fitted[..fitted.len() - pointer.len()];
-            vec![
-                Span::styled(icon, Style::default().fg(theme.health_red)),
-                Span::styled(msg_part.to_string(), Style::default().fg(theme.health_red)),
-                Span::styled(pointer.to_string(), Style::default().fg(theme.muted)),
-            ]
-        } else {
-            vec![
-                Span::styled(icon, Style::default().fg(theme.health_red)),
-                Span::styled(fitted, Style::default().fg(theme.health_red)),
-            ]
-        };
-        Line::from(spans)
+    } else if let Some(rows) = Some(footer_error_rows(app, area.width, area.height as usize))
+        .filter(|rows| !rows.is_empty())
+    {
+        // The error wraps over the footer's rows (see `draw`); the rows
+        // after the first are indented under its text, and the detail
+        // pointer that ends the last is muted.
+        let pointer = error_pointer(app);
+        let bare_pointer = pointer.trim_start_matches(" · ");
+        let red = Style::default().fg(theme.health_red);
+        let muted = Style::default().fg(theme.muted);
+        let indent = " ".repeat(badge_width as usize + display_width(ERROR_ICON));
+        let last = rows.len() - 1;
+        let mut lines: Vec<Line<'static>> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, row)| {
+                let lead = if i == 0 {
+                    Span::styled(ERROR_ICON, red)
+                } else {
+                    Span::raw(indent.clone())
+                };
+                let body = if i != last || pointer.is_empty() {
+                    vec![Span::styled(row, red)]
+                } else if let Some(msg) = row.strip_suffix(pointer) {
+                    vec![
+                        Span::styled(msg.to_string(), red),
+                        Span::styled(pointer, muted),
+                    ]
+                } else if row == bare_pointer {
+                    vec![Span::styled(row, muted)]
+                } else {
+                    vec![Span::styled(row, red)]
+                };
+                Line::from(std::iter::once(lead).chain(body).collect::<Vec<_>>())
+            })
+            .collect();
+        extra_rows = lines.split_off(1);
+        lines.remove(0)
     } else if let Some(status) = app
         .last_status
         .as_ref()
@@ -1430,7 +1570,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · ↑↓ jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
-                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · r reload · q close",
+                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · p preview · d DDL · r reload · q close",
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
@@ -1521,7 +1661,20 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     for s in line.spans {
         combined.push(s);
     }
-    f.render_widget(Paragraph::new(Line::from(combined)), area);
+    f.render_widget(
+        Paragraph::new(Line::from(combined)),
+        Rect { height: 1, ..area },
+    );
+    if !extra_rows.is_empty() {
+        f.render_widget(
+            Paragraph::new(Text::from(extra_rows)),
+            Rect {
+                y: area.y + 1,
+                height: area.height.saturating_sub(1),
+                ..area
+            },
+        );
+    }
 
     // Real terminal cursor for the typing modes whose input is
     // surfaced through the footer (GridFilter, HistorySearch,
@@ -2159,6 +2312,14 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    p             preview: run SELECT * … LIMIT 5 and show it in the grid"),
+        &mut lines,
+    );
+    push(
+        row("    d             copy the table's (or view's) CREATE statement, read from the catalog"),
+        &mut lines,
+    );
+    push(
         row("    r             reload the schema (tables other sessions made since connect)"),
         &mut lines,
     );
@@ -2280,6 +2441,10 @@ pub(crate) fn help_body(
     );
     push(
         row("    \\dt / \\dn       open schema browser (default view)"),
+        &mut lines,
+    );
+    push(
+        row("    \\df [pattern]    list functions (psql patterns: * ? schema.)"),
         &mut lines,
     );
     push(row("    \\?  / \\h        open this help"), &mut lines);
@@ -2525,7 +2690,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz"),
+        row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz · 107 serial not unique"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);

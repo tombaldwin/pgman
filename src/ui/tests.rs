@@ -655,6 +655,73 @@ fn fit_hints_measures_cjk_hints_in_columns() {
 }
 
 #[test]
+fn error_footer_rows_wrap_and_keep_the_pointer_last() {
+    const P: &str = " · ! detail";
+    // Fits: one row, as before.
+    assert_eq!(
+        error_footer_rows("relation \"x\" does not exist", P, 60, 3),
+        vec!["relation \"x\" does not exist · ! detail"]
+    );
+    // Too long for one row: wrapped on words, the pointer on the last.
+    let msg = "duplicate key value violates unique constraint \"users_email_key\"";
+    let rows = error_footer_rows(msg, P, 40, 3);
+    assert_eq!(
+        rows,
+        vec![
+            "duplicate key value violates unique",
+            "constraint \"users_email_key\" · ! detail"
+        ]
+    );
+    // Nothing lost when it fits in the rows it has.
+    assert_eq!(
+        rows.concat().replace(P, ""),
+        msg.replace("unique constraint", "uniqueconstraint")
+    );
+    // More than `max_rows` worth: cut on the last row, the pointer kept.
+    let long = "word ".repeat(60);
+    let rows = error_footer_rows(long.trim(), P, 30, 3);
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert!(rows[2].ends_with(P) && rows[2].contains('…'), "{rows:?}");
+    assert!(rows.iter().all(|r| display_width(r) <= 30), "{rows:?}");
+    // A last row too full for the pointer, with a row to spare: the
+    // pointer takes that row rather than cutting the message.
+    let rows = error_footer_rows("aaaa bbbb cccc dddd", P, 10, 3);
+    assert_eq!(rows, vec!["aaaa bbbb", "cccc dddd", "! detail"]);
+    // One row allowed: the old single-line fit.
+    let rows = error_footer_rows(msg, P, 40, 1);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].ends_with(P) && display_width(&rows[0]) <= 40);
+    // No detail to point at: no pointer anywhere.
+    let rows = error_footer_rows(msg, "", 40, 3);
+    assert_eq!(
+        rows.concat(),
+        msg.replace("unique constraint", "uniqueconstraint")
+    );
+}
+
+#[test]
+fn wrap_path_breaks_after_slashes_and_loses_nothing() {
+    let p = "/Users/someone/.cache/pgman/pgman.log.2026-10-21";
+    assert_eq!(wrap_path(p, 80), vec![p]);
+    let rows = wrap_path(p, 20);
+    assert_eq!(
+        rows,
+        vec!["/Users/someone/", ".cache/pgman/", "pgman.log.2026-10-21"]
+    );
+    assert_eq!(rows.concat(), p);
+    // A name wider than a row is split inside it, still within width.
+    let rows = wrap_path(p, 8);
+    assert_eq!(rows.concat(), p);
+    assert!(rows.iter().all(|r| display_width(r) <= 8), "{rows:?}");
+    // Double-width names never overrun a row either.
+    let rows = wrap_path("/データ/東京都大阪府/x", 5);
+    assert_eq!(rows.concat(), "/データ/東京都大阪府/x");
+    assert!(rows.iter().all(|r| display_width(r) <= 5), "{rows:?}");
+    // Width 0 hands the path back whole rather than looping.
+    assert_eq!(wrap_path(p, 0), vec![p]);
+}
+
+#[test]
 fn middle_ellipsis_never_overruns_a_cjk_budget() {
     for target in 0..=20 {
         let got = middle_ellipsis(JA, target);

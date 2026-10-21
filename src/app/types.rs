@@ -531,6 +531,12 @@ pub enum SchemaBrowserRow {
         table: String,
         name: String,
     },
+    /// One index on `table`, after its constraints.
+    Index {
+        schema: String,
+        table: String,
+        name: String,
+    },
     /// The folded group of a partitioned table's partitions.
     Partitions {
         schema: String,
@@ -1640,6 +1646,17 @@ pub struct TapBaseline {
     /// The snapshot — Hotspots already aggregated so the diff
     /// computation is cheap even when the ring has churned.
     pub hotspots: Vec<crate::tap::Hotspot>,
+}
+
+/// `--demo`'s tap burst, still to arrive. From `due` on, one event is
+/// delivered per frame through [`super::App::on_tap_event`] — the live
+/// tap's path — so the demo opens with the tap quiet and the `TAP` /
+/// `N+1` badges light as its queries come in, rather than pre-lit
+/// before anything happened.
+#[derive(Debug, Clone)]
+pub struct DemoTapFeed {
+    pub due: std::time::Instant,
+    pub pending: std::collections::VecDeque<crate::tap::TapEvent>,
 }
 
 /// Liveness + backpressure-loss snapshot, fed by tap heartbeats

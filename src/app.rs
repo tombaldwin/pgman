@@ -524,6 +524,7 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             SchemaBrowserRow::Table { name, .. } => name.as_str(),
             SchemaBrowserRow::Column { name, .. } => name.as_str(),
             SchemaBrowserRow::Constraint { name, .. } => name.as_str(),
+            SchemaBrowserRow::Index { name, .. } => name.as_str(),
             SchemaBrowserRow::Partitions { .. } => "",
             SchemaBrowserRow::Partition { name, .. } => name.as_str(),
         };
@@ -535,6 +536,7 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             SchemaBrowserRow::Table { .. } => 1,
             SchemaBrowserRow::Column { .. }
             | SchemaBrowserRow::Constraint { .. }
+            | SchemaBrowserRow::Index { .. }
             | SchemaBrowserRow::Partitions { .. } => 2,
             SchemaBrowserRow::Partition { .. } => 3,
         }
@@ -571,7 +573,8 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
 /// Pure: walk the cache and emit visible rows in display order
 /// (schemas alphabetical; under each expanded schema, its tables
 /// alphabetical; under each expanded table, its columns in catalog
-/// order followed by its unique/PK constraints alphabetical).
+/// order, then its unique/PK constraints alphabetical, then its
+/// indexes alphabetical).
 /// `expanded` is keyed by schema name and `"schema.table"` for
 /// tables — see `schema_browser_table_key`. Empty `expanded` →
 /// every node collapsed.
@@ -650,6 +653,16 @@ pub fn flatten_schema_browser(
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
             let constraints = cons_by_table.get(&(s, t)).cloned().unwrap_or_default();
+            // A unique or primary-key constraint's own index has the
+            // constraint's name; it would list twice. The table's detail
+            // pane still lists every index.
+            let indexes = cache
+                .indexes_by_table
+                .get(&(s.to_string(), t.to_string()))
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+                .iter()
+                .filter(|ix| !constraints.contains(&ix.name.as_str()));
             let table_key = schema_browser_table_key(s, t);
             let table_expanded = expanded.contains(&table_key);
             out.push(SchemaBrowserRow::Table {
@@ -674,6 +687,13 @@ pub fn flatten_schema_browser(
                     schema: s.to_string(),
                     table: t.to_string(),
                     name: cn.to_string(),
+                });
+            }
+            for ix in indexes {
+                out.push(SchemaBrowserRow::Index {
+                    schema: s.to_string(),
+                    table: t.to_string(),
+                    name: ix.name.clone(),
                 });
             }
             if let Some(parts) = partitions.get(&(s.to_string(), t.to_string())) {
@@ -946,6 +966,20 @@ pub fn build_select_all_template(schema: &str, table: &str) -> String {
     )
 }
 
+/// How many rows `p` in the schema browser previews.
+pub const SAMPLE_ROWS: usize = 5;
+
+/// The schema browser's sample-rows query (`p`): the first
+/// [`SAMPLE_ROWS`] rows of `schema.table`, identifiers quoted only
+/// where they need it.
+pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
+    format!(
+        "SELECT * FROM {}.{} LIMIT {SAMPLE_ROWS}",
+        quote_ident(schema),
+        quote_ident(table),
+    )
+}
+
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
 /// NULL, …);` template. One placeholder per column; the operator
 /// fills in real values in the editor. Returns an empty string if
@@ -1016,6 +1050,29 @@ pub fn splash_should_dismiss(
     }
 }
 
+/// The draft auto-save throttle: at most one write per window.
+const DRAFT_SAVE_GAP: Duration = Duration::from_millis(500);
+
+/// Pure: when a dirty draft is next due to be saved — the end of the
+/// throttle window after `last_save`, or at once when it has never been
+/// saved. The run loop sleeps until then so the save happens even when
+/// no key or message arrives to wake it.
+///
+/// ```
+/// use std::time::{Duration, Instant};
+/// use pgman::app::draft_save_at;
+/// let t0 = Instant::now();
+/// let gap = Duration::from_millis(500);
+/// assert_eq!(draft_save_at(Some(t0), gap), t0 + gap);
+/// assert!(draft_save_at(None, gap) <= Instant::now()); // never saved → now
+/// ```
+pub fn draft_save_at(last_save: Option<Instant>, min_gap: Duration) -> Instant {
+    match last_save {
+        Some(t) => t + min_gap,
+        None => Instant::now(),
+    }
+}
+
 /// Pure decision: is the draft auto-save throttle past its window?
 /// Returns `true` when at least `min_gap` has elapsed since the last
 /// save, OR when there's never been a save yet. The run-loop uses
@@ -1078,6 +1135,9 @@ pub struct App {
     /// can't clobber the operator's real session state. Populated
     /// by `crate::demo::app`.
     pub demo: bool,
+    /// `--demo` only: the tap burst still to arrive (see
+    /// [`DemoTapFeed`]). `None` everywhere else.
+    pub demo_tap_feed: Option<DemoTapFeed>,
     pub conn_state: ConnState,
     pub dsn: Option<Dsn>,
     /// Where the current DSN came from — surfaced in the failure view to
@@ -1489,6 +1549,7 @@ impl App {
             theme,
             mode,
             demo: false,
+            demo_tap_feed: None,
             conn_state: ConnState::Disconnected,
             dsn,
             dsn_origin: None,
@@ -1628,8 +1689,35 @@ impl App {
                 }
             }
         });
+        self.spawn_quit_on_signal();
         self.run_with(tui, event_rx).await
     }
+
+    /// Turn SIGHUP (the terminal closed) and SIGTERM into
+    /// [`AppMsg::Terminate`]. Their default action kills the process
+    /// on the spot, skipping the exit path that saves the session.
+    #[cfg(unix)]
+    fn spawn_quit_on_signal(&self) {
+        use tokio::signal::unix::{signal, SignalKind};
+        let tx = self.msg_tx.clone();
+        let (Ok(mut hup), Ok(mut term)) = (
+            signal(SignalKind::hangup()),
+            signal(SignalKind::terminate()),
+        ) else {
+            tracing::warn!("could not listen for SIGHUP / SIGTERM");
+            return;
+        };
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = hup.recv() => {}
+                _ = term.recv() => {}
+            }
+            let _ = tx.send(AppMsg::Terminate);
+        });
+    }
+
+    #[cfg(not(unix))]
+    fn spawn_quit_on_signal(&self) {}
 
     /// Generic loop body — drives any [`TuiHost`] from any `Event`
     /// source. Production passes the real `Tui` + a channel fed by
@@ -1667,6 +1755,12 @@ impl App {
                 self.spawn_update_check();
             }
             let animate = self.wants_animation();
+            // A dirty draft inside the save throttle needs the loop to
+            // wake when the window closes: without this, the tail of a
+            // typing burst sat unsaved until the next key, and closing
+            // the terminal lost it.
+            let draft_save_at = (!self.demo && self.draft_dirty)
+                .then(|| draft_save_at(self.draft_last_save, DRAFT_SAVE_GAP));
             tokio::select! {
                 ev = events.recv() => {
                     match ev {
@@ -1685,10 +1779,14 @@ impl App {
                     // are cheap (one Instant::now per frame).
                     self.tick_watch();
                     self.tick_auto_refresh();
+                    self.tick_demo_tap(Instant::now());
                 }
                 Some(msg) = msg_rx.recv() => {
                     self.on_msg(msg);
                 }
+                _ = tokio::time::sleep_until(
+                    tokio::time::Instant::from_std(draft_save_at.unwrap_or_else(Instant::now)),
+                ), if draft_save_at.is_some() => {}
             }
             // Deferred actions that need `&mut TuiHost`. `\e`
             // (external editor) sets the flag from the editor key
@@ -1705,11 +1803,7 @@ impl App {
             // write via rename; not even a syscall when not dirty.
             if !self.demo
                 && self.draft_dirty
-                && draft_save_due(
-                    self.draft_last_save,
-                    Instant::now(),
-                    Duration::from_millis(500),
-                )
+                && draft_save_due(self.draft_last_save, Instant::now(), DRAFT_SAVE_GAP)
             {
                 let _ = persist_draft_to(&self.draft_file, &self.editor.buffer);
                 self.draft_last_save = Some(Instant::now());
@@ -1822,6 +1916,27 @@ impl App {
             || matches!(self.conn_state, ConnState::Connecting)
             || (self.auto_refresh && matches!(self.mode, Mode::SlowQueries | Mode::Sessions))
             || (self.environments.auto_probe && self.mode == Mode::Environments)
+            || self.demo_tap_feed.is_some()
+    }
+
+    /// One frame of `--demo`'s tap feed: from its `due` time on, the
+    /// next event arrives through [`Self::on_tap_event`], as a live
+    /// tap's would. The feed is dropped with its last event, which
+    /// also stops it holding the frame clock awake.
+    pub fn tick_demo_tap(&mut self, now: Instant) {
+        let Some(feed) = self.demo_tap_feed.as_mut() else {
+            return;
+        };
+        if now < feed.due {
+            return;
+        }
+        let next = feed.pending.pop_front();
+        if feed.pending.is_empty() {
+            self.demo_tap_feed = None;
+        }
+        if let Some(event) = next {
+            self.on_tap_event(event);
+        }
     }
 
     /// Fold one [`crate::tap::TapEvent`] into the app state.

@@ -20,9 +20,9 @@ expression: dump(&buf)
 │1   │      · qty : integer NOT …   · sku                                 │    │
 │2   │      · price_cents : inte…   · qty                                 │    │
 │3   │      ◆ order_items_pkey      · price_cents                         │    │
-│4   │  ▼ orders  (5 col, 1 cons)                                         │    │
-│5   │      · id : bigint NOT NU… constraints (1)                         │    │
-│6   │      · user_id : bigint N…   · order_items_pkey                    │    │
+│4   │      ⌁ order_items_order_…                                         │    │
+│5   │  ▼ orders  (5 col, 1 cons) constraints (1)                         │    │
+│6   │      · id : bigint NOT NU…   · order_items_pkey                    │    │
 │    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

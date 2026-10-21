@@ -20,6 +20,15 @@ behaviour without being parsed as backslash text.
   "list tables" is folded into the one browser view).
 - `\dn` — open the schema browser (same as `\dt`; psql's "list schemas"
   likewise folds into the browser).
+- `\df` — list functions as a result grid: schema, name, result type,
+  arguments and kind (`func`, `proc`, `agg`, `window`). With no pattern it
+  lists everything outside `pg_catalog` and `information_schema`.
+- `\df <pattern>` — psql's patterns: `*` and `?` wildcards, an optional
+  `schema.` prefix (`\df billing.calc*`), unquoted text folded to lower
+  case, `"Quoted"` text kept as written. A pattern searches the system
+  schemas too, so `\df now` finds `pg_catalog.now`. The query runs like
+  any other statement (it lands in history); `--demo` answers from its own
+  three functions.
 
 ## Database / connection
 
@@ -90,6 +99,7 @@ the buffer. Opening the bar over a guarded-run confirmation cancels that run
 | `:l` | `\l` | List databases (name + size). |
 | `:x [on\|off]` | `\x` | Expanded (row-detail) output. |
 | `:dt` / `:dn` | `\dt` / `\dn` | Open the schema browser. |
+| `:df [PATTERN]` | `\df` | List functions, optionally matching a psql pattern. |
 | `:d [NAME]` | `\d` | Schema browser, filtered to `NAME` when given. |
 | `:i PATH` | `\i` | Load a SQL file into the editor (doesn't run it). |
 | `:timing [on\|off]` | `\timing` | Elapsed-ms in the status footer. |
@@ -104,7 +114,7 @@ An unrecognised name answers `unknown command :foo · :help lists them`.
 pgman [OPTIONS] [DSN]
 ```
 
-pgman is a TUI: every path except `--batch`, `--init-config`, `--upgrade`,
+pgman is a TUI: every path except `--batch` (and `pgman query`), `--init-config`, `--upgrade`,
 `--version`, and `--help` needs a real terminal on both stdin and stdout. A
 launch from a pipe or script without one is refused with `pgman needs a
 terminal. For pipes and scripts use --batch (see pgman --help).` (exit code
@@ -116,7 +126,7 @@ surface.
 | `[DSN]` (positional) | Connect using a `postgres://` DSN — same as `--dsn`. `pgman postgres://app@localhost/appdb` works without the flag name. Passing both `--dsn` and the positional form is fine only when they're identical; disagreeing values are a hard error. |
 | `--dsn <DSN>` | Connect using a `postgres://` DSN. |
 | `--theme <THEME>` | Colour theme: `dark` \| `light` \| `high-contrast` (default `dark`). |
-| `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; identical frame every launch. For screenshots / demo GIFs / talks. `F6` / `F7` answer with a canned plan, so the EXPLAIN tree opens in the demo the same way it does live. |
+| `--demo` | Run against a synthetic, self-contained dataset — no database, no network, no disk writes; the same frames every launch (the JDBC tap's demo burst arrives two seconds in, lighting `TAP` and `N+1`). For screenshots / demo GIFs / talks. `F6` / `F7` answer with a canned plan, so the EXPLAIN tree opens in the demo the same way it does live. |
 | `--init-config` | Write a commented default `safety.toml` under the config dir (honouring `XDG_CONFIG_HOME`), `0600`, then exit. Refuses to overwrite an existing file (exit `1`, says so on stderr) rather than clobbering your edits. |
 | `--log <PATH>` | Preload the editor with a Hibernate or Postgres server log from `PATH` (`-` for stdin) and open straight into the reconstructed-query picker — same as pasting the log and pressing `Ctrl-L` / `F8`. Refused past 64 MB (`-` / stdin is exempt — its size isn't known ahead of reading it) — trim the file first (`grep` for `org.hibernate.SQL` or `LOG:`). |
 | `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. `csv`, `tsv` and `expanded` stop at 1000 rows: past that, stderr says so and the exit status is `3`, so a partial export can't pass for a whole one. `--format json` (one statement) returns every row. A script of several statements runs in one transaction and prints only its status, not their rows: run one statement per call to get rows. |
@@ -132,6 +142,15 @@ surface.
 | `--upgrade` | Upgrade this install in place, then exit: `git pull` + `cargo install --path .` for a git checkout, `cargo install` for a crates.io install, or the Homebrew formula; prints the GitHub releases page for anything else. An install made with `cargo install --git …` isn't one of these: re-run that command to upgrade it. |
 | `--no-tap` | Don't start the JDBC tap listener, not even the one a Java project in the working directory turns on by default. |
 | `--no-update-check` | Skip the startup check for a newer release on crates.io (same effect as the `PGMAN_NO_UPDATE_CHECK` env var). Without either, pgman makes at most one crates.io request every six hours, sending only the running version and a user-agent string. |
+
+`pgman query 'SQL' [--json]` is `--batch` spelled the way ebman's
+subcommands are: `pgman --batch --sql 'SQL'`, with `--json` short for
+`--format json`. With no SQL it reads stdin, and every `--batch` flag
+applies (`--dsn`, `--format`, `--discovered`, `--yes`):
+
+```
+pgman query 'SELECT id, email FROM users LIMIT 5' --json --dsn postgres://app@localhost/appdb
+```
 
 `pgman mcp serve [--read-only] [--project-connections]` runs the stdio
 MCP server instead of the TUI — read-only queries, plus `apply_patches`
