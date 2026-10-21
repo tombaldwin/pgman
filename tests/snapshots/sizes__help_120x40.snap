@@ -16,7 +16,7 @@ expression: dump(&buf)
 │  ORDER BY created_at DESC;                                                                                           │
 │                 ╭──────────────────────────────────────────────────────────────────────────────────╮                 │
 ╰─────────────────│                                                                                  │─────────────────╯
-╭[ ◆ result · 6 ro│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)            │─────────────────╮
+╭[ ◆ result · 6 ro│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)        │─────────────────╮
 │id  email        │                                                                                  │                 │
 │1   ada@example.c│   grid                                                                           │                 │
 │2   linus@example│     q             quit                                                           │                 │
@@ -34,7 +34,7 @@ expression: dump(&buf)
 │                 │     ] / [  1..9   next / prev tab · tab N — see the tabs section                 │                 │
 │                 │     T             slow queries (pg_stat_statements top-N)                        │                 │
 │                 │     L             active sessions + locks (pg_stat_activity)                     │                 │
-│                 │ ↓ 233 more below                                                                 │                 │
+│                 │ ↓ 236 more below                                                                 │                 │
 │                 │                                                                                  │                 │
 │                 ╰──────────────────────────────────────────────────────────────────────────────────╯                 │
 │                                                                                                                      │

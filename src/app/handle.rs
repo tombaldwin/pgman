@@ -100,6 +100,8 @@ impl App {
                     self.open_row_detail();
                 }
                 self.query_running = false;
+                // A cancel that lost the race to the result.
+                self.cancel_requested = false;
                 self.last_error = None;
                 self.last_error_detail = None;
                 let elapsed = self.query_started.take().map(|t0| t0.elapsed());
@@ -158,6 +160,17 @@ impl App {
                 // pending refresh flag.
                 self.schema_dirty_after_run = false;
                 self.last_status = None;
+                // The cancel Ctrl-C asked for comes back as an error;
+                // shown as one, it read as the server failing the query.
+                // A statement timeout is the same SQLSTATE without the
+                // request, and stays an error.
+                let asked = std::mem::take(&mut self.cancel_requested);
+                if asked && detail.as_ref().and_then(|d| d.code.as_deref()) == Some("57014") {
+                    self.last_error = None;
+                    self.last_error_detail = None;
+                    self.last_status = Some("cancelled".into());
+                    return;
+                }
                 self.last_error = Some(error);
                 self.last_error_detail = detail;
                 // Postgres flagged a syntax error at a specific
@@ -216,6 +229,10 @@ impl App {
                         self.last_error_detail = None;
                     }
                     None => {
+                        // The footer shows an error over a status; the
+                        // statement before this one's failure is old news.
+                        self.last_error = None;
+                        self.last_error_detail = None;
                         self.last_status = Some(
                             if committed {
                                 "committed"
@@ -290,6 +307,8 @@ impl App {
                 match result {
                     Ok(()) => {
                         self.read_only = want;
+                        self.last_error = None;
+                        self.last_error_detail = None;
                         self.last_status = Some(format!(
                             "read-only {state} · this session from its next statement, and every later connect"
                         ));
@@ -310,6 +329,9 @@ impl App {
                 self.schema_cache = schema_cache;
                 // Recompute editor highlighting against the new schema.
                 self.editor_highlight_cache = None;
+                if std::mem::take(&mut self.schema_reload_announce) {
+                    self.last_status = Some(schema_reloaded_status(&self.schema_cache));
+                }
             }
             AppMsg::CostPreviewLoaded {
                 sql,

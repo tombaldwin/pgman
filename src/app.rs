@@ -70,6 +70,26 @@ pub fn read_only_escape_refusal(safety_toml_exists: bool) -> String {
     }
 }
 
+/// `:readonly off` refused by the profile: where the setting lives and
+/// what to change. `safety.toml` is read at start, so the next step
+/// ends in a restart. Pure.
+pub fn readonly_off_refusal(
+    cfg: &safety::SafetyConfig,
+    db: &str,
+    safety_toml_exists: bool,
+) -> String {
+    let own_entry = cfg.databases.contains_key(db);
+    match (safety_toml_exists, own_entry) {
+        (false, _) => crate::conn::READ_ONLY_DEFAULT_HINT.to_string(),
+        (true, true) => format!(
+            "{db} is read-only in safety.toml ([databases.{db}]) · set read_only = false there and restart pgman to write"
+        ),
+        (true, false) => format!(
+            "read-only is safety.toml's [default] · add [databases.{db}] with read_only = false and restart pgman to write"
+        ),
+    }
+}
+
 /// The status line when the query Enter loaded from the log picker
 /// still has `?` / `$N` placeholders: the log carried no bound values
 /// for it (Hibernate's bind logging is `TRACE`, usually off), so what
@@ -89,6 +109,38 @@ pub fn sessions_status(total: usize, blocked: usize) -> String {
         SESSIONS_ONLY_THIS_SESSION.to_string()
     } else {
         format!("sessions · {total} total · {blocked} blocked")
+    }
+}
+
+/// The status line while a statement runs. It hides the editor's
+/// `ctrl-c cancel running query` hint, so it carries the key itself;
+/// a plain run is just "running" (it read `running run…`). Pure.
+pub fn running_status(kind: RunKind) -> String {
+    match kind {
+        RunKind::Run => "running… · ctrl-c cancels".to_string(),
+        other => format!("running {}… · ctrl-c cancels", other.label()),
+    }
+}
+
+/// `c` with nothing to pick from. Started with `--dsn`, telling the
+/// operator to pass `--dsn` was no help: `:connect` takes another one.
+/// Pure.
+pub fn no_picks_hint(have_dsn: bool) -> &'static str {
+    if have_dsn {
+        "only the --dsn connection here · :connect postgres://… opens another; [[connections]] in pgman.toml lists more for c"
+    } else {
+        "no data sources to pick — pass --dsn, :connect postgres://…, or add `[[connections]]` to pgman.toml"
+    }
+}
+
+/// What a reload the operator asked for found. Pure / testable.
+pub fn schema_reloaded_status(cache: &crate::query::schema::SchemaCache) -> String {
+    match cache.tables.len() {
+        0 => "schema reloaded — still no tables this role can see".to_string(),
+        n => format!(
+            "schema reloaded · {n} table(s) in {} schema(s)",
+            cache.schemas.len()
+        ),
     }
 }
 
@@ -1218,6 +1270,15 @@ pub struct App {
     /// is interpreted as the bookmark letter. Cleared after one
     /// dispatch (success or not).
     pub pending_mark_set: bool,
+    /// A chord that acts on its second press (Ctrl-C quit, Ctrl-W
+    /// close a tab with SQL in it); any other key disarms it.
+    pub armed_chord: Option<ArmedChord>,
+    /// A reload the operator asked for is in flight: say what landed.
+    pub schema_reload_announce: bool,
+    /// Ctrl-C sent a cancel for the running statement: the
+    /// `57014 query_canceled` that comes back is the answer to it, not
+    /// a failure.
+    pub cancel_requested: bool,
     /// Mirror of `pending_mark_set` for `'<x>` jumps.
     pub pending_mark_jump: bool,
     /// When the current query started — captured in `spawn_run`
@@ -1492,6 +1553,9 @@ impl App {
             zoomed: false,
             body_rows: 0,
             pending_mark_set: false,
+            armed_chord: None,
+            schema_reload_announce: false,
+            cancel_requested: false,
             pending_mark_jump: false,
             query_started: None,
             row_detail: RowDetailUi::default(),
@@ -1807,14 +1871,38 @@ impl App {
         self.tap_generation = self.tap_generation.wrapping_add(1);
     }
 
-    /// True while the picker is asking the operator to authorise an
-    /// `ssh` session to a bastion a committed file named. That prompt
-    /// says "any other key cancels" and means it: the global `?` and
-    /// `:` handlers step aside so the key reaches the picker and
-    /// cancels, rather than leaving the question armed behind an
-    /// overlay.
-    fn tunnel_prompt_open(&self) -> bool {
-        self.mode == Mode::ConnPick && self.pending_tunnel.is_some()
+    /// The error overlay over the most recent failure (F2, `!`,
+    /// `:error`). No-op with a status when there's nothing to show.
+    pub(super) fn open_error_detail(&mut self) {
+        if self.last_error_detail.is_some() || self.last_error.is_some() {
+            // Remember where it was opened so closing the overlay
+            // lands back there — the way help does. Landing in
+            // Normal from the editor turned the next keys typed
+            // into hotkeys.
+            self.error_detail_return_to = Some(self.mode);
+            self.mode = Mode::ErrorDetail;
+        } else {
+            self.last_status = Some("no error to expand".into());
+        }
+    }
+
+    /// True while a prompt inside a non-typing mode owns every
+    /// character, so the global plain keys (`?`, `:`, `!`, the tab
+    /// digits and brackets) step aside and the key reaches it:
+    ///
+    /// - the picker asking to authorise an `ssh` session to a bastion
+    ///   a committed file named, which says "any other key cancels"
+    ///   and means it, rather than leaving the question armed behind
+    ///   an overlay;
+    /// - the patch view while a protected environment's name is
+    ///   typed, where `prod2` switched to tab 2 at the `2`.
+    fn prompt_owns_keys(&self) -> bool {
+        let tunnel = self.mode == Mode::ConnPick && self.pending_tunnel.is_some();
+        let naming = self.mode == Mode::Environments
+            && self.environments.patch.as_ref().is_some_and(|v| {
+                matches!(&v.stage, PatchStage::Plan(Ok(p)) if p.needs_typed() && !p.patches.is_empty())
+            });
+        tunnel || naming
     }
 
     /// Key dispatch — [`Self::on_key_inner`] wrapped in one invariant the
@@ -1826,9 +1914,28 @@ impl App {
     /// overlay headed by the previous query's `SQLSTATE 42P01`.
     pub fn on_key(&mut self, key: KeyEvent) {
         let error_before = self.last_error.clone();
+        let status_before = self.last_status.clone();
         let mode_before = self.mode;
         self.on_key_inner(key);
         if self.last_error.is_some() && self.last_error != error_before {
+            self.last_error_detail = None;
+        }
+        // The footer shows an error over a status, so an error the key
+        // left alone outlived every later success: `s` sorted, `y`
+        // yanked, `:timing on` answered, all under the old red line.
+        // A status this key set is newer news. A second-press prompt
+        // (Ctrl-C, Ctrl-W) is a question, not news, and a panel's
+        // first-visit tip is about the keys; both leave it.
+        if self.last_error.is_some()
+            && self.last_error == error_before
+            && self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| !s.starts_with("tip · "))
+            && self.last_status != status_before
+            && self.armed_chord.is_none()
+        {
+            self.last_error = None;
             self.last_error_detail = None;
         }
         // Opening or closing a panel changes the subject: a failed `T`
@@ -1864,12 +1971,31 @@ impl App {
         // reflex Ctrl-C in mid-typing shouldn't lose the buffer.
         // If we were watching, the key already served its purpose
         // (stopping the loop) — don't quit on it.
+        //
+        // It takes a second press: one reflex Ctrl-C (meant for a
+        // query, or for the shell) used to drop the session with no
+        // word. Ctrl-W's close-tab arms the same way below; any other
+        // key disarms both.
+        let armed = self.armed_chord.take();
+        if armed.is_some()
+            && self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("ctrl-c again") || s.starts_with("ctrl-w again"))
+        {
+            self.last_status = None;
+        }
         if !was_watching
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && key.code == KeyCode::Char('c')
             && self.mode != Mode::Editor
         {
-            self.should_quit = true;
+            if armed == Some(ArmedChord::Quit) {
+                self.should_quit = true;
+            } else {
+                self.armed_chord = Some(ArmedChord::Quit);
+                self.last_status = Some("ctrl-c again to quit".into());
+            }
             return;
         }
         // Fall through to the editor's on_editor_key for the
@@ -1920,7 +2046,7 @@ impl App {
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.mode != Mode::Help
             && !self.mode.is_text_input()
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
         {
             self.open_help_from(self.mode);
             return;
@@ -1959,19 +2085,17 @@ impl App {
         }
         // F2 expands the most-recent query failure into the rich
         // error overlay (severity / code / detail / hint / affected
-        // schema/table/column/constraint). No-op when there's
-        // nothing to show.
-        if matches!(key.code, KeyCode::F(2)) && self.mode != Mode::ErrorDetail {
-            if self.last_error_detail.is_some() || self.last_error.is_some() {
-                // Remember where F2 was pressed so closing the overlay
-                // lands back there — the way help does. Landing in
-                // Normal from the editor turned the next keys typed
-                // into hotkeys.
-                self.error_detail_return_to = Some(self.mode);
-                self.mode = Mode::ErrorDetail;
-            } else {
-                self.last_status = Some("no error to expand".into());
-            }
+        // schema/table/column/constraint). `!` is its plain-key twin
+        // wherever a character isn't being typed — F2 takes fn on a
+        // Mac keyboard — and `:error` the command-bar spelling.
+        let bang = matches!(key.code, KeyCode::Char('!'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && !self.mode.is_text_input()
+            && !self.prompt_owns_keys();
+        if (matches!(key.code, KeyCode::F(2)) || bang) && self.mode != Mode::ErrorDetail {
+            self.open_error_detail();
             return;
         }
         // F3 opens the NOTIFY arrivals panel from anywhere — the
@@ -2009,7 +2133,7 @@ impl App {
         if !ctrl
             && !alt
             && !typing_mode
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
             && matches!(key.code, KeyCode::Char(':'))
         {
             self.open_command_bar();
@@ -2027,8 +2151,19 @@ impl App {
             // `w` conflicts with `\watch` in editor mode — gate
             // close-tab to non-editor modes. Operators close tabs
             // from Normal (most common) or from any non-typing
-            // panel.
-            self.close_active_tab();
+            // panel. A tab holding SQL takes a second press: the
+            // chord is `\watch` in the editor, and reaching for that
+            // from the grid used to throw the buffer away.
+            let holds_sql = !self.editor.buffer.trim().is_empty();
+            if holds_sql && self.tabs.len() > 1 && armed != Some(ArmedChord::CloseTab) {
+                self.armed_chord = Some(ArmedChord::CloseTab);
+                self.last_status = Some(format!(
+                    "ctrl-w again to close tab {} and its SQL",
+                    self.active_tab + 1
+                ));
+            } else {
+                self.close_active_tab();
+            }
             return;
         }
         if ctrl && matches!(key.code, KeyCode::Tab) && tab_keys_ok {
@@ -2052,7 +2187,7 @@ impl App {
         if ctrl
             && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5'))
             && (!typing_mode || self.mode == Mode::Editor)
-            && !self.tunnel_prompt_open()
+            && !self.prompt_owns_keys()
         {
             self.cycle_tab(true);
             return;
@@ -2078,7 +2213,7 @@ impl App {
         // so is the keypress after `m` / `'`, which names a bookmark
         // (or cancels the pending one) rather than a tab.
         let mark_pending = self.pending_mark_set || self.pending_mark_jump;
-        if !ctrl && !alt && !typing_mode && !mark_pending && !self.tunnel_prompt_open() {
+        if !ctrl && !alt && !typing_mode && !mark_pending && !self.prompt_owns_keys() {
             if let KeyCode::Char(c) = key.code {
                 let bracket_is_mine = self.mode != Mode::SchemaBrowser;
                 if c == ']' && bracket_is_mine {
@@ -2103,7 +2238,7 @@ impl App {
         // keyboard, and reshaping the panes — or swapping the buffer —
         // under it is not what a chord typed there meant. The decision
         // modals returned above.
-        if alt && (!typing_mode || self.mode == Mode::Editor) && !self.tunnel_prompt_open() {
+        if alt && (!typing_mode || self.mode == Mode::Editor) && !self.prompt_owns_keys() {
             match key.code {
                 KeyCode::Char('n') => {
                     self.cycle_tab(true);
@@ -2638,12 +2773,20 @@ impl App {
     /// operator types. Preserves the cycle's `origin` fields so a
     /// later Esc still undoes back to the pre-Tab state.
     fn refresh_completion(&mut self) {
-        let existing = match self.completion.take() {
-            Some(c) => c,
-            None => return,
-        };
+        if self.completion.take().is_none() {
+            return;
+        }
         let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
+            // The popup closed (a `;`, a `(`): its `completion: 1 match
+            // · Tab to pick` would otherwise outlive it.
+            if self
+                .last_status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("completion"))
+            {
+                self.last_status = None;
+            }
             return;
         };
         // Empty prefix is fine — the candidate set falls back to "all
@@ -2670,14 +2813,17 @@ impl App {
         }
         let prefix_start = self.editor.cursor.saturating_sub(id.prefix.len());
         let cand_count = cands.len();
+        // What the operator typed to narrow is theirs: Esc goes back to
+        // it, not to the text the popup opened on. Keeping the opening
+        // text lost every character typed since — the popup a space
+        // after `FROM` opens starts on an empty prefix, so `us` then
+        // Tab then Esc left nothing.
         self.completion = Some(CompletionCycle {
             start: prefix_start,
             end: self.editor.cursor,
-            // Original cycle's origin is preserved so Esc-restore
-            // returns to the pre-Tab state, not the mid-narrow state.
-            origin: existing.origin,
-            origin_prefix: existing.origin_prefix,
-            origin_cursor: existing.origin_cursor,
+            origin: self.editor.buffer[prefix_start..self.editor.cursor].to_string(),
+            origin_prefix: id.prefix,
+            origin_cursor: self.editor.cursor,
             candidates: cands,
             selected: None,
         });
@@ -3109,6 +3255,7 @@ impl App {
             return;
         };
         self.last_status = Some("cancelling query…".to_string());
+        self.cancel_requested = true;
         dispatcher.dispatch();
     }
 
@@ -3801,12 +3948,38 @@ impl App {
         }
     }
 
+    /// The schema cache has no tables. Disconnected, that is the
+    /// answer; connected, the cache is stale (tables another session
+    /// made never appeared) or the database is empty, so reload it.
+    pub(super) fn schema_cache_missing(&mut self) {
+        if self.client.is_some() {
+            self.reload_schema();
+            self.last_status = Some(
+                "no tables in the schema cache — reloading it from the server; try again once it lands".into(),
+            );
+        } else {
+            self.last_status = Some("schema cache empty — connect to a database first".into());
+        }
+    }
+
+    /// Re-read the catalog (`r` in the schema browser): picks up tables
+    /// other sessions made since connect. The result is announced.
+    pub(super) fn reload_schema(&mut self) {
+        if self.client.is_none() {
+            self.last_status = Some("not connected — nothing to reload".into());
+            return;
+        }
+        self.schema_reload_announce = true;
+        self.spawn_schema_refresh();
+        self.last_status = Some("reloading the schema…".into());
+    }
+
     /// `S` from Normal — opens the schema browser. No-op when the
     /// cache is empty (disconnected / permission failure on the
     /// `pg_catalog` fetch).
     fn start_schema_browser(&mut self) {
         if self.schema_cache.is_empty() {
-            self.last_status = Some("schema cache empty — connect to a database first".into());
+            self.schema_cache_missing();
             return;
         }
         self.schema_browser.cursor = 0;
@@ -3827,7 +4000,7 @@ impl App {
     /// catalog so there's no async hop.
     fn start_schema_lint(&mut self) {
         if self.schema_cache.is_empty() {
-            self.last_status = Some("schema cache empty — connect to a database first".into());
+            self.schema_cache_missing();
             return;
         }
         let findings = crate::query::lint::run_all(&self.schema_cache);
@@ -4200,6 +4373,9 @@ impl App {
         if report.failed().is_some() || report.error.is_some() {
             self.last_error = Some(summary);
         } else {
+            // An earlier run's failure would otherwise sit over this one.
+            self.last_error = None;
+            self.last_error_detail = None;
             self.last_status = Some(summary);
         }
         // The pending counts moved.

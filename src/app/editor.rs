@@ -98,14 +98,26 @@ impl App {
         // dismisses the popup. It never reaches the run-or-newline rule
         // below on the same press: the operator was answering the
         // popup, not the buffer.
+        //
+        // Except when nothing has been picked and the statement is
+        // already terminated: a popup that opened by itself (a space
+        // typed in front of the `;`) isn't a question the operator
+        // asked, and accepting it wrote its first candidate into a
+        // finished statement. Enter runs, as it would without the popup.
         if matches!(key.code, KeyCode::Enter)
             && !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.completion.is_some()
         {
-            self.editor_accept_completion();
-            return;
+            let picked = self
+                .completion
+                .as_ref()
+                .is_some_and(|c| c.selected.is_some());
+            if picked || !enter_runs(&self.editor.buffer) {
+                self.editor_accept_completion();
+                return;
+            }
         }
         // While a completion popup is up in pre-selection state (LCP
         // expanded / popup-only, nothing committed via Tab yet),

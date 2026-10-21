@@ -1305,3 +1305,131 @@ fn the_grid_hints_say_esc_goes_back_to_the_environments() {
     let f = footer(&mut app);
     assert!(f.contains("esc / E envs"), "{f}");
 }
+
+/// The error pointer names the key that works where the operator is:
+/// `!` outside a text input, F2 in the editor where `!` is typed.
+#[test]
+fn the_error_pointer_names_the_key_that_works_here() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let footer = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect::<String>()
+    };
+    app.splash_visible = false;
+    app.last_error = Some("duplicate key".into());
+    app.last_error_detail = Some(crate::conn::QueryErrDetail::default());
+    app.mode = crate::app::Mode::Normal;
+    let f = footer(&mut app);
+    assert!(f.contains("· ! detail"), "{f}");
+    app.mode = crate::app::Mode::Editor;
+    let f = footer(&mut app);
+    assert!(f.contains("· F2 detail") && !f.contains("! detail"), "{f}");
+}
+
+#[test]
+fn a_running_watch_wears_a_badge() {
+    let mut a = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    let text = |a: &App| {
+        footer_badges_with(a, &a.theme, 0)
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect::<String>()
+    };
+    assert!(!text(&a).contains("WATCH"));
+    a.watch = Some(crate::app::WatchState {
+        sql: "select 1".into(),
+        interval: std::time::Duration::from_secs(2),
+        last_fire: std::time::Instant::now(),
+    });
+    assert!(text(&a).contains(" WATCH 2s "), "{}", text(&a));
+}
+
+/// The confirm modal's footer is the keys that answer it, whatever
+/// status the editor left behind.
+#[test]
+fn the_confirm_modal_footer_keeps_its_y_n_keys() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.pending_run = Some(crate::app::PendingRun {
+        sql: "delete from t".into(),
+        kind: crate::app::RunKind::Run,
+        decision: crate::safety::Decision {
+            kind: crate::safety::StatementKind::Delete { has_where: false },
+            guard: crate::safety::Guard::Confirm,
+            wrap_in_tx: true,
+            blocked_by_read_only: false,
+            read_only_escape: false,
+        },
+        is_batch: false,
+        summary: Some("delete without a where".into()),
+    });
+    app.mode = crate::app::Mode::Confirm;
+    app.last_status = Some("completed `users`".into());
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 24)).unwrap();
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let footer: String = (0..buf.area.width)
+        .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+        .collect();
+    assert!(footer.contains("y run · n / esc cancel"), "{footer}");
+}
+
+/// An error with no server detail says so in words, not type names.
+#[test]
+fn the_error_overlay_without_detail_speaks_plainly() {
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.last_error = Some("not connected".into());
+    app.mode = crate::app::Mode::ErrorDetail;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    term.draw(|f| draw(f, &mut app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let text: String = (0..buf.area.height)
+        .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+        .map(|(x, y)| buf[(x, y)].symbol().to_string())
+        .collect();
+    assert!(text.contains("nothing more to show"), "{text}");
+    assert!(!text.contains("DbError"));
+}
+
+/// A picker narrower than its panel sits in the middle of it, one row
+/// below the top, and never on the panel's own frame.
+#[test]
+fn a_floated_popup_is_centred_across_the_panel_and_off_its_frame() {
+    use ratatui::layout::Rect;
+    let panel = Rect {
+        x: 0,
+        y: 10,
+        width: 120,
+        height: 20,
+    };
+    let r = crate::ui::floated_in_panel(panel, 100, 8);
+    assert_eq!((r.x, r.y, r.width, r.height), (10, 11, 100, 8));
+    // As wide as the panel: inside its borders, not on them.
+    let r = crate::ui::floated_in_panel(panel, 200, 40);
+    assert_eq!((r.x, r.y, r.width, r.height), (1, 11, 118, 18));
+}

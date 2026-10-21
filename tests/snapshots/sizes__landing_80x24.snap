@@ -15,15 +15,15 @@ expression: dump(&buf)
 ╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────╮
 │ connected to shop on localhost:5432 · pg 16.2 · RO                           │
 │                                                                              │
-│   e   write a query                    S   schema browser (4 tables)         │
+│   e   write a query                    S   schema browser (3 tables)         │
 │   Q   saved queries (3)                T   slow queries                      │
 │   W   schema wizard                    L   sessions & locks                  │
 │   ctrl-l  logs → SQL (paste a log first)   F4  JDBC tap                      │
 │   ?   all keys                         ctrl-t  new tab                       │
 │                                                                              │
-│ recent                                                                       │
-│   SELECT * FROM users WHERE id = 42;                                         │
-│   SELECT count(*) FROM orders WHERE status = 'shipped';                      │
+│   TAP: your app's queries via the JDBC tap · N+1 ×1: repeated per row · F4   │
+│                                                                              │
+│                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   q quit · ? help · e editor · S schema · ? +11 more

@@ -93,6 +93,10 @@ pub enum DsnError {
     /// first, libpq the last: `?sslmode=disable&sslmode=verify-full`
     /// meant no TLS to one and verified TLS to the other.
     ConflictingSslMode,
+    /// A `[` host with no closing `]`, something other than `:port`
+    /// after the `]`, or an empty `[]`. Left to the resolver, a
+    /// half-bracketed host failed as a DNS lookup.
+    BadBracketedHost(String),
 }
 
 impl fmt::Display for DsnError {
@@ -109,6 +113,10 @@ impl fmt::Display for DsnError {
             DsnError::ConflictingSslMode => {
                 write!(f, "sslmode is given twice with different values — keep one")
             }
+            DsnError::BadBracketedHost(h) => write!(
+                f,
+                "malformed bracketed host {h:?} — write an IPv6 host as [::1] or [::1]:5432"
+            ),
         }
     }
 }
@@ -283,8 +291,9 @@ impl Dsn {
     /// `Err(DsnError::UnknownSslMode)`, never a value that quietly
     /// falls through to a weaker mode at connect time.
     ///
-    /// Known limitation: bracketed IPv6 hosts (`[::1]:5432`) are not
-    /// yet handled — see BACKLOG.md M0.
+    /// An IPv6 host is written in brackets (`[::1]`, `[::1]:5433`), as
+    /// in any URL; `host` holds it without them (see `split_host_port`
+    /// and, for the way back, [`host_port`]).
     pub fn parse(dsn: &str) -> Result<Dsn, DsnError> {
         let dsn = dsn.trim();
         let (scheme, rest) = dsn.split_once("://").ok_or(DsnError::MissingScheme)?;
@@ -317,15 +326,7 @@ impl Dsn {
             },
             None => (None, None),
         };
-        let (host, port) = match hostport.rsplit_once(':') {
-            Some((h, p)) => {
-                let port = p
-                    .parse::<u16>()
-                    .map_err(|_| DsnError::BadPort(p.to_string()))?;
-                (h, port)
-            }
-            None => (hostport, 5432),
-        };
+        let (host, port) = split_host_port(hostport)?;
 
         let host = if host.is_empty() {
             "localhost".to_string()
@@ -436,9 +437,58 @@ impl Dsn {
             None => String::new(),
         };
         format!(
-            "postgres://{userinfo}{}:{}/{}{tunnel}",
-            self.host, self.port, self.dbname
+            "postgres://{userinfo}{}/{}{tunnel}",
+            host_port(&self.host, self.port),
+            self.dbname
         )
+    }
+}
+
+/// Split a DSN authority's `host[:port]` into the host and the port
+/// (5432 when absent). A bracketed host is an IPv6 literal: the
+/// brackets go and the colons inside them are not a port separator.
+/// An unbracketed host with more than one colon is a bare IPv6 address
+/// with no port — `::1` read as host `:` port `1` was the other way
+/// this went wrong.
+fn split_host_port(hostport: &str) -> Result<(&str, u16), DsnError> {
+    let port = |p: &str| {
+        p.parse::<u16>()
+            .map_err(|_| DsnError::BadPort(p.to_string()))
+    };
+    if let Some(inner) = hostport.strip_prefix('[') {
+        let bad = || DsnError::BadBracketedHost(hostport.to_string());
+        let (host, after) = inner.split_once(']').ok_or_else(bad)?;
+        if host.is_empty() {
+            return Err(bad());
+        }
+        return match after {
+            "" => Ok((host, 5432)),
+            _ => match after.strip_prefix(':') {
+                Some(p) => Ok((host, port(p)?)),
+                None => Err(bad()),
+            },
+        };
+    }
+    if hostport.contains(']') {
+        return Err(DsnError::BadBracketedHost(hostport.to_string()));
+    }
+    if hostport.matches(':').count() > 1 {
+        return Ok((hostport, 5432));
+    }
+    match hostport.rsplit_once(':') {
+        Some((h, p)) => Ok((h, port(p)?)),
+        None => Ok((hostport, 5432)),
+    }
+}
+
+/// `host:port` for display and for `ssh -L`, with an IPv6 host put back
+/// in the brackets `split_host_port` took off, so `::1` port 5432
+/// reads `[::1]:5432`, not `::1:5432`.
+pub fn host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
     }
 }
 
@@ -905,10 +955,9 @@ async fn connect_inner(
             .await
             .map_err(|e| format!("ssh tunnel task panicked: {e}"))??;
             tracing::info!(
-                "SSH tunnel up — 127.0.0.1:{} → {}:{}",
+                "SSH tunnel up — 127.0.0.1:{} → {}",
                 opened.local_port,
-                dsn.host,
-                dsn.port
+                host_port(&dsn.host, dsn.port)
             );
             Some(opened)
         }
@@ -1697,14 +1746,14 @@ pub fn connect_hint(err: &str, dsn: &Dsn) -> Option<String> {
     }
     if lower.contains("connection refused") {
         return Some(format!(
-            "nothing is listening at {}:{}. is the server running, and is the port right?",
-            dsn.host, dsn.port
+            "nothing is listening at {}. is the server running, and is the port right?",
+            host_port(&dsn.host, dsn.port)
         ));
     }
     if lower.contains("timed out") || lower.contains("timeout") {
         return Some(format!(
-            "{}:{} didn't answer in time. VPN / firewall / security group blocking?",
-            dsn.host, dsn.port
+            "{} didn't answer in time. VPN / firewall / security group blocking?",
+            host_port(&dsn.host, dsn.port)
         ));
     }
     if lower.contains("no such host")
@@ -1874,6 +1923,49 @@ mod tests {
             Dsn::parse("postgres://h:not-a-port/db"),
             Err(DsnError::BadPort("not-a-port".to_string()))
         );
+    }
+
+    #[test]
+    fn a_bracketed_ipv6_host_parses_with_or_without_a_port() {
+        let d = Dsn::parse("postgres://u@[::1]/db").unwrap();
+        assert_eq!(
+            (d.host.as_str(), d.port, d.dbname.as_str()),
+            ("::1", 5432, "db")
+        );
+        assert_eq!(d.user.as_deref(), Some("u"));
+        let d = Dsn::parse("postgres://u:p@[fe80::1]:5433/db?sslmode=disable").unwrap();
+        assert_eq!((d.host.as_str(), d.port), ("fe80::1", 5433));
+        assert_eq!(d.redacted(), "postgres://u:***@[fe80::1]:5433/db");
+        // A bare IPv6 address is a host, not host `:` port `1`.
+        let d = Dsn::parse("postgres://::1/db").unwrap();
+        assert_eq!((d.host.as_str(), d.port), ("::1", 5432));
+    }
+
+    #[test]
+    fn a_malformed_bracketed_host_is_a_parse_error_not_a_lookup() {
+        for bad in [
+            "postgres://u@[::1/db",
+            "postgres://u@[]:5432/db",
+            "postgres://u@[::1]x/db",
+            "postgres://u@::1]/db",
+        ] {
+            assert!(
+                matches!(Dsn::parse(bad), Err(DsnError::BadBracketedHost(_))),
+                "{bad}: {:?}",
+                Dsn::parse(bad)
+            );
+        }
+        assert_eq!(
+            Dsn::parse("postgres://[::1]:nope/db"),
+            Err(DsnError::BadPort("nope".to_string()))
+        );
+    }
+
+    #[test]
+    fn host_port_brackets_only_an_ipv6_host() {
+        assert_eq!(host_port("::1", 5432), "[::1]:5432");
+        assert_eq!(host_port("db.internal", 6543), "db.internal:6543");
+        assert_eq!(host_port("10.0.0.1", 5432), "10.0.0.1:5432");
     }
 
     // --- Security-review: sslmode is validated, never silently downgraded ---

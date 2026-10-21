@@ -5684,6 +5684,36 @@ fn backslash_i_loads_file_into_editor_buffer() {
 }
 
 #[test]
+fn backslash_i_refuses_a_file_over_the_cap() {
+    let mut a = app_with_schemas();
+    let tmp = std::env::temp_dir().join(format!("pgman-include-big-{}.sql", std::process::id()));
+    // Sparse: the size is what's checked, so nothing is written.
+    let f = std::fs::File::create(&tmp).unwrap();
+    f.set_len(super::cmd::INCLUDE_MAX_BYTES + 1).unwrap();
+    drop(f);
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("\\i {}", tmp.display());
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("loads up to 8 MB"), "got: {err}");
+    assert!(err.contains("psql -f"), "got: {err}");
+    assert!(a.editor.buffer.is_empty(), "nothing loaded");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn backslash_i_refuses_a_directory() {
+    let mut a = app_with_schemas();
+    a.mode = Mode::Editor;
+    a.editor.buffer = format!("\\i {}", std::env::temp_dir().display());
+    a.editor.cursor = a.editor.buffer.len();
+    a.on_key(KeyEvent::from(KeyCode::F(5)));
+    let err = a.last_error.as_deref().unwrap_or("");
+    assert!(err.contains("isn't a regular file"), "got: {err}");
+}
+
+#[test]
 fn backslash_i_missing_file_is_actionable_error() {
     let mut a = app_with_schemas();
     a.mode = Mode::Editor;
@@ -6477,8 +6507,8 @@ async fn update_check_spawns_after_the_first_draw_never_before() {
     // Quit immediately after the first iteration so the loop runs
     // exactly one draw.
     tx.send(Event::Key(KeyEvent::new(
-        KeyCode::Char('c'),
-        KeyModifiers::CONTROL,
+        KeyCode::Char('q'),
+        KeyModifiers::NONE,
     )))
     .unwrap();
     drop(tx);
@@ -7044,7 +7074,8 @@ fn command_readonly_off_is_refused_when_the_profile_pins_read_only() {
     assert!(a.read_only, "the flag must not move");
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        err == readonly_off_refusal(&SafetyConfig::default(), "default", true)
+            || err == readonly_off_refusal(&SafetyConfig::default(), "default", false),
         "{err}"
     );
 }
@@ -8018,10 +8049,48 @@ fn readonly_off_under_a_read_only_profile_is_refused_with_a_next_step() {
     a.on_key(KeyEvent::from(KeyCode::Enter));
     let err = a.last_error.clone().unwrap_or_default();
     assert!(
-        err == read_only_escape_refusal(true) || err == read_only_escape_refusal(false),
+        err == readonly_off_refusal(&SafetyConfig::default(), "default", true)
+            || err == readonly_off_refusal(&SafetyConfig::default(), "default", false),
         "{err}"
     );
     assert!(a.read_only, "the setting did not change");
+}
+
+#[test]
+fn readonly_off_refusal_names_the_entry_to_change() {
+    let mut cfg = SafetyConfig::default();
+    let pinned = cfg.default.clone();
+    cfg.databases.insert("ledger".into(), pinned);
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", true),
+        "ledger is read-only in safety.toml ([databases.ledger]) · set read_only = false there and restart pgman to write"
+    );
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledgerlog", true),
+        "read-only is safety.toml's [default] · add [databases.ledgerlog] with read_only = false and restart pgman to write"
+    );
+    assert_eq!(
+        readonly_off_refusal(&cfg, "ledger", false),
+        crate::conn::READ_ONLY_DEFAULT_HINT
+    );
+}
+
+#[test]
+fn readonly_off_on_a_pinned_database_names_its_entry() {
+    let mut cfg = SafetyConfig::default();
+    cfg.default.read_only = false;
+    let mut pinned = cfg.default.clone();
+    pinned.read_only = true;
+    cfg.databases.insert("ledger".into(), pinned);
+    let mut a = App::new(Theme::default(), None, Vec::new(), cfg);
+    a.dsn = Some(crate::conn::Dsn::parse("postgres://app@db.internal/ledger").unwrap());
+    run_command(&mut a, "readonly off");
+    let err = a.last_error.clone().unwrap_or_default();
+    assert!(
+        err == readonly_off_refusal(&a.safety_config, "ledger", true)
+            || err == readonly_off_refusal(&a.safety_config, "ledger", false),
+        "{err}"
+    );
 }
 
 // ----- F2 error detail returns to where it was opened -----------------
@@ -10703,4 +10772,477 @@ fn a_new_probe_round_keeps_showing_the_last_reading() {
     })));
     a.start_env_probes();
     assert_eq!(a.environments.probes[0][1], first, "blanked to probing");
+}
+
+#[test]
+fn a_protected_name_types_digits_brackets_and_punctuation() {
+    // Every global plain key — the tab digits, `[` / `]`, `?`, `:` —
+    // used to act while a protected environment's name was typed:
+    // `prod2` switched to tab 2 at the `2`.
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    a.new_tab();
+    a.mode = Mode::Environments;
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+        let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
+        p.protected = true;
+        Box::pin(std::future::ready(Ok(p)))
+    });
+    press(&mut a, KeyCode::Char('P'));
+    let tab = a.active_tab;
+    for c in "1[]?:".chars() {
+        press(&mut a, KeyCode::Char(c));
+    }
+    assert_eq!(a.mode, Mode::Environments);
+    assert_eq!(a.active_tab, tab, "a digit or bracket switched tabs");
+    assert_eq!(a.environments.patch.as_ref().unwrap().typed, "1[]?:");
+}
+
+#[test]
+fn bang_opens_the_error_detail_where_nothing_is_typed() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status.as_deref(), Some("no error to expand"));
+    a.last_error = Some("relation \"nope\" does not exist".into());
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Normal, "`!` closes it again");
+    // In the editor `!` is a character.
+    a.mode = Mode::Editor;
+    a.editor.buffer.clear();
+    a.editor.cursor = 0;
+    press(&mut a, KeyCode::Char('!'));
+    assert_eq!(a.mode, Mode::Editor);
+    assert_eq!(a.editor.buffer, "!");
+}
+
+#[test]
+fn the_command_bar_spells_f2_f3_and_f4() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.last_error = Some("boom".into());
+    run_command(&mut a, "error");
+    assert_eq!(a.mode, Mode::ErrorDetail);
+    assert_eq!(a.error_detail_return_to, Some(Mode::Normal));
+    run_command(&mut a, "notify");
+    assert_eq!(a.mode, Mode::Notifications);
+    run_command(&mut a, "tap");
+    assert_eq!(a.mode, Mode::TapMonitor);
+    for name in ["error", "notify", "tap"] {
+        assert!(
+            crate::app::cmd::COMMAND_NAMES.contains(&name),
+            "{name} completes"
+        );
+    }
+}
+
+#[test]
+fn ctrl_c_outside_the_editor_quits_on_the_second_press() {
+    let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(ctrl_c);
+    assert!(!a.should_quit, "one reflex press doesn't drop the session");
+    assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
+    // Anything between disarms it, and takes the prompt away.
+    press(&mut a, KeyCode::Char('j'));
+    assert!(a.last_status.is_none());
+    a.on_key(ctrl_c);
+    assert!(!a.should_quit);
+    a.on_key(ctrl_c);
+    assert!(a.should_quit);
+}
+
+#[test]
+fn ctrl_w_closes_a_tab_holding_sql_on_the_second_press() {
+    let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.new_tab();
+    a.mode = Mode::Normal;
+    a.editor.buffer = "select 1".into();
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 2, "armed, not closed");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("ctrl-w again to close tab 2 and its SQL")
+    );
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 1);
+    // An empty tab closes at once.
+    a.new_tab();
+    a.mode = Mode::Normal;
+    a.editor.buffer.clear();
+    a.on_key(ctrl_w);
+    assert_eq!(a.tabs.len(), 1);
+}
+
+/// The footer shows an error over a status, so a success that came
+/// later has to take the error down or it reads as the latest news.
+#[test]
+fn a_later_success_replaces_a_stale_error() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let stale = |a: &mut App| {
+        a.last_error = Some("relation \"t\" does not exist".into());
+        a.last_error_detail = Some(crate::conn::QueryErrDetail::default());
+    };
+    // A key whose own status is the news: `:timing on`, `Y`.
+    stale(&mut a);
+    run_command(&mut a, "timing on");
+    assert!(a.last_status.is_some());
+    assert!(a.last_error.is_none() && a.last_error_detail.is_none());
+    stale(&mut a);
+    a.mode = Mode::Normal;
+    a.last_status = None;
+    press(&mut a, KeyCode::Char('Y'));
+    assert!(a.last_status.is_some(), "Y always says something");
+    assert!(a.last_error.is_none() && a.last_error_detail.is_none());
+    // A key that says nothing leaves it.
+    stale(&mut a);
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('j'));
+    assert!(a.last_error.is_some(), "a cursor move isn't news");
+    // A second-press prompt is a question: the error stays.
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(a.last_error.is_some(), "ctrl-c's prompt isn't news");
+    press(&mut a, KeyCode::Esc);
+    // Async successes.
+    let generation = a.generation;
+    stale(&mut a);
+    a.on_msg(AppMsg::TxClosed {
+        generation,
+        committed: true,
+        error: None,
+    });
+    assert!(a.last_error.is_none(), "committed");
+    stale(&mut a);
+    a.on_msg(AppMsg::ReadOnlyApplied {
+        generation,
+        want: true,
+        result: Ok(()),
+    });
+    assert!(a.last_error.is_none(), "read-only applied");
+}
+
+#[test]
+fn a_patch_run_that_succeeds_takes_down_an_earlier_failure() {
+    let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app(applied.clone());
+    press(&mut a, KeyCode::Char('P'));
+    let PatchStage::Plan(Ok(plan)) = a.environments.patch.as_ref().unwrap().stage.clone() else {
+        panic!("a plan");
+    };
+    // As the real (async) run lands: after the key, not inside it.
+    a.last_error = Some("an earlier run failed".into());
+    a.on_msg(AppMsg::EnvPatched {
+        report: crate::inventory::patching::ApplyReport {
+            results: vec![],
+            error: None,
+            recorded_after: None,
+            mode: crate::inventory::patching::RunMode::Apply,
+            copy: None,
+        },
+        plan,
+    });
+    assert!(applied.lock().unwrap().is_empty());
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert!(a.last_status.is_some());
+}
+
+fn two_table_cache() -> crate::query::schema::SchemaCache {
+    crate::query::schema::SchemaCache {
+        schemas: vec!["public".into()],
+        tables: vec![
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "events".into(),
+            },
+            crate::query::schema::TableMeta {
+                schema: "public".into(),
+                name: "orders".into(),
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_schema_reload_says_what_it_found() {
+    use crate::query::schema::SchemaCache;
+    let empty = SchemaCache::default();
+    assert_eq!(
+        crate::app::schema_reloaded_status(&empty),
+        "schema reloaded — still no tables this role can see"
+    );
+    let mut some = two_table_cache();
+    some.schemas.push("audit".into());
+    assert_eq!(
+        crate::app::schema_reloaded_status(&some),
+        "schema reloaded · 2 table(s) in 2 schema(s)"
+    );
+
+    // Only a reload the operator asked for is announced; the silent
+    // post-DDL refresh isn't.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let generation = a.generation;
+    a.last_status = None;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: some.clone(),
+    });
+    assert!(a.last_status.is_none(), "post-DDL refresh stays quiet");
+    a.schema_reload_announce = true;
+    a.on_msg(AppMsg::SchemaRefreshed {
+        generation,
+        schema_cache: some,
+    });
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap()
+        .starts_with("schema reloaded ·"));
+    assert!(!a.schema_reload_announce, "announced once");
+}
+
+#[test]
+fn r_in_the_schema_browser_reloads_and_says_so_when_it_cant() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('S'));
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    press(&mut a, KeyCode::Char('r'));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("not connected — nothing to reload")
+    );
+    assert!(!a.schema_reload_announce);
+}
+
+#[test]
+fn backslash_d_on_a_name_nothing_matches_says_so() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    run_command(&mut a, "d nosuchthing");
+    assert_eq!(a.mode, Mode::Normal, "no empty browser");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("\\d nosuchthing: no schema, table or column matches · r in the schema browser reloads it")
+    );
+    assert_eq!(a.schema_browser.filter, None);
+    run_command(&mut a, "d ord");
+    assert_eq!(a.mode, Mode::SchemaBrowser);
+    assert_eq!(a.schema_browser.filter.as_deref(), Some("ord"));
+}
+
+#[test]
+fn esc_after_tab_gives_back_what_was_typed() {
+    let mut cache = two_table_cache();
+    cache.tables.push(crate::query::schema::TableMeta {
+        schema: "public".into(),
+        name: "order_items".into(),
+    });
+    // The space after FROM opens the popup on an empty prefix; `ord`
+    // narrows it; Tab picks; Esc must leave `ord`, not the empty text
+    // the popup opened on.
+    for keys in [
+        vec![KeyCode::Tab, KeyCode::Esc],
+        vec![KeyCode::Tab, KeyCode::Tab, KeyCode::Esc],
+        vec![KeyCode::Esc],
+    ] {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.schema_cache = cache.clone();
+        a.mode = Mode::Editor;
+        type_str(&mut a, "select * from ord");
+        assert!(a.completion.is_some(), "the popup is up while narrowing");
+        for k in &keys {
+            press(&mut a, *k);
+        }
+        assert_eq!(a.editor.buffer, "select * from ord", "{keys:?}");
+        assert_eq!(a.editor.cursor, a.editor.buffer.len());
+        assert_eq!(a.mode, Mode::Editor, "Esc closed the popup, not the editor");
+    }
+}
+
+#[test]
+fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
+    // A space typed in front of the `;` opens the popup by itself;
+    // Enter used to write its first candidate into the statement.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from orders;");
+    press(&mut a, KeyCode::Left);
+    type_str(&mut a, " where ");
+    assert!(a.completion.as_ref().is_some_and(|c| c.selected.is_none()));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.completion.is_none());
+    assert_eq!(
+        a.editor.buffer, "select * from orders where ;",
+        "nothing inserted"
+    );
+    assert!(reached_request_run(&a), "{:?}", a.last_error);
+
+    // Picked with Tab, Enter accepts it and runs nothing yet.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from ;");
+    press(&mut a, KeyCode::Left);
+    type_str(&mut a, "eve");
+    press(&mut a, KeyCode::Tab);
+    assert!(
+        a.completion.as_ref().is_some_and(|c| c.selected.is_some()),
+        "{:?} {:?} {:?}",
+        a.editor.buffer,
+        a.last_status,
+        a.completion.as_ref().map(|c| c.selected)
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from events;");
+    assert!(!reached_request_run(&a), "accepting isn't running");
+
+    // Unterminated, Enter still accepts the first candidate.
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from ");
+    assert!(a.completion.is_some());
+    press(&mut a, KeyCode::Enter);
+    assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
+    assert!(!reached_request_run(&a));
+}
+
+#[test]
+fn the_running_status_names_the_kind_and_the_cancel_key() {
+    assert_eq!(
+        crate::app::running_status(RunKind::Run),
+        "running… · ctrl-c cancels"
+    );
+    assert_eq!(
+        crate::app::running_status(RunKind::ExplainAnalyze),
+        "running EXPLAIN ANALYZE… · ctrl-c cancels"
+    );
+}
+
+#[test]
+fn a_cancel_ctrl_c_asked_for_is_a_status_not_an_error() {
+    let failed = |code: &str, error: &str| AppMsg::QueryFailed {
+        generation: 0,
+        error: error.into(),
+        position: None,
+        detail: Some(crate::conn::QueryErrDetail {
+            code: Some(code.into()),
+            ..Default::default()
+        }),
+    };
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+        calls: calls.clone(),
+    }));
+    a.query_running = true;
+    a.mode = Mode::Editor;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let mut msg = failed("57014", "canceling statement due to user request");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a.last_error.is_none(), "{:?}", a.last_error);
+    assert_eq!(a.last_status.as_deref(), Some("cancelled"));
+    assert!(!a.query_running);
+
+    // A statement timeout is the same SQLSTATE, unasked: an error.
+    let mut msg = failed("57014", "canceling statement due to statement timeout");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a
+        .last_error
+        .as_deref()
+        .is_some_and(|e| e.contains("statement timeout")));
+
+    // Asked, but the statement failed for another reason first.
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let mut msg = failed("23505", "duplicate key value");
+    if let AppMsg::QueryFailed { generation, .. } = &mut msg {
+        *generation = a.generation;
+    }
+    a.on_msg(msg);
+    assert!(a.last_error.is_some());
+    assert!(!a.cancel_requested, "the request is spent");
+}
+
+#[test]
+fn c_with_only_a_dsn_points_at_connect_not_at_dsn() {
+    let mut a = App::new(
+        Theme::default(),
+        Some(Dsn::parse("postgres://app@db.internal/ledger").unwrap()),
+        Vec::new(),
+        SafetyConfig::default(),
+    );
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('c'));
+    let s = a.last_status.clone().unwrap_or_default();
+    assert!(s.contains(":connect") && !s.contains("pass --dsn"), "{s}");
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    press(&mut a, KeyCode::Char('c'));
+    assert!(a.last_status.as_deref().unwrap().contains("pass --dsn"));
+}
+
+#[test]
+fn closing_the_popup_by_typing_takes_its_status_with_it() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.schema_cache = two_table_cache();
+    a.mode = Mode::Editor;
+    type_str(&mut a, "select * from orders");
+    assert!(a.completion.is_some());
+    assert!(a.last_status.as_deref().unwrap().starts_with("completion"));
+    type_str(&mut a, ";");
+    assert!(a.completion.is_none());
+    assert_eq!(a.last_status, None, "the popup's status left with it");
+}
+
+#[test]
+fn a_written_file_is_named_first_and_its_directory_shortened() {
+    use crate::app::cmd::wrote_status;
+    let home = std::ffi::OsStr::new("/Users/someone");
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone/.cache/pgman/reports/pgman-report-1.md"),
+            Some(home)
+        ),
+        "wrote report to pgman-report-1.md · in ~/.cache/pgman/reports"
+    );
+    assert_eq!(
+        wrote_status("3 row(s)", std::path::Path::new("/tmp/x.xml"), Some(home)),
+        "wrote 3 row(s) to x.xml · in /tmp"
+    );
+    assert_eq!(
+        wrote_status("report", std::path::Path::new("r.md"), None),
+        "wrote report to r.md"
+    );
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone/r.md"),
+            Some(home)
+        ),
+        "wrote report to r.md · in ~"
+    );
+    // A sibling of home isn't under it.
+    assert_eq!(
+        wrote_status(
+            "report",
+            std::path::Path::new("/Users/someone2/r.md"),
+            Some(home)
+        ),
+        "wrote report to r.md · in /Users/someone2"
+    );
 }

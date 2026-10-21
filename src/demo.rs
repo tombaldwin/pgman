@@ -384,7 +384,101 @@ fn notice_grid() -> Grid {
 /// under ANALYZE, so the tree renders timings for `EXPLAIN ANALYZE`
 /// and estimates for plain `EXPLAIN` — the same difference a live
 /// session shows.
-pub fn explain_plan_grid(analyze: bool) -> Grid {
+pub fn explain_plan_grid(analyze: bool, sql: &str, cache: &SchemaCache) -> Grid {
+    // A query on one demo table is planned as a scan of that table —
+    // every EXPLAIN used to show the same users ⋈ orders join, whatever
+    // it was asked about. Joins and the rest keep the join plan.
+    let table = crate::app::infer_single_source_table(sql).filter(|(schema, name)| {
+        cache
+            .columns_meta_by_table
+            .contains_key(&(schema.clone(), name.clone()))
+    });
+    if let Some((_, name)) = table {
+        return scan_plan_grid(analyze, &name, where_clause_of(sql));
+    }
+    join_plan_grid(analyze)
+}
+
+/// A one-node plan: a sequential scan of `table`, filtered by `filter`
+/// when the query has a WHERE.
+fn scan_plan_grid(analyze: bool, table: &str, filter: Option<&str>) -> Grid {
+    let total = if table == "users" {
+        users_result().1.len()
+    } else {
+        GENERATED_ROW_COUNT
+    };
+    let rows = if filter.is_some() { 1 } else { total };
+    let filter_json = filter
+        .map(|f| {
+            // One line, escaped: the plan is JSON, and a WHERE typed
+            // over several lines would otherwise break it.
+            let f = f.split_whitespace().collect::<Vec<_>>().join(" ");
+            let f = f.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(",\n      \"Filter\": \"({f})\"")
+        })
+        .unwrap_or_default();
+    let actual = if analyze {
+        let removed = if filter.is_some() {
+            format!(",\n      \"Rows Removed by Filter\": {}", total - rows)
+        } else {
+            String::new()
+        };
+        format!(
+            ",\n      \"Actual Startup Time\": 0.01,\
+             \n      \"Actual Total Time\": 0.04,\
+             \n      \"Actual Rows\": {rows},\
+             \n      \"Actual Loops\": 1{removed}"
+        )
+    } else {
+        String::new()
+    };
+    let plan = format!(
+        "[\n  {{\n    \"Plan\": {{\n      \"Node Type\": \"Seq Scan\",\
+         \n      \"Relation Name\": \"{table}\",\n      \"Alias\": \"{table}\",\
+         \n      \"Startup Cost\": 0.00,\n      \"Total Cost\": 1.06,\
+         \n      \"Plan Rows\": {rows},\n      \"Plan Width\": 40{filter_json}{actual}\
+         \n    }}\n  }}\n]"
+    );
+    Grid {
+        columns: vec!["QUERY PLAN".to_string()],
+        rows: vec![vec![plan]],
+        truncated: false,
+    }
+}
+
+/// The text of `sql`'s top-level WHERE, up to its ORDER / GROUP /
+/// LIMIT / `;`, or `None` when there is none.
+fn where_clause_of(sql: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut start = None;
+    for (i, c) in sql.char_indices() {
+        match c {
+            '\'' => in_string = !in_string,
+            '(' if !in_string => depth += 1,
+            ')' if !in_string => depth = depth.saturating_sub(1),
+            ';' if !in_string && depth == 0 => {
+                return start
+                    .map(|s: usize| sql[s..i].trim())
+                    .filter(|w| !w.is_empty());
+            }
+            _ if in_string || depth > 0 => {}
+            _ if start.is_none() && word_at(sql, i, "where") => start = Some(i + "where".len()),
+            _ if start.is_some()
+                && ["order", "group", "limit", "offset"]
+                    .iter()
+                    .any(|w| word_at(sql, i, w)) =>
+            {
+                return start.map(|s| sql[s..i].trim()).filter(|w| !w.is_empty());
+            }
+            _ => {}
+        }
+    }
+    start.map(|s| sql[s..].trim()).filter(|w| !w.is_empty())
+}
+
+/// The users ⋈ orders hash join a join (or anything else) is shown.
+fn join_plan_grid(analyze: bool) -> Grid {
     let actual = |time: &str, rows: &str| -> String {
         if analyze {
             format!(
@@ -466,8 +560,8 @@ fn synth_cell(table: &str, col: &ColumnMeta, row_idx: usize) -> String {
             ["pending", "shipped", "delivered", "cancelled"][row_idx % 4].to_string()
         }
         ("orders", "total_cents") => (1_999 + row_idx * 550).to_string(),
-        ("order_items", "sku") | ("item", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
-        ("order_items", "qty") | ("item", "qty") => ((row_idx % 4) + 1).to_string(),
+        ("order_items", "sku") => format!("SKU-{:04}", 1000 + row_idx * 7),
+        ("order_items", "qty") => ((row_idx % 4) + 1).to_string(),
         ("order_items", "price_cents") => (499 + row_idx * 250).to_string(),
         _ if ty.starts_with("timestamp") => {
             format!(
@@ -529,18 +623,6 @@ fn schema_cache() -> SchemaCache {
             col("price_cents", "integer", true),
         ],
     );
-    // `item` is the table the docs' original N+1 walkthrough queries
-    // (`SELECT * FROM item WHERE order_id = ?`); without it the sample
-    // dead-ended in `--demo`.
-    columns_meta_by_table.insert(
-        key("item"),
-        vec![
-            col("id", "bigint", true),
-            col("order_id", "bigint", true),
-            col("sku", "varchar(40)", true),
-            col("qty", "integer", true),
-        ],
-    );
 
     let columns_by_table: HashMap<(String, String), Vec<String>> = columns_meta_by_table
         .iter()
@@ -548,10 +630,6 @@ fn schema_cache() -> SchemaCache {
         .collect();
 
     let tables = vec![
-        TableMeta {
-            schema: "public".into(),
-            name: "item".into(),
-        },
         TableMeta {
             schema: "public".into(),
             name: "order_items".into(),
@@ -582,11 +660,6 @@ fn schema_cache() -> SchemaCache {
             table: "order_items".into(),
             name: "order_items_pkey".into(),
         },
-        ConstraintMeta {
-            schema: "public".into(),
-            table: "item".into(),
-            name: "item_pkey".into(),
-        },
     ];
 
     let fk_edges = vec![
@@ -601,14 +674,6 @@ fn schema_cache() -> SchemaCache {
         FkEdge {
             child_schema: "public".into(),
             child_table: "order_items".into(),
-            child_column: "order_id".into(),
-            parent_schema: "public".into(),
-            parent_table: "orders".into(),
-            parent_column: "id".into(),
-        },
-        FkEdge {
-            child_schema: "public".into(),
-            child_table: "item".into(),
             child_column: "order_id".into(),
             parent_schema: "public".into(),
             parent_table: "orders".into(),
@@ -1040,6 +1105,7 @@ pub fn discovery() -> crate::inventory::discover::Found {
         db_name: Some(db.into()),
         vpc_id: Some("vpc-demo".into()),
         upgrades: None,
+        cluster: None,
     };
     let instances = vec![
         inst("staging", None, &["staging-replica"], "shop"),
@@ -1097,7 +1163,7 @@ mod tests {
         assert!(matches!(a.conn_state, ConnState::Connected { .. }));
         assert!(!a.grid.rows.is_empty(), "grid has data");
         assert_eq!(a.grid_view.source.as_ref().unwrap().1, "users");
-        assert_eq!(a.schema_cache.tables.len(), 4);
+        assert_eq!(a.schema_cache.tables.len(), 3);
         assert!(a
             .saved_queries
             .entries
@@ -1123,23 +1189,66 @@ mod tests {
     #[test]
     fn demo_schema_cache_has_pk_constraints_and_fks() {
         let c = schema_cache();
-        assert_eq!(c.constraints.len(), 4);
-        assert_eq!(c.fk_edges.len(), 3);
+        assert_eq!(c.constraints.len(), 3);
+        assert_eq!(c.fk_edges.len(), 2);
         assert!(c.columns_meta_by_table.contains_key(&key("users")));
-        assert!(c.columns_meta_by_table.contains_key(&key("item")));
+        // `item` was a copy of `order_items` kept for a walkthrough the
+        // docs no longer have; the browser showed both.
+        assert!(!c.columns_meta_by_table.contains_key(&key("item")));
+        assert_eq!(c.tables.len(), c.columns_meta_by_table.len());
     }
 
-    /// The docs' N+1 walkthrough queries `item`; the demo answers it
-    /// with rows shaped by the table's columns instead of the
-    /// "unknown table" notice it dead-ended in.
+    /// The docs' N+1 walkthrough queries `order_items`; the demo
+    /// answers it with rows shaped by the table's columns.
     #[test]
-    fn answer_select_on_item_yields_item_rows() {
+    fn answer_select_on_order_items_yields_its_rows() {
         let cache = schema_cache();
-        let g = answer("SELECT * FROM item WHERE order_id = 1", &cache);
-        assert_eq!(g.columns, vec!["id", "order_id", "sku", "qty"]);
+        let g = answer("SELECT * FROM order_items WHERE order_id = 1", &cache);
+        assert_eq!(
+            g.columns,
+            vec!["id", "order_id", "sku", "qty", "price_cents"]
+        );
         assert!(!g.rows.is_empty());
         assert!(g.rows[0][2].starts_with("SKU-"), "{:?}", g.rows[0]);
         assert!(g.rows[0][3].parse::<u32>().is_ok(), "{:?}", g.rows[0]);
+    }
+
+    /// EXPLAIN plans the table it was asked about, with its WHERE as
+    /// the filter; a join keeps the join plan.
+    #[test]
+    fn explain_plans_the_table_asked_about() {
+        let cache = schema_cache();
+        let plan = |sql: &str, analyze: bool| {
+            let g = explain_plan_grid(analyze, sql, &cache);
+            crate::query::explain::parse(&g.rows[0][0]).expect("valid plan JSON")
+        };
+        let filter = |p: &crate::query::explain::PlanNode| {
+            p.extras
+                .iter()
+                .find(|(k, _)| k == "Filter")
+                .map(|(_, v)| v.clone())
+        };
+        let p = plan(
+            "EXPLAIN SELECT * FROM orders WHERE status = 'shipped' LIMIT 5;",
+            false,
+        );
+        assert_eq!(p.node_type, "Seq Scan");
+        assert_eq!(p.relation_name.as_deref(), Some("orders"));
+        assert_eq!(filter(&p).as_deref(), Some("(status = 'shipped')"));
+        let p = plan(
+            "select *\nfrom users\nwhere email = \"x\"\n  and id = 1",
+            true,
+        );
+        assert_eq!(p.relation_name.as_deref(), Some("users"));
+        assert_eq!(filter(&p).as_deref(), Some("(email = \"x\" and id = 1)"));
+        assert_eq!(p.actual_rows, Some(1.0));
+        let p = plan("SELECT * FROM order_items", false);
+        assert_eq!(filter(&p), None);
+        let p = plan(
+            "SELECT * FROM orders o JOIN users u ON u.id = o.user_id",
+            false,
+        );
+        assert_eq!(p.node_type, "Hash Join");
     }
 
     #[test]
@@ -1163,7 +1272,7 @@ mod tests {
             a.editor.buffer
         );
         // Everything else app() sets up is untouched.
-        assert_eq!(a.schema_cache.tables.len(), 4);
+        assert_eq!(a.schema_cache.tables.len(), 3);
         assert!(!a.tap_events.is_empty());
     }
 

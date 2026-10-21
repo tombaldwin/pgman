@@ -19,17 +19,17 @@ expression: dump(&buf)
 ╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ connected to shop on localhost:5432 · pg 16.2 · RO                                                                                                                                                   │
 │                                                                                                                                                                                                      │
-│   e   write a query                                                 S   schema browser (4 tables)                                                                                                    │
+│   e   write a query                                                 S   schema browser (3 tables)                                                                                                    │
 │   Q   saved queries (3)                                             T   slow queries                                                                                                                 │
 │   W   schema wizard                                                 L   sessions & locks                                                                                                             │
 │   ctrl-l  logs → SQL (paste a Hibernate / Postgres log in the editor)   F4  JDBC tap                                                                                                                 │
 │   ?   all keys                                                      ctrl-t  new tab                                                                                                                  │
 │                                                                                                                                                                                                      │
+│   TAP below: your app's queries are arriving over the JDBC tap · N+1 ×1: one query it runs once per row · F4 to look                                                                                 │
+│                                                                                                                                                                                                      │
 │ recent                                                                                                                                                                                               │
 │   SELECT * FROM users WHERE id = 42;                                                                                                                                                                 │
 │   SELECT count(*) FROM orders WHERE status = 'shipped';                                                                                                                                              │
-│                                                                                                                                                                                                      │
-│                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

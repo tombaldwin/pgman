@@ -78,8 +78,10 @@ pub struct Environment {
     /// recognises the common migration tools' own tables.
     #[serde(default)]
     pub version_table: Option<VersionTable>,
-    /// A Flyway migration directory (`V<version>__<name>.sql`), for a
-    /// pending count; `~/` is your home.
+    /// Flyway's migration directories (`V<version>__<name>.sql`), for a
+    /// pending count: one, or several comma-separated the way
+    /// `flyway.locations` lists them, `filesystem:` prefix allowed.
+    /// Each is read recursively; `~/` is your home.
     #[serde(default)]
     pub migrations_dir: Option<String>,
     /// Applying patches asks for the environment's name to be typed.
@@ -157,11 +159,46 @@ pub struct ProbeSettings {
 }
 
 impl ProbeSettings {
-    /// `migrations_dir` with `~/` expanded; it must end up absolute.
-    pub fn migrations_dir(&self) -> Option<Result<std::path::PathBuf, String>> {
+    /// `migrations_dir`'s directories with `~/` expanded; each must end
+    /// up absolute.
+    pub fn migrations_dirs(&self) -> Option<Result<Vec<std::path::PathBuf>, String>> {
         let raw = self.migrations_dir.as_ref()?;
-        Some(expand_home_dir(raw, "migrations_dir"))
+        Some(migration_locations(raw).and_then(|locations| {
+            locations
+                .iter()
+                .map(|l| expand_home_dir(l, "migrations_dir"))
+                .collect()
+        }))
     }
+}
+
+/// `migrations_dir`'s entries: comma-separated as `flyway.locations`
+/// lists them, `filesystem:` dropped. A `classpath:` location is
+/// refused, since pgman doesn't know which project's classpath; the
+/// directory it names is wanted instead. Each must be absolute or start
+/// with `~/`. Pure.
+pub fn migration_locations(raw: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for entry in raw.split(',').map(str::trim) {
+        if entry.is_empty() {
+            return Err(format!("migrations_dir {raw:?} has an empty entry"));
+        }
+        if let Some(rest) = entry.strip_prefix("classpath:") {
+            return Err(format!(
+                "migrations_dir {entry:?}: pgman can't see a classpath; name the \
+                 directory instead, e.g. ~/src/app/src/main/resources/{}",
+                rest.trim_start_matches('/')
+            ));
+        }
+        let path = entry.strip_prefix("filesystem:").unwrap_or(entry);
+        if !path.starts_with("~/") && !std::path::Path::new(path).is_absolute() {
+            return Err(format!(
+                "migrations_dir {path:?} must be absolute or start with ~/"
+            ));
+        }
+        out.push(path.to_string());
+    }
+    Ok(out)
 }
 
 /// `~/x` against `$HOME`, else the path as written; it must be absolute.
@@ -297,11 +334,7 @@ impl Environment {
             }
         }
         if let Some(d) = &self.migrations_dir {
-            if !d.starts_with("~/") && !std::path::Path::new(d).is_absolute() {
-                return Err(format!(
-                    "migrations_dir {d:?} must be absolute or start with ~/"
-                ));
-            }
+            migration_locations(d)?;
         }
         if let Some(v) = &self.version_table {
             crate::query::patches::applied_ids_sql(&v.config())
@@ -669,12 +702,39 @@ pub fn gather(
         .collect()
 }
 
-/// List RDS instances through the aws CLI, checking the account first.
+/// `describe-db-instances`, with Aurora's writer and readers placed
+/// when there is an Aurora instance to place (`describe-db-clusters`).
+/// Best effort for the clusters: without them each instance stands
+/// alone. Blocking.
+pub(crate) fn list_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+    let mut all = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)?;
+    if all.iter().any(|i| i.is_postgres() && i.cluster.is_some()) {
+        match crate::aws_cli::run(&rds::describe_clusters_args(scope))
+            .and_then(|j| rds::parse_clusters(&j))
+        {
+            Ok(clusters) => rds::apply_clusters(&mut all, &clusters),
+            Err(e) => tracing::warn!("Aurora cluster members unavailable: {e}"),
+        }
+    }
+    Ok(all)
+}
+
+/// RDS instances through the aws CLI, the account checked first, without
+/// the upgrade targets [`fetch_rds`] adds: for finding a server an
+/// environment lists (logs, patches), which needs the listing and its
+/// replica links but not one `describe-db-engine-versions` per version.
 /// Blocking.
-pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+pub fn fetch_rds_listing(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
     scope.validate()?;
     scope.check_account("RDS instances")?;
-    let mut all = rds::parse_describe(&crate::aws_cli::run(&rds::describe_args(scope))?)?;
+    list_rds(scope)
+}
+
+/// List RDS instances through the aws CLI, checking the account first,
+/// with each engine version's upgrade targets for the overview.
+/// Blocking.
+pub fn fetch_rds(scope: &AwsScope) -> Result<Vec<rds::RdsInstance>, String> {
+    let mut all = fetch_rds_listing(scope)?;
     // Upgrade targets, once per engine version. Best effort: without
     // them the engine column just shows the version.
     let mut seen: HashMap<(String, String), Option<rds::Upgrades>> = HashMap::new();
@@ -759,6 +819,34 @@ mod tests {
         assert_eq!(r[0].error.as_deref(), Some("matched nothing"));
     }
 
+    #[test]
+    fn aurora_readers_are_rows_under_the_writer_with_the_clusters_database() {
+        let mut all = rds::parse_describe(rds::tests::AURORA_INSTANCES).unwrap();
+        rds::apply_clusters(
+            &mut all,
+            &rds::parse_clusters(rds::tests::AURORA_CLUSTERS).unwrap(),
+        );
+        let envs = parse_config(
+            "[[environments]]\nname = \"app\"\nsource = { kind = \"rds\", instances = [\"app-1\"] }\n",
+        )
+        .unwrap();
+        let rows: Vec<(String, String, Role, Option<String>)> = rds_targets(&envs[0], &all)
+            .into_iter()
+            .map(|t| (t.server, t.database, t.role, t.replica_of))
+            .collect();
+        let row = |s: &str, d: &str, r, of: Option<&str>| {
+            (s.to_string(), d.to_string(), r, of.map(str::to_string))
+        };
+        assert_eq!(
+            rows,
+            [
+                row("app-2", "ledger", Role::Primary, None),
+                row("app-1", "ledger", Role::Replica, Some("app-2")),
+                row("app-3", "own", Role::Replica, Some("app-2")),
+            ]
+        );
+    }
+
     use super::*;
 
     const CONFIG: &str = r#"
@@ -775,6 +863,40 @@ source = { kind = "rds", instances = ["production"], region = "us-west-1", accou
 name = "local"
 source = { kind = "static", connections = ["ledger-local"] }
 "#;
+
+    #[test]
+    fn migration_locations_read_like_flyway_locations() {
+        assert_eq!(
+            migration_locations("~/app/src/main/resources/db/migration").unwrap(),
+            ["~/app/src/main/resources/db/migration"]
+        );
+        assert_eq!(
+            migration_locations("filesystem:/srv/a, ~/b").unwrap(),
+            ["/srv/a", "~/b"]
+        );
+        let e = migration_locations("~/a,classpath:db/migration").unwrap_err();
+        assert!(
+            e.contains("can't see a classpath") && e.contains("src/main/resources/db/migration"),
+            "{e}"
+        );
+        assert!(migration_locations("db/migration")
+            .unwrap_err()
+            .contains("must be absolute"));
+        assert!(migration_locations("filesystem:db/migration")
+            .unwrap_err()
+            .contains("\"db/migration\" must be absolute"));
+        assert!(migration_locations("/a,,/b")
+            .unwrap_err()
+            .contains("empty entry"));
+        let settings = ProbeSettings {
+            version_table: None,
+            migrations_dir: Some("/srv/a,filesystem:/srv/b".into()),
+        };
+        assert_eq!(
+            settings.migrations_dirs(),
+            Some(Ok(vec!["/srv/a".into(), "/srv/b".into()]))
+        );
+    }
 
     #[test]
     fn config_parses_both_source_kinds() {
@@ -1026,10 +1148,22 @@ sslmode = "require"
                 "static secrets",
             ),
             (format!("{rds}secret = \"s\"\n"), "singular typo"),
+            (
+                format!("{rds}migrations_dir = \"classpath:db/migration\"\n"),
+                "a classpath location",
+            ),
+            (
+                format!("{rds}migrations_dir = \"/srv/a, db/migration\"\n"),
+                "a relative location after a good one",
+            ),
         ] {
             assert!(parse_config(&bad).is_err(), "{why}");
         }
         assert!(parse_config(&format!("{rds}sslmode = \"verify-full\"\nuser = \"me\"\n")).is_ok());
+        assert!(parse_config(&format!(
+            "{rds}migrations_dir = \"filesystem:/srv/a, ~/b\"\n"
+        ))
+        .is_ok());
     }
 
     #[test]

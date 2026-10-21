@@ -6,14 +6,14 @@
 //! |---|---|---|
 //! | Flyway | `flyway_schema_history` | newest successful version; failures flagged |
 //! | Liquibase | `databasechangelog` | the last changeset run |
-//! | Rails, golang-migrate | `schema_migrations` | the highest version |
+//! | Rails, golang-migrate | `schema_migrations` | the highest version; golang-migrate's `dirty` flagged |
 //! | sqlx | `_sqlx_migrations` | the highest version; failures flagged |
 //! | Django | `django_migrations` | the last migration applied |
 //! | Alembic | `alembic_version` | the current revision |
 //! | Prisma | `_prisma_migrations` | the last finished migration; failures flagged |
 //!
-//! Flyway can also count pending migrations against a directory of
-//! `V<version>__<name>.sql` files. Every statement here is a fixed read.
+//! Flyway can also count pending migrations against its directories of
+//! `V<version>__<name>.sql` files (and Java or Kotlin migrations). Every statement here is a fixed read.
 
 use crate::conn::{self, TypedRows};
 
@@ -64,6 +64,24 @@ impl Tool {
         }
     }
 
+    /// Whether this tool's versions sort into apply order, so that one
+    /// environment's can be called behind another's. Liquibase changeset
+    /// ids, Django's `app.migration` and Alembic revisions are names: two
+    /// databases can only be the same or differ.
+    pub fn versions_ordered(self) -> bool {
+        match self {
+            Tool::Flyway | Tool::Sqlx | Tool::SchemaMigrations => true,
+            // Prisma names its migrations `<timestamp>_<name>`.
+            Tool::Prisma => true,
+            Tool::Liquibase | Tool::Django | Tool::Alembic => false,
+        }
+    }
+
+    /// The tool [`Tool::name`] names.
+    pub fn from_name(name: &str) -> Option<Tool> {
+        Tool::ALL.into_iter().find(|t| t.name() == name)
+    }
+
     /// The read for this tool's history. Each returns whole history in
     /// apply order (oldest first), capped by the caller.
     pub fn sql(self) -> &'static str {
@@ -82,7 +100,13 @@ impl Tool {
             }
             Tool::Django => "SELECT app, name FROM django_migrations ORDER BY applied, id",
             Tool::Alembic => "SELECT version_num FROM alembic_version",
-            Tool::SchemaMigrations => "SELECT version::text FROM schema_migrations",
+            // Rails keeps only `version`; golang-migrate adds `dirty`, set
+            // while a migration is half applied. A row as JSON reads the
+            // column where there is one and NULL where there isn't, so one
+            // fixed statement serves both.
+            Tool::SchemaMigrations => {
+                "SELECT to_jsonb(m)->>'version', to_jsonb(m)->>'dirty' FROM schema_migrations m"
+            }
         }
     }
 }
@@ -116,7 +140,7 @@ fn truthy(v: Option<&str>) -> bool {
 
 /// `1.2.10` as numbers, for ordering and comparing versions. Trailing
 /// zeros don't count: Flyway reads `1.0` and `1` as one version. Pure.
-fn version_key(v: &str) -> Vec<u64> {
+pub(crate) fn version_key(v: &str) -> Vec<u64> {
     let mut key: Vec<u64> = v
         .split(['.', '_'])
         .map(|p| p.trim().parse().unwrap_or(0))
@@ -127,12 +151,15 @@ fn version_key(v: &str) -> Vec<u64> {
     key
 }
 
-/// A Flyway versioned-migration file's version: `V1_2__add.sql` → `1.2`.
-/// Repeatable (`R__`) and undo (`U`) files have none. Pure.
+/// A Flyway versioned-migration file's version: `V1_2__add.sql` → `1.2`,
+/// and the same for a Java or Kotlin migration's source
+/// (`V3__Backfill.java`). Repeatable (`R__`) and undo (`U`) files have
+/// none. Pure.
 pub fn flyway_file_version(file: &str) -> Option<String> {
     let rest = file.strip_prefix('V')?;
     let (version, _) = rest.split_once("__")?;
-    if version.is_empty() || !file.to_ascii_lowercase().ends_with(".sql") {
+    let lower = file.to_ascii_lowercase();
+    if version.is_empty() || ![".sql", ".java", ".kt"].iter().any(|x| lower.ends_with(x)) {
         return None;
     }
     Some(version.replace('_', "."))
@@ -231,6 +258,14 @@ pub fn parse(tool: Tool, rows: &TypedRows, files: Option<&[String]>) -> Migratio
                 .iter()
                 .filter_map(|r| cell(r, 0))
                 .max_by_key(|v| version_key(v));
+            // golang-migrate: a dirty row is a migration that failed part
+            // way, and migrate refuses to run until it's forced.
+            m.failed = rows
+                .rows
+                .iter()
+                .find(|r| truthy(cell(r, 1).as_deref()))
+                .and_then(|r| cell(r, 0))
+                .map(|v| format!("{v} (dirty)"));
         }
     }
     m
@@ -379,6 +414,18 @@ mod tests {
     }
 
     #[test]
+    fn named_versions_arent_ordered_and_every_tool_is_found_by_name() {
+        for t in Tool::ALL {
+            assert_eq!(Tool::from_name(t.name()), Some(t));
+        }
+        assert_eq!(Tool::from_name("nope"), None);
+        assert!(Tool::Flyway.versions_ordered());
+        assert!(!Tool::Liquibase.versions_ordered());
+        assert!(!Tool::Django.versions_ordered());
+        assert!(!Tool::Alembic.versions_ordered());
+    }
+
+    #[test]
     fn flyway_file_names_carry_versions() {
         assert_eq!(flyway_file_version("V1_2__add.sql").as_deref(), Some("1.2"));
         assert_eq!(
@@ -388,6 +435,12 @@ mod tests {
         assert_eq!(flyway_file_version("R__views.sql"), None);
         assert_eq!(flyway_file_version("V__x.sql"), None);
         assert_eq!(flyway_file_version("V1__x.txt"), None);
+        assert_eq!(
+            flyway_file_version("V3__Backfill.java").as_deref(),
+            Some("3")
+        );
+        assert_eq!(flyway_file_version("V4_1__Move.kt").as_deref(), Some("4.1"));
+        assert_eq!(flyway_file_version("R__Views.java"), None);
     }
 
     #[test]
@@ -422,6 +475,23 @@ mod tests {
             None,
         );
         assert_eq!(rails.version.as_deref(), Some("20240101120000"));
+        assert_eq!(rails.failed, None, "Rails has no dirty column");
+
+        let golang = parse(
+            Tool::SchemaMigrations,
+            &rows(&[&[Some("12"), Some("true")]]),
+            None,
+        );
+        assert_eq!(
+            (golang.version.as_deref(), golang.failed.as_deref()),
+            (Some("12"), Some("12 (dirty)"))
+        );
+        let clean = parse(
+            Tool::SchemaMigrations,
+            &rows(&[&[Some("12"), Some("false")]]),
+            None,
+        );
+        assert_eq!(clean.failed, None);
 
         let prisma = parse(
             Tool::Prisma,

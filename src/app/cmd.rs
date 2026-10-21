@@ -5,9 +5,14 @@ use super::*;
 /// psql muscle memory (`:q`) are deliberately absent — Tab on `:q`
 /// completes to `:quit`, which is the same command spelled in full.
 pub const COMMAND_NAMES: &[&str] = &[
-    "about", "connect", "d", "dn", "dt", "fixture", "help", "i", "l", "quit", "readonly", "report",
-    "timing", "update", "x",
+    "about", "connect", "d", "dn", "dt", "error", "fixture", "help", "i", "l", "notify", "quit",
+    "readonly", "report", "tap", "timing", "update", "x",
 ];
+
+/// `\i`'s ceiling. The file becomes one editor buffer, drawn and
+/// highlighted on every frame, so this is far below `--log`'s 64 MB:
+/// 8 MB is a schema dump of a few thousand tables.
+pub(crate) const INCLUDE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Help topics `:help <topic>` accepts, paired with the mode whose
 /// help anchor they scroll to. Reuses `App::help_anchor_for` rather
@@ -38,6 +43,33 @@ const HELP_TOPICS: &[(&str, Mode)] = &[
 #[cfg(test)]
 pub(crate) fn help_topics() -> &'static [(&'static str, Mode)] {
     HELP_TOPICS
+}
+
+/// The status after `\\report` / `\\fixture` wrote `path`: the file's
+/// name first and its directory after, the home directory as `~`. A
+/// full path at the end of the line was what the footer cut, mid-name,
+/// so the part the operator looks for went first. Pure.
+pub fn wrote_status(what: &str, path: &std::path::Path, home: Option<&std::ffi::OsStr>) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let dir = path.parent().filter(|d| !d.as_os_str().is_empty());
+    let Some(dir) = dir else {
+        return format!("wrote {what} to {name}");
+    };
+    let shown = match home.map(std::path::Path::new) {
+        Some(h) if !h.as_os_str().is_empty() && dir.starts_with(h) => {
+            let rest = dir.strip_prefix(h).unwrap_or(dir);
+            if rest.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{}", rest.display())
+            }
+        }
+        _ => dir.display().to_string(),
+    };
+    format!("wrote {what} to {name} · in {shown}")
 }
 
 /// Candidate command names for `typed` — every entry of
@@ -109,8 +141,7 @@ impl App {
         match cmd {
             BackslashCmd::Describe(target) => {
                 if self.schema_cache.is_empty() {
-                    self.last_status =
-                        Some("schema cache empty — connect to a database first".into());
+                    self.schema_cache_missing();
                     return;
                 }
                 // `\d <name>` → open browser with the name as
@@ -119,6 +150,17 @@ impl App {
                 // `\d` alone → open with no filter (default view).
                 self.schema_browser.filter = target.clone();
                 self.schema_browser.cursor = 0;
+                // A name nothing matches opened an empty browser with
+                // no word about why; psql says so, and so does this.
+                if let Some(t) = target.as_deref() {
+                    if self.flattened_schema_browser().is_empty() {
+                        self.schema_browser.filter = None;
+                        self.last_status = Some(format!(
+                            "\\d {t}: no schema, table or column matches · r in the schema browser reloads it"
+                        ));
+                        return;
+                    }
+                }
                 self.mode = Mode::SchemaBrowser;
                 self.last_status = Some(match target {
                     Some(t) => format!("\\d {t} → schema browser filtered to '{t}'"),
@@ -127,8 +169,7 @@ impl App {
             }
             BackslashCmd::ListTables | BackslashCmd::ListSchemas => {
                 if self.schema_cache.is_empty() {
-                    self.last_status =
-                        Some("schema cache empty — connect to a database first".into());
+                    self.schema_cache_missing();
                     return;
                 }
                 self.schema_browser.filter = None;
@@ -230,6 +271,11 @@ impl App {
             "update" => self.show_update_status(),
             "help" => self.dispatch_help_topic(arg),
             "readonly" => self.dispatch_read_only(arg),
+            // The command-bar spellings of F2 / F3 / F4, for keyboards
+            // where those take fn.
+            "error" => self.open_error_detail(),
+            "notify" => self.start_notifications(),
+            "tap" => self.start_tap_monitor(),
             other => {
                 // Rebuild from the LOWERCASED name, not the raw line:
                 // the four commands handled above matched on the
@@ -338,7 +384,11 @@ impl App {
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
         if !want && self.safety_config.profile_for(db).read_only {
-            self.last_error = Some(read_only_escape_refusal(safety_toml_exists()));
+            self.last_error = Some(readonly_off_refusal(
+                &self.safety_config,
+                db,
+                safety_toml_exists(),
+            ));
             return;
         }
         if !want && self.replica_pin {
@@ -507,12 +557,17 @@ impl App {
     /// `\i <path>` handler. Reads the whole file and replaces the
     /// editor buffer with it — the operator reviews before running,
     /// same as pasting it in by hand. Never runs anything itself.
+    ///
+    /// The read is on the UI thread, so it is capped at
+    /// [`INCLUDE_MAX_BYTES`] and refuses anything but a regular file:
+    /// `\i` on a FIFO used to hang the TUI, and a huge dump froze it
+    /// and then had to be drawn as one editor buffer.
     fn dispatch_include(&mut self, target: Option<String>) {
         let Some(path) = target else {
             self.last_error = Some("\\i requires a file path".into());
             return;
         };
-        match std::fs::read_to_string(&path) {
+        match crate::util::read_text_capped(std::path::Path::new(&path), INCLUDE_MAX_BYTES) {
             Ok(contents) => {
                 let n = contents.lines().count();
                 self.editor.buffer = contents;
@@ -521,6 +576,12 @@ impl App {
                 self.history_pos = None;
                 self.draft_dirty = true;
                 self.last_status = Some(format!("loaded {n} lines from {path}"));
+            }
+            Err(e @ crate::util::CappedReadError::TooBig { .. }) => {
+                self.last_error = Some(format!(
+                    "\\i {path}: {e}; \\i loads up to {} into the editor — run a bigger script with psql -f",
+                    crate::util::human_bytes(INCLUDE_MAX_BYTES)
+                ));
             }
             Err(e) => {
                 self.last_error = Some(format!("\\i {path} failed: {e}"));
@@ -542,7 +603,7 @@ impl App {
             crate::report::ReportFormat::Markdown => crate::report::render_markdown(&snapshot),
             crate::report::ReportFormat::Html => crate::report::render_html(&snapshot),
         };
-        let ok = format!("wrote report to {}", path.display());
+        let ok = wrote_status("report", &path, std::env::var_os("HOME").as_deref());
         self.write_export(&path, &body, "\\report", ok);
     }
 
@@ -584,7 +645,11 @@ impl App {
             Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
             _ => default_fixture_path(&table),
         };
-        let ok = format!("wrote {} row(s) to {}", fixture.rows.len(), path.display());
+        let ok = wrote_status(
+            &format!("{} row(s)", fixture.rows.len()),
+            &path,
+            std::env::var_os("HOME").as_deref(),
+        );
         self.write_export(&path, &xml, "\\fixture", ok);
     }
 }

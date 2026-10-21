@@ -2117,7 +2117,11 @@ fn environment_probe_reads_version_patch_level_and_pending() {
         &[
             "--yes",
             "--sql",
-            &format!("CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3)"),
+            &format!(
+                "CREATE TABLE {table} (id int); INSERT INTO {table} (id) VALUES (1), (3); \
+                 CREATE TABLE {table}_text (id text); \
+                 INSERT INTO {table}_text (id) VALUES ('1.2'), ('1.10'), (NULL)"
+            ),
         ],
     );
     assert!(
@@ -2201,6 +2205,15 @@ fn environment_probe_reads_version_patch_level_and_pending() {
     assert!(p.server_version.is_some());
     let p = probe(&table, &["pgman_test"]);
     assert_eq!(p.schema_version, Some(3), "named: read");
+
+    // A text column of ids that aren't integers: the highest shown as
+    // written, not an error.
+    let p = probe(&format!("{table}_text"), &[]);
+    assert_eq!(
+        (p.schema_version, p.schema_label.as_deref(), &p.schema_error),
+        (None, Some("1.10"), &None),
+        "{p:?}"
+    );
 }
 
 /// Over MCP, `probe: true` reads the databases of environments that
@@ -2518,7 +2531,7 @@ fn mcp_schema_lint_reports_a_table_without_a_primary_key() {
 fn probes_recognise_common_migration_tools() {
     let home = scratch_home("migtools", WRITABLE_PROFILE);
     let pid = std::process::id();
-    let tools: [(&str, &str); 4] = [
+    let tools: [(&str, &str); 5] = [
         (
             "flyway",
             "CREATE TABLE flyway_schema_history (installed_rank int PRIMARY KEY, version varchar(50), \
@@ -2546,6 +2559,11 @@ fn probes_recognise_common_migration_tools() {
             "rails",
             "CREATE TABLE schema_migrations (version varchar PRIMARY KEY); \
              INSERT INTO schema_migrations VALUES ('20231231000000'), ('20240101120000')",
+        ),
+        (
+            "golang",
+            "CREATE TABLE schema_migrations (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL); \
+             INSERT INTO schema_migrations VALUES (12, true)",
         ),
     ];
     let migdir = home.join("db-migration");
@@ -2661,8 +2679,11 @@ fn probes_recognise_common_migration_tools() {
         Some("flyway migration 1.2 failed")
     );
     assert_eq!(
-        results["django"].schema_label.as_deref(),
-        Some("shop.0007_orders")
+        (
+            results["django"].schema_label.as_deref(),
+            results["django"].migrations_applied
+        ),
+        (Some("shop.0007_orders"), Some(2))
     );
     assert_eq!(
         results["prisma"].schema_label.as_deref(),
@@ -2672,6 +2693,15 @@ fn probes_recognise_common_migration_tools() {
     assert_eq!(
         (r.migration_tool.as_deref(), r.schema_label.as_deref()),
         (Some("migrations"), Some("20240101120000"))
+    );
+    assert_eq!(r.schema_error, None, "Rails has no dirty column");
+    let g = &results["golang"];
+    assert_eq!(
+        (g.schema_label.as_deref(), g.schema_error.as_deref()),
+        (
+            Some("12"),
+            Some("schema_migrations: migration 12 (dirty) failed")
+        )
     );
 }
 
@@ -2848,6 +2878,10 @@ fn mcp_environment_logs_reads_only_listed_servers() {
     assert!(
         !calls.contains("--db-instance-identifier production"),
         "an unlisted server's logs are never asked for: {calls}"
+    );
+    assert!(
+        !calls.contains("describe-db-engine-versions"),
+        "finding the server needs no upgrade targets: {calls}"
     );
 }
 

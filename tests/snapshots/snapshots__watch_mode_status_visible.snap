@@ -18,4 +18,4 @@ expression: dump(&buf)
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   \watch every 2s · any key to stop
+ RO   WATCH 2s   \watch every 2s · any key to stop

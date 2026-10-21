@@ -89,7 +89,14 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         String::new()
     };
     let title = if app.grid_view.filter.is_some() && visible != total {
-        format!(" result · {visible}/{total} row(s) (filtered){cap} ")
+        // Out of the filter prompt, nothing on screen said how to get
+        // the other rows back.
+        let way_out = if app.mode == crate::app::Mode::GridFilter {
+            ""
+        } else {
+            " · / esc clears"
+        };
+        format!(" result · {visible}/{total} row(s) (filtered{way_out}){cap} ")
     } else {
         format!(" result · {total} row(s){cap} ")
     };

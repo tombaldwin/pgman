@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                                                                  │
-│ pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)                            │
+│ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                        │
 │                                                                                                  │
 │   grid                                                                                           │
 │     q             quit                                                                           │
@@ -28,8 +28,8 @@ expression: dump(&buf)
 │     T             slow queries (pg_stat_statements top-N)                                        │
 │     L             active sessions + locks (pg_stat_activity)                                     │
 │     E             environments overview (no connection needed)                                   │
-│     F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)                    │
-│ ↓ 221 more below                                                                                 │
+│     F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)                    │
+│ ↓ 224 more below                                                                                 │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ?  close help

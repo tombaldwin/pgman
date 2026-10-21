@@ -643,6 +643,18 @@ pub(crate) fn footer_badges_with(
         ));
         out.push(Span::raw(" "));
     }
+    // `\watch` re-runs on its own until a key stops it; without a
+    // badge the only sign was a status line the first run replaced.
+    if let Some(w) = &app.watch {
+        out.push(Span::styled(
+            format!(" WATCH {}s ", w.interval.as_secs()),
+            Style::default()
+                .bg(theme.accent)
+                .fg(theme.row_alt_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        out.push(Span::raw(" "));
+    }
     // JDBC tap connection badge — flashed whenever the tap
     // listener has seen at least one event this session. F4
     // hint piggybacks on the badge so the operator knows where
@@ -1295,10 +1307,12 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         // segment (joined with the same " · " it uses to split on)
         // rather than as a separate span that could get truncated away
         // by a raw cell-width clip.
-        let pointer = if app.last_error_detail.is_some() {
-            " · F2 detail"
-        } else {
-            ""
+        // `!` where no character is being typed; F2 (fn-F2 on a Mac)
+        // in the editor and the prompts, where `!` is a character.
+        let pointer = match app.last_error_detail {
+            Some(_) if app.mode.is_text_input() => " · F2 detail",
+            Some(_) => " · ! detail",
+            None => "",
         };
         // One row: a multi-line server error (message + `hint:`
         // continuation) is folded into ` · ` segments here; F2 keeps
@@ -1323,7 +1337,14 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             ]
         };
         Line::from(spans)
-    } else if let Some(status) = &app.last_status {
+    } else if let Some(status) = app
+        .last_status
+        .as_ref()
+        // The confirm modal says what it's asking itself; its footer is
+        // the keys that answer it. A status left from the editor (a
+        // completion's, the cost preview's) hid `y run · n / esc cancel`.
+        .filter(|_| app.mode != Mode::Confirm)
+    {
         let sp = SPINNER[app.anim_tick % SPINNER.len()];
         let prefix = if app.query_running {
             format!(" {sp} ")
@@ -1409,7 +1430,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 Mode::GridFilter => "type to filter live · enter accept · esc clear",
                 Mode::GridFind => "type to find · ↑↓ jump · enter accept · esc clear",
                 Mode::ExplainTree => "j/k navigate · enter expand/collapse · g/G top/bottom · q / esc close",
-                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · q close",
+                Mode::SchemaBrowser => "j/k navigate · enter expand · [ ] jump schema · + / − all · / filter · s SELECT · i INSERT · r reload · q close",
                 Mode::SchemaBrowserFilter => "type to narrow · enter accept · esc clear",
                 Mode::SlowQueries => "j/k navigate · enter copy · r refresh · R auto-refresh · q / esc close",
                 Mode::Sessions => "j/k navigate · K terminate · r refresh · R auto-refresh · q / esc close",
@@ -1418,7 +1439,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 }
                 Mode::Environments => "j/k navigate · enter connect · d discover · r refresh · q / esc close",
                 Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
-                Mode::ErrorDetail => "esc / q / F2 close",
+                Mode::ErrorDetail => "esc / q / ! close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
                 Mode::TapMonitor => "j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close",
@@ -1797,7 +1818,7 @@ pub(crate) fn help_body(
 
     push(
         Line::from(Span::styled(
-            "pgman — keys (? / F1 help · : commands · F2 error detail · F3 notify)",
+            "pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)",
             Style::default()
                 .fg(theme.title)
                 .add_modifier(Modifier::BOLD),
@@ -1860,7 +1881,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    F3            LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
+        row("    F3 / :notify  LISTEN/NOTIFY arrivals panel (also reachable from any mode)"),
         &mut lines,
     );
     push(row("    h / l  ← →    move column cursor"), &mut lines);
@@ -2137,6 +2158,10 @@ pub(crate) fn help_body(
         row("    i             yank INSERT INTO … (cols) VALUES (NULL, …) template"),
         &mut lines,
     );
+    push(
+        row("    r             reload the schema (tables other sessions made since connect)"),
+        &mut lines,
+    );
     push(row("    g / G         jump to top / bottom"), &mut lines);
     push(row("    esc / q       close"), &mut lines);
     push(Line::from(""), &mut lines);
@@ -2313,6 +2338,14 @@ pub(crate) fn help_body(
     );
     push(row("    :quit  /  :q    quit pgman"), &mut lines);
     push(
+        row("    :error          the last error in full (= F2, or ! outside the editor)"),
+        &mut lines,
+    );
+    push(
+        row("    :notify  :tap   the NOTIFY panel (= F3), the JDBC tap monitor (= F4)"),
+        &mut lines,
+    );
+    push(
         row("    :readonly on|off  the read-only flag pgman opens connections with; applies"),
         &mut lines,
     );
@@ -2400,7 +2433,7 @@ pub(crate) fn help_body(
 
     heading("notifications", &mut lines, &mut anchors);
     push(
-        row("    F3            open the NOTIFY arrivals panel (works from any mode)"),
+        row("    F3 / :notify  open the NOTIFY arrivals panel (works from any mode)"),
         &mut lines,
     );
     push(
@@ -2421,7 +2454,7 @@ pub(crate) fn help_body(
 
     heading("jdbc tap", &mut lines, &mut anchors);
     push(
-        row("    F4            open the JDBC tap monitor (live stream, works from any mode)"),
+        row("    F4 / :tap     open the JDBC tap monitor (live stream, works from any mode)"),
         &mut lines,
     );
     push(
@@ -2742,21 +2775,25 @@ fn centered_pct(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
-/// A popup floated one row and one column inside `panel`, sized to
-/// `content_w` × `content_h` but never past the room that leaves.
-/// Anchored top-left rather than centred: a popup centred on a panel
-/// it is nearly as wide as puts its own top border on the panel's
-/// border and title, fusing the two frames into one run of glyphs
-/// (`┌ pgman┌ pick a connection`). Falls back to centring when the
-/// panel is too small to float inside at all.
-fn floated_in_panel(panel: Rect, content_w: u16, content_h: u16) -> Rect {
+/// A popup floated one row inside `panel` and centred across its
+/// interior, sized to `content_w` × `content_h` but never past the
+/// room the panel's borders leave. Never on the panel's frame: a popup
+/// centred on a panel it is nearly as tall or wide as puts its own
+/// border on the panel's border and title, fusing the two frames into
+/// one run of glyphs (`┌ pgman┌ pick a connection`). It used to sit in
+/// the top-left corner for that reason, which left a narrow popup
+/// hard against one side of a wide panel. Falls back to centring when
+/// the panel is too small to float inside at all.
+pub(crate) fn floated_in_panel(panel: Rect, content_w: u16, content_h: u16) -> Rect {
     if panel.width < 4 || panel.height < 4 {
         return centered(panel, content_w, content_h);
     }
+    let inner_w = panel.width - 2;
+    let width = content_w.min(inner_w);
     Rect {
-        x: panel.x + 1,
+        x: panel.x + 1 + (inner_w - width) / 2,
         y: panel.y + 1,
-        width: content_w.min(panel.width - 2),
+        width,
         height: content_h.min(panel.height - 2),
     }
 }

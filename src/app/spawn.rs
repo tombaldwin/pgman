@@ -329,10 +329,7 @@ impl App {
     /// the actual reconnect.
     pub(super) fn start_connection_change(&mut self) {
         if self.conn_pick.picks.is_empty() {
-            self.last_status = Some(
-                "no data sources to pick — pass --dsn or add `[[connections]]` to pgman.toml"
-                    .into(),
-            );
+            self.last_status = Some(no_picks_hint(self.dsn.is_some()).into());
             return;
         }
         if self.query_running {
@@ -421,7 +418,7 @@ impl App {
         self.query_running = true;
         self.query_started = Some(Instant::now());
         self.last_error = None;
-        self.last_status = Some(format!("running {}…", kind.label()));
+        self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
             let result = execute(&client, &sql, kind, &decision, is_batch).await;
             // Run + wrap_in_tx leaves the transaction open on success — the
@@ -491,8 +488,10 @@ impl App {
         // returns, so `AppMsg::QueryOk`'s handler opens
         // `Mode::ExplainTree` through the identical path.
         let grid = match kind {
-            RunKind::Explain => crate::demo::explain_plan_grid(false),
-            RunKind::ExplainAnalyze => crate::demo::explain_plan_grid(true),
+            RunKind::Explain => crate::demo::explain_plan_grid(false, &sql, &self.schema_cache),
+            RunKind::ExplainAnalyze => {
+                crate::demo::explain_plan_grid(true, &sql, &self.schema_cache)
+            }
             RunKind::Run => crate::demo::answer(&sql, &self.schema_cache),
         };
         let msg = AppMsg::QueryOk {

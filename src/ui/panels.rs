@@ -1224,7 +1224,17 @@ pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<Pro
         (_, _, Some(_)) => ("version ✗".to_string(), Some(ProbeAlert::Warn)),
         (Some(v), Some(n), None) if n > 0 => (format!("v{v} (+{n})"), Some(ProbeAlert::Warn)),
         (Some(v), _, None) => (format!("v{v}"), None),
-        (None, _, None) => ("—".to_string(), None),
+        // A version column with no integer ids: its highest as written.
+        (None, pending, None) => match &p.schema_label {
+            Some(l) => {
+                let l = crate::grid::truncate_cell(l, 24);
+                match pending {
+                    Some(n) if n > 0 => (format!("{l} (+{n})"), Some(ProbeAlert::Warn)),
+                    _ => (l, None),
+                }
+            }
+            None => ("—".to_string(), None),
+        },
     }
 }
 
@@ -1484,6 +1494,49 @@ pub(crate) fn environment_detail(t: &crate::inventory::Target) -> String {
     format!("  {}", parts.join(" · "))
 }
 
+/// Fit a ` · `-joined detail line into `width` columns from its tail,
+/// never mid-token: a last segment that doesn't fit is cut at a `.`,
+/// `-`, `:` or `/` with a `…` (an endpoint keeps its leading labels:
+/// `ledger-1.abc123.eu-west-1…`), or dropped whole when too little of it
+/// would show. One segment that alone is too wide is end-ellipsised.
+/// Pure.
+pub(crate) fn fit_segments(text: &str, width: usize) -> String {
+    use crate::ui::display_width;
+    if display_width(text) <= width {
+        return text.to_string();
+    }
+    let mut segs: Vec<&str> = text.split(" · ").collect();
+    while segs.len() > 1 {
+        let last = segs[segs.len() - 1];
+        let head = segs[..segs.len() - 1].join(" · ");
+        let room = width.saturating_sub(display_width(&head) + display_width(" · ") + 1);
+        if room >= 8 {
+            // The longest prefix of `last`, within `room`, that ends just
+            // before a separator.
+            let mut cut = None;
+            let mut used = 0;
+            for (i, c) in last.char_indices() {
+                used += crate::ui::char_width(c);
+                if used > room {
+                    break;
+                }
+                if matches!(c, '.' | '-' | ':' | '/') && i >= 4 {
+                    cut = Some(i);
+                }
+            }
+            if let Some(i) = cut {
+                return format!("{head} · {}…", &last[..i]);
+            }
+        }
+        segs.pop();
+        let joined = segs.join(" · ");
+        if display_width(&joined) <= width {
+            return joined;
+        }
+    }
+    crate::grid::truncate_cell(segs[0], width)
+}
+
 /// A replica's lag readings as the detail line shows them:
 /// `▁▂▂▃▅▇ · 2s–30s over 12 probes`, or `None` with fewer than two. Pure.
 pub(crate) fn lag_trend(samples: &[f64]) -> Option<String> {
@@ -1545,10 +1598,51 @@ pub(crate) struct DriftCell {
     pub behind: bool,
 }
 
+/// How one probed version compares with the others in the drift matrix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DriftKey {
+    /// A version that sorts into apply order: a version table's id, or
+    /// Flyway's `1.2.10` as numbers.
+    Ordered(Vec<u64>),
+    /// A name (a Liquibase changeset, Django's `app.migration`, an
+    /// Alembic revision), which can only match or differ, and how many
+    /// migrations the tool records.
+    Named { applied: usize, name: String },
+}
+
+/// A probed row's [`DriftKey`], or `None` when it read no version. Pure.
+fn drift_key(p: &crate::query::probe::Probe) -> Option<DriftKey> {
+    use crate::query::migrations::{version_key, Tool};
+    if let Some(v) = p.schema_version {
+        return Some(DriftKey::Ordered(vec![v.max(0) as u64]));
+    }
+    let label = p.schema_label.as_ref()?;
+    let ordered = match &p.migration_tool {
+        // A version table's id as written.
+        None => true,
+        Some(t) => Tool::from_name(t).is_none_or(Tool::versions_ordered),
+    };
+    Some(if ordered {
+        DriftKey::Ordered(version_key(label))
+    } else {
+        DriftKey::Named {
+            applied: p.migrations_applied.unwrap_or(0),
+            name: label.clone(),
+        }
+    })
+}
+
 /// The schema-drift matrix: database names (rows) by environments
 /// (columns), each cell the database's schema version there, read from
-/// whichever of its rows the probe answered (a primary shows its
-/// replica's). `—` where nothing was read. Pure.
+/// every row of it the probe answered (a primary shows its replica's).
+/// `—` where nothing was read.
+///
+/// A cell is flagged when it has patches pending or is behind the newest
+/// version seen. Names that don't sort are behind when fewer migrations
+/// are recorded than the most anywhere, and all flagged when two
+/// databases with that most name different ones. An environment whose
+/// rows of one database disagree (two primaries, a replica behind) shows
+/// each version and is flagged. Pure.
 pub(crate) fn drift_matrix(
     reports: &[crate::inventory::EnvReport],
     probes: &[Vec<crate::app::ProbeState>],
@@ -1563,44 +1657,74 @@ pub(crate) fn drift_matrix(
             }
         }
     }
-    // The version a database shows in an environment: the first row of
-    // that database with a probed version, and its ordering key.
-    let read = |ri: usize, db: &str| -> Option<(String, Vec<u64>, bool)> {
-        reports[ri].targets.iter().enumerate().find_map(|(ti, t)| {
-            if t.database != db {
-                return None;
-            }
-            let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
-                return None;
-            };
-            let (text, _) = schema_cell(p);
-            let key: Vec<u64> = match (p.schema_version, &p.schema_label) {
-                (Some(v), _) => vec![v.max(0) as u64],
-                (None, Some(l)) => l
-                    .split(['.', '_'])
-                    .map(|x| x.parse().unwrap_or(0))
-                    .collect(),
-                (None, None) => return None,
-            };
-            Some((text, key, p.pending.unwrap_or(0) > 0))
-        })
+    // Every probed version of a database in an environment: its text,
+    // key and whether patches are pending, in row order.
+    let read = |ri: usize, db: &str| -> Vec<(String, DriftKey, bool)> {
+        reports[ri]
+            .targets
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.database == db)
+            .filter_map(|(ti, _)| {
+                let ProbeState::Done(Ok(p)) = probes.get(ri)?.get(ti)? else {
+                    return None;
+                };
+                let key = drift_key(p)?;
+                Some((schema_cell(p).0, key, p.pending.unwrap_or(0) > 0))
+            })
+            .collect()
     };
     let cells: Vec<Vec<DriftCell>> = dbs
         .iter()
         .map(|db| {
-            let row: Vec<Option<(String, Vec<u64>, bool)>> =
+            let row: Vec<Vec<(String, DriftKey, bool)>> =
                 (0..reports.len()).map(|ri| read(ri, db)).collect();
-            let newest = row.iter().flatten().map(|(_, k, _)| k.clone()).max();
-            row.into_iter()
-                .map(|c| match c {
-                    Some((text, key, pending)) => DriftCell {
-                        behind: pending || newest.as_ref().is_some_and(|n| &key < n),
-                        text,
-                    },
-                    None => DriftCell {
-                        text: "—".into(),
-                        behind: false,
-                    },
+            let keys = || row.iter().flatten().map(|(_, k, _)| k);
+            let newest = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Ordered(v) => Some(v),
+                    DriftKey::Named { .. } => None,
+                })
+                .max();
+            let most = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Named { applied, .. } => Some(*applied),
+                    DriftKey::Ordered(_) => None,
+                })
+                .max();
+            let mut names_at_most: Vec<&str> = keys()
+                .filter_map(|k| match k {
+                    DriftKey::Named { applied, name } if Some(*applied) == most => {
+                        Some(name.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            names_at_most.sort_unstable();
+            names_at_most.dedup();
+            let behind = |k: &DriftKey| match k {
+                DriftKey::Ordered(v) => newest.is_some_and(|n| v < n),
+                DriftKey::Named { applied, .. } => Some(*applied) < most || names_at_most.len() > 1,
+            };
+            row.iter()
+                .map(|versions| {
+                    if versions.is_empty() {
+                        return DriftCell {
+                            text: "—".into(),
+                            behind: false,
+                        };
+                    }
+                    let mut texts: Vec<&str> = Vec::new();
+                    for (t, _, _) in versions {
+                        if !texts.contains(&t.as_str()) {
+                            texts.push(t);
+                        }
+                    }
+                    DriftCell {
+                        behind: texts.len() > 1
+                            || versions.iter().any(|(_, k, pending)| *pending || behind(k)),
+                        text: texts.join(" / "),
+                    }
                 })
                 .collect()
         })
@@ -1961,6 +2085,26 @@ fn verb(mode: RunMode) -> &'static str {
     }
 }
 
+/// `text` as rows of at most `width` columns: unchanged when it fits;
+/// otherwise wrapped on words, its leading indent kept on the first
+/// row and two more on the rest so a continuation reads as one. Pure.
+pub(crate) fn wrap_indented(text: &str, width: usize) -> Vec<String> {
+    if crate::ui::display_width(text) <= width {
+        return vec![text.to_string()];
+    }
+    let indent = text.len() - text.trim_start_matches(' ').len();
+    let rest = text.trim_start_matches(' ');
+    let wrap_at = width.saturating_sub(indent + 2).max(10);
+    super::wrap_words(rest, wrap_at)
+        .into_iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let pad = if i == 0 { indent } else { indent + 2 };
+            format!("{}{row}", " ".repeat(pad))
+        })
+        .collect()
+}
+
 fn draw_env_lines(
     f: &mut Frame,
     inner: Rect,
@@ -1982,11 +2126,25 @@ fn draw_env_lines(
         Line::from(""),
     ];
     let room = (inner.height as usize).saturating_sub(2 + usize::from(footer.is_some()));
+    // Wrapped, not cut: a confirmation covers every statement it shows,
+    // and a reason or a log line cut mid-word lost its end. Scrolling
+    // counts screen rows.
+    // Each row keeps its line's colour; a continuation's extra indent
+    // must not make a note read as SQL.
+    let body: Vec<(String, bool, bool)> = body
+        .iter()
+        .flat_map(|(text, loud)| {
+            let sql = text.starts_with("      ");
+            wrap_indented(text, width)
+                .into_iter()
+                .map(move |row| (row, *loud, sql))
+        })
+        .collect();
     let scroll = scroll.min(body.len().saturating_sub(room));
-    for (text, loud) in body.iter().skip(scroll).take(room) {
+    for (text, loud, sql) in body.iter().skip(scroll).take(room) {
         let colour = if *loud {
             theme.health_red
-        } else if text.starts_with("      ") {
+        } else if *sql {
             theme.text
         } else {
             theme.health_yellow
@@ -2033,7 +2191,7 @@ fn draw_drift(f: &mut Frame, inner: Rect, app: &App) {
         )
     };
     let mut lines = vec![Line::from(Span::styled(
-        "  schema version of each database, by environment — yellow is behind the newest or has patches pending",
+        "  schema version by environment — yellow: behind, differs, or patches pending",
         Style::default().fg(theme.muted),
     ))];
     lines.push(Line::from(""));
@@ -2305,7 +2463,7 @@ pub(super) fn draw_environments(f: &mut Frame, area: Rect, app: &App) {
     if let (Some(t), Some(at)) = (focused, detail_area) {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                crate::grid::truncate_cell(
+                fit_segments(
                     &match lag_trend(ui.selected_lag_history()) {
                         // The trend near the front, where a narrow panel
                         // keeps it.
@@ -2921,7 +3079,7 @@ pub(super) fn draw_error_detail(f: &mut Frame, area: Rect, app: &App) {
     if app.last_error_detail.is_none() && app.last_error.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "(no extended detail — non-server error or DbError fields empty)",
+            "(nothing more to show: the server sent no detail with this one, or it came from pgman)",
             Style::default().fg(theme.muted),
         )));
     }
@@ -3797,6 +3955,142 @@ mod tests {
     }
 
     #[test]
+    fn drift_compares_named_versions_by_count_and_name_not_as_numbers() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let named = |tool: &str, name: &str, applied: usize| {
+            ProbeState::done(Ok(Probe {
+                migration_tool: Some(tool.into()),
+                schema_label: Some(name.into()),
+                migrations_applied: Some(applied),
+                ..Probe::default()
+            }))
+        };
+        let cells = |staging: ProbeState, qa: ProbeState| {
+            drift_matrix(&demo, &[vec![ProbeState::ViaReplica, staging], vec![qa]]).2[0]
+                .iter()
+                .map(|c| c.behind)
+                .collect::<Vec<_>>()
+        };
+        // Two changeset ids that read as no number at all: once both
+        // were 0, so neither was flagged.
+        assert_eq!(
+            cells(
+                named("liquibase", "add-orders", 12),
+                named("liquibase", "add-users", 12)
+            ),
+            [true, true],
+            "same count, different names: they differ, neither is known newer"
+        );
+        assert_eq!(
+            cells(
+                named("liquibase", "add-orders", 13),
+                named("liquibase", "add-users", 12)
+            ),
+            [false, true],
+            "fewer recorded is behind"
+        );
+        assert_eq!(
+            cells(
+                named("django", "shop.0007_orders", 9),
+                named("django", "shop.0007_orders", 9)
+            ),
+            [false, false]
+        );
+        // Django's `auth.0012_x` read as numbers was "newer" than
+        // `shop.0007_orders` whatever was applied.
+        assert_eq!(
+            cells(
+                named("django", "auth.0012_x", 8),
+                named("django", "shop.0007_orders", 9)
+            ),
+            [true, false]
+        );
+        // Flyway's still sort as versions: 1.10 is after 1.9.
+        assert_eq!(
+            cells(named("flyway", "1.10", 1), named("flyway", "1.9", 50)),
+            [false, true]
+        );
+    }
+
+    #[test]
+    fn drift_shows_every_version_of_a_database_in_an_environment() {
+        use crate::app::ProbeState;
+        use crate::query::probe::Probe;
+        let mut demo = crate::demo::environments();
+        demo.truncate(2); // staging (primary + replica), qa
+        let probe = |v: i64| {
+            ProbeState::done(Ok(Probe {
+                schema_version: Some(v),
+                pending: Some(0),
+                ..Probe::default()
+            }))
+        };
+        // Both of staging's rows answered, and disagree.
+        let (_, _, cells) = drift_matrix(&demo, &[vec![probe(251), probe(249)], vec![probe(251)]]);
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "v251 / v249".into(),
+                behind: true
+            },
+            "the second row isn't hidden behind the first"
+        );
+        assert!(!cells[0][1].behind);
+        let (_, _, cells) = drift_matrix(&demo, &[vec![probe(251), probe(251)], vec![probe(251)]]);
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "v251".into(),
+                behind: false
+            },
+            "agreeing rows show once"
+        );
+        // Rows whose versions don't compare (a different tool on each)
+        // are neither behind the other, but they still disagree.
+        let tool = |tool: &str, label: &str| {
+            ProbeState::done(Ok(Probe {
+                migration_tool: Some(tool.into()),
+                schema_label: Some(label.into()),
+                migrations_applied: Some(3),
+                ..Probe::default()
+            }))
+        };
+        let (_, _, cells) = drift_matrix(
+            &demo,
+            &[
+                vec![tool("flyway", "2"), tool("liquibase", "add-users")],
+                vec![ProbeState::Off],
+            ],
+        );
+        assert_eq!(
+            cells[0][0],
+            DriftCell {
+                text: "flyway 2 / liquibase add-users".into(),
+                behind: true
+            }
+        );
+    }
+
+    #[test]
+    fn a_version_table_of_text_ids_shows_the_id_as_written() {
+        use crate::query::probe::Probe;
+        let p = |pending| Probe {
+            schema_label: Some("1.10".into()),
+            pending,
+            ..Probe::default()
+        };
+        assert_eq!(schema_cell(&p(Some(0))), ("1.10".into(), None));
+        assert_eq!(
+            schema_cell(&p(Some(2))),
+            ("1.10 (+2)".into(), Some(ProbeAlert::Warn))
+        );
+        assert_eq!(schema_cell(&Probe::default()), ("—".into(), None));
+    }
+
+    #[test]
     fn a_detected_migration_tool_shows_its_own_version() {
         use crate::query::probe::Probe;
         let p = |label: &str, pending, error: Option<&str>| Probe {
@@ -4501,5 +4795,50 @@ mod tests {
             discovery_heading(&d, "AWS account 1"),
             "  AWS account 1 · profile staging · p scope 2/2"
         );
+    }
+
+    #[test]
+    fn a_long_line_wraps_under_its_indent_rather_than_being_cut() {
+        assert_eq!(wrap_indented("  fits", 10), vec!["  fits"]);
+        let reason =
+            "  not included: V7__orders.sql — it has no statements a version table could record";
+        let rows = wrap_indented(reason, 40);
+        assert!(rows.len() > 1, "{rows:?}");
+        assert!(
+            rows.iter().all(|r| crate::ui::display_width(r) <= 40),
+            "{rows:?}"
+        );
+        assert!(rows[0].starts_with("  not included"));
+        assert!(rows[1..]
+            .iter()
+            .all(|r| r.starts_with("    ") && !r.starts_with("     ")));
+        // Nothing lost: every word is still there, in order.
+        let back: Vec<&str> = rows.iter().flat_map(|r| r.split_whitespace()).collect();
+        let want: Vec<&str> = reason.split_whitespace().collect();
+        assert_eq!(back, want);
+    }
+
+    #[test]
+    fn the_detail_line_is_cut_at_a_boundary_never_mid_token() {
+        let line = "  prod/ledger · db.r6g.large · multi-AZ · ledger-1.abc123xyz.eu-west-1.rds.amazonaws.com:5432";
+        assert_eq!(fit_segments(line, 200), line);
+        let fitted = fit_segments(line, 80);
+        assert!(crate::ui::display_width(&fitted) <= 80, "{fitted}");
+        assert!(
+            fitted.ends_with("…") && fitted.contains("· ledger-1.abc123xyz.eu-west-1"),
+            "{fitted}"
+        );
+        let cut = fitted.trim_end_matches('…');
+        assert!(
+            line.contains(&format!("{cut}.")) || line.contains(&format!("{cut}-")),
+            "cut right before a separator: {fitted}"
+        );
+        // Too little room for any of the endpoint: it goes whole.
+        assert_eq!(
+            fit_segments(line, 45),
+            "  prod/ledger · db.r6g.large · multi-AZ"
+        );
+        // One segment that is itself too wide is end-ellipsised.
+        assert!(crate::ui::display_width(&fit_segments("  prod/ledger", 8)) <= 8);
     }
 }

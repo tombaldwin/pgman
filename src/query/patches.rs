@@ -404,28 +404,48 @@ pub const MAX_PATCH_BYTES: u64 = 1024 * 1024;
 /// The recorded ids from the version-table query. A list cut at the row
 /// cap is refused rather than reported on: a missing id would read as a
 /// pending patch, which is the one wrong answer this tool must not give.
+/// So is a list with an id that isn't an integer.
 pub fn applied_ids(
     typed: &crate::conn::TypedRows,
     truncated: bool,
     cfg: &PatchesConfig,
 ) -> Result<Vec<i64>, String> {
+    let (ids, other) = applied_ids_and_others(typed, truncated, cfg)?;
+    if !other.is_empty() {
+        return Err(format!(
+            "{}.{} holds a non-integer id",
+            cfg.table, cfg.column
+        ));
+    }
+    Ok(ids)
+}
+
+/// [`applied_ids`], with the ids that aren't integers (`1.2`, `R7` in a
+/// text column) kept aside instead of failing the list: for a probe,
+/// which only shows a version. A list cut at the row cap is still
+/// refused. A NULL id records nothing. Pure.
+pub fn applied_ids_and_others(
+    typed: &crate::conn::TypedRows,
+    truncated: bool,
+    cfg: &PatchesConfig,
+) -> Result<(Vec<i64>, Vec<String>), String> {
     if truncated {
         return Err(format!(
             "{} holds more than {MAX_APPLIED_IDS} rows; refusing to report on a partial list",
             cfg.table
         ));
     }
-    let mut out = Vec::new();
+    let mut ids = Vec::new();
+    let mut other = Vec::new();
     for row in &typed.rows {
-        // A NULL id records nothing.
         if let Some(text) = row.first().and_then(|c| c.as_deref()) {
-            let id = text
-                .parse::<i64>()
-                .map_err(|_| format!("{}.{} holds a non-integer id", cfg.table, cfg.column))?;
-            out.push(id);
+            match text.parse::<i64>() {
+                Ok(id) => ids.push(id),
+                Err(_) => other.push(text.to_string()),
+            }
         }
     }
-    Ok(out)
+    Ok((ids, other))
 }
 
 /// Every `*.sql` file in `dir` (not recursive), parsed for its id.
@@ -599,6 +619,26 @@ mod tests {
         let r = reconcile(vec![f("1-a.sql", Some(1)), f("2-b.sql", Some(2))], &[1, 2]);
         assert!(r.pending.is_empty());
         assert!(r.recorded_without_file.is_empty());
+    }
+
+    #[test]
+    fn ids_that_arent_integers_fail_applying_but_are_kept_for_a_probe() {
+        let typed = crate::conn::TypedRows {
+            columns: Vec::new(),
+            rows: vec![vec![Some("7".into())], vec![None], vec![Some("1.2".into())]],
+            affected: None,
+        };
+        assert_eq!(
+            applied_ids_and_others(&typed, false, &cfg()),
+            Ok((vec![7], vec!["1.2".to_string()]))
+        );
+        assert!(applied_ids(&typed, false, &cfg())
+            .unwrap_err()
+            .contains("non-integer"));
+        assert!(
+            applied_ids_and_others(&typed, true, &cfg()).is_err(),
+            "a cut list is refused either way"
+        );
     }
 
     #[test]

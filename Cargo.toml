@@ -35,7 +35,9 @@ include = [
 
 [dependencies]
 ratatui = "0.30"
-crossterm = { version = "0.29", features = ["event-stream"] }
+# `use-dev-tty`: once `--log -` has read a log from stdin, keys come from
+# /dev/tty, and the default mio source can't wait on a tty on macOS.
+crossterm = { version = "0.29", features = ["event-stream", "use-dev-tty"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "io-std", "fs"] }
 tokio-postgres = "0.7"
 tokio-postgres-rustls = "0.14"

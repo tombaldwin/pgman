@@ -436,12 +436,12 @@ fn demo_app_renders_grid_schema_and_tap_without_panic() {
         rendered.contains("ada@example.com"),
         "grid data missing:\n{rendered}"
     );
-    // Schema browser opens against the fixture cache (4 tables,
+    // Schema browser opens against the fixture cache (3 tables,
     // collapsed under the public schema node).
     a.mode = Mode::SchemaBrowser;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(
-        rendered.contains("public") && rendered.contains("4 table(s)"),
+        rendered.contains("public") && rendered.contains("3 table(s)"),
         "schema browser missing:\n{rendered}"
     );
     // Tap monitor shows the synthetic events.
@@ -668,8 +668,8 @@ fn grid_render_shows_filtered_count_in_title() {
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
-        rendered.contains("2/3 row(s) (filtered)"),
-        "expected `2/3 row(s) (filtered)` in title; full render:\n{rendered}"
+        rendered.contains("2/3 row(s) (filtered · / esc clears)"),
+        "expected `2/3 row(s) (filtered · / esc clears)` in title; full render:\n{rendered}"
     );
 }
 
@@ -757,7 +757,8 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
     );
 
     // The panel's own top border row is intact — the popup starts on
-    // the row below it, and one column in.
+    // the row below it, inside the panel's borders and centred across
+    // it.
     let lines: Vec<&str> = rendered.lines().collect();
     let panel_top = lines
         .iter()
@@ -767,9 +768,19 @@ fn connection_picker_floats_inside_the_panel_and_pads_outside_brackets() {
         !lines[panel_top].contains("pick a connection"),
         "picker landed on the panel's top border row:\n{rendered}"
     );
+    let row: Vec<char> = lines[panel_top + 1].chars().collect();
+    assert_eq!(row.first(), Some(&'│'), "the panel's border:\n{rendered}");
+    assert_eq!(row.last(), Some(&'│'), "the panel's border:\n{rendered}");
+    let left = row.iter().position(|&c| c == '╭').expect("popup corner");
+    let right = row.iter().rposition(|&c| c == '╮').expect("popup corner");
     assert!(
-        lines[panel_top + 1].starts_with("│╭[ ◆ pick a connection"),
-        "picker should float one row/column inside the panel:\n{rendered}"
+        lines[panel_top + 1].contains("╭[ ◆ pick a connection"),
+        "picker should float one row inside the panel:\n{rendered}"
+    );
+    let (gap_left, gap_right) = (left - 1, row.len() - 2 - right);
+    assert!(
+        gap_left.abs_diff(gap_right) <= 1,
+        "picker should be centred ({gap_left} left, {gap_right} right):\n{rendered}"
     );
 
     // Every popup row keeps a blank column before its right border, so

@@ -8,7 +8,7 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │> (empty — press e to focus)                              │
 ╰──────────────────────────────────────────────────────────╯
-╭[ ◆ result · 2/3 row(s) (filtered) ◆ ]────────────────────╮
+╭[ ◆ result · 2/3 row(s) (filtered · / esc clears) ◆ ]─────╮
 │name                                                      │
 │alice                                                     │
 │carol                                                     │

@@ -71,8 +71,12 @@ pub struct Probe {
     /// The migration tool found keeping this database's history, when
     /// the version isn't read from a configured version table.
     pub migration_tool: Option<String>,
-    /// That tool's current version, as it names it.
+    /// That tool's current version, as it names it. From a configured
+    /// version table, the highest id as written when none of its ids is
+    /// an integer (`schema_version` is then `None`).
     pub schema_label: Option<String>,
+    /// How many migrations that tool records as applied.
+    pub migrations_applied: Option<usize>,
 }
 
 /// Where a probe reads the schema version from.
@@ -109,6 +113,27 @@ pub fn parse_status(rows: &TypedRows) -> Probe {
     }
 }
 
+/// The version a probe shows from a version table's ids: the highest
+/// integer, or — when the column holds none, only text such as `1.2` —
+/// the highest of those as written, rather than no version at all.
+/// Pure.
+pub fn shown_version(ids: &[i64], others: &[String]) -> (Option<i64>, Option<String>) {
+    match ids.iter().copied().max() {
+        Some(v) => (Some(v), None),
+        None => (
+            None,
+            others
+                .iter()
+                .max_by(|a, b| {
+                    super::migrations::version_key(a)
+                        .cmp(&super::migrations::version_key(b))
+                        .then_with(|| a.cmp(b))
+                })
+                .cloned(),
+        ),
+    }
+}
+
 /// Probe one database. `patches` names the version table and, when the
 /// patch files were read, the files to reconcile against it.
 pub async fn run(
@@ -126,9 +151,15 @@ pub async fn run(
                 Ok(Some(m)) => {
                     probe.migration_tool = Some(m.tool.to_string());
                     probe.schema_label = m.version;
+                    probe.migrations_applied = Some(m.applied);
                     probe.pending = m.pending;
-                    probe.schema_error =
-                        m.failed.map(|f| format!("{} migration {f} failed", m.tool));
+                    // `migrations migration 12 failed` reads as a typo: name
+                    // the shared table instead.
+                    let who = match m.tool {
+                        "migrations" => "schema_migrations:",
+                        tool => tool,
+                    };
+                    probe.schema_error = m.failed.map(|f| format!("{who} migration {f} failed"));
                 }
                 Ok(None) => {}
                 Err(e) => probe.schema_error = Some(e),
@@ -143,11 +174,14 @@ pub async fn run(
             conn::run_statement_typed_capped(client, &sql, Some(patches::MAX_APPLIED_IDS))
                 .await
                 .map_err(|e| e.msg)?;
-        patches::applied_ids(&typed, truncated, cfg)
+        patches::applied_ids_and_others(&typed, truncated, cfg)
     };
     match read.await {
-        Ok(applied) => {
-            probe.schema_version = applied.iter().copied().max();
+        Ok((applied, others)) => {
+            (probe.schema_version, probe.schema_label) = shown_version(&applied, &others);
+            // Patch files carry integer ids, so an id that isn't one
+            // can't be the record of any of them: leaving it out makes
+            // nothing look pending that isn't.
             if let Some(files) = files {
                 probe.pending = Some(patches::reconcile(files.to_vec(), &applied).pending.len());
             }
@@ -195,5 +229,27 @@ mod tests {
             affected: None,
         });
         assert_eq!(p, Probe::default(), "no row: nothing known");
+    }
+
+    #[test]
+    fn a_version_column_without_integer_ids_shows_its_highest_as_written() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(shown_version(&[3, 12, 7], &[]), (Some(12), None));
+        assert_eq!(
+            shown_version(&[3], &s(&["9.9"])),
+            (Some(3), None),
+            "an integer is the version when there is one"
+        );
+        assert_eq!(
+            shown_version(&[], &s(&["1.9", "1.10", "1.2"])),
+            (None, Some("1.10".into())),
+            "1.10 is after 1.9"
+        );
+        assert_eq!(
+            shown_version(&[], &s(&["beta", "alpha"])),
+            (None, Some("beta".into())),
+            "no numbers: by text"
+        );
+        assert_eq!(shown_version(&[], &[]), (None, None));
     }
 }

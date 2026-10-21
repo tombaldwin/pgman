@@ -10,12 +10,14 @@ mode, as do `?` (help) and `:` (the command bar) — except while a text input
 has focus, where both are characters you meant to type — and except in
 the y/n prompts (confirm a statement, commit or roll back, terminate a
 session), which keep the keyboard until answered; help still opens
-from them. `]` / `[` (next /
+from them. On a Mac keyboard the F-keys take `fn`, so each has a plain
+spelling too: `!` opens the error detail wherever you aren't typing, and
+`:error`, `:notify` and `:tap` do what `F2`, `F3` and `F4` do. `]` / `[` (next /
 previous tab) and `1`..`9` (jump to tab) work from the grid and every panel
 but not while typing; `Ctrl-]` (next tab) and `Ctrl-T` (new tab) work from
 the editor too; `Ctrl-W` closes the current tab from any mode *except* while
 typing (editor, filters, search prompts — where `Ctrl-W` would collide with
-`\watch` or word-delete). `Ctrl-Tab` / `Ctrl-Shift-Tab`, `Alt-N` / `Alt-P`
+`\watch` or word-delete); a tab with SQL in it takes a second `Ctrl-W`. `Ctrl-Tab` / `Ctrl-Shift-Tab`, `Alt-N` / `Alt-P`
 and `Alt-1`..`Alt-9` do the same where the terminal delivers them. `z` / `Z`
 (zoom the results / the editor) and `+` / `-` / `0` (editor size) work from
 the grid; `Alt-Z` and `Alt-=` / `Alt--` / `Alt-0` do the same from the grid,
@@ -46,7 +48,7 @@ once a query has run share one key map.
 
 | Key | Action |
 |---|---|
-| `q` | Quit (`Ctrl-C` also quits, except from the editor, where it cancels a running query) |
+| `q` | Quit (`Ctrl-C` twice also quits, except from the editor, where it cancels a running query) |
 | `?` / `F1` | Toggle help (both work from every non-typing mode) |
 | `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |
@@ -59,7 +61,8 @@ once a query has run share one key map.
 | `L` | Active sessions + locks |
 | `E` | Environments: every database and replica, no connection needed; `Enter` connects, `d` discovers from AWS ([Environments](environments.md)) |
 | `Esc` | Back to the environments overview, when environments are configured |
-| `F3` | NOTIFY arrivals panel (also reachable from any mode) |
+| `F3` / `:notify` | NOTIFY arrivals panel (also reachable from any mode) |
+| `!` / `F2` / `:error` | The last error in full |
 | `]` / `[` / `1`..`9` / `Ctrl-T` | Next / previous tab, jump to tab N, new tab — see [Tabs](#tabs) |
 | `z` | Zoom the results to the whole body; `z` again restores the split exactly as it was |
 | `Z` | Zoom the editor and go there; `Esc` then `z` restores the split |
@@ -89,7 +92,7 @@ diff, all of which are also dispatched from this mode.
 | `Ctrl-Z` | Undo |
 | `Ctrl-Y` / `Ctrl-Shift-Z` | Redo |
 | `Ctrl-R` | Reverse-incremental history search — see [History search](#history-search) |
-| `Ctrl-W` | `\watch` — re-run the buffer (or last history entry) every 2s; any key stops |
+| `Ctrl-W` | `\watch` — re-run the buffer (or last history entry) every 2s; a `WATCH` badge shows while it runs; any key stops |
 | `Ctrl-X` | Open the buffer in `$EDITOR` (suspends the TUI, resumes on save) |
 | `Ctrl-S` | Save the current buffer as a named saved query |
 | `Ctrl-O` | Open the saved-queries panel |
@@ -214,6 +217,7 @@ don't list beside their table: an expanded partitioned table shows one
 | `/` | In-tree filter (live; ancestors of a match stay visible) |
 | `s` | Yank `SELECT * FROM <schema>.<table> LIMIT 100` template |
 | `i` | Yank `INSERT INTO … (cols) VALUES (NULL, …)` template |
+| `r` | Reload the schema — picks up tables other sessions made since you connected (`S`, `\d` and `W` also reload by themselves when the cache is empty while connected) |
 | `Esc` / `q` | Close (also drops the in-tree filter) |
 
 ## Schema wizard
@@ -321,7 +325,7 @@ the digits still switch tabs there.
 | `1` .. `9` | Jump directly to tab N (a digit past the last tab says how many are open) |
 | `Ctrl-]` | Next tab — also from the editor, where `]` is a character |
 | `Ctrl-T` | Open a new tab (fresh editor + result) |
-| `Ctrl-W` | Close the current tab (no-op on the last one) |
+| `Ctrl-W` | Close the current tab (no-op on the last one; press twice when it holds SQL) |
 | `Ctrl-Tab` / `Ctrl-Shift-Tab` | Next / previous tab, where the terminal delivers them |
 | `Alt-N` / `Alt-P`, `Alt-1` .. `Alt-9` | The same, where the terminal delivers Alt chords (iTerm on a Mac needs the option key set to `Esc+`) |
 
@@ -383,7 +387,7 @@ Open it at a named section with `:help <topic>` — `grid`, `editor`,
 |---|---|
 | `Esc` / `Enter` / `q` / `A` | Close |
 
-### Error detail (`F2`)
+### Error detail (`F2` / `!` / `:error`)
 
 Expands the most recent query failure (severity / code / detail / hint /
 affected schema, table, column, constraint). No-op if there's nothing to
@@ -391,7 +395,7 @@ show.
 
 | Key | Action |
 |---|---|
-| `Esc` / `q` / `F2` | Close |
+| `Esc` / `q` / `!` / `F2` | Close |
 
 ### Notifications (`F3`)
 

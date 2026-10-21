@@ -148,6 +148,29 @@ and breaking changes.
   Hibernate's `show_sql` console lines reconstruct. Find no longer eats
   `n`. `ctrl-l` works from the start card. `--demo`'s slow queries,
   sessions and wizard work. The help fits small terminals.
+- **The rest of that pass.** Plain keys for the F-keys a Mac keyboard
+  hides behind `fn`: `!` opens the error detail (`:error`, `:notify`,
+  `:tap` spell F2–F4), and the footer names the key that works where
+  you are. `ctrl-c` outside the editor and `ctrl-w` over a tab holding
+  SQL take a second press; a `WATCH` badge shows while `\watch` runs;
+  a cancel reads `cancelled`, not as the server's error. A later
+  success takes a stale error off the footer, and the confirm modal
+  keeps its `y`/`n` keys. `r` in the schema browser reloads the schema
+  (tables other sessions made), and an empty cache on a live connection
+  reloads by itself; `\d` on a name nothing matches says so. Esc after
+  Tab gives back what you typed, and Enter runs a finished statement
+  under a popup nobody picked from. Bracketed IPv6 hosts parse
+  (`postgres://u@[::1]:5433/db`); `\i` refuses files over 8 MB and
+  anything that isn't a regular file; `--log -` reads a piped log and
+  takes keys from the terminal; `--demo` honours `--log`.
+  Environments: Aurora readers sit under their writer; docker finds
+  postgis and registry-prefixed images, IPv6-only and ranged ports; a
+  dirty golang-migrate version shows as failed; a text id in a version
+  table shows instead of an error; drift compares Liquibase, Django and
+  Alembic versions as names; `migrations_dir` takes Flyway `locations`,
+  recursively, Java and Kotlin migrations included. Long lines in the
+  patch and log views wrap instead of being cut, the detail line cuts
+  an endpoint at a dot, and the pickers sit centred.
 - **`schema_lint` over MCP** — the schema wizard's findings (missing
   primary keys, unindexed foreign keys, unused indexes, bloat, …) for an
   agent to work through.

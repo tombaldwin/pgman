@@ -10,7 +10,7 @@ expression: dump(&buf)
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 SELECT id, email,…                                        ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ environments · schema drift ◆ ] v / q back ───────────────────────────────────────────────────╮
-│  schema version of each database, by environment — yellow is behind the newest or has patches pen│
+│  schema version by environment — yellow: behind, differs, or patches pending                     │
 │                                                                                                  │
 │    DATABASE  STAGING    QA  LOCAL                                                                │
 │    shop      v251 (+1)  —   —                                                                    │

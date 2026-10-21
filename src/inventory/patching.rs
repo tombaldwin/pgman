@@ -362,7 +362,7 @@ pub fn resolve(
     let report = super::gather(
         std::slice::from_ref(&env),
         &entries,
-        super::fetch_rds,
+        super::fetch_rds_listing,
         super::docker::fetch,
     )
     .pop()

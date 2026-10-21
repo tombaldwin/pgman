@@ -145,7 +145,7 @@ can't silently widen what an environment covers.
 
 | `kind` | Rows | Needs |
 | --- | --- | --- |
-| `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases` (default: the instance's `DBName`). Aurora instances carry no `DBName` — it's on the cluster — so give `databases`; Aurora readers aren't yet told apart from the writer. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
+| `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases` (default: the instance's `DBName`). Aurora keeps the writer, the readers and the database name on the cluster, so when an Aurora instance is listed `aws rds describe-db-clusters` is read too: readers list under the writer as replicas do, the cluster's `DatabaseName` is the default database, and naming any one instance brings the whole cluster, so a failover doesn't split it. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
 | `static` | One row per named connection in `connections.toml`, with its role. There's no engine version or status yet. | Nothing. |
 | `docker` | Local containers that expose 5432 or run a `postgres` image, whose names match one of `containers` (globs; default all). One row per entry in `databases` (default `postgres`), reached on the port 5432 is published to. A stopped container, or one that doesn't publish 5432, is listed with the reason it can't connect. | The `docker` CLI on `PATH`. `user`, `password_env` and `sslmode` apply; `ssh_tunnel` and `secrets` don't. |
 
@@ -189,6 +189,9 @@ the MCP `environments` tool when called with `probe: true`):
 - **`SCHEMA`**: the patch level, the highest id in `version_table`,
   as `v251`. Patch files the table hasn't recorded show as `v251 (+2)`
   in yellow; it's the same matching as the MCP `pending_patches` tool.
+  A text column holding no integer ids at all (`1.2`, `1.10`) shows
+  its highest as written instead of failing; applying patches still
+  refuses such a table.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
   `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has
@@ -213,13 +216,13 @@ tools by the table each keeps, and `SCHEMA` shows that tool's version:
 
 | Tool | Table | `SCHEMA` shows |
 |---|---|---|
-| Flyway | `flyway_schema_history` | `flyway 2.3.1`: the newest successful version. A failed migration shows `✗` in red. With `migrations_dir` naming its `V<version>__*.sql` directory, pending ones show as `(+2)`. |
+| Flyway | `flyway_schema_history` | `flyway 2.3.1`: the newest successful version. A failed migration shows `✗` in red. With `migrations_dir` naming its `V<version>__*.sql` directory, pending ones show as `(+2)`; see below. |
 | Liquibase | `databasechangelog` | the last changeset run |
 | Prisma | `_prisma_migrations` | the last finished migration; a failed one shows `✗` |
 | sqlx | `_sqlx_migrations` | the highest version; a failed one shows `✗` |
 | Django | `django_migrations` | the last `app.migration` applied |
 | Alembic | `alembic_version` | the current revision |
-| Rails, golang-migrate | `schema_migrations` | the highest version |
+| Rails, golang-migrate | `schema_migrations` | the highest version; golang-migrate's `dirty` (a migration that failed part way) shows `✗` |
 
 ```toml
 [[environments]]
@@ -228,6 +231,14 @@ name = "staging"
 probe = true
 migrations_dir = "~/src/app/src/main/resources/db/migration"   # Flyway only, optional
 ```
+
+`migrations_dir` takes what `flyway.locations` would: one directory or
+several, comma-separated, with or without a `filesystem:` prefix. Each
+is read recursively, as Flyway reads it. A directory under
+`src/main/resources` also brings in the same package under
+`src/main/java` and `src/main/kotlin`, so Java and Kotlin migrations
+(`V3__Backfill.java`) count too. A `classpath:` location is refused:
+pgman can't see a classpath, so name the directory it maps to instead.
 
 How a probe connects:
 
@@ -345,7 +356,7 @@ confirmed by typing its name; `protected = false` turns that off.
 | `Enter` | Connect to the database under the cursor. |
 | `P` | Apply the database's pending patches: a plan to confirm (`y`, or the environment's name when it's protected), then each patch in its own transaction. In the plan, `o` plans again letting patches that can't run in a transaction run outside one. See [applying patches](#applying-patches). |
 | `l` | Recent errors from the focused server's RDS log (ERROR, FATAL, PANIC from the newest files, grouped with a count). `STATEMENT` lines are left out. |
-| `v` | Schema drift: each database's version by environment, behind or pending in yellow. `v` again for the list. |
+| `v` | Schema drift: each database's version by environment, behind or pending in yellow. Versions that are names (Liquibase, Django, Alembic) can't be ordered: fewer migrations recorded is behind, and two different names at the same count are both yellow. An environment with several rows of one database (two primaries, a lagging replica) shows each version that differs. `v` again for the list. |
 | `R` | Probe again every 30 s while the overview is open (environments with `probe = true`; off until pressed). |
 | `d` | Discover environments from AWS (`space` choose, `s` save, `p` next profile/scope, `q` back). |
 | `r` | List again. |
