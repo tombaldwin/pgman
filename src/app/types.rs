@@ -1698,3 +1698,26 @@ pub struct TapHealth {
     /// Count of heartbeat events seen — for diagnostics.
     pub heartbeat_count: u64,
 }
+
+impl TapHealth {
+    /// The tap monitor's one-line status summary for this snapshot:
+    /// the setup hint before anything has arrived, the counters after.
+    /// Pure, so opening the monitor and every event that lands while
+    /// it is open render the same line.
+    pub fn monitor_status(&self) -> String {
+        let queries = self.query_count;
+        let beats = self.heartbeat_count;
+        if queries == 0 && beats == 0 {
+            return "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into();
+        }
+        let dropped_suffix = if self.dropped_events_total > 0 {
+            format!(
+                " · {} dropped (JAR backpressure)",
+                self.dropped_events_total
+            )
+        } else {
+            String::new()
+        };
+        format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
+    }
+}

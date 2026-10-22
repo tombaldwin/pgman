@@ -2002,6 +2002,21 @@ impl App {
     ///   update `tap_health` with the dropped-events counter
     ///   and bump the heartbeat-count tally.
     pub fn on_tap_event(&mut self, event: crate::tap::TapEvent) {
+        // The monitor writes its summary into the status line when it
+        // opens; an event landing while it is open must refresh that
+        // line, or "no events yet" outlives the events. Only the
+        // summary is replaced — any other status (a sort flash, an
+        // error) is the operator's and stays.
+        let shown_summary = (self.mode == Mode::TapMonitor)
+            .then(|| self.tap_health.monitor_status())
+            .filter(|s| self.last_status.as_deref() == Some(s.as_str()));
+        self.fold_tap_event(event);
+        if shown_summary.is_some() {
+            self.last_status = Some(self.tap_health.monitor_status());
+        }
+    }
+
+    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) {
         self.tap_health.last_event_at_unix_micros = event.received_at_unix_micros;
         match event.kind {
             crate::tap::TapKind::Heartbeat => {

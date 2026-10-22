@@ -4493,6 +4493,59 @@ fn f4_opens_tap_monitor_from_any_mode() {
     assert_eq!(a.mode, Mode::TapMonitor);
 }
 
+/// Opened on an empty ring, the monitor's status said "no events yet"
+/// and kept saying it after events streamed in: it was written once, on
+/// open. Events arriving through the app's message path must refresh it.
+#[test]
+fn tap_monitor_status_follows_events_that_arrive_while_it_is_open() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.start_tap_monitor();
+    assert!(a
+        .last_status
+        .as_deref()
+        .unwrap_or("")
+        .contains("no events yet"));
+    a.on_msg(AppMsg::TapEvent {
+        event: tap_query("SELECT 1", 1),
+    });
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        !status.contains("no events yet") && status.contains("1 queries"),
+        "status must reflect the event that arrived; got {status}"
+    );
+    a.on_msg(AppMsg::TapEvent {
+        event: tap_heartbeat(3, 2),
+    });
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(
+        status.contains("1 queries")
+            && status.contains("1 heartbeats")
+            && status.contains("3 dropped"),
+        "got {status}"
+    );
+}
+
+/// The refresh only replaces the monitor's own summary: a status the
+/// operator just caused (a sort flash) stays, and so does the empty
+/// status after the monitor closed.
+#[test]
+fn tap_events_do_not_overwrite_another_status() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.start_tap_monitor();
+    a.last_status = Some("tap hotspots · sort: calls".into());
+    a.on_msg(AppMsg::TapEvent {
+        event: tap_query("SELECT 1", 1),
+    });
+    assert_eq!(a.last_status.as_deref(), Some("tap hotspots · sort: calls"));
+    a.on_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
+    a.on_msg(AppMsg::TapEvent {
+        event: tap_query("SELECT 2", 2),
+    });
+    assert_eq!(a.last_status, None);
+}
+
 #[test]
 fn tap_monitor_status_distinguishes_no_traffic_from_no_jar() {
     // Empty case.
