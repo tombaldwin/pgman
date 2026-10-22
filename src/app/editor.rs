@@ -130,10 +130,19 @@ impl App {
             .as_ref()
             .map(|c| c.selected.is_none())
             .unwrap_or(false);
+        // Whitespace is not narrowing: it ends the word the popup was
+        // completing. Kept alive across it, the cycle re-anchored on
+        // whatever came next — `from invoices i` had the popup offer
+        // `inner join` for the alias, and Enter wrote it in. A space
+        // after `FROM` / `JOIN` / … still opens a fresh popup through
+        // the keyword auto-trigger below.
         let is_narrowing_key = match key.code {
-            KeyCode::Char(_) => !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT),
+            KeyCode::Char(c) => {
+                !c.is_whitespace()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            }
             KeyCode::Backspace | KeyCode::Delete => true,
             _ => false,
         };

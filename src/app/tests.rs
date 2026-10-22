@@ -11634,3 +11634,54 @@ fn demo_tap_feed_holds_the_frame_clock_until_drained() {
         "a drained feed must let the clock idle"
     );
 }
+
+// ---- H1: a popup the operator did not ask for never eats Enter ----------
+
+fn invoice_cache_app() -> App {
+    let mut a = test_app_with_cache(&[
+        ("panel_usr_invoices", &["id", "customer_id", "total"]),
+        ("panel_usr_customers", &["id", "name"]),
+        ("panel_usr_items", &["id", "invoice_id"]),
+    ]);
+    a.mode = Mode::Editor;
+    a
+}
+
+#[test]
+fn a_space_after_a_completed_table_name_closes_the_popup() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices");
+    assert!(
+        a.completion.is_some(),
+        "the FROM popup narrowed to the table"
+    );
+    type_str(&mut a, " i");
+    assert!(
+        a.completion.is_none(),
+        "the alias is not a completion prefix: {:?}",
+        a.completion.as_ref().map(|c| &c.candidates)
+    );
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "no stale completion status: {:?}",
+        a.last_status
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_invoices i\n");
+}
+
+#[test]
+fn an_alias_then_enter_then_a_join_types_through_verbatim() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices i");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "left join panel_usr_items t");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "on t.invoice_id = i.id");
+    assert_eq!(
+        a.editor.buffer,
+        "select * from panel_usr_invoices i\nleft join panel_usr_items t\non t.invoice_id = i.id"
+    );
+}
