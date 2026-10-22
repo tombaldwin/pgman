@@ -35,14 +35,18 @@ fn editor_app(buffer: &str) -> App {
 
 /// Ctrl-F with a `pg_format` on the given PATH: the real subprocess
 /// runs (the stub is a shell script that has to be spawned), and the
-/// status names it. The stub is copied to a throwaway directory under
-/// the name the lookup wants, `pg_format`.
+/// status names it. The stub is linked into a throwaway directory under
+/// the name the lookup wants, `pg_format` — linked, not copied: on Linux,
+/// running a file just written fails with ETXTBSY whenever another test
+/// thread forks while the write handle is still open, and the test then
+/// sees neither formatter's output.
+#[cfg(unix)]
 #[test]
 fn reformat_uses_pg_format_when_it_is_on_path() {
     let dir = std::env::temp_dir().join(format!("pgman-pgfmt-sub-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::copy(stub("fake_pg_format"), dir.join("pg_format")).unwrap();
+    std::os::unix::fs::symlink(stub("fake_pg_format"), dir.join("pg_format")).unwrap();
     let mut a = editor_app("select 1");
     a.reformat_buffer_with_path(Some(dir.as_os_str()));
     let _ = std::fs::remove_dir_all(&dir);
