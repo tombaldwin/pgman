@@ -13,6 +13,11 @@ pub const MAX_ROWS: usize = 1000;
 /// (docs/backlog/null-cells.md).
 pub type Cell = Option<String>;
 
+/// What the grid, row detail and cell detail draw for SQL NULL — dimmed
+/// and italic in `theme.null_cell`, so it never reads as the text
+/// `NULL`. An empty string draws as nothing.
+pub const NULL_MARKER: &str = "NULL";
+
 /// A cell's text with NULL as `""` — for readers to which the two mean
 /// the same (a catalog parser, a size column). Anything that shows,
 /// writes or compares a value must look at the `Option` instead.
@@ -58,7 +63,10 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
                 .rows
                 .iter()
                 .filter_map(|r| r.get(col))
-                .map(|c| UnicodeWidthStr::width(show_controls(cell_text(c), true).as_ref()))
+                .map(|c| match c {
+                    Some(text) => UnicodeWidthStr::width(show_controls(text, true).as_ref()),
+                    None => NULL_MARKER.len(),
+                })
                 .max()
                 .unwrap_or(0);
             UnicodeWidthStr::width(header.as_str())
@@ -172,14 +180,14 @@ pub fn show_controls(s: &str, single_line: bool) -> std::borrow::Cow<'_, str> {
 
 /// Is every non-NULL cell of column `col` a number as Postgres prints
 /// one (`42`, `-99999999.99`, `1e+30`, `NaN`)? A column of only NULLs
-/// is not. Numeric columns are never cut by [`fit_column_widths`]: a
+/// is not, and neither is one holding an empty string. Numeric columns are never cut by [`fit_column_widths`]: a
 /// truncated number is a wrong number. Pure / testable.
 pub fn is_numeric_column(grid: &Grid, col: usize) -> bool {
     let mut any = false;
-    for cell in grid.rows.iter().filter_map(|r| r.get(col)).map(cell_text) {
-        if cell.is_empty() {
+    for cell in grid.rows.iter().filter_map(|r| r.get(col)) {
+        let Some(cell) = cell else {
             continue;
-        }
+        };
         if !looks_numeric(cell) {
             return false;
         }
@@ -365,6 +373,30 @@ mod tests {
             show_controls("plain é 東京", true),
             std::borrow::Cow::Borrowed("plain é 東京")
         ));
+    }
+
+    #[test]
+    fn a_null_is_as_wide_as_its_marker_and_an_empty_string_is_nothing() {
+        let g = Grid {
+            columns: vec!["n".into(), "e".into()],
+            rows: vec![vec![None, Some(String::new())]],
+            truncated: false,
+        };
+        assert_eq!(column_widths(&g, 48), vec![NULL_MARKER.len(), 1]);
+    }
+
+    #[test]
+    fn an_empty_string_is_not_a_number_but_a_null_is_no_evidence() {
+        let g = Grid {
+            columns: vec!["with_null".into(), "with_empty".into()],
+            rows: vec![
+                vec![Some("1".into()), Some("1".into())],
+                vec![None, Some(String::new())],
+            ],
+            truncated: false,
+        };
+        assert!(is_numeric_column(&g, 0));
+        assert!(!is_numeric_column(&g, 1));
     }
 
     #[test]

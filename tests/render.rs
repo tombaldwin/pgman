@@ -2206,3 +2206,93 @@ fn an_overlay_leaves_a_wrapped_error_footer_whole() {
         );
     }
 }
+
+/// The text run starting at `(x, y)`, `len` cells long.
+fn run_at(buf: &Buffer, x: u16, y: u16, len: u16) -> String {
+    (x..x + len).map(|x| buf[(x, y)].symbol()).collect()
+}
+
+/// Every place `needle` is drawn, cell-exact.
+fn find_all(buf: &Buffer, needle: &str) -> Vec<(u16, u16)> {
+    let n = needle.chars().count() as u16;
+    let mut hits = Vec::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width.saturating_sub(n - 1) {
+            if run_at(buf, x, y, n) == needle {
+                hits.push((x, y));
+            }
+        }
+    }
+    hits
+}
+
+/// `SELECT '' AS e, NULL AS n, 'NULL' AS t`, as a grid.
+fn null_grid_app() -> App {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.grid = Grid {
+        columns: vec!["e".into(), "n".into(), "t".into()],
+        rows: vec![vec![Some(String::new()), None, Some("NULL".into())]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a
+}
+
+/// The NULL is drawn as a dimmed italic `NULL` in `theme.null_cell`, the
+/// text `'NULL'` as plain text, the empty string as nothing: three
+/// different things on screen, where the grid used to draw the first
+/// and the last the same.
+#[test]
+fn grid_draws_null_as_a_dimmed_marker_and_the_empty_string_as_nothing() {
+    let mut a = null_grid_app();
+    let theme = Theme::default();
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let (hx, hy) = find_cell(&buf, "e  n").expect("header drawn");
+    let data: Vec<(u16, u16)> = find_all(&buf, "NULL")
+        .into_iter()
+        .filter(|(_, y)| *y == hy + 1)
+        .collect();
+    assert_eq!(data.len(), 2, "the NULL and the text 'NULL':\n{rendered}");
+    let marker = &buf[data[0]];
+    assert_eq!(marker.fg, theme.null_cell, "NULL marker colour");
+    assert!(marker.modifier.contains(Modifier::ITALIC), "NULL is italic");
+    let text = &buf[data[1]];
+    assert_ne!(text.fg, theme.null_cell, "the text 'NULL' is not dimmed");
+    assert!(!text.modifier.contains(Modifier::ITALIC));
+    // The empty string's column draws nothing.
+    assert_eq!(buf[(hx, hy + 1)].symbol(), " ", "\n{rendered}");
+}
+
+#[test]
+fn row_detail_and_cell_detail_say_null_and_empty_string_apart() {
+    let theme = Theme::default();
+    let mut a = null_grid_app();
+    a.mode = Mode::RowDetail;
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let empty = find_all(&buf, "(empty string)");
+    assert_eq!(empty.len(), 1, "\n{rendered}");
+    assert_eq!(buf[empty[0]].fg, theme.muted);
+    // The `n` field is the marker, in the NULL colour; the `t` field's
+    // `NULL` is text.
+    let colours: Vec<_> = find_all(&buf, "NULL").iter().map(|p| buf[*p].fg).collect();
+    assert!(colours.contains(&theme.null_cell), "\n{rendered}");
+    assert!(colours.contains(&theme.text), "\n{rendered}");
+
+    for (field, want, colour) in [
+        (0, "(empty string)", theme.muted),
+        (1, "NULL", theme.null_cell),
+        (2, "NULL", theme.text),
+    ] {
+        a.row_detail.field = field;
+        a.mode = Mode::CellDetail;
+        let buf = render(&mut a, 80, 24);
+        let at = find_all(&buf, want);
+        let rendered = dump(&buf);
+        assert!(!at.is_empty(), "field {field}:\n{rendered}");
+        assert_eq!(buf[at[0]].fg, colour, "field {field}:\n{rendered}");
+    }
+}
