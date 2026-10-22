@@ -114,6 +114,47 @@ const GENERIC: &[&str] = &[
     "public",
 ];
 
+/// Directory names that say what a directory holds, not whose project
+/// it is: a path pgman shows keeps them (`~/git/▓▓▓▓/db/patches`).
+/// Compared lowercased, alongside [`GENERIC`].
+const GENERIC_PATH: &[&str] = &[
+    "users",
+    "home",
+    "git",
+    "src",
+    "code",
+    "projects",
+    "project",
+    "repos",
+    "repo",
+    "work",
+    "workspace",
+    "clients",
+    "client",
+    "documents",
+    "desktop",
+    "volumes",
+    "tmp",
+    "var",
+    "opt",
+    "srv",
+    "sql",
+    "patches",
+    "patch",
+    "migrations",
+    "migration",
+    "resources",
+    "pgman",
+    "toml",
+    "api",
+    "service",
+    "backend",
+    "server",
+    "web",
+    "apps",
+    "scripts",
+];
+
 /// Shortest segment matched on its own, away from the rest of its name.
 /// Shorter ones (`ab`) would black out ordinary words all over the
 /// screen; they are still redacted inside a full match.
@@ -271,6 +312,17 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
     for e in &app.environments.reports {
         out.push(e.name.clone());
         out.extend(e.profile.clone());
+        // Its patch and migration directories, which a probe error
+        // ("cannot list <dir>: …") and the patch plan show.
+        if let Some(probe) = &e.probe {
+            let patches = probe
+                .version_table
+                .as_ref()
+                .and_then(|v| v.patches.as_deref());
+            for path in patches.into_iter().chain(probe.migrations_dir.as_deref()) {
+                out.extend(path_names(path));
+            }
+        }
         for t in &e.targets {
             out.push(t.server.clone());
             out.push(t.database.clone());
@@ -304,6 +356,17 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
             out.extend(p.env.secrets.values().cloned());
             if let Some(scope) = p.env.source.rds_scope() {
                 out.extend(scope.profile);
+            }
+            // The project's version table: its patch directory, under the
+            // project's own directory, shows in the proposal and in the
+            // "version_table from <project>/.pgman/pgman.toml" note.
+            if let Some(path) = p
+                .env
+                .version_table
+                .as_ref()
+                .and_then(|v| v.patches.as_deref())
+            {
+                out.extend(path_names(path));
             }
         }
     }
@@ -526,6 +589,26 @@ fn arns(s: &str, out: &mut Vec<Range<usize>>) {
     }
 }
 
+/// The parts of a directory path that could name a project or client:
+/// every word in it that isn't a generic directory or infrastructure
+/// word, as known names. `~/git/examplecorp-api/db/patches` gives
+/// `examplecorp`, so the path shows as `~/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches`.
+fn path_names(path: &str) -> Vec<String> {
+    let lower = path.to_ascii_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    for r in alnum_runs(&lower) {
+        let word = &lower[r];
+        if word.chars().count() >= MIN_SEGMENT
+            && !is_generic(word)
+            && !GENERIC_PATH.contains(&word)
+            && !out.iter().any(|w| w == word)
+        {
+            out.push(word.to_string());
+        }
+    }
+    out
+}
+
 /// The login name, as a known name: the home directory's last part
 /// (what a path on screen shows) and `$USER`, when they differ.
 fn login_names(home: Option<std::path::PathBuf>, user: Option<String>) -> Vec<String> {
@@ -677,6 +760,52 @@ mod tests {
         ] {
             assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
         }
+    }
+
+    #[test]
+    fn a_path_names_only_its_distinctive_directories() {
+        assert_eq!(
+            path_names("~/git/examplecorp-api/db/patches"),
+            ["examplecorp"]
+        );
+        assert_eq!(
+            path_names("/Users/dev/work/clients/Examplecorp/ledger-service/src/main/resources/db/migration"),
+            ["examplecorp", "ledger"]
+        );
+        assert!(path_names("/home/dev/git/api/db/patches").is_empty());
+    }
+
+    #[test]
+    fn app_names_includes_an_environments_probe_directories() {
+        // A probe error says "cannot list <dir>: …".
+        use crate::inventory::{EnvReport, ProbeSettings, VersionTable};
+        let mut a = crate::app::App::new(
+            crate::theme::Theme::default(),
+            None,
+            Vec::new(),
+            crate::safety::SafetyConfig::default(),
+        );
+        a.environments.reports = vec![EnvReport {
+            name: "staging".into(),
+            source: "docker".into(),
+            targets: Vec::new(),
+            error: None,
+            profile: None,
+            probe: Some(ProbeSettings {
+                version_table: Some(VersionTable {
+                    table: "public.db_version".into(),
+                    column: "id".into(),
+                    patches: Some("~/git/examplecorp-api/db/patches".into()),
+                    databases: Vec::new(),
+                }),
+                migrations_dir: Some("~/git/ledgerco-flyway/db/migration".into()),
+            }),
+        }];
+        let names = app_names(&a);
+        for want in ["examplecorp", "ledgerco", "flyway"] {
+            assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
+        }
+        assert!(!names.iter().any(|n| n == "patches" || n == "git"));
     }
 
     #[test]

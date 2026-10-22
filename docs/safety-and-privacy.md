@@ -446,7 +446,14 @@ layout doesn't move. A `REDACT` badge sits first in the footer.
   profiles and password variables; an open discovery's proposals; and
   `AWS_PROFILE`. A name is matched case-insensitively as a whole word,
   and so is each distinctive part of it, so a truncated `examplecorp-pr…`
-  is still caught.
+  is still caught;
+- the project in a directory path pgman was given: a discovery's
+  version-table patch directory (and the project config it came from),
+  and an environment's patch and migration directories. Each word of the
+  path is matched except generic directory words (`git`, `src`, `db`,
+  `patches`, `migration`…), so `~/git/examplecorp-api/db/patches` shows
+  as `~/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches`. A project named after a table
+  (`orders`) blacks that word out elsewhere too.
 
 Generic parts stay, so a screenshot still says which database it is:
 `examplecorp-prod-replica` shows as `▓▓▓▓▓▓▓▓▓▓▓-prod-replica`, and an

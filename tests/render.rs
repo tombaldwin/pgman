@@ -1916,6 +1916,50 @@ fn redacted_overview_hides_an_rds_profile_named_in_its_error() {
 }
 
 #[test]
+fn redacted_discovery_hides_the_project_in_its_version_table_paths() {
+    // A proposal picks up the project's version table: its patch
+    // directory and the config file it came from both name the
+    // project's directory, which is often the client's name.
+    use pgman::inventory::discover::with_version_table;
+    let mut found = pgman::demo::discovery();
+    let root = "/home/dev/git/examplecorp-api";
+    with_version_table(
+        &mut found.proposals,
+        Some(&(
+            std::path::PathBuf::from(format!("{root}/.pgman/pgman.toml")),
+            pgman::inventory::VersionTable {
+                table: "public.db_version".into(),
+                column: "id".into(),
+                patches: Some(format!("{root}/db/patches")),
+                databases: Vec::new(),
+            },
+        )),
+    );
+    let chosen = vec![false; found.proposals.len()];
+    let mut a = settle_app();
+    a.environments.discovery = Some(pgman::app::DiscoveryUi {
+        found: Some(found),
+        chosen,
+        ..Default::default()
+    });
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 160, 45));
+    assert!(
+        off.contains("examplecorp-api/db/patches") && off.contains("examplecorp-api/.pgman"),
+        "the paths never on screen:\n{off}"
+    );
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 45));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    // The generic directories still say what the path is.
+    assert!(on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches"), "{on}");
+    assert!(
+        on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/.pgman/pgman.toml"),
+        "{on}"
+    );
+}
+
+#[test]
 fn redacted_picker_hides_the_credential_variable_names() {
     // A picker row ends `password ← $VAR  user ← $VAR`; a project's
     // variable names tend to carry its client's name.
