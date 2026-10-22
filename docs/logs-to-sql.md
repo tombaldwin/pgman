@@ -126,6 +126,12 @@ runnable SQL with bind values substituted in:
   [hibernate] select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=48204
 ```
 
+A statement that failed in the log (an `ERROR:` + `STATEMENT:` pair from a
+Postgres log) is marked `✗`, and while it is highlighted the popup's bottom
+border carries the error: `failed in the log: relation "invoice_lnes" does
+not exist at character 15`. Loading it says the same in the status line,
+since running it again will likely fail the same way.
+
 Press `c` to flip to the cluster view — the same queries grouped by shape,
 most-repeated first, so a loop-driven select stands out instead of hiding
 among near-identical rows in a longer log:

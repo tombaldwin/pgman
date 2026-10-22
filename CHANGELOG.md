@@ -12,7 +12,7 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   query marked failed with the error message — what the default
   `log_min_error_statement` logs with nothing else on. A statement
   `log_statement` already logged is marked failed rather than listed
-  twice.
+  twice. The log picker marks a failed pick `✗` and shows its error.
 
 ### Fixed
 

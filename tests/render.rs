@@ -1000,6 +1000,44 @@ fn log_picker_scrolls_to_keep_the_focused_row_visible() {
     );
 }
 
+/// A pick that failed in the log wears a `✗`, and the focused one's
+/// error is on the popup's bottom border — gone when the cursor moves
+/// to one that ran.
+#[test]
+fn log_picker_marks_a_failed_statement_and_shows_its_error() {
+    let mut a = settle_app();
+    a.mode = pgman::app::Mode::LogPick;
+    a.log_pick.picks = pgman::query::pglog::parse(
+        "[101] LOG:  statement: select 1\n\
+         [101] ERROR:  relation \"invoice_lnes\" does not exist at character 15\n\
+         [101] STATEMENT:  select * from invoice_lnes",
+    );
+    assert_eq!(a.log_pick.picks.len(), 2, "fixture check");
+    a.log_pick.index = 1;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        rendered.contains("▶ [postgres]  ✗ select * from invoice_lnes"),
+        "the failed row is not marked:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("[postgres]  select 1"),
+        "the row that ran is marked:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "failed in the log: relation \"invoice_lnes\" does not exist at character 15"
+        ),
+        "the focused pick's error is not shown:\n{rendered}"
+    );
+
+    a.log_pick.index = 0;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        !rendered.contains("failed in the log"),
+        "the error outlived the focus:\n{rendered}"
+    );
+}
+
 /// The picker's triage header reads the `log_pick.clusters` cache —
 /// written when the picks are set and on every view toggle — instead
 /// of re-running `nplus1::summarize`, which re-fingerprints and

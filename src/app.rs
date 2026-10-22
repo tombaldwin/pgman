@@ -3181,6 +3181,20 @@ impl App {
     /// statement that cannot run. When no member is bound (the log had
     /// no bind lines for this shape) the template loads and the flag
     /// lets Enter say so instead of calling it `loaded query`.
+    /// The focused pick's error when it failed where it was logged —
+    /// the all-queries view only: a cluster row is a shape, not a run.
+    pub fn focused_log_pick_error(&self) -> Option<&str> {
+        match self.log_pick.view {
+            LogPickView::AllQueries => self
+                .log_pick
+                .picks
+                .get(self.log_pick.index)?
+                .error
+                .as_deref(),
+            LogPickView::Clusters => None,
+        }
+    }
+
     fn focused_log_pick_sql(&self) -> Option<(String, bool)> {
         let sql = match self.log_pick.view {
             LogPickView::AllQueries => self

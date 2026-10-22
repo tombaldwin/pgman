@@ -3040,6 +3040,37 @@ fn log_pick_enter_in_cluster_view_loads_a_runnable_member_not_the_template() {
     );
 }
 
+/// A pick that failed in the log says so as it loads: running it again
+/// will likely fail the same way.
+#[test]
+fn log_pick_enter_on_a_failed_statement_says_it_failed() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.log_pick.picks = crate::query::pglog::parse(
+        "[101] ERROR:  relation \"invoice_lnes\" does not exist at character 15\n\
+         [101] STATEMENT:  select * from invoice_lnes\n\
+         [101] LOG:  statement: select 1",
+    );
+    a.mode = Mode::LogPick;
+    // A cluster row is a shape, not a run: it has no error of its own.
+    a.log_pick.view = LogPickView::Clusters;
+    assert_eq!(a.focused_log_pick_error(), None);
+    a.log_pick.view = LogPickView::AllQueries;
+    assert!(a.focused_log_pick_error().is_some());
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "select * from invoice_lnes;");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(
+            "loaded query · 27 char(s) · failed in the log: relation \"invoice_lnes\" does not exist at character 15"
+        )
+    );
+    // The one that ran loads as before.
+    a.log_pick.picks = crate::query::pglog::parse("[101] LOG:  statement: select 1");
+    a.mode = Mode::LogPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.last_status.as_deref(), Some("loaded query · 9 char(s)"));
+}
+
 #[test]
 fn log_pick_enter_on_a_cluster_with_no_bound_member_loads_the_template_and_says_so() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
