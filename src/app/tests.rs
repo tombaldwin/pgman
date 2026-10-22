@@ -2214,17 +2214,34 @@ fn row_insert_sql_keeps_null_and_the_empty_string_apart() {
     );
 }
 
+/// The yank's output, pasted back, inserts the row it copied — numbers
+/// and booleans included, quoted as untyped literals.
 #[test]
-fn format_sql_literal_passes_numerics_unquoted() {
-    assert_eq!(format_sql_literal(Some("42")), "42");
-    assert_eq!(format_sql_literal(Some("3.14")), "3.14");
-    assert_eq!(format_sql_literal(Some("-1")), "-1");
+fn row_insert_sql_quotes_every_value() {
+    let cols = ["id", "code", "ok"].map(String::from);
+    let row = [Some("1".into()), Some("007".into()), Some("t".into())];
+    assert_eq!(
+        row_insert_sql("public", "t", &cols, &row),
+        "INSERT INTO public.t (id, code, ok) VALUES ('1', '007', 't');"
+    );
 }
 
 #[test]
-fn format_sql_literal_lowercases_booleans() {
-    assert_eq!(format_sql_literal(Some("TRUE")), "true");
-    assert_eq!(format_sql_literal(Some("False")), "false");
+fn format_sql_literal_quotes_numbers_so_their_text_survives() {
+    // An untyped literal takes the column's type, so a number column
+    // reads these as numbers — and a text column keeps them exactly.
+    assert_eq!(format_sql_literal(Some("42")), "'42'");
+    assert_eq!(format_sql_literal(Some("3.14")), "'3.14'");
+    assert_eq!(format_sql_literal(Some("-1")), "'-1'");
+    assert_eq!(format_sql_literal(Some("007")), "'007'");
+    assert_eq!(format_sql_literal(Some("1e3")), "'1e3'");
+    assert_eq!(format_sql_literal(Some("NaN")), "'NaN'");
+}
+
+#[test]
+fn format_sql_literal_keeps_boolean_looking_text_as_it_is() {
+    assert_eq!(format_sql_literal(Some("TRUE")), "'TRUE'");
+    assert_eq!(format_sql_literal(Some("t")), "'t'");
 }
 
 #[test]
@@ -3920,7 +3937,7 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
     assert!(
         a.editor
             .buffer
-            .contains("SELECT * FROM public.users WHERE id = 42"),
+            .contains("SELECT * FROM public.users WHERE id = '42'"),
         "expected parent select; got: {}",
         a.editor.buffer
     );

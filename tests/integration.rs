@@ -5696,3 +5696,44 @@ fn mcp_query_keeps_null_apart_from_the_empty_string() {
         serde_json::json!([{"e": "", "n": null, "s": " "}])
     );
 }
+
+/// The `I` yank's INSERT, run against the table it was copied from,
+/// puts back the row it copied: a NULL, an empty string, a space, a
+/// zero-padded code in a text column, a number and a boolean — none of
+/// them turned into another value on the way.
+#[tokio::test]
+async fn the_insert_yank_puts_back_the_row_it_copied() {
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    let (client, _tunnel) =
+        pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+            .await
+            .expect("connect writable");
+    let table = it_name("yank");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int, e text, n text, s text, code text, \
+             amount numeric, ok boolean); \
+             INSERT INTO {table} VALUES (1, '', NULL, ' ', '007', 1.50, true)"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let insert = pgman::app::row_insert_sql("public", &table, &before.columns, &before.rows[0]);
+    client
+        .batch_execute(&format!("DELETE FROM {table}; {insert}"))
+        .await
+        .unwrap_or_else(|e| panic!("{insert}: {e}"));
+    let after = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select again");
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert_eq!(after.rows, before.rows, "{insert}");
+    assert_eq!(after.rows[0][1], Some(String::new()));
+    assert_eq!(after.rows[0][2], None);
+    assert_eq!(after.rows[0][4].as_deref(), Some("007"));
+}

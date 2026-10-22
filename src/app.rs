@@ -828,27 +828,21 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
     Some((schema, t.name.clone()))
 }
 
-/// Render a grid cell as a SQL literal. SQL NULL → `NULL`; the empty
-/// string → `''` (they are different values, and writing `NULL` for
-/// `''` changed the row the yank was copying). Numeric strings pass
-/// through unquoted. Anything else is single-quoted with embedded
-/// quotes doubled. Best-effort — types aren't tracked through the
-/// renderer, so JSON / arrays / bytea would all hit the string branch
-/// and get quoted; the operator edits the literal in the editor
-/// afterwards if needed.
+/// Render a grid cell as a SQL literal: SQL NULL → `NULL`, and every
+/// value — the empty string included — a single-quoted string with
+/// embedded quotes doubled. NULL and `''` are different values: writing
+/// `NULL` for `''` changed the row the yank was copying.
+///
+/// A value is quoted even when it looks like a number or a boolean. The
+/// grid holds text, not types, so it cannot know a column is numeric;
+/// a quoted literal is an untyped one, which Postgres reads as the
+/// target column's type (`'42'` into an `integer`, `'t'` into a
+/// `boolean`). Bare, `007` in a text column came back as `7`, `1e3` as
+/// `1000`, `TRUE` as `true`, and `NaN` was read as a column name.
 pub fn format_sql_literal(cell: Option<&str>) -> String {
     let Some(s) = cell else {
         return "NULL".to_string();
     };
-    // Numeric? Try parsing both integer and float forms.
-    if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
-        return s.to_string();
-    }
-    // Booleans pass through as identifiers (Postgres accepts them).
-    if matches!(s.to_ascii_lowercase().as_str(), "true" | "false") {
-        return s.to_ascii_lowercase();
-    }
-    // Default: SQL string literal with `'` doubled.
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for c in s.chars() {
