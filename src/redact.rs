@@ -301,6 +301,9 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
             }
         }
     }
+    // The start card's `databases` line lists every database on the
+    // server, not only the one connected to.
+    out.extend(app.databases.iter().map(|d| d.name.clone()));
     out.extend(app.redact_env_names.iter().cloned());
     out
 }
@@ -638,9 +641,14 @@ mod tests {
             probe: None,
         }];
         a.redact_env_names = vec!["loginname".into()];
+        a.databases = vec![crate::app::DatabaseInfo {
+            name: "otherdb".into(),
+            size: "1 GB".into(),
+        }];
         let names = app_names(&a);
         for want in [
             "loginname",
+            "otherdb",
             "live.example.net",
             "liveuser",
             "livedb",

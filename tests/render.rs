@@ -1851,3 +1851,26 @@ fn header_keeps_database_and_user_beside_a_long_rds_endpoint() {
     assert!(line.contains("Database: ledger"), "{line}");
     assert!(line.contains("User: ledger_app"), "{line}");
 }
+
+#[test]
+fn redacted_demo_start_card_hides_every_database_on_the_server() {
+    // The start card's `databases` line lists the server's other
+    // databases too, not only the one connected to.
+    let mut a = pgman::demo::launch_app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.redact = true;
+    let rendered = dump(&render(&mut a, 160, 45));
+    assert!(
+        rendered.contains("databases"),
+        "no databases line:\n{rendered}"
+    );
+    for name in ["ledger", "ledgerlog", "billing"] {
+        assert!(
+            !rendered
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|w| w == name || w.starts_with("ledger_")),
+            "{name} shows in clear:\n{rendered}"
+        );
+    }
+}
