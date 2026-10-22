@@ -4,9 +4,9 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────╮
-│ Server: localhost:5433  •  Database: ledger  •  User: billing                                                                ││                                                 PostgreSQL   results │
+│ Server: ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432  •  Database: ledger  •  User: billing                  ││                                                 PostgreSQL   results │
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1                                                             ││                                                <?> help  <:> command │
-│ Via: --demo (synthetic data)                                                                                                 ││                                               <E> envs  <ctrl-t> tab │
+│ Via: --demo, synthetic data · environment staging ledger-staging/ledger (direct)                                             ││                                               <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────╯
  1 empty                                                                                                                                                         ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -17,7 +17,7 @@ expression: dump(&buf)
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ connected to ledger on localhost:5433 · pg 16.4 · RO                                                                                                                                                 │
+│ connected to ledger on ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432 · pg 16.4 · RO                                                                                                   │
 │                                                                                                                                                                                                      │
 │   e   write a query                                                 S   schema browser (26 tables)                                                                                                   │
 │   Q   saved queries (4)                                             T   slow queries                                                                                                                 │

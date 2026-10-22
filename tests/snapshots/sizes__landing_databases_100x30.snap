@@ -4,9 +4,9 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ─────────────────────────────────────────────────╮╭──────────────────────────────────╮
-│ Server: localhost:5433  •  Database: ledger                  ││             PostgreSQL   results │
+│ Server: ledger-staging…  •  Database: ledger                 ││             PostgreSQL   results │
 │ Status: connected · pg 16.4  •  Session:  read-only          ││            <?> help  <:> command │
-│ Via: --demo (synthetic data)                                 ││           <E> envs  <ctrl-t> tab │
+│ Via: --demo, synthetic data · environment staging ledger-st… ││           <E> envs  <ctrl-t> tab │
 ╰──────────────────────────────────────────────────────────────╯╰──────────────────────────────────╯
  1 empty                                                     ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
@@ -17,7 +17,7 @@ expression: dump(&buf)
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭[ ◆ start ◆ ]─────────────────────────────────────────────────────────────────────────────────────╮
-│ connected to ledger on localhost:5433 · pg 16.4 · RO                                             │
+│ connected to ledger on ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws…:5432 · pg 16.4 · RO  │
 │ databases  受 注 管 理 デ ー タ ベ ー ス  812 MB · 分 析 基 盤 デ ー タ ウ ェ ア ハ ウ ス  3.4 GB · +1 more             │
 │                                                                                                  │
 │   e   write a query                                                 S   schema browser (26 tables│

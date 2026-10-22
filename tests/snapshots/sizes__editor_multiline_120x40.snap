@@ -4,9 +4,9 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ──────────────────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
-│ Server: localhost:5433  •  Database: ledger  •  User: billing             ││                     PostgreSQL   editor │
+│ Server: ledger-staging…:5432  •  Database: ledger  •  User: billing       ││                     PostgreSQL   editor │
 │ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
-│ Via: --demo (synthetic data)                                              ││                  <E> envs  <ctrl-t> tab │
+│ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
 ╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
  1 SELECT number, cu…                                                            ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor ◆ ]────────────────────────────────────────────────────────────────────────────────────────────────────────╮
