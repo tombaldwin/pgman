@@ -120,7 +120,7 @@ client's config, so use `secret` for anything that matters.
 | --- | --- |
 | *(none)* | All. For a local or single-server database. |
 | `replica` | All. Where reads should go. |
-| `primary` | `sessions_locks` and `pending_patches` only: pgman's own fixed reads, never client SQL. A replica's sessions and locks are its own, so a pre-flight before a migration needs the primary's view. After a patch, a lagging replica can still show the old version, so "did the patch land?" is checked on the primary too. `query` is refused; it goes to the replica. The future two-phase patch apply will also use the primary. |
+| `primary` | `sessions_locks` and `pending_patches` only: pgman's own fixed reads, never client SQL. A replica's sessions and locks are its own, so a pre-flight before a migration needs the primary's view. After a patch, a lagging replica can still show the old version, so "did the patch land?" is checked on the primary too. `query` is refused; it goes to the replica. `apply_patches` takes no connection name, so no role here applies to it: it names an environment's database and refuses a replica. |
 
 Every result from a `replica` connection carries a `replica` object with
 `in_recovery`, `lag_secs` (the age of the replica's last replayed change)
