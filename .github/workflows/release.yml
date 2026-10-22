@@ -99,10 +99,13 @@ jobs:
           set -euo pipefail
           sha="${{ github.sha }}"
           echo "checking CI for $sha"
-          # `--repo` is required: this job has no `actions/checkout`, so
-          # `gh` cannot infer the repository from the working directory
-          # and dies with "failed to determine base repo". Caught on this
-          # gate's first real tag, which it blocked.
+          # `--repo` keeps this independent of the working directory. The
+          # gate first ran in a job with no `actions/checkout`, where `gh`
+          # could not infer the repository and died with "failed to
+          # determine base repo" (caught on its first real tag, which it
+          # blocked). The job checks out now, for the version checks
+          # above, but the explicit repo stays so this step never depends
+          # on that.
           runs=$(gh run list --repo "${{ github.repository }}" \
                    --workflow=ci.yml --limit 50 \
                    --json headSha,status,conclusion) || {
