@@ -549,6 +549,19 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
     for i in 0..n {
         if matches_self(&rows[i]) {
             keep[i] = true;
+            // A matched table (or anything under one) keeps what is
+            // under it: `/orders` showed the `orders` row with only
+            // its `orders_pkey` constraint, every column filtered
+            // away. A matched schema does not — the filter expands
+            // everything, and `/public` would be the whole database.
+            let d = depth(&rows[i]);
+            if d >= 1 {
+                let mut j = i + 1;
+                while j < n && depth(&rows[j]) > d {
+                    keep[j] = true;
+                    j += 1;
+                }
+            }
             continue;
         }
         let d = depth(&rows[i]);
@@ -566,11 +579,28 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             j += 1;
         }
     }
-    rows.into_iter()
+    let mut out: Vec<SchemaBrowserRow> = rows
+        .into_iter()
         .zip(keep)
         .filter(|(_, k)| *k)
         .map(|(r, _)| r)
-        .collect()
+        .collect();
+    // A schema's table count is what the filter left under it: the
+    // detail pane said `7 table(s)` over the 3 on screen.
+    for i in 0..out.len() {
+        if !matches!(out[i], SchemaBrowserRow::Schema { .. }) {
+            continue;
+        }
+        let shown = out[i + 1..]
+            .iter()
+            .take_while(|r| !matches!(r, SchemaBrowserRow::Schema { .. }))
+            .filter(|r| matches!(r, SchemaBrowserRow::Table { .. }))
+            .count();
+        if let SchemaBrowserRow::Schema { table_count, .. } = &mut out[i] {
+            *table_count = shown;
+        }
+    }
+    out
 }
 
 /// Pure: walk the cache and emit visible rows in display order
@@ -1378,6 +1408,12 @@ pub struct App {
     /// more times in a row. Reset on any non-Tab editor keypress so a
     /// subsequent Tab starts a fresh cycle from the current cursor.
     pub completion: Option<CompletionCycle>,
+    /// Did the last frame actually draw the completion popup? Enter
+    /// accepts a candidate only from a popup the operator could see:
+    /// one the renderer skipped (no room, wrong mode) is not a
+    /// question on screen, and Enter stays a newline / run. Written by
+    /// `ui::draw` every frame.
+    pub completion_popup_drawn: bool,
     /// Active reverse-incremental history search session (Ctrl-R).
     /// When `Some`, `mode == Mode::HistorySearch` and the editor
     /// buffer reflects the current match — Enter accepts, Esc
@@ -1641,6 +1677,7 @@ impl App {
             schema_cache: SchemaCache::default(),
             databases: Vec::new(),
             completion: None,
+            completion_popup_drawn: false,
             history_search: None,
             watch: None,
             notices: Vec::new(),
@@ -2613,9 +2650,9 @@ impl App {
         }
     }
 
-    /// `Ctrl-S` in editor — prompt for a name (with the existing
-    /// saved entry's name pre-filled if the buffer matches one
-    /// — otherwise empty). Enter persists; Esc cancels.
+    /// `Ctrl-S` in editor — prompt for a name, a suggestion derived
+    /// from the buffer pre-filled and selected (typing replaces it).
+    /// Enter persists; Esc cancels.
     fn start_save_query_prompt(&mut self) {
         if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("editor empty — nothing to save".into());
@@ -2626,6 +2663,7 @@ impl App {
         // operator has a starting point. They can backspace and
         // type their own.
         self.saved_ui.save_name = default_query_name(&self.editor.buffer);
+        self.saved_ui.save_name_suggested = true;
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }

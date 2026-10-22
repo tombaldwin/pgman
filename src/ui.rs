@@ -48,6 +48,9 @@ const FIXED_TEXT: &[&str] = &[ABOUT_CREDIT];
 /// infrastructure names in all of it (`redact::apply`), so no panel
 /// has to remember to.
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // Every frame says afresh whether it drew the completion popup —
+    // a frame that returns early (the splash) drew none.
+    app.completion_popup_drawn = false;
     draw_frame(f, app);
     if app.redact {
         let r = crate::redact::Redactor::new(crate::redact::app_names(app)).with_fixed(FIXED_TEXT);
@@ -147,7 +150,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
     // computed once, so no overlay can drift back out of it. The tab
     // bar is chrome like the header: an overlay centred over it
     // painted `┌ about ┐` across the tab labels on a short terminal.
-    let area = body_area(area, header_h, tabbar_height);
+    let area = body_area(area, header_h, tabbar_height, footer_h);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -158,7 +161,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
         } else {
             halves(chunks[2])
         };
-        draw_completion_popup(f, above, below, app);
+        app.completion_popup_drawn = draw_completion_popup(f, above, below, app);
     }
     if app.mode == Mode::Help {
         draw_help(f, area, app);
@@ -874,10 +877,11 @@ fn footer_error_rows(app: &App, width: u16, max_rows: usize) -> Vec<String> {
 
 /// An error wrapped on words into at most `max_rows` rows of `width`
 /// columns, `pointer` ending the last. What does not fit is cut on the
-/// last row by [`fit_status`], which keeps the pointer — the way to
-/// the rest. With one row this is the old single-line footer. A
-/// multi-line server error arrives folded into ` · ` segments by
-/// [`footer_text`]; the overlay keeps its original lines. Pure.
+/// last row by [`fit_error_row`]: the end of the message goes, the
+/// pointer — the way to the rest — stays. With one row this is the
+/// single-line footer. A multi-line server error arrives folded into
+/// ` · ` segments by [`footer_text`]; the overlay keeps its original
+/// lines. Pure.
 pub(crate) fn error_footer_rows(
     msg: &str,
     pointer: &str,
@@ -886,7 +890,7 @@ pub(crate) fn error_footer_rows(
 ) -> Vec<String> {
     let full = format!("{msg}{pointer}");
     if width == 0 || max_rows <= 1 || display_width(&full) <= width {
-        return vec![fit_status(&full, width)];
+        return vec![fit_error_row(msg, pointer, width)];
     }
     let mut rows = wrap_words(msg, width);
     if rows.len() > max_rows {
@@ -900,9 +904,32 @@ pub(crate) fn error_footer_rows(
         rows.push(last);
         rows.push(fit_status(pointer.trim_start_matches(" · "), width));
     } else {
-        rows.push(fit_status(&format!("{last}{pointer}"), width));
+        rows.push(fit_error_row(&last, pointer, width));
     }
     rows
+}
+
+/// Narrowest message an error row keeps beside its pointer; under it
+/// the pointer goes and the message has the row.
+const ERROR_ROW_MIN_MSG: usize = 8;
+
+/// One footer row of error: `msg` then `pointer`, at most `width`
+/// columns. Too wide, the END of the message is cut with `…` and the
+/// pointer kept — the start of an error says what failed, and the
+/// pointer leads to the rest. [`fit_status`]'s middle cut kept the
+/// first word and the last (`function… exist`), which reads as
+/// nothing. A row too narrow for the pointer and a few columns of
+/// message drops the pointer. Pure / testable.
+pub(crate) fn fit_error_row(msg: &str, pointer: &str, width: usize) -> String {
+    let full = format!("{msg}{pointer}");
+    if display_width(&full) <= width {
+        return full;
+    }
+    let pointer_w = display_width(pointer);
+    if !pointer.is_empty() && width >= pointer_w + ERROR_ROW_MIN_MSG {
+        return format!("{}{pointer}", end_ellipsis(msg, width - pointer_w));
+    }
+    end_ellipsis(msg, width)
 }
 
 /// Rows the editor block takes — its two border rows included — for a
@@ -1942,7 +1969,7 @@ pub(crate) fn build_field_layout(
             let values = if is_empty {
                 vec!["(empty)".to_string()]
             } else {
-                wrap_value(raw, value_width)
+                wrap_value(&crate::grid::show_controls(raw, false), value_width)
             };
             FieldLayout {
                 label,
@@ -2959,21 +2986,23 @@ pub(crate) fn short_server_version(v: &str) -> &str {
 }
 
 /// The body rect of a full-terminal `area`: everything between the
-/// one-row header plus `tabbar` rows of tab bar, and the one-row
-/// footer. Overlays are centred inside this rather than the whole
+/// `header` rows plus `tabbar` rows of tab bar, and the `footer` rows
+/// below. Overlays are centred inside this rather than the whole
 /// terminal, so a popup can never paint over the connection state or
-/// the tab labels above, or the close hint below. Degrades to the
-/// input rect when there aren't enough rows to give up.
-fn body_area(area: Rect, header: u16, tabbar: u16) -> Rect {
-    let above = header + tabbar;
-    if area.height < above + 2 {
+/// the tab labels above, or the footer below — all of it: an error
+/// wrapped over a taller footer lost its first row, badges and all,
+/// to the help overlay when this assumed one. Degrades to the input
+/// rect when there aren't enough rows to give up.
+fn body_area(area: Rect, header: u16, tabbar: u16, footer: u16) -> Rect {
+    let reserved = header + tabbar + footer;
+    if area.height <= reserved {
         return area;
     }
     Rect {
         x: area.x,
-        y: area.y + above,
+        y: area.y + header + tabbar,
         width: area.width,
-        height: area.height - above - 1,
+        height: area.height - reserved,
     }
 }
 

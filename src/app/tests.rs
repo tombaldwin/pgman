@@ -3407,6 +3407,70 @@ fn filter_schema_browser_rows_keeps_path_to_deep_match() {
 }
 
 #[test]
+fn a_matched_table_keeps_its_columns_and_the_schema_counts_what_shows() {
+    let table = |name: &str| SchemaBrowserRow::Table {
+        schema: "public".into(),
+        name: name.into(),
+        expanded: true,
+        column_count: 2,
+        constraint_count: 1,
+    };
+    let column = |table: &str, name: &str| SchemaBrowserRow::Column {
+        schema: "public".into(),
+        table: table.into(),
+        name: name.into(),
+    };
+    let rows = vec![
+        SchemaBrowserRow::Schema {
+            name: "public".into(),
+            expanded: true,
+            table_count: 3,
+        },
+        table("panel_usr_orders"),
+        column("panel_usr_orders", "id"),
+        column("panel_usr_orders", "total"),
+        SchemaBrowserRow::Constraint {
+            schema: "public".into(),
+            table: "panel_usr_orders".into(),
+            name: "panel_usr_orders_pkey".into(),
+        },
+        table("events"),
+        column("events", "id"),
+        table("panel_usr_items"),
+        column("panel_usr_items", "sku"),
+    ];
+    let out = filter_schema_browser_rows(rows, "panel_usr");
+    let names: Vec<String> = out
+        .iter()
+        .map(|r| match r {
+            SchemaBrowserRow::Schema { name, .. }
+            | SchemaBrowserRow::Table { name, .. }
+            | SchemaBrowserRow::Column { name, .. }
+            | SchemaBrowserRow::Constraint { name, .. } => name.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "public",
+            "panel_usr_orders",
+            "id",
+            "total",
+            "panel_usr_orders_pkey",
+            "panel_usr_items",
+            "sku",
+        ]
+    );
+    // Two of the schema's three tables are on screen, and it says two.
+    assert!(
+        matches!(out[0], SchemaBrowserRow::Schema { table_count: 2, .. }),
+        "{:?}",
+        out[0]
+    );
+}
+
+#[test]
 fn filter_schema_browser_rows_is_case_insensitive() {
     let rows = vec![SchemaBrowserRow::Schema {
         name: "PUBLIC".into(),
@@ -4070,6 +4134,45 @@ fn save_query_prompt_persists_buffer_under_name() {
     assert_eq!(a.mode, Mode::Editor);
     let q = a.saved_queries.get("mine").expect("entry saved");
     assert_eq!(q.body, "select 1");
+}
+
+#[test]
+fn the_suggested_save_name_is_replaced_by_typing_not_appended_to() {
+    let open = || {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.saved_queries_file = temp_saved_path("suggested");
+        a.mode = Mode::Editor;
+        a.editor.buffer = "select * from orders".into();
+        a.editor.cursor = a.editor.buffer.len();
+        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(a.mode, Mode::SaveQueryPrompt);
+        let suggestion = a.saved_ui.save_name.clone();
+        assert!(!suggestion.is_empty());
+        assert!(a.saved_ui.save_name_suggested);
+        (a, suggestion)
+    };
+    // Typing replaces the whole suggestion.
+    let (mut a, _) = open();
+    type_str(&mut a, "mine");
+    assert_eq!(a.saved_ui.save_name, "mine");
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "min", "then Backspace is one char");
+    // Backspace first clears it.
+    let (mut a, _) = open();
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "");
+    // → keeps it to edit from its end.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Right);
+    type_str(&mut a, "_v2");
+    assert_eq!(a.saved_ui.save_name, format!("{suggestion}_v2"));
+    // Enter saves it untouched.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Enter);
+    assert!(a.saved_queries.get(&suggestion).is_some());
+    // The next prompt starts selected again.
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert!(a.saved_ui.save_name_suggested);
 }
 
 #[test]
@@ -8697,6 +8800,7 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "i.customer_id = c.id");
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(
         a.editor.buffer,
@@ -8708,6 +8812,16 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "l.invoice_id = i.id");
+}
+
+/// Render one frame, as the run loop does between keys — what the
+/// operator sees, and so what Enter may act on (see
+/// `App::completion_popup_drawn`).
+fn draw_a_frame(a: &mut App) {
+    a.splash_visible = false;
+    a.splash_until = None;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    term.draw(|f| crate::ui::draw(f, a)).unwrap();
 }
 
 fn popup_with(a: &mut App, selected: Option<usize>) {
@@ -8742,6 +8856,7 @@ fn popup_with(a: &mut App, selected: Option<usize>) {
 fn enter_with_the_completion_popup_open_accepts_the_first_candidate() {
     let mut a = editor_with("");
     popup_with(&mut a, None);
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM users", "no newline, no run");
     assert_eq!(a.editor.cursor, a.editor.buffer.len());
@@ -8761,6 +8876,7 @@ fn enter_with_a_highlighted_candidate_keeps_that_one() {
     a.editor.buffer = "SELECT * FROM user_logs".into();
     a.editor.cursor = a.editor.buffer.len();
     a.completion.as_mut().unwrap().end = a.editor.cursor;
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM user_logs");
     assert!(a.completion.is_none());
@@ -11604,6 +11720,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     press(&mut a, KeyCode::Left);
     type_str(&mut a, " where ");
     assert!(a.completion.as_ref().is_some_and(|c| c.selected.is_none()));
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.completion.is_none());
     assert_eq!(
@@ -11627,6 +11744,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
         a.last_status,
         a.completion.as_ref().map(|c| c.selected)
     );
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from events;");
     assert!(!reached_request_run(&a), "accepting isn't running");
@@ -11637,6 +11755,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     a.mode = Mode::Editor;
     type_str(&mut a, "select * from ");
     assert!(a.completion.is_some());
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
     assert!(!reached_request_run(&a));
@@ -11805,4 +11924,97 @@ fn a_listing_says_whether_environments_toml_loaded() {
     assert!(a.environments_config_broken);
     a.on_msg(AppMsg::EnvironmentsLoaded(Ok(Vec::new())));
     assert!(!a.environments_config_broken);
+}
+
+// ---- H1: a popup the operator did not ask for never eats Enter ----------
+
+fn invoice_cache_app() -> App {
+    let mut a = test_app_with_cache(&[
+        ("panel_usr_invoices", &["id", "customer_id", "total"]),
+        ("panel_usr_customers", &["id", "name"]),
+        ("panel_usr_items", &["id", "invoice_id"]),
+    ]);
+    a.mode = Mode::Editor;
+    a
+}
+
+#[test]
+fn a_space_after_a_completed_table_name_closes_the_popup() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices");
+    assert!(
+        a.completion.is_some(),
+        "the FROM popup narrowed to the table"
+    );
+    type_str(&mut a, " i");
+    assert!(
+        a.completion.is_none(),
+        "the alias is not a completion prefix: {:?}",
+        a.completion.as_ref().map(|c| &c.candidates)
+    );
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "no stale completion status: {:?}",
+        a.last_status
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_invoices i\n");
+}
+
+#[test]
+fn an_alias_then_enter_then_a_join_types_through_verbatim() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices i");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "left join panel_usr_items t");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "on t.invoice_id = i.id");
+    assert_eq!(
+        a.editor.buffer,
+        "select * from panel_usr_invoices i\nleft join panel_usr_items t\non t.invoice_id = i.id"
+    );
+}
+
+#[test]
+fn enter_under_a_popup_no_frame_has_drawn_is_a_newline() {
+    // Same popup the accepting test opens, but no frame has put it on
+    // screen (the renderer had no room for it, say): Enter is the
+    // operator's newline, not an answer to a question they never saw.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    assert!(!a.completion_popup_drawn);
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "SELECT * FROM us\n");
+    assert!(a.completion.is_none(), "the cycle closed with the newline");
+
+    // A frame too short for the popup draws none, and says so.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    a.splash_visible = false;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 6)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    assert!(!a.completion_popup_drawn, "no room, no popup");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn, "a full-size frame draws it");
+}
+
+#[test]
+fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_items");
+    assert!(a.completion.is_some(), "the FROM popup is still narrowing");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items\n");
+    assert!(a.completion.is_none());
+
+    // A prefix that is not yet a whole name still accepts.
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_it");
+    draw_a_frame(&mut a);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items");
 }

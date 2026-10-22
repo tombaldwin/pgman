@@ -104,17 +104,34 @@ impl App {
         // typed in front of the `;`) isn't a question the operator
         // asked, and accepting it wrote its first candidate into a
         // finished statement. Enter runs, as it would without the popup.
+        //
+        // And only a popup that is on screen: a cycle the last frame
+        // did not draw (no room for it, or not drawn yet) is not a
+        // question the operator can see, so Enter falls through to
+        // the newline / run below and the cycle closes with it.
         if matches!(key.code, KeyCode::Enter)
             && !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.completion.is_some()
+            && self.completion_popup_drawn
         {
             let picked = self
                 .completion
                 .as_ref()
                 .is_some_and(|c| c.selected.is_some());
-            if picked || !enter_runs(&self.editor.buffer) {
+            // The word under the popup is already a whole candidate
+            // (`from users` with `users_archived` still listed):
+            // there is nothing to accept, and Enter is the newline the
+            // operator typed it for — not a no-op that eats it.
+            let already_complete = self.completion.as_ref().is_some_and(|c| {
+                let typed = self.editor.buffer.get(c.start..c.end).unwrap_or("");
+                !typed.is_empty()
+                    && c.candidates
+                        .iter()
+                        .any(|cand| cand.insert.eq_ignore_ascii_case(typed))
+            });
+            if picked || (!already_complete && !enter_runs(&self.editor.buffer)) {
                 self.editor_accept_completion();
                 return;
             }
@@ -130,10 +147,19 @@ impl App {
             .as_ref()
             .map(|c| c.selected.is_none())
             .unwrap_or(false);
+        // Whitespace is not narrowing: it ends the word the popup was
+        // completing. Kept alive across it, the cycle re-anchored on
+        // whatever came next — `from invoices i` had the popup offer
+        // `inner join` for the alias, and Enter wrote it in. A space
+        // after `FROM` / `JOIN` / … still opens a fresh popup through
+        // the keyword auto-trigger below.
         let is_narrowing_key = match key.code {
-            KeyCode::Char(_) => !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT),
+            KeyCode::Char(c) => {
+                !c.is_whitespace()
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            }
             KeyCode::Backspace | KeyCode::Delete => true,
             _ => false,
         };

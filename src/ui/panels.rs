@@ -2905,7 +2905,16 @@ pub(super) fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled("name:", Style::default().fg(theme.muted))),
         Line::from(Span::styled(
             app.saved_ui.save_name.clone(),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            // A suggestion still untouched shows selected: the next
+            // character typed replaces it.
+            if app.saved_ui.save_name_suggested {
+                Style::default()
+                    .fg(theme.text)
+                    .bg(theme.row_selected_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+            },
         )),
     ];
     f.render_widget(Paragraph::new(Text::from(lines)), inner);

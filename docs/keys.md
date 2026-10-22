@@ -105,7 +105,7 @@ diff, all of which are also dispatched from this mode.
 | `( [ {` | Autoclose — inserts the matching close, cursor between |
 | `) ] }` | Skips over a matching close immediately ahead of the cursor |
 | `'` / `"` | Autoclose/skip, gated so it doesn't fight SQL `''` escaping or in-word apostrophes |
-| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup; `Enter` accepts the highlighted (or first) candidate |
+| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup; while the popup is on screen, `Enter` accepts the highlighted (or first) candidate |
 | `.` after an identifier | Auto-triggers qualified completion (`users.|`) |
 | `Shift-Enter` | Insert a newline even after a `;` (where the terminal distinguishes it) |
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
@@ -133,9 +133,14 @@ a level and `Tab` there adds one.
 ### Completion popup
 
 While the popup is open (no candidate committed yet): typing, `Backspace`
-and `Delete` re-narrow the candidate list live; `Esc` restores the
-originally-typed prefix and closes the popup. Any other key commits the
-current candidate. Repeated `Tab` cycles through candidates.
+and `Delete` re-narrow the candidate list live; a space ends the word and
+closes the popup, so an alias typed after a table name is never completed.
+`Esc` restores the originally-typed prefix and closes the popup. Repeated
+`Tab` cycles through candidates. `Enter` accepts the highlighted (or first)
+candidate — but only from a popup that is on screen, and not when nothing
+is highlighted and either the word is already a whole candidate (then it is
+a newline) or the statement already ends in `;` (then it runs). Any
+other key closes the popup and leaves the buffer as it is.
 
 ## Result grid
 
@@ -306,7 +311,9 @@ Opened with `Q`, or `Ctrl-O` from the editor.
 | `Esc` / `q` | Close (drops any active filter) |
 
 From the editor, `Ctrl-S` prompts for a name and saves the current buffer.
-A saved query with `:param` placeholders prompts for each value in turn
+The prompt opens with a name suggested from the SQL, shown selected: typing
+replaces it, `Backspace` clears it, `→` / `End` keep it to edit, and `Enter`
+saves it as it is. A saved query with `:param` placeholders prompts for each value in turn
 (`Enter` accepts and moves to the next; `Esc` cancels back to the list).
 
 ## History search

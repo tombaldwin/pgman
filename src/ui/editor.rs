@@ -464,18 +464,26 @@ fn fit_completion_row(
 /// active one highlighted; "↑ N more" / "↓ N more" markers when the
 /// list is longer than the popup. Only the active cycle is rendered;
 /// any non-Tab editor key dismisses (see `App::editor_key`).
-pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area: Rect, app: &App) {
+///
+/// Returns whether the popup was drawn: Enter accepts a candidate only
+/// from a popup that is on screen (`App::completion_popup_drawn`).
+pub(super) fn draw_completion_popup(
+    f: &mut Frame,
+    editor_area: Rect,
+    body_area: Rect,
+    app: &App,
+) -> bool {
     // Same cap as the highlighter: over it the editor is a plain
     // viewer, and a completion popup over a 200 MB paste is neither
     // wanted nor affordable.
     if app.editor.buffer.len() > PLAIN_ABOVE_BYTES {
-        return;
+        return false;
     }
     let Some(cycle) = app.completion.as_ref() else {
-        return;
+        return false;
     };
     if cycle.candidates.is_empty() {
-        return;
+        return false;
     }
     let theme = &app.theme;
     // The right-side tail is `(kind · context)`. Long context strings
@@ -575,7 +583,7 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
     let width = desired_width.max(20).min(avail_w);
     let height = desired_height.min(avail_h);
     if height < 3 || width < 3 {
-        return;
+        return false;
     }
 
     // Scroll to keep the selected row centred. When nothing's selected
@@ -699,6 +707,7 @@ pub(super) fn draw_completion_popup(f: &mut Frame, editor_area: Rect, body_area:
         ),
         popup,
     );
+    true
 }
 
 #[cfg(test)]
