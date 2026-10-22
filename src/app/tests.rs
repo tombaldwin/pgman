@@ -10080,6 +10080,22 @@ async fn a_discovery_backed_out_of_does_not_land_in_the_next() {
     assert!(!d.loading && d.found.is_some());
 }
 
+/// On a replica whose profile is read-only too (the default), the
+/// refusal is the replica's: safety.toml's advice can't unpin it.
+#[tokio::test]
+async fn readonly_off_on_a_read_only_replica_does_not_send_you_to_safety_toml() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.read_only && a.replica_pin);
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    let e = a.last_error.as_deref().unwrap();
+    assert_eq!(e, crate::app::cmd::REPLICA_READONLY_REFUSAL);
+    assert!(!e.contains("restart"), "{e}");
+}
+
 #[tokio::test]
 async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
     let mut a = writable_app();

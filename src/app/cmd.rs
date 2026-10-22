@@ -9,6 +9,12 @@ pub const COMMAND_NAMES: &[&str] = &[
     "quit", "readonly", "redact", "report", "tap", "timing", "update", "x",
 ];
 
+/// `:readonly off` on a replica opened from the environments overview.
+/// The session is pinned read-only whatever `safety.toml` says, so the
+/// only way to write is to connect somewhere else.
+pub(crate) const REPLICA_READONLY_REFUSAL: &str = "this is a read replica: it stays read-only \
+     whatever safety.toml says (the server refuses writes too) · connect to its primary to write";
+
 /// `\i`'s ceiling. The file becomes one editor buffer, drawn and
 /// highlighted on every frame, so this is far below `--log`'s 64 MB:
 /// 8 MB is a schema dump of a few thousand tables.
@@ -405,18 +411,19 @@ impl App {
             .as_ref()
             .map(|d| d.dbname.as_str())
             .unwrap_or("default");
+        // The replica first: no safety.toml change unpins it, so the
+        // profile's advice would send the operator to edit it for
+        // nothing.
+        if !want && self.replica_pin {
+            self.last_error = Some(REPLICA_READONLY_REFUSAL.into());
+            return;
+        }
         if !want && self.safety_config.profile_for(db).read_only {
             self.last_error = Some(readonly_off_refusal(
                 &self.safety_config,
                 db,
                 safety_toml_exists(),
             ));
-            return;
-        }
-        if !want && self.replica_pin {
-            self.last_error = Some(
-                "this is a read replica: it stays read-only (the server refuses writes too)".into(),
-            );
             return;
         }
         let state = if want { "on" } else { "off" };
