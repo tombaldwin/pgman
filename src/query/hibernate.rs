@@ -129,6 +129,7 @@ fn finalize(
         runnable_sql,
         source: Source::HibernateLog,
         src_line,
+        error: None,
     });
 }
 

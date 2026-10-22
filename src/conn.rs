@@ -200,7 +200,7 @@ impl From<tokio_postgres::Error> for QueryErr {
         // When DbError carries a message itself, prefer it (no `db
         // error: ERROR:` wrapping) so the message line is clean.
         // Fall through to the default Display for non-server errors.
-        let mut msg = db
+        let msg = db
             .map(|d| d.message().to_string())
             .unwrap_or_else(|| e.to_string());
         // A write bounced off `default_transaction_read_only = on`
@@ -209,12 +209,9 @@ impl From<tokio_postgres::Error> for QueryErr {
         // the TUI (`last_error` is this `.msg`) and `--batch` (which
         // prints it to stderr) end up showing, so neither path has to
         // ask separately.
-        let safety_toml_exists = crate::util::config_file("safety.toml").exists();
-        if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml_exists) {
-            msg.push('\n');
-            msg.push_str("hint: ");
-            msg.push_str(&hint);
-        }
+        let safety_toml = crate::util::config_file("safety.toml");
+        let safety_toml = safety_toml.exists().then_some(safety_toml.as_path());
+        let (msg, detail) = explain_read_only_refusal(msg, detail, safety_toml);
         Self {
             msg,
             position,
@@ -230,35 +227,92 @@ impl From<tokio_postgres::Error> for QueryErr {
 /// `app::read_only_escape_refusal`), so the two paths cannot drift.
 pub const READ_ONLY_DEFAULT_HINT: &str = "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database";
 
+/// The two halves of a read-only refusal's explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadOnlyHint {
+    /// The `hint:` line appended to the message — what the footer and
+    /// `--batch` stderr show. Names `safety.toml` but never its full
+    /// path: at 80 columns a path made the footer three rows and was
+    /// cut anyway.
+    footer: String,
+    /// Where the setting lives, full path and all, for the F2 overlay
+    /// (and `--batch`, which prints the detail's hint) — `None` when
+    /// there is no file to point at.
+    detail: Option<String>,
+}
+
 /// Hint for a read-only-transaction refusal (SQLSTATE `25006`):
 /// `read_only = true` set `default_transaction_read_only = on` at
 /// connect, and Postgres itself — not a client-side guard — rejected the
 /// write. Says where the setting came from rather than leaving the
-/// operator to guess: the file's path and key when a `safety.toml`
-/// exists, and [`READ_ONLY_DEFAULT_HINT`] when the profile is the
-/// built-in default — naming a file that is not there sent the operator
-/// looking for it. Pure — pattern-matched on the SQLSTATE code, falling
-/// back to the message text when the server didn't populate `detail`
-/// (e.g. a `simple_query` error path that skips it); `safety_toml_exists`
-/// is checked by the caller at message time because the profile does not
-/// record its origin.
+/// operator to guess: `safety.toml` and its key when the file exists
+/// (its full path goes to the detail, not the one-row footer), and
+/// [`READ_ONLY_DEFAULT_HINT`] when the profile is the built-in default
+/// — naming a file that is not there sent the operator looking for it.
+/// Pure — pattern-matched on the SQLSTATE code, falling back to the
+/// message text when the server didn't populate `detail` (e.g. a
+/// `simple_query` error path that skips it); `safety_toml` (the file,
+/// when it exists) is checked by the caller at message time because the
+/// profile does not record its origin.
 fn read_only_refusal_hint(
     detail: Option<&QueryErrDetail>,
     msg: &str,
-    safety_toml_exists: bool,
-) -> Option<String> {
+    safety_toml: Option<&std::path::Path>,
+) -> Option<ReadOnlyHint> {
     let is_read_only_refusal = detail.and_then(|d| d.code.as_deref()) == Some("25006")
         || msg.to_ascii_lowercase().contains("read-only transaction");
     if !is_read_only_refusal {
         return None;
     }
-    if !safety_toml_exists {
-        return Some(READ_ONLY_DEFAULT_HINT.to_string());
+    let Some(path) = safety_toml else {
+        return Some(ReadOnlyHint {
+            footer: READ_ONLY_DEFAULT_HINT.to_string(),
+            detail: None,
+        });
+    };
+    Some(ReadOnlyHint {
+        footer: READ_ONLY_FILE_HINT.to_string(),
+        detail: Some(format!(
+            "read_only = true in {} · set read_only = false for this database there and restart pgman to write",
+            path.display()
+        )),
+    })
+}
+
+/// The footer's half of a read-only refusal when `safety.toml` exists:
+/// the file by name, never its path (see [`ReadOnlyHint::footer`]).
+pub const READ_ONLY_FILE_HINT: &str =
+    "read-only by safety.toml (read_only) — see docs/configuration.md";
+
+/// `msg` and `detail` with a read-only refusal's explanation added: the
+/// short `hint:` line on the message, the full path in the detail's
+/// hint (see [`read_only_refusal_hint`]). Anything else passes through
+/// untouched. Pure — `safety_toml` is the file when it exists.
+pub fn explain_read_only_refusal(
+    mut msg: String,
+    mut detail: Option<QueryErrDetail>,
+    safety_toml: Option<&std::path::Path>,
+) -> (String, Option<QueryErrDetail>) {
+    if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml) {
+        msg.push('\n');
+        msg.push_str("hint: ");
+        msg.push_str(&hint.footer);
+        if let Some(full) = hint.detail {
+            attach_detail_hint(&mut detail, full);
+        }
     }
-    Some(format!(
-        "this connection is read-only by safety.toml ({}, read_only) — see docs/configuration.md",
-        crate::util::config_file("safety.toml").display()
-    ))
+    (msg, detail)
+}
+
+/// Put pgman's own `hint` into the error's detail for the F2 overlay —
+/// after the server's, when it sent one. A refusal with no server
+/// detail at all (the message-text fallback) gets a detail of its own.
+fn attach_detail_hint(detail: &mut Option<QueryErrDetail>, hint: String) {
+    let d = detail.get_or_insert_with(QueryErrDetail::default);
+    d.hint = Some(match d.hint.take() {
+        Some(server) => format!("{server}\n{hint}"),
+        None => hint,
+    });
 }
 
 impl std::fmt::Display for QueryErr {
@@ -1061,7 +1115,7 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
         let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
         Ok(Grid {
             columns: vec!["status".to_string()],
-            rows: vec![vec![format!("{affected} row(s) affected")]],
+            rows: vec![vec![Some(format!("{affected} row(s) affected"))]],
             truncated: false,
         })
     } else {
@@ -1075,21 +1129,8 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
     }
 }
 
-/// One result row as the grid shows it: the text-wire cells lined up
-/// with the `n_columns` Describe promised ([`project_cells`]) and SQL
-/// NULL rendered as the empty string, which `grid::cmp_cells` sorts
-/// last. The shared row→cells step of every result-set path (TUI grid,
-/// the `T` / `L` panel loads, `--batch csv` / `tsv` / `expanded`).
-/// Pure / testable.
-pub fn display_cells(cells: Vec<Option<String>>, n_columns: usize) -> Vec<String> {
-    project_cells(cells, n_columns)
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
 /// Stream a row-returning statement over the simple-query (text)
-/// protocol into display strings, stopping at `grid::MAX_ROWS`. Every
+/// protocol into grid cells, stopping at `grid::MAX_ROWS`. Every
 /// type arrives already rendered by the server — no client-side
 /// decoder to be missing. Returns `(rows, truncated)`, `truncated`
 /// being `true` iff at least one row existed past the cap.
@@ -1097,11 +1138,11 @@ async fn stream_text_rows(
     client: &tokio_postgres::Client,
     sql: &str,
     n_columns: usize,
-) -> Result<(Vec<Vec<String>>, bool), QueryErr> {
+) -> Result<(Vec<Vec<crate::grid::Cell>>, bool), QueryErr> {
     use futures::StreamExt;
     let stream = client.simple_query_raw(sql).await.map_err(QueryErr::from)?;
     let mut stream = Box::pin(stream);
-    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut out: Vec<Vec<crate::grid::Cell>> = Vec::new();
     let mut truncated = false;
     while let Some(msg) = stream.next().await {
         let tokio_postgres::SimpleQueryMessage::Row(row) = msg.map_err(QueryErr::from)? else {
@@ -1116,42 +1157,11 @@ async fn stream_text_rows(
         let cells: Vec<Option<String>> = (0..row.columns().len())
             .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
             .collect();
-        out.push(display_cells(cells, n_columns));
+        // Lined up with the `n_columns` Describe promised; SQL NULL
+        // stays `None`, never the empty string.
+        out.push(project_cells(cells, n_columns));
     }
     Ok((out, truncated))
-}
-
-#[cfg(test)]
-mod display_cells_tests {
-    use super::display_cells;
-
-    fn cells(items: &[Option<&str>]) -> Vec<Option<String>> {
-        items.iter().map(|c| c.map(str::to_string)).collect()
-    }
-
-    #[test]
-    fn text_wire_values_pass_through_and_null_is_the_empty_string() {
-        let got = display_cells(
-            cells(&[
-                Some("2024-05-06 07:08:09+00"),
-                None,
-                Some("{1,2}"),
-                Some(""),
-            ]),
-            4,
-        );
-        assert_eq!(got, vec!["2024-05-06 07:08:09+00", "", "{1,2}", ""]);
-    }
-
-    #[test]
-    fn a_short_row_is_padded_and_a_long_row_cut_to_the_described_width() {
-        assert_eq!(display_cells(cells(&[Some("a")]), 3), vec!["a", "", ""]);
-        assert_eq!(
-            display_cells(cells(&[Some("a"), Some("b"), Some("c")]), 2),
-            vec!["a", "b"]
-        );
-        assert!(display_cells(Vec::new(), 0).is_empty());
-    }
 }
 
 /// Column names + Postgres [`Type`]s, plus the text-wire value of every
@@ -1368,7 +1378,7 @@ pub async fn run_batch_in_tx_open(
 fn status_grid(msg: &str) -> Grid {
     Grid {
         columns: vec!["status".to_string()],
-        rows: vec![vec![msg.to_string()]],
+        rows: vec![vec![Some(msg.to_string())]],
         truncated: false,
     }
 }
@@ -1553,20 +1563,30 @@ enum TlsVerify {
 fn build_tls_connector(
     verify: TlsVerify,
 ) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
-    // Install the default crypto provider once per process — rustls 0.23
-    // requires this before any ClientConfig is built.
-    static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
-    CRYPTO_INIT.call_once(|| {
-        // Ignore the result: re-installing after another caller already
-        // did is fine; first-write wins.
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    });
-
     let roots = if verify == TlsVerify::Nothing {
         rustls::RootCertStore::empty()
     } else {
         trusted_roots()
     };
+    tls_connector(verify, roots)
+}
+
+/// [`build_tls_connector`] with the trusted roots given, so the
+/// handshake tests can trust a fixture CA instead of the OS store.
+fn tls_connector(
+    verify: TlsVerify,
+    roots: rustls::RootCertStore,
+) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    // Install the crypto provider once per process — rustls 0.23 needs
+    // one before any ClientConfig is built. ring is the only provider
+    // compiled in (Cargo.toml), and the one reqwest's update check uses.
+    static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
+    CRYPTO_INIT.call_once(|| {
+        // Ignore the result: re-installing after another caller already
+        // did is fine; first-write wins.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+
     let config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(server_verifier(verify, roots)?)
@@ -1898,8 +1918,9 @@ mod tests {
 
     #[test]
     fn project_cells_leaves_a_matching_row_alone() {
-        let cells = vec![Some("a".into()), None];
-        assert_eq!(project_cells(cells.clone(), 2), cells);
+        // NULL and the empty string stay two different cells.
+        let cells = vec![Some("a".into()), None, Some(String::new())];
+        assert_eq!(project_cells(cells.clone(), 3), cells);
         assert!(project_cells(Vec::new(), 0).is_empty());
     }
 
@@ -2400,7 +2421,7 @@ mod tests {
         }
 
         fn roots() -> rustls::RootCertStore {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let _ = rustls::crypto::ring::default_provider().install_default();
             let mut roots = rustls::RootCertStore::empty();
             roots
                 .add(cert(include_bytes!("../tests/fixtures/tls/ca.pem")))
@@ -2483,6 +2504,216 @@ mod tests {
             // require / prefer: nothing checked.
             let none = v(TlsVerify::Nothing);
             assert!(check(none.as_ref(), UNTRUSTED, "localhost").is_ok());
+        }
+    }
+
+    /// Real TLS handshakes, end to end: pgman's connector, driven by
+    /// tokio-postgres, against an in-process server that speaks just
+    /// enough of the Postgres protocol — the SSLRequest, then a rustls
+    /// server session — to read the startup message *over TLS* and
+    /// answer with an ErrorResponse. The Docker test servers run without
+    /// SSL, so this is the one place a handshake, the crypto provider's
+    /// key exchange and signature checks, and the sslmode verifiers all
+    /// run for real. The certificates are made per test with rcgen (no
+    /// key is ever committed): a P-256 CA, and a leaf for
+    /// `db.internal.test` it signs.
+    mod handshake {
+        use super::super::{build_tls_connector, tls_connector, TlsVerify};
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use std::io::{Read, Write};
+
+        /// What the server says once it has read the startup message;
+        /// the client seeing it proves application data crossed the
+        /// encrypted channel both ways.
+        const GREETING: &str = "pgman tls handshake test: startup message received";
+
+        /// A throwaway CA and the server certificate it signed.
+        struct Pki {
+            ca: CertificateDer<'static>,
+            leaf: CertificateDer<'static>,
+            leaf_key: PrivateKeyDer<'static>,
+        }
+
+        fn pki() -> Pki {
+            pki_named("pgman handshake test ca")
+        }
+
+        /// A PKI whose CA is called `ca_name`. Two CAs need two names: a
+        /// verifier finds the issuer by name, so a namesake would fail as a
+        /// bad signature rather than an unknown issuer.
+        fn pki_named(ca_name: &str) -> Pki {
+            use rcgen::{
+                BasicConstraints, CertificateParams, CertifiedIssuer, DnType,
+                ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+            };
+            let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
+            ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            ca.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+            ca.distinguished_name.push(DnType::CommonName, ca_name);
+            let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+
+            let mut leaf = CertificateParams::new(vec!["db.internal.test".to_string()]).unwrap();
+            leaf.distinguished_name
+                .push(DnType::CommonName, "db.internal.test");
+            leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+            let leaf_key = KeyPair::generate().unwrap();
+            let leaf_cert = leaf.signed_by(&leaf_key, &ca).unwrap();
+            Pki {
+                ca: ca.der().clone(),
+                leaf: leaf_cert.der().clone(),
+                leaf_key: PrivatePkcs8KeyDer::from(leaf_key.serialize_der()).into(),
+            }
+        }
+
+        fn roots(ca: &CertificateDer<'static>) -> rustls::RootCertStore {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(ca.clone()).unwrap();
+            roots
+        }
+
+        /// Accept one connection on an ephemeral port and play the
+        /// server's side, presenting `pki`'s leaf. Returns the port and
+        /// a handle yielding the startup message's bytes, or why the
+        /// server gave up.
+        fn serve_once(pki: &Pki) -> (u16, std::thread::JoinHandle<Result<Vec<u8>, String>>) {
+            let chain = vec![pki.leaf.clone()];
+            let key = pki.leaf_key.clone_key();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let handle = std::thread::spawn(move || {
+                let (mut tcp, _) = listener.accept().map_err(|e| e.to_string())?;
+                let timeout = Some(std::time::Duration::from_secs(10));
+                tcp.set_read_timeout(timeout).map_err(|e| e.to_string())?;
+                // SSLRequest: length 8, code 80877103. Answer 'S'.
+                let mut req = [0u8; 8];
+                tcp.read_exact(&mut req).map_err(|e| e.to_string())?;
+                if req != [0, 0, 0, 8, 4, 210, 22, 47] {
+                    return Err(format!("not an SSLRequest: {req:?}"));
+                }
+                tcp.write_all(b"S").map_err(|e| e.to_string())?;
+
+                let config = rustls::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(chain, key)
+                    .map_err(|e| e.to_string())?;
+                let conn = rustls::ServerConnection::new(std::sync::Arc::new(config))
+                    .map_err(|e| e.to_string())?;
+                let mut tls = rustls::StreamOwned::new(conn, tcp);
+
+                // StartupMessage: Int32 length (itself included), then the body.
+                let mut len = [0u8; 4];
+                tls.read_exact(&mut len).map_err(|e| e.to_string())?;
+                let len = u32::from_be_bytes(len) as usize;
+                let mut startup = vec![0u8; len.saturating_sub(4)];
+                tls.read_exact(&mut startup).map_err(|e| e.to_string())?;
+
+                // ErrorResponse: 'E', Int32 length, fields, terminator.
+                let mut fields = Vec::new();
+                for (code, value) in [(b'S', "FATAL"), (b'C', "08000"), (b'M', GREETING)] {
+                    fields.push(code);
+                    fields.extend_from_slice(value.as_bytes());
+                    fields.push(0);
+                }
+                fields.push(0);
+                let mut msg = vec![b'E'];
+                msg.extend_from_slice(&(fields.len() as u32 + 4).to_be_bytes());
+                msg.extend_from_slice(&fields);
+                tls.write_all(&msg).map_err(|e| e.to_string())?;
+                tls.flush().map_err(|e| e.to_string())?;
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+                Ok(startup)
+            });
+            (port, handle)
+        }
+
+        /// Connect to `serve_once`'s server with `connector`, naming the
+        /// server `host` (SNI, and the name verify-full checks) while
+        /// dialling 127.0.0.1. Ok(server's message) or Err(client error).
+        async fn connect(
+            connector: tokio_postgres_rustls::MakeRustlsConnect,
+            port: u16,
+            host: &str,
+        ) -> Result<String, String> {
+            let mut cfg = tokio_postgres::Config::new();
+            cfg.host(host)
+                .hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+                .port(port)
+                .user("pgman_tls")
+                .dbname("pgman_tls")
+                .ssl_mode(tokio_postgres::config::SslMode::Require)
+                .connect_timeout(std::time::Duration::from_secs(10));
+            match cfg.connect(connector).await {
+                Ok(_) => Err("the test server never accepts a login".into()),
+                Err(e) => match e.as_db_error() {
+                    Some(db) => Ok(db.message().to_string()),
+                    None => Err(super::super::chain_message(&e)),
+                },
+            }
+        }
+
+        /// The handshake completed: the server read the startup message
+        /// through TLS and the client read the server's reply.
+        fn assert_talked(client: Result<String, String>, server: Result<Vec<u8>, String>) {
+            assert_eq!(client.as_deref(), Ok(GREETING));
+            let startup = server.expect("server side of the handshake");
+            let text = String::from_utf8_lossy(&startup);
+            assert!(text.contains("user\0pgman_tls\0"), "{text:?}");
+        }
+
+        #[tokio::test]
+        async fn sslmode_require_handshakes_with_any_certificate() {
+            let (port, server) = serve_once(&pki());
+            // The production builder, as `connect` calls it.
+            let client = connect(build_tls_connector(TlsVerify::Nothing).unwrap(), port, "x").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_full_handshakes_with_a_trusted_named_certificate() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::ChainAndHostname, roots(&pki.ca)).unwrap();
+            let client = connect(connector, port, "db.internal.test").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_ca_handshakes_whatever_host_was_dialled() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::Chain, roots(&pki.ca)).unwrap();
+            let client = connect(connector, port, "localhost").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_full_refuses_a_certificate_for_another_name() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::ChainAndHostname, roots(&pki.ca)).unwrap();
+            let err = connect(connector, port, "localhost").await.unwrap_err();
+            assert!(err.contains("not valid for name"), "{err}");
+            assert!(
+                server.join().unwrap().is_err(),
+                "server must not get the startup message"
+            );
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_ca_refuses_an_untrusted_chain() {
+            let (port, server) = serve_once(&pki());
+            // A CA that did not sign the server's certificate.
+            let other = pki_named("some other ca");
+            let connector = tls_connector(TlsVerify::Chain, roots(&other.ca)).unwrap();
+            let err = connect(connector, port, "db.internal.test")
+                .await
+                .unwrap_err();
+            assert!(err.contains("UnknownIssuer"), "{err}");
+            assert!(
+                server.join().unwrap().is_err(),
+                "server must not get the startup message"
+            );
         }
     }
 
@@ -2669,24 +2900,31 @@ mod tests {
     }
 
     #[test]
-    fn read_only_refusal_hint_names_the_file_when_there_is_one() {
+    fn read_only_refusal_hint_names_the_file_in_the_footer_and_its_path_in_the_detail() {
         let detail = QueryErrDetail {
             code: Some("25006".to_string()),
             ..Default::default()
         };
+        let path = std::path::Path::new("/home/op/.config/pgman/safety.toml");
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            true,
+            Some(path),
         )
         .expect("25006 should map to a hint");
-        let path = crate::util::config_file("safety.toml")
-            .display()
-            .to_string();
-        assert!(h.contains(&path), "should name the file's path: {h}");
-        assert!(h.contains("read_only"), "got: {h}");
-        assert!(h.contains("docs/configuration.md"), "got: {h}");
-        assert!(!h.contains("--init-config"), "got: {h}");
+        assert_eq!(h.footer, READ_ONLY_FILE_HINT);
+        assert!(h.footer.contains("safety.toml"), "got: {h:?}");
+        assert!(h.footer.contains("read_only"), "got: {h:?}");
+        assert!(h.footer.contains("docs/configuration.md"), "got: {h:?}");
+        // The one-row footer never carries the path; the detail does.
+        assert!(!h.footer.contains("/home/op"), "path in the footer: {h:?}");
+        let full = h.detail.expect("the detail names the path");
+        assert!(
+            full.contains("/home/op/.config/pgman/safety.toml"),
+            "got: {full}"
+        );
+        assert!(full.contains("read_only = false"), "got: {full}");
+        assert!(!h.footer.contains("--init-config"), "got: {}", h.footer);
     }
 
     #[test]
@@ -2700,19 +2938,13 @@ mod tests {
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            false,
+            None,
         )
         .expect("25006 should map to a hint");
-        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
-        assert!(h.contains("--init-config"), "got: {h}");
-        assert!(h.contains("read_only = false"), "got: {h}");
-        let path = crate::util::config_file("safety.toml")
-            .display()
-            .to_string();
-        assert!(
-            !h.contains(&path),
-            "must not name a file that is not there: {h}"
-        );
+        assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
+        assert!(h.footer.contains("--init-config"), "got: {h:?}");
+        assert!(h.footer.contains("read_only = false"), "got: {h:?}");
+        assert_eq!(h.detail, None, "no file, no path to name");
     }
 
     #[test]
@@ -2721,12 +2953,29 @@ mod tests {
         // the message text alone must still be recognised — on both
         // branches.
         let msg = "cannot execute INSERT in a read-only transaction";
-        let h = read_only_refusal_hint(None, msg, true)
+        let path = std::path::Path::new("/x/safety.toml");
+        let h = read_only_refusal_hint(None, msg, Some(path))
             .expect("message text alone should map to a hint");
-        assert!(h.contains("safety.toml ("), "got: {h}");
-        let h = read_only_refusal_hint(None, msg, false)
+        assert_eq!(h.footer, READ_ONLY_FILE_HINT);
+        let h = read_only_refusal_hint(None, msg, None)
             .expect("message text alone should map to a hint");
-        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
+        assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
+    }
+
+    #[test]
+    fn attach_detail_hint_follows_the_servers_hint_and_creates_a_detail_when_there_is_none() {
+        let mut none = None;
+        attach_detail_hint(&mut none, "ours".to_string());
+        assert_eq!(none.and_then(|d| d.hint).as_deref(), Some("ours"));
+        let mut server = Some(QueryErrDetail {
+            code: Some("25006".to_string()),
+            hint: Some("theirs".to_string()),
+            ..Default::default()
+        });
+        attach_detail_hint(&mut server, "ours".to_string());
+        let d = server.unwrap();
+        assert_eq!(d.hint.as_deref(), Some("theirs\nours"));
+        assert_eq!(d.code.as_deref(), Some("25006"), "the rest is kept");
     }
 
     #[test]
@@ -2735,16 +2984,15 @@ mod tests {
             code: Some("42601".to_string()), // syntax_error
             ..Default::default()
         };
-        for exists in [true, false] {
+        let path = std::path::Path::new("/x/safety.toml");
+        for file in [Some(path), None] {
             assert!(read_only_refusal_hint(
                 Some(&detail),
                 "syntax error at or near \"FROM\"",
-                exists
+                file
             )
             .is_none());
-            assert!(
-                read_only_refusal_hint(None, "relation \"t\" does not exist", exists).is_none()
-            );
+            assert!(read_only_refusal_hint(None, "relation \"t\" does not exist", file).is_none());
         }
     }
 }

@@ -64,8 +64,9 @@ behaviour without being parsed as backslash text.
   path picks a timestamped default under the cache directory.
 - `\fixture` / `\fixture <path>` — capture the current result grid as a
   DBUnit `FlatXmlDataSet` at `<path>`. Requires a non-empty, single-table
-  result (the source table becomes the XML element name). No path picks
-  a timestamped default under the cache directory.
+  result (the source table becomes the XML element name). A NULL cell is
+  left out of its row, flat XML's NULL; an empty string is `col=""`.
+  No path picks a timestamped default under the cache directory.
 
 ## Meta
 
@@ -133,7 +134,7 @@ surface.
 | `--log <PATH>` | Preload the editor with a Hibernate or Postgres server log from `PATH` (`-` for stdin) and open straight into the reconstructed-query picker — same as pasting the log and pressing `Ctrl-L` / `F8`. Refused past 64 MB (`-` / stdin is exempt — its size isn't known ahead of reading it) — trim the file first (`grep` for `org.hibernate.SQL` or `LOG:`). |
 | `--batch` | Run one SQL statement, write the result to stdout, then exit — no TUI. For scripts/CI. `csv`, `tsv` and `expanded` stop at 1000 rows: past that, stderr says so and the exit status is `3`, so a partial export can't pass for a whole one. `--format json` (one statement) returns every row. A script of several statements runs in one transaction and prints only its status, not their rows: run one statement per call to get rows. |
 | `--sql <SQL>` | The statement to run in `--batch` mode; omit to read stdin until EOF. |
-| `--format <FORMAT>` | `--batch` output format: `csv` (default) \| `tsv` \| `json` \| `expanded`. `json` is typed: SQL `NULL` → JSON `null` (never confused with an empty string), `int2`/`int4`/`int8`/`float4`/`float8`/`numeric` → a JSON number (numeric falls back to a quoted string only for the non-numeric spellings `NaN`/`Infinity`/`-Infinity`), `bool` → JSON `true`/`false`, everything else → a string. `csv`/`tsv`/`expanded` render every value as text, unchanged. |
+| `--format <FORMAT>` | `--batch` output format: `csv` (default) \| `tsv` \| `json` \| `expanded`. `json` is typed: SQL `NULL` → JSON `null` (never confused with an empty string), `int2`/`int4`/`int8`/`float4`/`float8`/`numeric` → a JSON number (numeric falls back to a quoted string only for the non-numeric spellings `NaN`/`Infinity`/`-Infinity`), `bool` → JSON `true`/`false`, everything else → a string. `csv`/`tsv`/`expanded` render every value as text, unchanged. `csv` and `tsv` keep NULL apart from the empty string the way `COPY` does: in `csv` a NULL is an empty unquoted field and an empty string is `""`; in `tsv` a NULL is `\N` (a backslash in a value is written `\\`, so no value can look like it); `expanded`, which is for reading, prints a NULL as nothing, as psql does. |
 | `--discovered` | In `--batch` mode with no `--dsn`, accept the single data source discovered in this checkout. Without it a lone discovered candidate is refused — nothing found in the working tree connects without a deliberate act, and batch has no keypress to offer. Entries that are the same connection (one database declared twice, such as `dataSource` and `replicaDataSource` with identical URLs and credentials) count once. Zero or several distinct candidates still need `--dsn`. |
 | `--yes` | In `--batch` mode, proceed past statements the safety guard would otherwise only *confirm* (e.g. `INSERT`/`UPDATE`/`DELETE`-with-`WHERE`). Statements configured to *block* (`DROP`, unqualified `DELETE`/`UPDATE`, …) stay blocked regardless, and it does not lift `read_only` — a write on a read-only connection is still refused by Postgres itself. Without this flag, a non-interactive batch refuses anything that would have prompted interactively. |
 | `--tap-listen <ADDR>` | Bind a TCP listener for the planned pgman-tap library (length-prefixed JSON events; not released yet — use `--tap-otlp` today); `:PORT` or bare `PORT` binds `127.0.0.1`. Events stream into the JDBC tap monitor (`F4`). Auto-enabled on `127.0.0.1:7432` when a Java project is detected in the cwd and this flag isn't passed. |

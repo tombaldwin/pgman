@@ -137,25 +137,41 @@ fn wrap_value_handles_multibyte_chars_by_chars_not_bytes() {
 }
 
 #[test]
-fn build_field_layout_pads_label_and_marks_empty() {
-    let cols = vec!["id".to_string(), "long_column_name".to_string()];
-    let row = vec!["42".to_string(), "".to_string()];
+fn build_field_layout_pads_label_and_marks_empty_and_null_apart() {
+    let cols = vec![
+        "id".to_string(),
+        "long_column_name".to_string(),
+        "n".to_string(),
+        "missing".to_string(),
+    ];
+    let row = vec![Some("42".to_string()), Some("".to_string()), None];
     let got = build_field_layout(&cols, &row, 16, 40);
-    assert_eq!(got.len(), 2);
+    assert_eq!(got.len(), 4);
     // Labels padded to label_width.
     assert_eq!(got[0].label.chars().count(), 16);
     assert!(got[0].label.starts_with("id"));
-    assert!(!got[0].is_empty);
+    assert_eq!(got[0].kind, FieldKind::Value);
     assert_eq!(got[0].values, vec!["42"]);
-    // Empty cell rendered with "(empty)" sentinel.
-    assert!(got[1].is_empty);
-    assert_eq!(got[1].values, vec!["(empty)"]);
+    // An empty string and a NULL: two different things, said two ways.
+    assert_eq!(got[1].kind, FieldKind::Empty);
+    assert_eq!(got[1].values, vec!["(empty string)"]);
+    assert_eq!(got[2].kind, FieldKind::Null);
+    assert_eq!(got[2].values, vec!["NULL"]);
+    // A cell the row is too short to have is no value: NULL.
+    assert_eq!(got[3].kind, FieldKind::Null);
+}
+
+#[test]
+fn diff_cell_says_null_and_empty_string_apart() {
+    assert_eq!(diff_cell(&None), "NULL");
+    assert_eq!(diff_cell(&Some(String::new())), "''");
+    assert_eq!(diff_cell(&Some("x".into())), "x");
 }
 
 #[test]
 fn build_field_layout_truncates_oversized_labels() {
     let cols = vec!["aaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]; // 25 chars
-    let row = vec!["v".to_string()];
+    let row = vec![Some("v".to_string())];
     let got = build_field_layout(&cols, &row, 8, 10);
     assert_eq!(got[0].label.chars().count(), 8);
     assert!(got[0].label.starts_with("aaaaaaaa"));
@@ -179,7 +195,7 @@ fn scroll_offset_keeps_cursor_in_view() {
 #[test]
 fn build_field_layout_wraps_long_values() {
     let cols = vec!["bio".to_string()];
-    let row = vec!["abcdefghij".to_string()];
+    let row = vec![Some("abcdefghij".to_string())];
     let got = build_field_layout(&cols, &row, 4, 4);
     assert_eq!(got[0].values, vec!["abcd", "efgh", "ij"]);
 }
@@ -534,6 +550,184 @@ fn footer_badges_surface_tap_and_nplus1_when_findings_exist() {
     assert!(
         labels.iter().any(|l| l.contains("N+1 ×1")),
         "expected N+1 ×1 badge: {labels:?}"
+    );
+}
+
+/// A query event bound to `params`, for the tap List view's detail.
+fn tap_query_with_params(sql: &str, params: &[&str], redacted: bool) -> crate::tap::TapEvent {
+    crate::tap::TapEvent {
+        v: 1,
+        kind: crate::tap::TapKind::Query,
+        ts_unix_micros: 1,
+        received_at_unix_micros: 1,
+        app: Some("svc".into()),
+        pool: None,
+        conn: Some("c-1".into()),
+        txn: None,
+        sql: Some(sql.into()),
+        params: Some(params.iter().map(|p| p.to_string()).collect()),
+        params_redacted: redacted,
+        duration_micros: Some(1),
+        rows: None,
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: None,
+    }
+}
+
+/// The tap monitor drawn at `w`×`h`, one string per row.
+fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
+    a.splash_visible = false;
+    a.mode = crate::app::Mode::TapMonitor;
+    a.tap_nav.view = crate::app::TapView::List;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| draw(f, a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// The List view shows the focused query's bound parameters — before,
+/// they were only stored and written to `--tap-record`.
+#[test]
+fn tap_list_shows_the_focused_events_bound_parameters() {
+    let mut a = settled_app(false, false);
+    a.on_tap_event(tap_query_with_params(
+        "SELECT * FROM accounts WHERE id = ?",
+        &["2107"],
+        false,
+    ));
+    let rows = tap_monitor_rows(&mut a, 120, 40);
+    let row = rows
+        .iter()
+        .find(|r| r.contains("params"))
+        .unwrap_or_else(|| panic!("no params line:\n{}", rows.join("\n")));
+    assert!(row.contains("params  1: 2107"), "{row}");
+    assert!(!row.contains("redacted"), "{row}");
+}
+
+/// A masked value carries a visible marker, in the warning colour, so the
+/// operator reads `[redacted]` as masked and not as what was bound.
+#[test]
+fn tap_list_marks_parameters_the_producer_redacted() {
+    let mut a = settled_app(false, false);
+    a.on_tap_event(tap_query_with_params(
+        "INSERT INTO invoice (account_id, amount, note) VALUES (?, ?, ?)",
+        &["2", "11", "[redacted]"],
+        true,
+    ));
+    a.splash_visible = false;
+    a.mode = crate::app::Mode::TapMonitor;
+    a.tap_nav.view = crate::app::TapView::List;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+    term.draw(|f| draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let (y, row) = (0..buf.area.height)
+        .map(|y| {
+            let row: String = (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect();
+            (y, row)
+        })
+        .find(|(_, r)| r.contains("params"))
+        .expect("a params line");
+    assert!(
+        row.contains("params (some redacted)  1: 2 · 2: 11 · 3: [redacted]"),
+        "{row}"
+    );
+    let x = row.find("params (some").unwrap();
+    let x = row[..x].chars().count() as u16;
+    assert_eq!(buf[(x, y)].fg, a.theme.health_yellow, "{row}");
+}
+
+/// The detail follows the cursor; and a panel too short for it keeps its
+/// list rows instead.
+#[test]
+fn tap_list_params_detail_follows_the_cursor_and_yields_to_a_short_panel() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut a = settled_app(false, false);
+    a.on_tap_event(tap_query_with_params(
+        "SELECT 1 WHERE a = ?",
+        &["first"],
+        false,
+    ));
+    a.on_tap_event(tap_query_with_params(
+        "SELECT 2 WHERE b = ?",
+        &["second"],
+        false,
+    ));
+    a.mode = crate::app::Mode::TapMonitor;
+    a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    assert_eq!(a.tap_nav.events_cursor, 1);
+    let dump = tap_monitor_rows(&mut a, 120, 40).join("\n");
+    assert!(
+        dump.contains("1: second") && !dump.contains("1: first"),
+        "{dump}"
+    );
+    let dump = tap_monitor_rows(&mut a, 120, 12).join("\n");
+    assert!(!dump.contains("params"), "{dump}");
+    assert!(dump.contains("SELECT 2 WHERE b"), "{dump}");
+}
+
+/// A parameter list longer than the row carries on to a second line,
+/// which shows the cut with `…` rather than stopping mid-value.
+#[test]
+fn tap_list_carries_a_long_parameter_list_onto_a_marked_second_line() {
+    let mut a = settled_app(false, false);
+    let values: Vec<String> = (1..=40).map(|i| format!("value-{i}")).collect();
+    let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+    a.on_tap_event(tap_query_with_params(
+        "SELECT * FROM t WHERE a IN (?)",
+        &refs,
+        false,
+    ));
+    let rows = tap_monitor_rows(&mut a, 120, 40);
+    let at = rows
+        .iter()
+        .position(|r| r.contains("params  1: value-1 ·"))
+        .unwrap_or_else(|| panic!("{}", rows.join("\n")));
+    let next = &rows[at + 1];
+    assert!(next.contains("value-") && next.contains('…'), "{next}");
+}
+
+/// Crossing a COMMIT row keeps the detail's rows (the list doesn't
+/// change height under the cursor) and says a boundary has no params.
+#[test]
+fn tap_list_params_detail_keeps_its_rows_on_a_commit() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut a = settled_app(false, false);
+    a.on_tap_event(tap_query_with_params(
+        "SELECT 1 WHERE a = ?",
+        &["first"],
+        false,
+    ));
+    let mut commit = tap_query_with_params("", &[], false);
+    commit.kind = crate::tap::TapKind::TxnBoundary;
+    commit.sql = None;
+    commit.params = None;
+    commit.txn = Some("c-1#1".into());
+    commit.txn_outcome = Some(crate::tap::TxnOutcome::Commit);
+    a.on_tap_event(commit);
+    let on_query = tap_monitor_rows(&mut a, 120, 40);
+    a.mode = crate::app::Mode::TapMonitor;
+    a.on_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    let on_commit = tap_monitor_rows(&mut a, 120, 40);
+    // The detail's rule starts at the panel's left border; the popup's
+    // own top and bottom borders start at a corner.
+    let rule = format!("│{}", "─".repeat(40));
+    let rule_at = |rows: &[String]| rows.iter().position(|r| r.contains(&rule));
+    assert!(rule_at(&on_query).is_some(), "{}", on_query.join("\n"));
+    assert_eq!(rule_at(&on_query), rule_at(&on_commit));
+    let dump = on_commit.join("\n");
+    assert!(
+        dump.contains("no parameters on a commit / rollback"),
+        "{dump}"
     );
 }
 
@@ -1481,6 +1675,114 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
         .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
         .collect();
     assert!(footer.contains("y run · n / esc cancel"), "{footer}");
+}
+
+/// A write refused by a read-only connection at 80x24: the footer
+/// names `safety.toml` in at most two rows and never its path — a full
+/// path made it three and was cut anyway — and the F2 overlay carries
+/// the path whole.
+#[test]
+fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
+    let path = std::path::Path::new("/home/op/.config/pgman/safety.toml");
+    let (msg, detail) = crate::conn::explain_read_only_refusal(
+        "cannot execute DELETE in a read-only transaction".into(),
+        Some(crate::conn::QueryErrDetail {
+            code: Some("25006".into()),
+            severity: Some("ERROR".into()),
+            ..Default::default()
+        }),
+        Some(path),
+    );
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.last_error = Some(msg);
+    app.last_error_detail = detail;
+    app.mode = crate::app::Mode::Editor;
+    let screen = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let rows = screen(&mut app);
+    let footer: Vec<&String> = rows.iter().skip_while(|r| !r.contains('⚠')).collect();
+    // The rendered footer's height also depends on the tap's
+    // process-wide drop counter (a `DROP ×n` badge other tests can
+    // raise), so the row budget is checked with the badges pinned —
+    // the same `error_footer_rows` `draw` sizes the footer from.
+    let badges: usize = footer_badges_with(&app, &app.theme, 0)
+        .iter()
+        .map(|s| display_width(&s.content))
+        .sum();
+    let budgeted = error_footer_rows(
+        &footer_text(app.last_error.as_deref().unwrap()),
+        " · F2 detail",
+        80 - badges - display_width(ERROR_ICON),
+        ERROR_FOOTER_MAX_ROWS as usize,
+    );
+    assert!(
+        budgeted.len() <= 2,
+        "footer is {} rows: {budgeted:?}",
+        budgeted.len()
+    );
+    assert!(!footer.is_empty(), "no error footer:\n{}", rows.join("\n"));
+    let footer = footer
+        .iter()
+        .map(|r| r.trim_end())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(footer.contains("safety.toml"), "{footer}");
+    assert!(footer.contains("F2 detail"), "{footer}");
+    assert!(!footer.contains("/home/op"), "path in the footer: {footer}");
+    assert!(!footer.contains('…'), "the footer was cut: {footer}");
+
+    app.mode = crate::app::Mode::ErrorDetail;
+    let rows = screen(&mut app);
+    // The overlay wraps a long value mid-word: read it with the wraps
+    // (and the panes' borders around it) taken out.
+    let joined: String = rows
+        .concat()
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '│')
+        .collect();
+    assert!(
+        joined.contains("read_only=truein/home/op/.config/pgman/safety.toml"),
+        "F2 lost the path:\n{}",
+        rows.join("\n")
+    );
+}
+
+/// The log picker's failed-pick line fits its border and is cut at the
+/// end, never in the middle with a stray word after the ellipsis.
+#[test]
+fn failed_pick_title_fits_and_cuts_at_the_end() {
+    use super::panels::failed_pick_title;
+    let err = "relation \"invoice_lnes\" does not exist at character 15";
+    assert_eq!(
+        failed_pick_title(err, 200),
+        format!(" failed in the log: {err} ")
+    );
+    let cut = failed_pick_title(err, 60);
+    assert!(display_width(&cut) <= 60, "{cut:?}");
+    assert!(cut.starts_with(" failed in the log: relation"), "{cut:?}");
+    assert!(cut.ends_with("… "), "{cut:?}");
+    assert!(
+        !cut.contains("15"),
+        "a middle cut kept the last word: {cut:?}"
+    );
+    // A multi-line message is one line on a border.
+    assert_eq!(failed_pick_title("a\nb", 200), " failed in the log: a · b ");
 }
 
 /// An error with no server detail says so in words, not type names.

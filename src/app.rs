@@ -12,7 +12,7 @@ mod types;
 mod yank;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
-use crate::grid::Grid;
+use crate::grid::{cell_text, Cell, Grid};
 use crate::inventory::patching::RunMode;
 use crate::query::complete::{self as complete_q, Candidate};
 use crate::query::schema::SchemaCache;
@@ -204,8 +204,8 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
     grid.rows
         .iter()
         .filter_map(|row| {
-            let name = row.first()?.clone();
-            let size = row.get(1)?.clone();
+            let name = cell_text(row.first()?).to_string();
+            let size = cell_text(row.get(1)?).to_string();
             // No size means no CONNECT (RDS's `rdsadmin`): not one to
             // offer on the start card.
             (!size.is_empty()).then_some(DatabaseInfo { name, size })
@@ -324,30 +324,41 @@ pub fn next_sort_state(current: Option<(usize, bool)>, target_col: usize) -> Opt
 
 /// Pure: filter `rows` by `pattern` (case-insensitive substring
 /// across every column). Returns the row indices that match, in
-/// original order. `None` pattern means "everything".
+/// original order. `None` pattern, or an empty one, means
+/// "everything". A NULL cell matches only the whole word `null`
+/// ([`cell_matches`]).
 ///
 /// ```
 /// use pgman::app::compute_visible_rows;
 /// let rows = vec![
-///     vec!["1".into(), "alice".into()],
-///     vec!["2".into(), "BOB".into()],
+///     vec![Some("1".into()), Some("alice".into())],
+///     vec![Some("2".into()), Some("BOB".into())],
 /// ];
 /// assert_eq!(compute_visible_rows(&rows, None), vec![0, 1]);
 /// assert_eq!(compute_visible_rows(&rows, Some("bo")), vec![1]); // case-insens
 /// ```
-pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<usize> {
+pub fn compute_visible_rows(rows: &[Vec<Cell>], pattern: Option<&str>) -> Vec<usize> {
     match pattern {
-        None => (0..rows.len()).collect(),
+        None | Some("") => (0..rows.len()).collect(),
         Some(pat) => {
             let needle = pat.to_ascii_lowercase();
             (0..rows.len())
-                .filter(|i| {
-                    rows[*i]
-                        .iter()
-                        .any(|c| c.to_ascii_lowercase().contains(&needle))
-                })
+                .filter(|i| rows[*i].iter().any(|c| cell_matches(c, &needle)))
                 .collect()
         }
+    }
+}
+
+/// Does `cell` match the filter / find `needle` (already lowercased)?
+/// A value matches when it contains the needle, case-insensitively. A
+/// NULL has no text to contain anything, but the grid draws it as
+/// `NULL`, so it matches the whole word `null` (any case) — and only
+/// that: `/nu`, looking for `number`, must not light up every row
+/// with a NULL in it. Pure / testable.
+pub fn cell_matches(cell: &Cell, needle: &str) -> bool {
+    match cell {
+        Some(text) => text.to_ascii_lowercase().contains(needle),
+        None => needle == "null",
     }
 }
 
@@ -465,7 +476,7 @@ pub fn compute_grid_find_matches(
             continue;
         };
         for (ci, cell) in row.iter().enumerate() {
-            if cell.to_ascii_lowercase().contains(&needle) {
+            if cell_matches(cell, &needle) {
                 out.push((vi, ci));
             }
         }
@@ -817,25 +828,21 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
     Some((schema, t.name.clone()))
 }
 
-/// Render a rendered-cell string as a SQL literal. Empty → `NULL`.
-/// Numeric strings pass through unquoted. Anything else is
-/// single-quoted with embedded quotes doubled. Best-effort — types
-/// aren't tracked through the renderer, so JSON / arrays / bytea
-/// would all hit the string branch and get quoted; the operator
-/// edits the literal in the editor afterwards if needed.
-pub fn format_sql_literal(s: &str) -> String {
-    if s.is_empty() {
+/// Render a grid cell as a SQL literal: SQL NULL → `NULL`, and every
+/// value — the empty string included — a single-quoted string with
+/// embedded quotes doubled. NULL and `''` are different values: writing
+/// `NULL` for `''` changed the row the yank was copying.
+///
+/// A value is quoted even when it looks like a number or a boolean. The
+/// grid holds text, not types, so it cannot know a column is numeric;
+/// a quoted literal is an untyped one, which Postgres reads as the
+/// target column's type (`'42'` into an `integer`, `'t'` into a
+/// `boolean`). Bare, `007` in a text column came back as `7`, `1e3` as
+/// `1000`, `TRUE` as `true`, and `NaN` was read as a column name.
+pub fn format_sql_literal(cell: Option<&str>) -> String {
+    let Some(s) = cell else {
         return "NULL".to_string();
-    }
-    // Numeric? Try parsing both integer and float forms.
-    if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
-        return s.to_string();
-    }
-    // Booleans pass through as identifiers (Postgres accepts them).
-    if matches!(s.to_ascii_lowercase().as_str(), "true" | "false") {
-        return s.to_ascii_lowercase();
-    }
-    // Default: SQL string literal with `'` doubled.
+    };
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for c in s.chars() {
@@ -953,6 +960,114 @@ fn strip_strings(sql: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| sql.to_string())
 }
 
+/// Postgres's keywords that cannot be a bare column or table name: the
+/// "reserved" and "reserved (can be function or type)" rows of the SQL
+/// key words appendix. Sorted, for `binary_search`. A column named
+/// `order` or `user` is legal, quoted; bare, it is a syntax error.
+const RESERVED_KEYWORDS: &[&str] = &[
+    "all",
+    "analyse",
+    "analyze",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "asymmetric",
+    "authorization",
+    "binary",
+    "both",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "collation",
+    "column",
+    "concurrently",
+    "constraint",
+    "create",
+    "cross",
+    "current_catalog",
+    "current_date",
+    "current_role",
+    "current_schema",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "default",
+    "deferrable",
+    "desc",
+    "distinct",
+    "do",
+    "else",
+    "end",
+    "except",
+    "false",
+    "fetch",
+    "for",
+    "foreign",
+    "freeze",
+    "from",
+    "full",
+    "grant",
+    "group",
+    "having",
+    "ilike",
+    "in",
+    "initially",
+    "inner",
+    "intersect",
+    "into",
+    "is",
+    "isnull",
+    "join",
+    "lateral",
+    "leading",
+    "left",
+    "like",
+    "limit",
+    "localtime",
+    "localtimestamp",
+    "natural",
+    "not",
+    "notnull",
+    "null",
+    "offset",
+    "on",
+    "only",
+    "or",
+    "order",
+    "outer",
+    "overlaps",
+    "placing",
+    "primary",
+    "references",
+    "returning",
+    "right",
+    "select",
+    "session_user",
+    "similar",
+    "some",
+    "symmetric",
+    "system_user",
+    "table",
+    "tablesample",
+    "then",
+    "to",
+    "trailing",
+    "true",
+    "union",
+    "unique",
+    "user",
+    "using",
+    "variadic",
+    "verbose",
+    "when",
+    "where",
+    "window",
+    "with",
+];
+
 /// Quote a Postgres identifier only when it needs it: lowercase
 /// ASCII identifiers passing the unquoted-identifier rule render
 /// bare; anything else (mixed case, leading digit, embedded space,
@@ -970,6 +1085,7 @@ pub fn quote_ident(name: &str) -> String {
             return true;
         }
         chars.any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+            || RESERVED_KEYWORDS.binary_search(&name).is_ok()
     }
     if !needs_quote(name) {
         return name.to_string();
@@ -1011,6 +1127,26 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
         quote_ident(schema),
         quote_ident(table),
     )
+}
+
+/// `I`'s `INSERT INTO schema.table (cols…) VALUES (literals…);` for one
+/// grid row, each cell through [`format_sql_literal`]. Column names are
+/// the server's own, case and all, so they go through [`quote_ident`]
+/// (`createdAt` bare is `createdat`, a column the table lacks). The
+/// schema and table stay as the query spelled them — `FROM Users`
+/// infers `Users`, which only works bare. Pure / testable.
+pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
+    let cols = columns
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let vals = row
+        .iter()
+        .map(|c| format_sql_literal(c.as_deref()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
 }
 
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
@@ -2002,6 +2138,21 @@ impl App {
     ///   update `tap_health` with the dropped-events counter
     ///   and bump the heartbeat-count tally.
     pub fn on_tap_event(&mut self, event: crate::tap::TapEvent) {
+        // The monitor writes its summary into the status line when it
+        // opens; an event landing while it is open must refresh that
+        // line, or "no events yet" outlives the events. Only the
+        // summary is replaced — any other status (a sort flash, an
+        // error) is the operator's and stays.
+        let shown_summary = (self.mode == Mode::TapMonitor)
+            .then(|| self.tap_health.monitor_status())
+            .filter(|s| self.last_status.as_deref() == Some(s.as_str()));
+        self.fold_tap_event(event);
+        if shown_summary.is_some() {
+            self.last_status = Some(self.tap_health.monitor_status());
+        }
+    }
+
+    fn fold_tap_event(&mut self, event: crate::tap::TapEvent) {
         self.tap_health.last_event_at_unix_micros = event.received_at_unix_micros;
         match event.kind {
             crate::tap::TapKind::Heartbeat => {
@@ -2827,7 +2978,7 @@ impl App {
         self.cell_detail.json_rows.clear();
         self.cell_detail.json_cursor = 0;
         self.cell_detail.json_collapsed.clear();
-        if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(value) {
+        if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(cell_text(value)) {
             self.cell_detail.json_rows =
                 crate::query::json_cell::flatten(&parsed, &self.cell_detail.json_collapsed);
             // Stash the parsed value so collapse/expand can re-flatten.
@@ -2937,26 +3088,32 @@ impl App {
         }
     }
 
+    /// Drop a status a completion popup left (`completion: 3 matches ·
+    /// Tab to pick`, …) once the popup is gone; any other status stays.
+    fn clear_completion_status(&mut self) {
+        if self
+            .last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion"))
+        {
+            self.last_status = None;
+        }
+    }
+
     /// Re-extract candidates from the current buffer/cursor. Called
     /// after a narrowing key while the completion popup is in
     /// pre-selection state so the popup stays live and narrows as the
     /// operator types. Preserves the cycle's `origin` fields so a
     /// later Esc still undoes back to the pre-Tab state.
     fn refresh_completion(&mut self) {
-        if self.completion.take().is_none() {
+        let Some(old) = self.completion.take() else {
             return;
-        }
+        };
         let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             // The popup closed (a `;`, a `(`): its `completion: 1 match
             // · Tab to pick` would otherwise outlive it.
-            if self
-                .last_status
-                .as_deref()
-                .is_some_and(|s| s.starts_with("completion"))
-            {
-                self.last_status = None;
-            }
+            self.clear_completion_status();
             return;
         };
         // Empty prefix is fine — the candidate set falls back to "all
@@ -2966,6 +3123,14 @@ impl App {
         let cands =
             complete_q::candidates_for(&self.editor.buffer, self.editor.cursor, &self.schema_cache);
         if cands.is_empty() {
+            // A popup the editor opened on its own closes as quietly as
+            // it opened: the operator typing on through it never asked
+            // for completion, and `no matches for t.…` stayed in the
+            // footer while they went on writing ordinary SQL.
+            if old.auto {
+                self.clear_completion_status();
+                return;
+            }
             // Mirror the tailored messaging from editor_complete so the
             // status footer doesn't show `no matches for ""` when the
             // operator narrows the prefix down to empty in a clause
@@ -2996,6 +3161,7 @@ impl App {
             origin_cursor: self.editor.cursor,
             candidates: cands,
             selected: None,
+            auto: old.auto,
         });
         self.last_status = Some(format!(
             "completion: {} match{} · Tab to pick",
@@ -3166,6 +3332,20 @@ impl App {
     /// statement that cannot run. When no member is bound (the log had
     /// no bind lines for this shape) the template loads and the flag
     /// lets Enter say so instead of calling it `loaded query`.
+    /// The focused pick's error when it failed where it was logged —
+    /// the all-queries view only: a cluster row is a shape, not a run.
+    pub fn focused_log_pick_error(&self) -> Option<&str> {
+        match self.log_pick.view {
+            LogPickView::AllQueries => self
+                .log_pick
+                .picks
+                .get(self.log_pick.index)?
+                .error
+                .as_deref(),
+            LogPickView::Clusters => None,
+        }
+    }
+
     fn focused_log_pick_sql(&self) -> Option<(String, bool)> {
         let sql = match self.log_pick.view {
             LogPickView::AllQueries => self
@@ -3736,7 +3916,8 @@ impl App {
     /// `s` in Normal mode — cycle sort on the focused column:
     /// `off → ASC → DESC → off`. ASC takes a snapshot of the raw
     /// row order so `off` can restore it without re-running the
-    /// query.
+    /// query. NULLs go where Postgres puts them by default: last
+    /// ascending, first descending ([`crate::grid::cmp_cells`]).
     fn cycle_sort(&mut self) {
         if self.grid.columns.is_empty() {
             return;
@@ -3749,8 +3930,9 @@ impl App {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
                 self.grid.rows.sort_by(|a, b| {
-                    let av = a.get(col).map(String::as_str).unwrap_or("");
-                    let bv = b.get(col).map(String::as_str).unwrap_or("");
+                    // A short row's missing cell sorts as a NULL.
+                    let av = a.get(col).and_then(Option::as_deref);
+                    let bv = b.get(col).and_then(Option::as_deref);
                     let ord = crate::grid::cmp_cells(av, bv);
                     if asc {
                         ord
@@ -3812,7 +3994,7 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.grid_view.col_cursor).cloned() else {
+        let Some(cell) = row.get(self.grid_view.col_cursor).cloned() else {
             return;
         };
         let edge = match self
@@ -3828,6 +4010,11 @@ impl App {
                 return;
             }
         };
+        // `WHERE id = NULL` matches nothing: a NULL references no row.
+        let Some(value) = cell else {
+            self.last_status = Some(format!("{col_name} is NULL here — it references no row"));
+            return;
+        };
         // Build the parent SELECT. Use the same literal-quoting
         // path as row-as-INSERT for safe value rendering.
         let sql = format!(
@@ -3835,7 +4022,7 @@ impl App {
             parent_schema = quote_ident(&edge.parent_schema),
             parent_table = quote_ident(&edge.parent_table),
             parent_column = quote_ident(&edge.parent_column),
-            value_lit = format_sql_literal(&value),
+            value_lit = format_sql_literal(Some(&value)),
         );
         // Open in a new tab so the operator can close it to "go
         // back" to the originating result. Multi-tab refuses if
@@ -3945,7 +4132,7 @@ impl App {
     fn choose_diff_key(
         a: &PinnedResult,
         b_columns: &[String],
-        b_rows: &[Vec<String>],
+        b_rows: &[Vec<Cell>],
     ) -> crate::query::row_diff::RowKey {
         use crate::query::row_diff::{infer_key_column, RowKey};
         if a.columns == b_columns {

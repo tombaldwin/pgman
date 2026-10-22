@@ -399,11 +399,7 @@ impl App {
             let dot_byte = self.editor.cursor.saturating_sub(1);
             let prev_char = self.editor.buffer[..dot_byte].chars().next_back();
             if matches!(prev_char, Some(c) if c.is_alphabetic() || c == '_') {
-                let saved_status = self.last_status.clone();
-                self.editor_complete();
-                if self.completion.is_none() {
-                    self.last_status = saved_status;
-                }
+                self.auto_complete();
             }
         }
 
@@ -444,12 +440,23 @@ impl App {
                     .iter()
                     .any(|k| k.eq_ignore_ascii_case(last_word))
             {
-                let saved_status = self.last_status.clone();
-                self.editor_complete();
-                if self.completion.is_none() {
-                    self.last_status = saved_status;
-                }
+                self.auto_complete();
             }
+        }
+    }
+
+    /// Completion the editor opened on its own (after `.` or a
+    /// trigger keyword), not one the operator asked for with Tab. One
+    /// that finds nothing leaves the status as it was — typing `.` in
+    /// ordinary text is no reason to complain — and one that opens is
+    /// marked [`CompletionCycle::auto`], so narrowing it to nothing
+    /// later is just as quiet.
+    fn auto_complete(&mut self) {
+        let saved_status = self.last_status.clone();
+        self.editor_complete();
+        match self.completion.as_mut() {
+            Some(cycle) => cycle.auto = true,
+            None => self.last_status = saved_status,
         }
     }
 
@@ -653,6 +660,7 @@ impl App {
                 origin_cursor: cycle.origin_cursor,
                 candidates: cycle.candidates,
                 selected: Some(next),
+                auto: cycle.auto,
             });
             return;
         }
@@ -736,6 +744,7 @@ impl App {
                 origin_cursor: original_cursor,
                 candidates: cands,
                 selected: None,
+                auto: false,
             });
             return;
         }
@@ -759,6 +768,7 @@ impl App {
                 origin_cursor: original_cursor,
                 candidates: cands,
                 selected: Some(0),
+                auto: false,
             });
             return;
         }
@@ -801,6 +811,7 @@ impl App {
             origin_cursor: original_cursor,
             candidates: cands,
             selected: None,
+            auto: false,
         });
     }
 }

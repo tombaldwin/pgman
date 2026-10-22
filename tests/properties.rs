@@ -272,7 +272,7 @@ proptest! {
     #[test]
     fn unfiltered_visible_rows_are_identity(
         rows in proptest::collection::vec(
-            proptest::collection::vec(".{0,8}", 0..4),
+            proptest::collection::vec(proptest::option::of(".{0,8}"), 0..4),
             0..30,
         ),
     ) {
@@ -285,7 +285,7 @@ proptest! {
     #[test]
     fn filter_preserves_relative_order(
         rows in proptest::collection::vec(
-            proptest::collection::vec("[a-z]{0,6}", 1..4),
+            proptest::collection::vec(proptest::option::of("[a-z]{0,6}"), 1..4),
             0..30,
         ),
         pattern in "[a-z]{1,3}",
@@ -320,23 +320,27 @@ proptest! {
 proptest! {
     /// `cmp_cells` is antisymmetric.
     #[test]
-    fn cmp_cells_is_antisymmetric(a in ".{0,16}", b in ".{0,16}") {
-        let ab = cmp_cells(&a, &b);
-        let ba = cmp_cells(&b, &a);
+    fn cmp_cells_is_antisymmetric(
+        a in proptest::option::of(".{0,16}"),
+        b in proptest::option::of(".{0,16}"),
+    ) {
+        let ab = cmp_cells(a.as_deref(), b.as_deref());
+        let ba = cmp_cells(b.as_deref(), a.as_deref());
         prop_assert_eq!(ab.reverse(), ba);
     }
 
     /// `cmp_cells` is reflexive (a == a is Equal).
     #[test]
-    fn cmp_cells_is_reflexive(a in ".{0,16}") {
-        prop_assert_eq!(cmp_cells(&a, &a), std::cmp::Ordering::Equal);
+    fn cmp_cells_is_reflexive(a in proptest::option::of(".{0,16}")) {
+        prop_assert_eq!(cmp_cells(a.as_deref(), a.as_deref()), std::cmp::Ordering::Equal);
     }
 
-    /// Empty cell is always `Greater` than a non-empty one (NULLS LAST).
+    /// NULL is always `Greater` than any value, the empty string
+    /// included (NULLS LAST).
     #[test]
-    fn cmp_cells_null_last(b in "[^\\s].{0,16}") {
-        prop_assert_eq!(cmp_cells("", &b), std::cmp::Ordering::Greater);
-        prop_assert_eq!(cmp_cells(&b, ""), std::cmp::Ordering::Less);
+    fn cmp_cells_null_last(b in ".{0,16}") {
+        prop_assert_eq!(cmp_cells(None, Some(&b)), std::cmp::Ordering::Greater);
+        prop_assert_eq!(cmp_cells(Some(&b), None), std::cmp::Ordering::Less);
     }
 }
 
@@ -470,7 +474,7 @@ proptest! {
     #[test]
     fn grid_sort_is_idempotent(
         rows in proptest::collection::vec(
-            (0i32..1000, "[a-z]{0,8}"),
+            (0i32..1000, proptest::option::of("[a-z]{0,8}")),
             0..40,
         ),
     ) {
@@ -478,13 +482,13 @@ proptest! {
             columns: vec!["id".into(), "name".into()],
             rows: rows
                 .iter()
-                .map(|(i, s)| vec![i.to_string(), s.clone()])
+                .map(|(i, s)| vec![Some(i.to_string()), s.clone()])
                 .collect(),
                     truncated: false,
         };
-        g.rows.sort_by(|a, b| cmp_cells(&a[0], &b[0]));
+        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
         let after_first = g.rows.clone();
-        g.rows.sort_by(|a, b| cmp_cells(&a[0], &b[0]));
+        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
         prop_assert_eq!(after_first, g.rows);
     }
 }

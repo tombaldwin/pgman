@@ -132,7 +132,13 @@ impl App {
                 // still readable that way), surface the parse error
                 // in last_status so the operator sees what happened.
                 if kind_label == "EXPLAIN" || kind_label == "EXPLAIN ANALYZE" {
-                    if let Some(text) = self.grid.rows.first().and_then(|r| r.first()).cloned() {
+                    if let Some(text) = self
+                        .grid
+                        .rows
+                        .first()
+                        .and_then(|r| r.first())
+                        .map(|c| crate::grid::cell_text(c).to_string())
+                    {
                         match crate::query::explain::parse(&text) {
                             Ok(plan) => {
                                 self.explain.plan = Some(plan);

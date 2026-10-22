@@ -1,4 +1,12 @@
 use super::*;
+use crate::grid::{cell_text, Cell};
+
+/// `rows` as text, NULL as `""`: for asserting on values.
+fn text(rows: &[Vec<Cell>]) -> Vec<Vec<&str>> {
+    rows.iter()
+        .map(|r| r.iter().map(cell_text).collect())
+        .collect()
+}
 
 fn cache() -> SchemaCache {
     schema::schema_cache()
@@ -40,11 +48,11 @@ fn the_opening_grid_is_the_opening_querys_answer() {
     );
     assert_eq!(a.grid.rows.len(), 5);
     assert!(
-        a.grid.rows.iter().all(|r| r[2] == "open"),
+        a.grid.rows.iter().all(|r| cell_text(&r[2]) == "open"),
         "{:?}",
         a.grid.rows
     );
-    let due: Vec<&str> = a.grid.rows.iter().map(|r| r[5].as_str()).collect();
+    let due: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[5])).collect();
     let mut sorted = due.clone();
     sorted.sort();
     assert_eq!(due, sorted, "ORDER BY due_at holds without sorting");
@@ -96,19 +104,31 @@ fn answer_select_on_invoice_lines_yields_that_invoices_lines() {
         ]
     );
     assert!(!g.rows.is_empty());
-    assert!(g.rows.iter().all(|r| r[1] == "48207"), "{:?}", g.rows);
-    assert!(g.rows[0][3].parse::<u32>().is_ok(), "{:?}", g.rows[0]);
-    assert!(g.rows[0][5].contains('.'), "money: {:?}", g.rows[0]);
+    assert!(
+        g.rows.iter().all(|r| cell_text(&r[1]) == "48207"),
+        "{:?}",
+        g.rows
+    );
+    assert!(
+        cell_text(&g.rows[0][3]).parse::<u32>().is_ok(),
+        "{:?}",
+        g.rows[0]
+    );
+    assert!(
+        cell_text(&g.rows[0][5]).contains('.'),
+        "money: {:?}",
+        g.rows[0]
+    );
 }
 
 #[test]
 fn a_term_on_id_answers_one_row_with_that_id() {
     let g = answer("SELECT * FROM payments WHERE id = 39900", &cache());
     assert_eq!(g.rows.len(), 1);
-    assert_eq!(g.rows[0][0], "39900");
+    assert_eq!(cell_text(&g.rows[0][0]), "39900");
     // The canned tables filter instead.
     let g = answer("SELECT name FROM customers WHERE id = 2107", &cache());
-    assert_eq!(g.rows, [["Meridian Legal"]]);
+    assert_eq!(text(&g.rows), [["Meridian Legal"]]);
     let g = answer("SELECT * FROM customers WHERE id = 1", &cache());
     assert!(g.rows.is_empty(), "no such customer");
 }
@@ -153,13 +173,13 @@ fn filter_rows_keeps_matching_rows_and_ignores_unknown_columns() {
     let grid = Grid {
         columns: vec!["id".into(), "status".into()],
         rows: vec![
-            vec!["1".into(), "open".into()],
-            vec!["2".into(), "paid".into()],
+            vec![Some("1".into()), Some("open".into())],
+            vec![Some("2".into()), Some("paid".into())],
         ],
         truncated: false,
     };
     let only = filter_rows(grid.clone(), &[("STATUS".into(), "paid".into())]);
-    assert_eq!(only.rows, [["2", "paid"]]);
+    assert_eq!(text(&only.rows), [["2", "paid"]]);
     let all = filter_rows(grid.clone(), &[("nope".into(), "x".into())]);
     assert_eq!(all.rows, grid.rows);
 }
@@ -173,7 +193,7 @@ fn explain_plans_the_table_asked_about() {
     let cache = cache();
     let plan = |sql: &str, analyze: bool| {
         let g = explain_plan_grid(analyze, sql, &cache);
-        crate::query::explain::parse(&g.rows[0][0]).expect("valid plan JSON")
+        crate::query::explain::parse(cell_text(&g.rows[0][0])).expect("valid plan JSON")
     };
     let extra = |p: &crate::query::explain::PlanNode, key: &str| {
         p.extras
@@ -308,6 +328,10 @@ fn answer_select_on_invoices_yields_the_written_out_rows() {
     let grid = answer("SELECT * FROM invoices", &cache());
     let (expected_cols, expected_rows) = schema::invoices();
     assert_eq!(grid.columns, expected_cols);
+    let expected_rows: Vec<Vec<Cell>> = expected_rows
+        .into_iter()
+        .map(|r| r.into_iter().map(data_cell).collect())
+        .collect();
     assert_eq!(grid.rows, expected_rows);
 }
 
@@ -332,8 +356,8 @@ fn answer_select_on_a_generated_table_yields_shaped_deterministic_rows() {
     for row in &grid.rows {
         assert_eq!(row.len(), grid.columns.len());
         // Every column here is NOT NULL.
-        assert!(row.iter().all(|c| !c.is_empty()), "{row:?}");
-        assert_eq!(row[5], "failed", "the WHERE holds in every row");
+        assert!(row.iter().all(|c| !cell_text(c).is_empty()), "{row:?}");
+        assert_eq!(cell_text(&row[5]), "failed", "the WHERE holds in every row");
     }
     assert_eq!(grid.rows, answer(sql, &cache()).rows);
 }
@@ -352,7 +376,7 @@ fn every_relation_answers_with_its_not_null_columns_filled() {
         for row in &g.rows {
             for (cell, col) in row.iter().zip(meta) {
                 if col.not_null {
-                    assert!(!cell.is_empty(), "{}.{} is NOT NULL", t.name, col.name);
+                    assert!(cell.is_some(), "{}.{} is NOT NULL", t.name, col.name);
                 }
             }
         }
@@ -365,14 +389,20 @@ fn answer_unknown_statement_yields_one_row_notice() {
     let grid = answer("SELECT 1", &cache);
     assert_eq!(grid.columns, vec!["demo".to_string()]);
     assert_eq!(grid.rows.len(), 1);
-    assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
+    assert_eq!(
+        cell_text(&grid.rows[0][0]),
+        "this is --demo mode, no database"
+    );
 
     // A join (not a single-table FROM) also falls back to the notice.
     let grid = answer(
         "SELECT * FROM invoices i JOIN customers c ON c.id = i.customer_id",
         &cache,
     );
-    assert_eq!(grid.rows[0][0], "this is --demo mode, no database");
+    assert_eq!(
+        cell_text(&grid.rows[0][0]),
+        "this is --demo mode, no database"
+    );
 }
 
 #[test]
@@ -422,22 +452,26 @@ fn project_columns_narrows_to_the_named_columns() {
     let grid = Grid {
         columns: vec!["id".into(), "user_id".into(), "status".into()],
         rows: vec![
-            vec!["1".into(), "7".into(), "shipped".into()],
-            vec!["2".into(), "8".into(), "pending".into()],
+            vec![Some("1".into()), Some("7".into()), Some("shipped".into())],
+            vec![Some("2".into()), Some("8".into()), Some("pending".into())],
         ],
         truncated: false,
     };
     let out = project_columns("id, status", grid);
     assert_eq!(out.columns, vec!["id".to_string(), "status".to_string()]);
-    assert_eq!(out.rows[0], vec!["1".to_string(), "shipped".to_string()]);
-    assert_eq!(out.rows[1], vec!["2".to_string(), "pending".to_string()]);
+    assert_eq!(text(&out.rows)[0], ["1", "shipped"]);
+    assert_eq!(text(&out.rows)[1], ["2", "pending"]);
 }
 
 #[test]
 fn project_columns_keeps_every_column_for_anything_it_cannot_read() {
     let grid = || Grid {
         columns: vec!["id".into(), "user_id".into(), "status".into()],
-        rows: vec![vec!["1".into(), "7".into(), "shipped".into()]],
+        rows: vec![vec![
+            Some("1".into()),
+            Some("7".into()),
+            Some("shipped".into()),
+        ]],
         truncated: false,
     };
     let all = vec![
@@ -463,7 +497,7 @@ fn project_columns_keeps_every_column_for_anything_it_cannot_read() {
 fn project_columns_reads_alias_qualified_names_case_insensitively() {
     let grid = Grid {
         columns: vec!["id".into(), "Status".into()],
-        rows: vec![vec!["1".into(), "shipped".into()]],
+        rows: vec![vec![Some("1".into()), Some("shipped".into())]],
         truncated: true,
     };
     let out = project_columns("o.ID , o.status", grid);
@@ -522,7 +556,7 @@ fn functions_grid_has_the_live_columns() {
     let g = functions_grid(None);
     assert_eq!(g.columns, ["schema", "name", "result", "arguments", "type"]);
     assert!(g.rows.iter().all(|r| r.len() == g.columns.len()));
-    assert!(g.rows.iter().all(|r| r[0] == "public"));
+    assert!(g.rows.iter().all(|r| cell_text(&r[0]) == "public"));
     assert_eq!(functions_grid(Some("public.invoice_*")).rows.len(), 1);
     assert_eq!(functions_grid(Some("reporting.invoice_*")).rows.len(), 0);
     assert_eq!(functions_grid(Some("reporting.*")).rows.len(), 2);

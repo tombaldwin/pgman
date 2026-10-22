@@ -121,19 +121,7 @@ impl App {
             .tap_nav
             .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
-        let queries = self.tap_health.query_count;
-        let beats = self.tap_health.heartbeat_count;
-        let dropped = self.tap_health.dropped_events_total;
-        self.last_status = Some(if queries == 0 && beats == 0 {
-            "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into()
-        } else {
-            let dropped_suffix = if dropped > 0 {
-                format!(" · {dropped} dropped (JAR backpressure)")
-            } else {
-                String::new()
-            };
-            format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
-        });
+        self.last_status = Some(self.tap_health.monitor_status());
         self.mode = Mode::TapMonitor;
     }
 

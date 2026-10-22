@@ -477,6 +477,13 @@ are environment and role words (`prod`, `staging`, `replica`,
 data (result rows, SQL in the editor). A table named after a client
 shows as it is. Nor is pgman's own fixed text, such as the About
 card's credit line, even where a word in it matches a redacted name.
+The bound parameters the JDBC tap monitor shows under an event are
+data too, so `--redact` leaves them readable: an email or a surname
+bound to a statement appears as the application sent it. The only
+masking they get is the producer's own: pgman-tap replaces a value
+with `[redacted]` and the line is labelled `params (some redacted)`.
+A value that happens to match a pattern above (an account ID, an IP
+address) is still blocked out, as anything drawn is.
 
 **Limits.** Matching is on what is drawn. A known name cut short by the
 layout is caught by its parts, but an *unknown* host or account ID cut

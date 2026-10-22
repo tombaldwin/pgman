@@ -411,6 +411,7 @@ fn scr_log_pick() -> App {
             runnable_sql: "select * from users where id = 42".into(),
             source: Source::HibernateLog,
             src_line: 12,
+            error: None,
         },
         ReconstructedQuery {
             raw_sql: "select * from orders where user_id = ?".into(),
@@ -418,6 +419,7 @@ fn scr_log_pick() -> App {
             runnable_sql: "select * from orders where user_id = 42".into(),
             source: Source::PostgresLog,
             src_line: 45,
+            error: None,
         },
     ];
     a.log_pick.index = 0;
@@ -478,7 +480,9 @@ fn scr_cell_detail() -> App {
     let mut a = base();
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into()]],
+        rows: vec![vec![Some(
+            r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into(),
+        )]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -718,7 +722,7 @@ fn scr_result_diff() -> App {
     a.on_key(key('D')); // pin A
                         // Mutate the grid so B differs from A: change a cell, drop a
                         // row, add a row.
-    a.grid.rows[0][4] = "5512.00".into();
+    a.grid.rows[0][4] = Some("5512.00".into());
     a.grid.rows.remove(1);
     a.grid.rows.push(
         [
@@ -729,7 +733,7 @@ fn scr_result_diff() -> App {
             "249.00",
             "2026-11-01 09:00:00+00",
         ]
-        .map(String::from)
+        .map(|s| Some(s.to_string()))
         .to_vec(),
     );
     a.on_key(key('D')); // diff B against A

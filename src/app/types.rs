@@ -179,9 +179,10 @@ pub enum Mode {
     /// `SavedQueries`). Edits `App::saved_ui.rename_buf`; Enter
     /// commits (refused on name collision), Esc cancels.
     RenameQueryPrompt,
-    /// JDBC-tap event monitor (`F4` from anywhere). Lists
-    /// `App::tap_events` in recency order — time, duration,
-    /// app, sql preview. j/k move; enter drills into one event;
+    /// JDBC-tap event monitor (`F4` from anywhere). Its List view
+    /// shows `App::tap_events` in recency order — duration, rows,
+    /// app, sql preview — with the focused query's bound
+    /// parameters beneath. j/k move; v cycles the other views;
     /// c clears the ring; q/esc close.
     TapMonitor,
     /// Result-diff view (`D` in Normal pins A, the next `D`
@@ -289,6 +290,11 @@ pub struct CompletionCycle {
     /// any specific candidate — the next Tab will pick `candidates[0]`.
     /// `Some(i)` means `candidates[i]` is currently in the buffer.
     pub selected: Option<usize>,
+    /// The editor opened this popup on its own (after `.` or a trigger
+    /// keyword), not Tab. Narrowing an auto-opened popup to nothing
+    /// closes it without a status: the operator never asked for
+    /// completion. One Tab opened says why it closed.
+    pub auto: bool,
 }
 
 /// Active `\watch` session — re-run the saved SQL every `interval`
@@ -357,7 +363,7 @@ pub struct GridView {
     pub sort: Option<(usize, bool)>,
     /// The grid as it landed from the query — preserved so a "clear
     /// sort" can restore the original row order without re-running.
-    pub raw_rows: Option<Vec<Vec<String>>>,
+    pub raw_rows: Option<Vec<Vec<crate::grid::Cell>>>,
     /// Active row-filter pattern (case-insensitive substring across
     /// all columns). `None` = no filter; rendered rows are
     /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
@@ -462,7 +468,7 @@ pub struct GridBookmark {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedResult {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<crate::grid::Cell>>,
     /// Short label for the header — the SQL that produced A
     /// (collapsed / truncated) or a fallback.
     pub label: String,
@@ -476,7 +482,7 @@ pub struct PinnedResult {
 pub struct ResultDiffState {
     pub a: PinnedResult,
     pub b_columns: Vec<String>,
-    pub b_rows: Vec<Vec<String>>,
+    pub b_rows: Vec<Vec<crate::grid::Cell>>,
     pub b_label: String,
     pub key: crate::query::row_diff::RowKey,
     pub diff: crate::query::row_diff::RowDiff,
@@ -1697,4 +1703,27 @@ pub struct TapHealth {
     pub query_count: u64,
     /// Count of heartbeat events seen — for diagnostics.
     pub heartbeat_count: u64,
+}
+
+impl TapHealth {
+    /// The tap monitor's one-line status summary for this snapshot:
+    /// the setup hint before anything has arrived, the counters after.
+    /// Pure, so opening the monitor and every event that lands while
+    /// it is open render the same line.
+    pub fn monitor_status(&self) -> String {
+        let queries = self.query_count;
+        let beats = self.heartbeat_count;
+        if queries == 0 && beats == 0 {
+            return "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into();
+        }
+        let dropped_suffix = if self.dropped_events_total > 0 {
+            format!(
+                " · {} dropped (JAR backpressure)",
+                self.dropped_events_total
+            )
+        } else {
+            String::new()
+        };
+        format!("JDBC tap · {queries} queries · {beats} heartbeats{dropped_suffix}")
+    }
 }

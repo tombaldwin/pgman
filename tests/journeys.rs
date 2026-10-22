@@ -157,9 +157,9 @@ fn grid_filter_typing_narrows_visible_rows() {
     a.grid = Grid {
         columns: vec!["name".into()],
         rows: vec![
-            vec!["alice".into()],
-            vec!["bob".into()],
-            vec!["carol".into()],
+            vec![Some("alice".into())],
+            vec![Some("bob".into())],
+            vec![Some("carol".into())],
         ],
         truncated: false,
     };
@@ -238,7 +238,11 @@ fn grid_sort_cycle_through_three_states() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["3".into()], vec!["1".into()], vec!["2".into()]],
+        rows: vec![
+            vec![Some("3".into())],
+            vec![Some("1".into())],
+            vec![Some("2".into())],
+        ],
         truncated: false,
     };
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
@@ -246,17 +250,32 @@ fn grid_sort_cycle_through_three_states() {
     // ASC.
     drive(&mut a, &[k('s')]);
     assert_eq!(a.grid_view.sort, Some((0, true)));
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a
+        .grid
+        .rows
+        .iter()
+        .map(|r| pgman::grid::cell_text(&r[0]))
+        .collect();
     assert_eq!(ids, vec!["1", "2", "3"]);
     // DESC.
     drive(&mut a, &[k('s')]);
     assert_eq!(a.grid_view.sort, Some((0, false)));
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a
+        .grid
+        .rows
+        .iter()
+        .map(|r| pgman::grid::cell_text(&r[0]))
+        .collect();
     assert_eq!(ids, vec!["3", "2", "1"]);
     // Off — restores original order.
     drive(&mut a, &[k('s')]);
     assert_eq!(a.grid_view.sort, None);
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a
+        .grid
+        .rows
+        .iter()
+        .map(|r| pgman::grid::cell_text(&r[0]))
+        .collect();
     assert_eq!(ids, vec!["3", "1", "2"]);
 }
 

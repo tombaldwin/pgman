@@ -361,8 +361,8 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 print!("{text}");
                 0
             }
-            Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {}", terminal_safe(&msg));
+            Err(e) => {
+                eprintln!("{}", terminal_safe(&error_text(&e)));
                 1
             }
         }
@@ -401,8 +401,8 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                     0
                 }
             }
-            Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {}", terminal_safe(&msg));
+            Err(e) => {
+                eprintln!("{}", terminal_safe(&error_text(&e)));
                 1
             }
         }
@@ -426,45 +426,79 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
 /// RFC-4180-style CSV. Fields containing `,`, `"`, `\r`, or `\n` get
 /// quoted; embedded `"` becomes `""`.
 ///
+/// NULL and the empty string follow `COPY … (FORMAT csv)`: a NULL is an
+/// empty, unquoted field and an empty string is `""`. Any RFC 4180
+/// reader reads both as empty; `COPY … FROM` (and anything else that
+/// keeps the difference) reads them back as the two values they were.
+///
 /// ```
 /// use pgman::batch::format_csv;
 /// use pgman::grid::Grid;
 /// let g = Grid {
 ///     columns: vec!["id".into(), "name".into()],
-///     rows: vec![vec!["1".into(), "has, comma".into()]],
+///     rows: vec![vec![Some("1".into()), Some("has, comma".into())]],
 ///     truncated: false,
 /// };
 /// assert_eq!(format_csv(&g), "id,name\n1,\"has, comma\"\n");
+///
+/// let g = Grid {
+///     columns: vec!["e".into(), "n".into()],
+///     rows: vec![vec![Some(String::new()), None]],
+///     truncated: false,
+/// };
+/// assert_eq!(format_csv(&g), "e,n\n\"\",\n");
 /// ```
 pub fn format_csv(grid: &Grid) -> String {
     let mut out = String::new();
-    push_delim_row(&mut out, &grid.columns, ',', true);
+    push_delim_row(&mut out, header(grid), ',', true);
     for row in &grid.rows {
-        push_delim_row(&mut out, row, ',', true);
+        push_delim_row(&mut out, cells(row), ',', true);
     }
     out
 }
 
 /// Tab-separated. No quoting; tabs and newlines inside values are
-/// escaped (`\t`, `\n`) so each record stays a single line.
+/// escaped (`\t`, `\n`) so each record stays a single line. A NULL is
+/// `\N`, as in `COPY`'s text format — a backslash in a value is already
+/// written `\\`, so `\N` cannot be one — and an empty string is an
+/// empty field.
 pub fn format_tsv(grid: &Grid) -> String {
     let mut out = String::new();
-    push_delim_row(&mut out, &grid.columns, '\t', false);
+    push_delim_row(&mut out, header(grid), '\t', false);
     for row in &grid.rows {
-        push_delim_row(&mut out, row, '\t', false);
+        push_delim_row(&mut out, cells(row), '\t', false);
     }
     out
 }
 
-fn push_delim_row(buf: &mut String, fields: &[String], delim: char, csv_quote: bool) {
-    for (i, field) in fields.iter().enumerate() {
+/// A header line's fields: column names, never NULL.
+fn header(grid: &Grid) -> impl Iterator<Item = Option<&str>> {
+    grid.columns.iter().map(|c| Some(c.as_str()))
+}
+
+/// A row's fields, `None` for SQL NULL.
+fn cells(row: &[crate::grid::Cell]) -> impl Iterator<Item = Option<&str>> {
+    row.iter().map(Option::as_deref)
+}
+
+fn push_delim_row<'a>(
+    buf: &mut String,
+    fields: impl Iterator<Item = Option<&'a str>>,
+    delim: char,
+    csv_quote: bool,
+) {
+    for (i, field) in fields.enumerate() {
         if i > 0 {
             buf.push(delim);
         }
-        if csv_quote {
-            push_csv_field(buf, field);
-        } else {
-            push_tsv_field(buf, field);
+        match (field, csv_quote) {
+            // NULL: an empty unquoted CSV field; `\N` in TSV.
+            (None, true) => {}
+            (None, false) => buf.push_str("\\N"),
+            // The empty string: quoted, so it is not the NULL above.
+            (Some(""), true) => buf.push_str("\"\""),
+            (Some(field), true) => push_csv_field(buf, field),
+            (Some(field), false) => push_tsv_field(buf, field),
         }
     }
     buf.push('\n');
@@ -490,6 +524,22 @@ fn is_renderable(c: char) -> bool {
 /// statement summary in a refusal. A `RAISE NOTICE` carrying
 /// `\x1b]0;pwned\x07` reached the terminal raw; it now goes through the
 /// same filter CSV / TSV cells do ([`is_renderable`]).
+/// What stderr says for a failed statement: `error: ` and the message
+/// (pgman's own `hint:` line, when it added one, included), then the
+/// detail's hint — the server's, as psql shows it, and pgman's longer
+/// half of a read-only refusal, which names `safety.toml`'s full path.
+/// The TUI shows the same hint in its F2 overlay. Pure.
+pub fn error_text(e: &QueryErr) -> String {
+    let mut out = format!("error: {}", e.msg);
+    if let Some(hint) = e.detail.as_ref().and_then(|d| d.hint.as_deref()) {
+        for line in hint.lines() {
+            out.push_str("\nhint: ");
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 pub fn terminal_safe(s: &str) -> String {
     s.chars().filter(|c| is_renderable(*c)).collect()
 }
@@ -497,6 +547,25 @@ pub fn terminal_safe(s: &str) -> String {
 #[cfg(test)]
 mod terminal_safe_tests {
     use super::*;
+
+    #[test]
+    fn error_text_adds_the_details_hint_one_line_each() {
+        let bare = QueryErr::msg("syntax error at or near \"FROM\"");
+        assert_eq!(error_text(&bare), "error: syntax error at or near \"FROM\"");
+        let refused = QueryErr {
+            msg: "cannot execute DELETE in a read-only transaction\nhint: short".into(),
+            position: None,
+            detail: Some(conn::QueryErrDetail {
+                hint: Some("server's\nread_only = true in /x/safety.toml".into()),
+                ..Default::default()
+            }),
+        };
+        assert_eq!(
+            error_text(&refused),
+            "error: cannot execute DELETE in a read-only transaction\nhint: short\n\
+             hint: server's\nhint: read_only = true in /x/safety.toml"
+        );
+    }
 
     #[test]
     fn control_characters_are_dropped_and_line_structure_kept() {
@@ -511,7 +580,7 @@ mod terminal_safe_tests {
     fn expanded_format_filters_column_names_and_values() {
         let g = Grid {
             columns: vec!["c\x1b[31m".into()],
-            rows: vec![vec!["v\x1b]0;pwned\x07".into()]],
+            rows: vec![vec![Some("v\x1b]0;pwned\x07".into())]],
             truncated: false,
         };
         let out = format_expanded(&g);
@@ -560,15 +629,16 @@ fn push_tsv_field(buf: &mut String, field: &str) {
 }
 
 /// JSON array of objects. Each row → `{ "col": "value", … }`. Values
-/// are always strings (we don't have a type-aware path; grids carry
-/// the rendered string form). Keys / strings are escaped per RFC 8259.
+/// are strings, or `null` for SQL NULL (a grid carries the rendered
+/// text, not the type — the typed path is [`run_statement_typed_json`]).
+/// Keys / strings are escaped per RFC 8259.
 ///
 /// ```
 /// use pgman::batch::format_json;
 /// use pgman::grid::Grid;
 /// let g = Grid {
 ///     columns: vec!["id".into()],
-///     rows: vec![vec!["1".into()], vec!["2".into()]],
+///     rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
 ///     truncated: false,
 /// };
 /// assert_eq!(format_json(&g), "[{\"id\":\"1\"},{\"id\":\"2\"}]\n");
@@ -586,8 +656,12 @@ pub fn format_json(grid: &Grid) -> String {
             }
             push_json_string(&mut out, col);
             out.push(':');
-            let value = row.get(ci).map(String::as_str).unwrap_or("");
-            push_json_string(&mut out, value);
+            // NULL (or a cell past a short row's end) is JSON null,
+            // never "": the typed path's rule, kept here too.
+            match row.get(ci).and_then(Option::as_deref) {
+                Some(value) => push_json_string(&mut out, value),
+                None => out.push_str("null"),
+            }
         }
         out.push('}');
     }
@@ -745,7 +819,9 @@ fn push_json_string(buf: &mut String, s: &str) {
 
 /// psql `\x` expanded — one record per group, `col | value` lines
 /// separated by a divider. Useful for rows with many columns or long
-/// values, where a wide CSV/TSV becomes unreadable.
+/// values, where a wide CSV/TSV becomes unreadable. A NULL prints as
+/// nothing, as psql's does with its default `\pset null`: this format
+/// is for reading, and a marker would make the text `NULL` ambiguous.
 pub fn format_expanded(grid: &Grid) -> String {
     let mut out = String::new();
     // Column-name padding so the `|` separators line up within each
@@ -769,7 +845,7 @@ pub fn format_expanded(grid: &Grid) -> String {
                 out.push(' ');
             }
             out.push_str(" | ");
-            out.push_str(&terminal_safe(value));
+            out.push_str(&terminal_safe(crate::grid::cell_text(value)));
             out.push('\n');
         }
     }
@@ -825,7 +901,7 @@ mod tests {
             columns: columns.iter().map(|s| (*s).to_string()).collect(),
             rows: rows
                 .iter()
-                .map(|r| r.iter().map(|s| (*s).to_string()).collect())
+                .map(|r| r.iter().map(|s| Some((*s).to_string())).collect())
                 .collect(),
             truncated: false,
         }
@@ -846,6 +922,44 @@ mod tests {
         assert_eq!(
             out,
             "id,note\n1,plain\n2,\"has, comma\"\n3,\"has \"\"quote\"\"\"\n4,\"has\nnewline\"\n"
+        );
+    }
+
+    /// `COPY … CSV`'s rule: NULL is an empty unquoted field, the empty
+    /// string is `""`, and a lone space is just a space.
+    #[test]
+    fn csv_writes_null_unquoted_and_the_empty_string_quoted() {
+        let g = Grid {
+            columns: vec!["e".into(), "n".into(), "s".into()],
+            rows: vec![vec![Some(String::new()), None, Some(" ".into())]],
+            truncated: false,
+        };
+        assert_eq!(format_csv(&g), "e,n,s\n\"\",, \n");
+    }
+
+    /// `COPY`'s text format: NULL is `\N`, which no value can be, since a
+    /// backslash in a value is written `\\`.
+    #[test]
+    fn tsv_writes_null_as_backslash_n_and_the_empty_string_as_nothing() {
+        let g = Grid {
+            columns: vec!["e".into(), "n".into(), "t".into()],
+            rows: vec![vec![Some(String::new()), None, Some("\\N".into())]],
+            truncated: false,
+        };
+        assert_eq!(format_tsv(&g), "e\tn\tt\n\t\\N\t\\\\N\n");
+    }
+
+    #[test]
+    fn json_writes_null_as_null_and_the_empty_string_as_a_string() {
+        let g = Grid {
+            columns: vec!["e".into(), "n".into(), "short".into()],
+            rows: vec![vec![Some(String::new()), None]],
+            truncated: false,
+        };
+        // A cell past a short row's end is no value either.
+        assert_eq!(
+            format_json(&g),
+            "[{\"e\":\"\",\"n\":null,\"short\":null}]\n"
         );
     }
 

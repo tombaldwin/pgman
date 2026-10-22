@@ -6,6 +6,60 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- The JDBC tap's List view shows the focused statement's bound
+  parameters beneath the list, labelled `params (some redacted)` when
+  the producer masked a value and `params (withheld by source)` for
+  OpenTelemetry spans, which carry none.
+- A Postgres log's `ERROR:` + `STATEMENT:` pair is reconstructed as a
+  query marked failed with the error message — what the default
+  `log_min_error_statement` logs with nothing else on. A statement
+  `log_statement` already logged is marked failed rather than listed
+  twice. The log picker marks a failed pick `✗` and shows its error.
+
+### Changed
+
+- One TLS crypto provider (ring) instead of two: no cmake / C build of
+  aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
+  Postgres connection no longer offers the post-quantum X25519MLKEM768
+  key exchange, which only the aws-lc provider had.
+
+### Fixed
+
+- The tap monitor's status line kept reading "no events yet" after
+  events had arrived; it now follows them.
+- OpenTelemetry spans were stamped with their end time rather than
+  their start, which inflated the Pools view's peak concurrency.
+- A write refused by a read-only connection no longer puts the full
+  `safety.toml` path in the footer, where at 80 columns it took three
+  rows and was cut anyway. The footer names `safety.toml`; the F2
+  overlay and `--batch` stderr give the path.
+- A completion popup the editor opened on its own (after `.` or `FROM `)
+  that narrows to nothing as you type on now closes without leaving
+  `completion: no matches for …` in the footer. A popup Tab opened still
+  says why it closed.
+- **NULL and the empty string no longer look the same.** The grid
+  draws a NULL as a dimmed `NULL` (a new theme colour, `null_cell`) and
+  an empty string as nothing; row and cell detail say `NULL` and
+  `(empty string)`. The `I` INSERT yank wrote `NULL` for an empty
+  string, changing the row it copied; it now writes `''`.
+- **The `I` yank writes back the row it copied.** Every value is a
+  quoted literal (a text `007` came back as `7`, `TRUE` as `true`),
+  column names are quoted when they need it (`createdAt`), and reserved
+  words are quoted everywhere pgman builds SQL (a column named `order`).
+- `--format csv` and `Y` write a NULL as an empty field and an empty
+  string as `""`, as `COPY … CSV` does; `--format tsv` writes a NULL as
+  `\N`, as `COPY`'s text format does. `--format json` already wrote
+  `null`, and now does for a multi-statement script too.
+- Sort puts NULLs last ascending and first descending (Postgres's
+  defaults) and an empty string first ascending, not with the NULLs.
+  `/null` and `f null` find NULL cells.
+- `F` on a NULL foreign key says so instead of opening `WHERE id = NULL`;
+  `y` on a NULL field leaves the clipboard alone.
+- The result diff counts a NULL → `''` change and shows it; `\fixture`
+  leaves NULL cells out (flat XML's NULL) instead of writing `col=""`.
+
 ## [0.1.0] — 2026-10-22
 
 First public release. pgman is a terminal UI for PostgreSQL in the k9s

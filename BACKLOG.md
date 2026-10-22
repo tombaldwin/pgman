@@ -94,9 +94,6 @@ small-UX, correctness and environments findings landed on branch
 - **Require CI checks on `main`.** Branch protection blocks force-push
   and deletion but requires no status checks, so a PR can merge red.
   Require `ci.yml`'s jobs once the release is out.
-- **One TLS backend.** The build carries both aws-lc-rs and ring
-  (`Cargo.lock`); settle on one, for build time, binary size and one
-  thing to audit.
 
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).
@@ -109,10 +106,6 @@ buckets were folded in once their initial passes shipped).
 ### Reconstruction
 - N+1: time-window heuristic once `ReconstructedQuery` carries
   timestamps.
-- pglog: reconstruct a failed statement from its `ERROR:` + `STATEMENT:`
-  pair (the default `log_min_error_statement` logs these with nothing
-  else enabled), without duplicating a statement `log_statement` already
-  logged. Today the pair is skipped.
 
 ### Editor — domain features
 - Saved queries — possible v3 nice-to-haves: tags / folders,
@@ -122,28 +115,11 @@ buckets were folded in once their initial passes shipped).
 A second round of editor quality-of-life features past the syntax-
 highlighting / pg_format / auto-save / persistent-history / undo
 batch.
-- **A popup that narrows to nothing leaves its status behind**
-  (2026-10-22). Typing on through an auto-opened popup until nothing
-  matches (`… on t.` with no schema cache) closes it in
-  `refresh_completion`, which sets `completion: no matches for t.…`;
-  nothing clears it while the operator keeps typing ordinary SQL.
-  An auto-opened popup that dies of no matches should leave no status.
 - **Multi-line comment toggle for selection** — current
   `Ctrl-/` toggles the focused line. We don't have selection
   yet; once we do, apply per-line.
 
 ### Result grid
-- **NULL and the empty string look the same** (release panel M1,
-  2026-10-22). `grid::Grid` holds cells as `String` with NULL as `""`
-  (`conn::display_cells`), so the grid, row / cell detail and the `Y`
-  CSV yank cannot tell them apart, and the `I` INSERT yank
-  (`format_sql_literal`) writes `NULL` for an empty string. Needs the
-  cell type to carry NULL (`Option<String>`, or a parallel mask kept in
-  step with sort / filter): ~164 `.rows` use sites over conn, grid,
-  app, ui, batch, row_diff, demo and report — skipped as a refactor
-  past three modules. Then: a dimmed theme-coloured `NULL` marker in
-  grid and detail, `''` vs `NULL` in the INSERT yank, CSV keeping
-  NULL as an empty field (the RFC 4180 / `COPY … CSV` convention).
 - **Cell editing → UPDATE generation** — Enter on a cell in the
   grid (when the result is from a single table with a primary key)
   opens an inline editor; on save, generates `UPDATE … SET col =
@@ -255,6 +231,26 @@ work that still belongs to L1:
     `Connection.commit/rollback`. Emit a `TxnBoundary`
     event at the same moment so pgman can retroactively
     close out the synthetic txn.
+
+- **Tap List detail: the rest of the focused event.** The detail
+  under the List view shows only the bound parameters. The error
+  cause chain (a failed row is only coloured red), the full `caller`
+  stack (only `caller[0]` reaches the Callers view) and the
+  `pool` / `conn` / `txn` the event ran on are stored and never shown
+  for one event. Same place, same two-line budget, or a focused-event
+  overlay.
+- **Tap monitor's empty hint ignores the listener that is running.**
+  `TapHealth::monitor_status` always says "start pgman with
+  `--tap-otlp :4318` and attach the OpenTelemetry Java agent", even
+  when pgman is already listening on `--tap-listen` (auto-enabled in a
+  Java project) and the operator is waiting on pgman-tap. It should
+  name what is bound and what to point at it. Related: a stream of only
+  `txn_boundary` events (no query, no heartbeat) still reads "no events
+  yet", since the counters it reads ignore boundaries.
+- **The tap wire format has no page in `docs/`.** It is described in
+  `src/tap/mod.rs` (module doc) and in pgman-tap's README, nowhere a
+  user of pgman looks. When pgman-tap ships, `docs/tap.md` should carry
+  the v1 fields, including that `ts_unix_micros` is a query's start.
 
 #### L2 — insights
 Once events are flowing, the panel becomes an analysis surface.
@@ -628,12 +624,20 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
-- **The read-only hint's safety.toml path in the footer** (release
-  panel re-check, 2026-10-22). A write refused by a read-only
-  connection gives `hint: this connection is read-only by safety.toml
-  (<full path>)`; at 80x24 the path makes the footer three lines and
-  is cut anyway. Name `safety.toml` in the footer and leave the path to
-  F2.
+- **Two footer messages still carry a full config path** (2026-10-22,
+  found doing the read-only hint). Neither is a `hint:` line. One is the
+  startup error for a `config.toml` that doesn't parse
+  (`redact::config_default_from`: `<full path>: <toml error> —
+  redaction is on until it parses`, set as `last_error`, so F2 shows
+  the same text). The other is the environments save status (`added
+  <names> to <full path>`). Name the file in the footer, as the
+  read-only refusal now does. The parse error would need its path in
+  an error detail for F2 to keep it.
+- **The F2 error overlay wraps mid-word and cuts a long hint at 80x24**
+  (2026-10-22). `push_kv` wraps by character (`transact` / `ion`,
+  `do` / `cs/configuration.md`), and at 80x24 the read-only refusal's
+  path hint runs past the overlay's last row with no sign that there
+  is more.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs

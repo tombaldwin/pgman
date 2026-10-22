@@ -80,6 +80,9 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     // filter has ever been applied, `grid_view.visible_rows` was
     // initialised to `0..rows.len()` so this branch handles the
     // unfiltered path too.
+    let null_style = Style::default()
+        .fg(theme.null_cell)
+        .add_modifier(Modifier::ITALIC);
     let rows: Vec<Row> = app
         .grid_view
         .visible_rows
@@ -93,6 +96,12 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                     .take(shown.len())
                     .map(|(i, c)| {
                         let w = widths.get(i).copied().unwrap_or(0);
+                        let Some(c) = c else {
+                            // SQL NULL: the dimmed marker, never blank —
+                            // blank is what an empty string looks like.
+                            let (kept, _) = grid::truncate_cell_parts(grid::NULL_MARKER, w);
+                            return Cell::from(Span::styled(kept, null_style));
+                        };
                         let (kept, marker) = if numeric.get(i).copied().unwrap_or(false) {
                             // Never cut a number: its column is as wide as
                             // its widest value, or wider than the screen.
@@ -216,6 +225,9 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let sep_style = Style::default().fg(theme.border_idle);
     let value_style = Style::default().fg(theme.text);
     let null_style = Style::default()
+        .fg(theme.null_cell)
+        .add_modifier(Modifier::ITALIC);
+    let empty_style = Style::default()
         .fg(theme.muted)
         .add_modifier(Modifier::ITALIC);
     let focus_bg = theme.row_selected_bg;
@@ -224,10 +236,10 @@ pub(super) fn draw_row_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let mut field_line_counts: Vec<u16> = Vec::with_capacity(layout.len());
     for (field_idx, field) in layout.iter().enumerate() {
         let is_focus = field_idx == focus;
-        let value_span_style_base = if field.is_empty {
-            null_style
-        } else {
-            value_style
+        let value_span_style_base = match field.kind {
+            crate::ui::FieldKind::Null => null_style,
+            crate::ui::FieldKind::Empty => empty_style,
+            crate::ui::FieldKind::Value => value_style,
         };
         let (label_style_eff, sep_style_eff, value_style_eff) = if is_focus {
             (
@@ -344,30 +356,37 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let field = app.row_detail.field;
     let column = app.grid.columns.get(field).cloned().unwrap_or_default();
-    let value = row.get(field).cloned().unwrap_or_default();
+    // A field past the row's end is no value: NULL, as row detail says.
+    let value = row.get(field).cloned().flatten();
 
     // Nest inside the row-detail popup so the zoom reads as drilling in,
     // not a new context. 90% of the screen so big JSON gets room.
     let popup = centered_pct(area, 90, 90);
     let inner_width = popup.width.saturating_sub(4) as usize; // borders + uniform(1) pad
     let inner_height = popup.height.saturating_sub(4);
-    let is_empty = value.is_empty();
 
     let is_json = !app.cell_detail.json_rows.is_empty();
     let body_lines: Vec<Line> = if is_json {
         render_json_tree(app, inner_width)
-    } else if is_empty {
-        vec![Line::from(Span::styled(
-            "(empty)",
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::ITALIC),
-        ))]
     } else {
-        wrap_value(&crate::grid::show_controls(&value, false), inner_width)
-            .into_iter()
-            .map(|l| Line::from(Span::styled(l, Style::default().fg(theme.text))))
-            .collect()
+        match value.as_deref() {
+            None => vec![Line::from(Span::styled(
+                grid::NULL_MARKER,
+                Style::default()
+                    .fg(theme.null_cell)
+                    .add_modifier(Modifier::ITALIC),
+            ))],
+            Some("") => vec![Line::from(Span::styled(
+                crate::ui::EMPTY_STRING_MARKER,
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::ITALIC),
+            ))],
+            Some(value) => wrap_value(&grid::show_controls(value, false), inner_width)
+                .into_iter()
+                .map(|l| Line::from(Span::styled(l, Style::default().fg(theme.text))))
+                .collect(),
+        }
     };
 
     let total_lines = body_lines.len() as u16;
@@ -539,8 +558,14 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
     // UPDATE against its baseline) can carry thousands of rows, and the
     // overlay only ever shows `visible_h` of them.
     let row_w = inner.width.saturating_sub(4) as usize;
-    let render_row =
-        |row: &[String]| -> String { crate::grid::truncate_cell(&row.join(" | "), row_w) };
+    let join = |cells: &[grid::Cell]| -> String {
+        cells
+            .iter()
+            .map(crate::ui::diff_cell)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let render_row = |row: &[grid::Cell]| -> String { grid::truncate_cell(&join(row), row_w) };
     let nr = diff.removed.len();
     let nc = diff.changed.len();
     let total = nr + nc + diff.added.len();
@@ -567,10 +592,20 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
                         .get(c.col)
                         .map(String::as_str)
                         .unwrap_or("?");
-                    format!("{col}: {} → {}", c.old, c.new)
+                    format!(
+                        "{col}: {} → {}",
+                        crate::ui::diff_cell(&c.old),
+                        crate::ui::diff_cell(&c.new)
+                    )
                 })
                 .collect();
-            let text = format!("~ [{}] {}", ch.key.join(", "), deltas.join("  ·  "));
+            let key = ch
+                .key
+                .iter()
+                .map(crate::ui::diff_cell)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let text = format!("~ [{key}] {}", deltas.join("  ·  "));
             (
                 Style::default().fg(theme.health_yellow),
                 crate::grid::truncate_cell(&text, row_w),

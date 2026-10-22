@@ -220,7 +220,10 @@ pub fn answer(sql: &str, cache: &SchemaCache) -> Grid {
                 Some((columns, rows)) => filter_rows(
                     Grid {
                         columns,
-                        rows,
+                        rows: rows
+                            .into_iter()
+                            .map(|r| r.into_iter().map(data_cell).collect())
+                            .collect(),
                         truncated: false,
                     },
                     &equalities,
@@ -394,7 +397,7 @@ fn filter_rows(grid: Grid, equalities: &[(String, String)]) -> Grid {
             .filter(|row| {
                 tests
                     .iter()
-                    .all(|(i, v)| row.get(*i).is_some_and(|c| c == v))
+                    .all(|(i, v)| row.get(*i).is_some_and(|c| c.as_deref() == Some(*v)))
             })
             .collect(),
         ..grid
@@ -438,7 +441,7 @@ pub fn project_columns(select_list: &str, grid: Grid) -> Grid {
             .map(|row| {
                 wanted
                     .iter()
-                    .map(|&i| row.get(i).cloned().unwrap_or_default())
+                    .map(|&i| row.get(i).cloned().flatten())
                     .collect()
             })
             .collect(),
@@ -490,7 +493,7 @@ fn split_top_level_commas(list: &str) -> Vec<&str> {
 fn notice_grid() -> Grid {
     Grid {
         columns: vec!["demo".to_string()],
-        rows: vec![vec!["this is --demo mode, no database".to_string()]],
+        rows: vec![vec![Some("this is --demo mode, no database".to_string())]],
         truncated: false,
     }
 }
@@ -558,7 +561,9 @@ pub fn explain_plan_grid(analyze: bool, sql: &str, cache: &SchemaCache) -> Grid 
     let json = serde_json::json!([{ "Plan": plan }]);
     Grid {
         columns: vec!["QUERY PLAN".to_string()],
-        rows: vec![vec![serde_json::to_string_pretty(&json).unwrap_or_default()]],
+        rows: vec![vec![Some(
+            serde_json::to_string_pretty(&json).unwrap_or_default(),
+        )]],
         truncated: false,
     }
 }
@@ -849,8 +854,9 @@ fn generated_rows(
         .map(|i| {
             cols.iter()
                 .map(|c| {
-                    pinned(&c.name)
-                        .unwrap_or_else(|| schema::synth_cell(table, &c.name, &c.type_name, i))
+                    pinned(&c.name).map(Some).unwrap_or_else(|| {
+                        data_cell(schema::synth_cell(table, &c.name, &c.type_name, i))
+                    })
                 })
                 .collect()
         })
@@ -862,8 +868,17 @@ fn generated_rows(
     }
 }
 
-fn row(cells: &[&str]) -> Vec<String> {
-    cells.iter().map(|s| s.to_string()).collect()
+/// A `\df` row: catalog text, where an empty string (a function with
+/// no arguments) is a value, not a NULL.
+fn row(cells: &[&str]) -> Vec<crate::grid::Cell> {
+    cells.iter().map(|s| Some(s.to_string())).collect()
+}
+
+/// One cell of the demo's table data, which writes NULL as the empty
+/// string (`schema::synth_cell`, the canned `invoices` / `customers`):
+/// a demo timestamp or foreign key that is blank is a NULL.
+fn data_cell(s: String) -> crate::grid::Cell {
+    (!s.is_empty()).then_some(s)
 }
 
 fn saved_queries() -> Vec<SavedQuery> {
@@ -927,6 +942,7 @@ fn tap_events() -> Vec<TapEvent> {
         "SELECT id, name, billing_email, currency FROM customers WHERE id = ?",
         290,
         Some("CustomerRepository.findById:41"),
+        &["2107"],
     )];
     events.push(query(
         BASE + 40_000,
@@ -935,6 +951,7 @@ fn tap_events() -> Vec<TapEvent> {
         "SELECT id, number, status, total, due_at FROM invoices WHERE customer_id = ? ORDER BY issued_at DESC LIMIT ?",
         1_840,
         Some("InvoiceController.list:58"),
+        &["2107", "20"],
     ));
     // The N+1: eight near-identical selects in one txn, ~25ms apart.
     for i in 0..8u64 {
@@ -945,6 +962,7 @@ fn tap_events() -> Vec<TapEvent> {
             "SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?",
             420 + i * 15,
             Some("InvoiceService.loadLines:112"),
+            &[&(4824 + i).to_string()],
         ));
     }
     events.push(query(
@@ -954,6 +972,7 @@ fn tap_events() -> Vec<TapEvent> {
         "UPDATE subscriptions SET status = ?, current_period_end = ? WHERE id = ?",
         2_310,
         Some("DunningJob.advance:77"),
+        &["past_due", "2026-11-30 00:00:00+00", "381"],
     ));
     events
 }
@@ -966,6 +985,7 @@ fn query(
     sql: &str,
     dur: u64,
     caller: Option<&str>,
+    params: &[&str],
 ) -> TapEvent {
     TapEvent {
         v: 1,
@@ -977,7 +997,7 @@ fn query(
         conn: Some(conn.into()),
         txn: txn.map(str::to_string),
         sql: Some(sql.into()),
-        params: None,
+        params: Some(params.iter().map(|p| p.to_string()).collect()),
         params_redacted: false,
         duration_micros: Some(dur),
         rows: Some(1),

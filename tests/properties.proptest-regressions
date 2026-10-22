@@ -9,3 +9,4 @@ cc fdfcd4f0bd3e013dbcfa17567f484accef8d648f4f74c249a76c1be4ac91f420 # shrinks to
 cc 7dd2170f319ad84685c473e83040d782ccaacbe6cdcae551a0b16ba283a807a9 # shrinks to password = "@#"
 cc a62f6936b723538bff0eca6e0d802a157d302f467bd576ddd466b1b2e1189541 # shrinks to password = "@/?"
 cc 22427814850aca32c8f68e0eea153c519ff929f530a08bb1e4038343940d7179 # shrinks to events = [KeyEvent { code: Esc, modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }, KeyEvent { code: Char('E'), modifiers: KeyModifiers(0x0), kind: Press, state: KeyEventState(0x0) }], seed_buffer = "", seed_history = []
+cc 6b5a2ec607a0f78d5cbf6c076c1d143c792814e941770555b5dc3324347070f2 # shrinks to b = ""

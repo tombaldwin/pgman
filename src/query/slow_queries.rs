@@ -51,21 +51,23 @@ pub fn parse(grid: &Grid) -> Vec<SlowQueryRow> {
     grid.rows
         .iter()
         .map(|r| SlowQueryRow {
-            query: q_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default(),
+            query: q_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default(),
             calls: c_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(0),
             total_ms: t_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0),
             mean_ms: m_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0),
             rows: r_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(0),
         })
@@ -87,7 +89,7 @@ mod tests {
             ],
             rows: rows
                 .iter()
-                .map(|r| r.iter().map(|s| (*s).to_string()).collect())
+                .map(|r| r.iter().map(|s| Some((*s).to_string())).collect())
                 .collect(),
             truncated: false,
         }
@@ -133,7 +135,7 @@ mod tests {
     fn parse_treats_missing_columns_as_default_values() {
         let g = Grid {
             columns: vec!["query".into(), "calls".into()],
-            rows: vec![vec!["SELECT 1".into(), "5".into()]],
+            rows: vec![vec![Some("SELECT 1".into()), Some("5".into())]],
             truncated: false,
         };
         let parsed = parse(&g);

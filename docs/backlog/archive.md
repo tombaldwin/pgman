@@ -7,6 +7,20 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-10-22 NULL cells *(done, see docs/backlog/null-cells.md)*
+- NULL and the empty string look the same (release panel M1): grid
+  cells are `Option<String>`; NULL draws as a dimmed `NULL`
+  (`theme.null_cell`), an empty string as nothing in the grid and
+  `(empty string)` in row / cell detail; the `I` yank writes `NULL`
+  vs `''`; CSV writes NULL unquoted and `''` as `""`, TSV writes `\N`,
+  Grid JSON `null`; sort is NULLS LAST ascending / FIRST descending;
+  `/null` and `f null` find NULLs; the diff and the DBUnit capture
+  keep them apart.
+- Found on the way: the `I` yank wrote number- and boolean-looking
+  text bare (`007` came back `7`) and its column names unquoted;
+  `quote_ident` never quoted reserved keywords; `F` on a NULL built
+  `WHERE id = NULL`; an attribute-less fixture row was not SQL.
+
 ### 2026-10-21 backlog pass *(all done, see CHANGELOG → The backlog pass)*
 - `\df [pattern]`; schema-browser indexes, `p` sample rows, `d` DDL
   copy (covers both DDL items); LINT107; JOIN … ON foreign-key
@@ -205,6 +219,16 @@ Shipped fixes:
 
 ### JDBC tap
 
+- **Gaps found building pgman-tap (2026-10-22).** The List view shows
+  the focused query's bound `params`, with a `params (some redacted)`
+  marker when `params_redacted` is set (`TapEvent::params_summary`,
+  pure; the detail rows are reserved on a COMMIT row too, so the list
+  doesn't change height under the cursor). The OTLP ingest stamps a
+  span's `startTimeUnixNano` — `ts_unix_micros` is the statement's
+  start on the wire, now documented — so back-to-back spans no longer
+  inflate the Pools view's peak. The monitor's status line follows
+  events that arrive while it is open (`TapHealth::monitor_status`)
+  instead of reading "no events yet" for the session.
 - **L2 — pool-saturation gauge (live view).** Fifth
   TapMonitor view (`List → Hotspots → Callers → Transactions
   → Pools → NplusOne → Baseline`), groups the ring by

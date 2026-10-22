@@ -37,8 +37,18 @@ Three input shapes are recognised:
   Ubuntu default (`%m [%p] %q%u@%d `), RDS's (`%t:%r:%u@%d:[%p]:`) and
   pgBadger's (`%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h `) all work;
   include `%p` in it so a `bind`'s parameters pair with the right backend's
-  `execute`. A failed statement's `ERROR:` / `STATEMENT:` pair isn't
-  reconstructed.
+  `execute`.
+
+  A failed statement is reconstructed too: an `ERROR:` followed by its
+  `STATEMENT:` from the same backend — which the default
+  `log_min_error_statement = error` logs with nothing else turned on —
+  becomes a query marked failed with the error message. Its parameters
+  come from a `CONTEXT:  … with parameters:` line in the error report
+  (Postgres 13+, `log_parameter_max_length_on_error`) or the backend's
+  last `bind`. When `log_statement` already logged the statement before
+  it ran, that query is the one marked failed rather than a second copy
+  appearing, so the failure doesn't read as a ×2 N+1 cluster. A `FATAL`'s
+  `STATEMENT:` isn't reconstructed.
 - **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
   typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the
@@ -115,6 +125,12 @@ runnable SQL with bind values substituted in:
   [hibernate] select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=48202
   [hibernate] select l.id, l.description, l.amount from invoice_lines l where l.invoice_id=48204
 ```
+
+A statement that failed in the log (an `ERROR:` + `STATEMENT:` pair from a
+Postgres log) is marked `✗`, and while it is highlighted the popup's bottom
+border carries the error: `failed in the log: relation "invoice_lnes" does
+not exist at character 15`. Loading it says the same in the status line,
+since running it again will likely fail the same way.
 
 Press `c` to flip to the cluster view — the same queries grouped by shape,
 most-repeated first, so a loop-driven select stands out instead of hiding

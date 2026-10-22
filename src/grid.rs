@@ -7,7 +7,25 @@
 /// exhausting memory.
 pub const MAX_ROWS: usize = 1000;
 
-/// A result set: column headers plus string-rendered rows.
+/// One result cell: the server's text rendering of the value, `None`
+/// for SQL NULL. An empty string is `Some("")` — a different value, and
+/// every reader has to decide what a NULL means for it
+/// (docs/backlog/null-cells.md).
+pub type Cell = Option<String>;
+
+/// What the grid, row detail and cell detail draw for SQL NULL — dimmed
+/// and italic in `theme.null_cell`, so it never reads as the text
+/// `NULL`. An empty string draws as nothing.
+pub const NULL_MARKER: &str = "NULL";
+
+/// A cell's text with NULL as `""` — for readers to which the two mean
+/// the same (a catalog parser, a size column). Anything that shows,
+/// writes or compares a value must look at the `Option` instead.
+pub fn cell_text(cell: &Cell) -> &str {
+    cell.as_deref().unwrap_or("")
+}
+
+/// A result set: column headers plus text-rendered rows.
 ///
 /// `truncated` is set when the underlying source had more rows than
 /// `MAX_ROWS` — the renderer surfaces this so the user knows the view
@@ -15,7 +33,7 @@ pub const MAX_ROWS: usize = 1000;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Grid {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<Cell>>,
     pub truncated: bool,
 }
 
@@ -45,7 +63,10 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
                 .rows
                 .iter()
                 .filter_map(|r| r.get(col))
-                .map(|c| UnicodeWidthStr::width(show_controls(c, true).as_ref()))
+                .map(|c| match c {
+                    Some(text) => UnicodeWidthStr::width(show_controls(text, true).as_ref()),
+                    None => NULL_MARKER.len(),
+                })
                 .max()
                 .unwrap_or(0);
             UnicodeWidthStr::width(header.as_str())
@@ -55,26 +76,28 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Compare two rendered cells for sorting. Numeric-aware: when both
-/// parse as `f64`, compare as numbers (so `2` sorts before `10`).
-/// Empty strings (the renderer's representation of SQL NULL) sort
-/// AFTER non-empty values, matching Postgres's default `NULLS LAST`
-/// for `ORDER BY … ASC`.
+/// Compare two cells for sorting. Numeric-aware: when both parse as
+/// `f64`, compare as numbers (so `2` sorts before `10`). SQL NULL
+/// (`None`) sorts AFTER every value, Postgres's default: `NULLS LAST`
+/// for `ORDER BY … ASC`, and — the sort reversing this for DESC —
+/// `NULLS FIRST` for `DESC`. An empty string is a value like any other:
+/// the smallest string, so first ascending.
 ///
 /// ```
 /// use std::cmp::Ordering;
 /// use pgman::grid::cmp_cells;
-/// assert_eq!(cmp_cells("2", "10"), Ordering::Less);          // numeric
-/// assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);     // lex
-/// assert_eq!(cmp_cells("", "anything"), Ordering::Greater);  // NULL last
+/// assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);      // numeric
+/// assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less); // lex
+/// assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);  // NULL last
+/// assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);        // '' first
 /// ```
-pub fn cmp_cells(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn cmp_cells(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    match (a.is_empty(), b.is_empty()) {
-        (true, true) => Ordering::Equal,
-        (true, false) => Ordering::Greater,
-        (false, true) => Ordering::Less,
-        _ => match (a.parse::<f64>(), b.parse::<f64>()) {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
             (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or_else(|| a.cmp(b)),
             _ => a.cmp(b),
         },
@@ -159,14 +182,14 @@ pub fn show_controls(s: &str, single_line: bool) -> std::borrow::Cow<'_, str> {
 
 /// Is every non-NULL cell of column `col` a number as Postgres prints
 /// one (`42`, `-99999999.99`, `1e+30`, `NaN`)? A column of only NULLs
-/// is not. Numeric columns are never cut by [`fit_column_widths`]: a
+/// is not, and neither is one holding an empty string. Numeric columns are never cut by [`fit_column_widths`]: a
 /// truncated number is a wrong number. Pure / testable.
 pub fn is_numeric_column(grid: &Grid, col: usize) -> bool {
     let mut any = false;
     for cell in grid.rows.iter().filter_map(|r| r.get(col)) {
-        if cell.is_empty() {
+        let Some(cell) = cell else {
             continue;
-        }
+        };
         if !looks_numeric(cell) {
             return false;
         }
@@ -355,10 +378,34 @@ mod tests {
     }
 
     #[test]
+    fn a_null_is_as_wide_as_its_marker_and_an_empty_string_is_nothing() {
+        let g = Grid {
+            columns: vec!["n".into(), "e".into()],
+            rows: vec![vec![None, Some(String::new())]],
+            truncated: false,
+        };
+        assert_eq!(column_widths(&g, 48), vec![NULL_MARKER.len(), 1]);
+    }
+
+    #[test]
+    fn an_empty_string_is_not_a_number_but_a_null_is_no_evidence() {
+        let g = Grid {
+            columns: vec!["with_null".into(), "with_empty".into()],
+            rows: vec![
+                vec![Some("1".into()), Some("1".into())],
+                vec![None, Some(String::new())],
+            ],
+            truncated: false,
+        };
+        assert!(is_numeric_column(&g, 0));
+        assert!(!is_numeric_column(&g, 1));
+    }
+
+    #[test]
     fn column_widths_measure_a_cell_as_it_is_drawn() {
         let g = Grid {
             columns: vec!["c".into()],
-            rows: vec![vec!["a\tb\nc".into()]],
+            rows: vec![vec![Some("a\tb\nc".into())]],
             truncated: false,
         };
         // `a⇥b⏎c`: five columns, where the raw tab and newline counted
@@ -402,9 +449,9 @@ mod tests {
         let g = Grid {
             columns: vec!["n".into(), "t".into(), "nulls".into()],
             rows: vec![
-                vec!["1".into(), "a".into(), "".into()],
-                vec!["".into(), "2".into(), "".into()],
-                vec!["-3.5".into(), "b".into(), "".into()],
+                vec![Some("1".into()), Some("a".into()), None],
+                vec![None, Some("2".into()), None],
+                vec![Some("-3.5".into()), Some("b".into()), None],
             ],
             truncated: false,
         };
@@ -463,8 +510,8 @@ mod tests {
         Grid {
             columns: vec!["id".into(), "name".into()],
             rows: vec![
-                vec!["1".into(), "alice".into()],
-                vec!["1000".into(), "bob".into()],
+                vec![Some("1".into()), Some("alice".into())],
+                vec![Some("1000".into()), Some("bob".into())],
             ],
             truncated: false,
         }
@@ -490,8 +537,8 @@ mod tests {
         let g = Grid {
             columns: vec!["id".into(), "名前".into()],
             rows: vec![
-                vec!["1".into(), "東京都".into()],
-                vec!["2".into(), "bob".into()],
+                vec![Some("1".into()), Some("東京都".into())],
+                vec![Some("2".into()), Some("bob".into())],
             ],
             truncated: false,
         };
@@ -500,7 +547,7 @@ mod tests {
         // A width-2 header alone must still get its 4 columns.
         let g = Grid {
             columns: vec!["名前".into()],
-            rows: vec![vec!["x".into()]],
+            rows: vec![vec![Some("x".into())]],
             truncated: false,
         };
         assert_eq!(column_widths(&g, 80), vec![4]);
@@ -594,24 +641,29 @@ mod tests {
     #[test]
     fn cmp_cells_numbers_sort_numerically() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("2", "10"), Ordering::Less);
-        assert_eq!(cmp_cells("100", "20"), Ordering::Greater);
-        assert_eq!(cmp_cells("1.5", "1.05"), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);
+        assert_eq!(cmp_cells(Some("100"), Some("20")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("1.5"), Some("1.05")), Ordering::Greater);
     }
 
     #[test]
     fn cmp_cells_falls_back_to_string_when_either_non_numeric() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);
+        assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less);
         // One number, one text: lexicographic.
-        assert_eq!(cmp_cells("10", "alice"), Ordering::Less);
+        assert_eq!(cmp_cells(Some("10"), Some("alice")), Ordering::Less);
     }
 
     #[test]
-    fn cmp_cells_empty_string_is_null_last() {
+    fn cmp_cells_null_is_last_and_the_empty_string_is_a_value() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("", "anything"), Ordering::Greater);
-        assert_eq!(cmp_cells("anything", ""), Ordering::Less);
-        assert_eq!(cmp_cells("", ""), Ordering::Equal);
+        assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("anything"), None), Ordering::Less);
+        assert_eq!(cmp_cells(None, None), Ordering::Equal);
+        // After the empty string too: it is a value, not a NULL.
+        assert_eq!(cmp_cells(None, Some("")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);
+        assert_eq!(cmp_cells(Some(""), Some("1")), Ordering::Less);
+        assert_eq!(cmp_cells(Some(""), Some("")), Ordering::Equal);
     }
 }

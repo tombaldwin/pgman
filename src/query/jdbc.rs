@@ -27,6 +27,7 @@ pub fn parse(sql: &str, params_text: &str) -> Option<ReconstructedQuery> {
         runnable_sql,
         source: Source::JdbcPaste,
         src_line: 0,
+        error: None,
     })
 }
 

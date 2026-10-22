@@ -14,6 +14,14 @@
 //!     `bind` carries the parameters, `execute` is the execution event. One
 //!     `ReconstructedQuery` is emitted per `statement` / `execute`; the matching
 //!     `bind`'s parameters are paired in by backend pid.
+//!   - `ERROR:  <message>` then `STATEMENT:  <sql>` from the same backend —
+//!     what the default `log_min_error_statement = error` logs for a failed
+//!     statement with nothing else enabled. It becomes a query marked failed
+//!     with the error's message (`ReconstructedQuery::error`); parameters come
+//!     from a `DETAIL:` / `CONTEXT:  … with parameters:` line in the report or
+//!     the backend's last `bind`. When `log_statement` already logged the
+//!     statement before it ran, that query is marked failed instead of a second
+//!     copy being emitted — two copies would read as an N+1 loop.
 //!
 //! Parameter values are logged by Postgres as quoted text regardless of type
 //! (`$1 = '42'`), so they are reconstructed as quoted literals — re-running
@@ -26,7 +34,8 @@
 //! a severity marker (`ERROR:  …` at column 0, e.g. the second line of a
 //! multi-line string literal in a paste that lost Postgres's tabs) reads
 //! as a record; backends with no `[%p]` in the prefix share one pairing
-//! bucket; `ERROR` + `STATEMENT` pairs are not reconstructed.
+//! bucket; a `FATAL` / `PANIC` + `STATEMENT` pair (a terminated backend)
+//! is not reconstructed, only `ERROR`.
 
 use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
 use crate::query::subst::{self, PlaceholderStyle};
@@ -35,53 +44,111 @@ use std::collections::HashMap;
 /// Parse a Postgres server log into reconstructed queries.
 pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
     let mut out: Vec<ReconstructedQuery> = Vec::new();
-    // pid -> (sql, params) from the most recent `bind` for that backend.
-    let mut stashed: HashMap<String, (String, Vec<BoundParam>)> = HashMap::new();
+    let mut seen = Seen::default();
     let mut current: Option<Pending> = None;
 
     for (idx, line) in log.lines().enumerate() {
         let line_no = idx + 1;
-        match split_record(line).map(|r| (r.level, r.msg, r.prefix)) {
-            Some(("DETAIL", msg, _)) => {
+        let Some(Record { prefix, level, msg }) = split_record(line) else {
+            // Not a record line — a continuation of a multi-line statement.
+            if let Some(cur) = current.as_mut() {
+                cur.sql.push('\n');
+                cur.sql.push_str(line);
+            }
+            continue;
+        };
+        let pid = extract_pid(prefix).unwrap_or_default();
+        // An ERROR's report runs on through DETAIL / HINT / CONTEXT / …
+        // to its STATEMENT; anything else from that backend means the
+        // STATEMENT is not coming (`log_min_error_statement` above
+        // `error`), and a later one belongs to some other message.
+        if !REPORT_LEVELS.contains(&level) {
+            seen.errors.remove(&pid);
+        }
+        match level {
+            "DETAIL" => {
                 if msg.contains("parameters:") {
+                    let params = parse_parameters(msg);
                     if let Some(cur) = current.as_mut() {
-                        let params = parse_parameters(msg);
                         if !params.is_empty() {
                             cur.params = params;
                         }
+                    } else if let Some(err) = seen.errors.get_mut(&pid) {
+                        err.params = params;
                     }
                 }
                 // Non-parameter DETAIL lines belong to `current` — don't finalize.
             }
-            Some(("LOG", msg, prefix)) => match parse_log_message(msg) {
+            "LOG" => match parse_log_message(msg) {
                 Some((kind, sql)) => {
-                    finalize(current.take(), &mut stashed, &mut out);
+                    finalize(current.take(), &mut seen, &mut out);
                     current = Some(Pending {
                         kind,
-                        pid: extract_pid(prefix).unwrap_or_default(),
+                        pid,
                         sql: sql.to_string(),
                         params: Vec::new(),
                         line: line_no,
+                        before_run: !msg.starts_with("duration:"),
+                        error: None,
                     });
                 }
                 // A LOG line we don't recognise ends the current statement.
-                None => finalize(current.take(), &mut stashed, &mut out),
+                None => finalize(current.take(), &mut seen, &mut out),
             },
-            // ERROR / STATEMENT / WARNING / HINT / … end the current statement.
-            Some(_) => finalize(current.take(), &mut stashed, &mut out),
-            // Not a record line — a continuation of a multi-line statement.
-            None => {
-                if let Some(cur) = current.as_mut() {
-                    cur.sql.push('\n');
-                    cur.sql.push_str(line);
+            "ERROR" => {
+                finalize(current.take(), &mut seen, &mut out);
+                seen.errors.insert(
+                    pid,
+                    FailedRun {
+                        message: msg.trim().to_string(),
+                        params: Vec::new(),
+                    },
+                );
+            }
+            // PG 13+ `log_parameter_max_length_on_error`: `CONTEXT:
+            // unnamed portal with parameters: $1 = '…'`.
+            "CONTEXT" => {
+                finalize(current.take(), &mut seen, &mut out);
+                if msg.contains("parameters:") {
+                    if let Some(err) = seen.errors.get_mut(&pid) {
+                        err.params = parse_parameters(msg);
+                    }
                 }
             }
+            "STATEMENT" => {
+                finalize(current.take(), &mut seen, &mut out);
+                if let Some(err) = seen.errors.remove(&pid) {
+                    current = Some(Pending {
+                        kind: Kind::Failed,
+                        pid,
+                        sql: msg.to_string(),
+                        params: err.params,
+                        line: line_no,
+                        before_run: false,
+                        error: Some(err.message),
+                    });
+                }
+            }
+            // WARNING / HINT / FATAL / … end the current statement.
+            _ => finalize(current.take(), &mut seen, &mut out),
         }
     }
-    finalize(current.take(), &mut stashed, &mut out);
+    finalize(current.take(), &mut seen, &mut out);
     out.sort_by_key(|q| q.src_line);
     out
 }
+
+/// The levels an `ERROR`'s report carries between it and its
+/// `STATEMENT` (and the `STATEMENT` itself): a record at any of these
+/// keeps the backend's pending error.
+const REPORT_LEVELS: &[&str] = &[
+    "DETAIL",
+    "HINT",
+    "CONTEXT",
+    "LOCATION",
+    "QUERY",
+    "STATEMENT",
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -89,6 +156,8 @@ enum Kind {
     Execute,
     Bind,
     Parse,
+    /// An `ERROR`'s `STATEMENT:` — the statement that failed.
+    Failed,
 }
 
 struct Pending {
@@ -97,13 +166,34 @@ struct Pending {
     sql: String,
     params: Vec<BoundParam>,
     line: usize,
+    /// Logged before it ran (`log_statement`), not after
+    /// (`log_min_duration_statement`'s `duration: … statement:`) — so
+    /// an ERROR + STATEMENT that follows may be this same run failing.
+    before_run: bool,
+    /// The `ERROR:` message, for [`Kind::Failed`].
+    error: Option<String>,
 }
 
-fn finalize(
-    pending: Option<Pending>,
-    stashed: &mut HashMap<String, (String, Vec<BoundParam>)>,
-    out: &mut Vec<ReconstructedQuery>,
-) {
+/// An `ERROR:` waiting for its `STATEMENT:`.
+struct FailedRun {
+    message: String,
+    params: Vec<BoundParam>,
+}
+
+/// Per-backend state the records leave behind for the ones after them.
+#[derive(Default)]
+struct Seen {
+    /// pid -> (sql, params) from the most recent `bind` for that backend.
+    stashed: HashMap<String, (String, Vec<BoundParam>)>,
+    /// pid -> the `ERROR:` whose report is still being read.
+    errors: HashMap<String, FailedRun>,
+    /// pid -> index in `out` of that backend's latest query, when it was
+    /// logged before it ran — the run an ERROR + STATEMENT for the same
+    /// SQL reports on.
+    before_run: HashMap<String, usize>,
+}
+
+fn finalize(pending: Option<Pending>, seen: &mut Seen, out: &mut Vec<ReconstructedQuery>) {
     let Some(mut p) = pending else {
         return;
     };
@@ -116,12 +206,24 @@ fn finalize(
         Kind::Parse => {}
         // `bind` carries the parameters; stash them for the matching `execute`.
         Kind::Bind => {
-            stashed.insert(p.pid.clone(), (raw_sql, std::mem::take(&mut p.params)));
+            seen.stashed
+                .insert(p.pid.clone(), (raw_sql, std::mem::take(&mut p.params)));
         }
-        Kind::Statement | Kind::Execute => {
+        Kind::Statement | Kind::Execute | Kind::Failed => {
+            if p.kind == Kind::Failed {
+                // `log_statement` logged this run already: mark that
+                // query failed rather than emit it twice.
+                if let Some(&i) = seen.before_run.get(&p.pid) {
+                    if out[i].raw_sql == raw_sql && out[i].error.is_none() {
+                        out[i].error = p.error.take();
+                        seen.before_run.remove(&p.pid);
+                        return;
+                    }
+                }
+            }
             let mut params = std::mem::take(&mut p.params);
-            if params.is_empty() && p.kind == Kind::Execute {
-                if let Some((bind_sql, bind_params)) = stashed.get(&p.pid) {
+            if params.is_empty() && p.kind != Kind::Statement {
+                if let Some((bind_sql, bind_params)) = seen.stashed.get(&p.pid) {
                     if *bind_sql == raw_sql {
                         params = bind_params.clone();
                     }
@@ -139,7 +241,13 @@ fn finalize(
                 runnable_sql,
                 source: Source::PostgresLog,
                 src_line: p.line,
+                error: p.error,
             });
+            if p.before_run && p.kind != Kind::Failed {
+                seen.before_run.insert(p.pid, out.len() - 1);
+            } else {
+                seen.before_run.remove(&p.pid);
+            }
         }
     }
 }
@@ -606,16 +714,171 @@ mod tests {
                     "select id, total from invoices where status = 'open' and total > '100'",
                     "select id\n\tfrom customer\n\twhere active",
                     "select * from invoices where id = '48202'",
+                    "select * from invoice_lnes\n\twhere invoice_id = 1",
                     "select 1",
                 ],
                 "log_line_prefix = '{format}'"
             );
             assert_eq!(
                 q.iter().map(|q| q.src_line).collect::<Vec<_>>(),
-                [1, 3, 8, 12],
+                [1, 3, 8, 10, 12],
+                "log_line_prefix = '{format}'"
+            );
+            assert_eq!(
+                q.iter().map(|q| q.error.as_deref()).collect::<Vec<_>>(),
+                [
+                    None,
+                    None,
+                    None,
+                    Some("relation \"invoice_lnes\" does not exist at character 15"),
+                    None
+                ],
                 "log_line_prefix = '{format}'"
             );
         }
+    }
+
+    /// The default `log_min_error_statement = error` with nothing else
+    /// on: a failed statement is logged as its ERROR and STATEMENT only.
+    #[test]
+    fn an_error_and_its_statement_become_a_failed_query() {
+        let log = "\
+2026-10-21 09:12:48 UTC [101] LOG:  checkpoint starting: time
+2026-10-21 09:12:49 UTC [101] ERROR:  column \"totl\" does not exist at character 8
+2026-10-21 09:12:49 UTC [101] HINT:  Perhaps you meant to reference the column \"invoices.total\".
+2026-10-21 09:12:49 UTC [101] STATEMENT:  select totl
+\tfrom invoices
+\twhere id = 7
+2026-10-21 09:12:50 UTC [101] LOG:  statement: select 1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:?}");
+        assert_eq!(q[0].raw_sql, "select totl\n\tfrom invoices\n\twhere id = 7");
+        assert_eq!(q[0].runnable_sql, q[0].raw_sql);
+        assert_eq!(q[0].src_line, 4, "the STATEMENT line, where the SQL is");
+        assert_eq!(
+            q[0].error.as_deref(),
+            Some("column \"totl\" does not exist at character 8")
+        );
+        assert_eq!(q[1].raw_sql, "select 1");
+        assert_eq!(q[1].error, None);
+    }
+
+    /// `log_statement = 'all'` logs the statement before it runs, then
+    /// the ERROR + STATEMENT when it fails: one run, so one query, the
+    /// logged one, marked failed. Two would read as a ×2 N+1 cluster.
+    #[test]
+    fn a_failure_log_statement_already_logged_marks_that_query_instead_of_repeating_it() {
+        let log = "\
+[101] LOG:  statement: update invoices set total = 0 where id = 7
+[101] ERROR:  cannot execute UPDATE in a read-only transaction
+[101] STATEMENT:  update invoices set total = 0 where id = 7
+[101] LOG:  execute <unnamed>: select * from invoice_lines where invoice_id = $1
+[101] DETAIL:  parameters: $1 = '48202'
+[101] ERROR:  canceling statement due to statement timeout
+[101] STATEMENT:  select * from invoice_lines where invoice_id = $1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:?}");
+        assert_eq!(q[0].src_line, 1);
+        assert_eq!(
+            q[0].error.as_deref(),
+            Some("cannot execute UPDATE in a read-only transaction")
+        );
+        assert_eq!(q[1].src_line, 4);
+        assert_eq!(
+            q[1].runnable_sql, "select * from invoice_lines where invoice_id = '48202'",
+            "the execute's parameters are kept"
+        );
+        assert_eq!(
+            q[1].error.as_deref(),
+            Some("canceling statement due to statement timeout")
+        );
+        assert!(crate::query::nplus1::detect(&q).is_empty(), "no N+1 here");
+    }
+
+    /// `log_min_duration_statement` logs a statement after it finished,
+    /// so the same SQL failing next is a second run, not this one.
+    #[test]
+    fn a_failure_after_a_duration_logged_success_is_its_own_query() {
+        let log = "\
+[101] LOG:  duration: 0.300 ms  statement: delete from locks where id = 1
+[101] ERROR:  could not obtain lock on row in relation \"locks\"
+[101] STATEMENT:  delete from locks where id = 1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:?}");
+        assert_eq!(q[0].error, None, "the first run succeeded");
+        assert!(q[1].error.is_some());
+        assert_eq!(q[1].src_line, 3);
+    }
+
+    /// Parameters for a failed extended-protocol statement: from PG 13's
+    /// `CONTEXT:  … with parameters:` in the report, or else from the
+    /// backend's last `bind` of the same SQL.
+    #[test]
+    fn a_failed_statement_takes_its_parameters_from_the_report_or_the_bind() {
+        let log = "\
+[101] ERROR:  invalid input syntax for type integer: \"x\"
+[101] CONTEXT:  unnamed portal with parameters: $1 = 'x'
+[101] STATEMENT:  select * from t where id = $1
+[202] LOG:  bind <unnamed>: select * from t where id = $1
+[202] DETAIL:  parameters: $1 = '9'
+[202] ERROR:  deadlock detected
+[202] DETAIL:  Process 202 waits for ShareLock on transaction 5; blocked by process 101.
+[202] STATEMENT:  select * from t where id = $1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2, "{q:?}");
+        assert_eq!(q[0].runnable_sql, "select * from t where id = 'x'");
+        assert_eq!(q[1].runnable_sql, "select * from t where id = '9'");
+        assert_eq!(q[1].error.as_deref(), Some("deadlock detected"));
+    }
+
+    #[test]
+    fn an_error_pairs_with_its_own_backends_statement_only() {
+        let log = "\
+[101] ERROR:  relation \"a\" does not exist
+[202] LOG:  statement: select 2
+[202] STATEMENT:  select from_202
+[101] STATEMENT:  select * from a
+[303] ERROR:  relation \"b\" does not exist
+[303] LOG:  statement: select 3
+[303] STATEMENT:  select * from b
+[404] WARNING:  there is no transaction in progress
+[404] STATEMENT:  commit";
+        let q = parse(log);
+        let got: Vec<(&str, bool)> = q
+            .iter()
+            .map(|q| (q.raw_sql.as_str(), q.error.is_some()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("select 2", false),
+                ("select * from a", true),
+                // 303's report ended at its LOG: the later STATEMENT is
+                // not the ERROR's. A WARNING's STATEMENT did not fail.
+                ("select 3", false),
+            ]
+        );
+    }
+
+    /// The same failing shape, run with different values, is a loop
+    /// like any other.
+    #[test]
+    fn failed_statements_cluster_like_any_other() {
+        let log = (1..=3)
+            .map(|i| {
+                format!(
+                    "[101] ERROR:  permission denied for table audit\n\
+                     [101] STATEMENT:  insert into audit values ({i})"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let q = parse(&log);
+        assert_eq!(q.len(), 3);
+        assert!(q.iter().all(|q| q.error.is_some()));
+        let clusters = crate::query::nplus1::detect(&q);
+        assert_eq!(clusters.len(), 1);
+        assert_eq!(clusters[0].count, 3);
     }
 
     #[test]

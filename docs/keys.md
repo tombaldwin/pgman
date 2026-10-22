@@ -156,15 +156,22 @@ fetch past the cap. To see other rows, narrow the query (`WHERE`,
 with `pgman query 'SQL' --json` (or `--batch --format json`), which
 isn't capped; see [commands](commands.md).
 
+A NULL is drawn as a dimmed, italic `NULL` (`theme.null_cell`) and an
+empty string as nothing, so the two never look alike; row and cell
+detail say `NULL` and `(empty string)`. Sort puts NULLs where Postgres
+does by default — last ascending, first descending — and an empty
+string sorts as the smallest value. Filter and find match a NULL on the
+whole word `null` (any case), so `/null` finds them; `/nu` does not.
+
 | Key | Action |
 |---|---|
 | `s` | Cycle sort on the focused column (off → ASC → DESC) |
 | `/` | Live row filter (hides non-matching rows) |
 | `f` | Find within the grid (highlights + jumps; `n`/`N` step matches) |
 | `n` / `N` | Step to next / previous filter or find match |
-| `F` | Follow the FK on the focused cell → new tab, `SELECT * FROM parent WHERE pk=value` |
-| `Y` | Copy the (filtered) grid to clipboard as CSV |
-| `I` | Yank the focused row as an `INSERT` (single-table SELECTs only) |
+| `F` | Follow the FK on the focused cell → new tab, `SELECT * FROM parent WHERE pk=value` (a NULL references nothing: no tab) |
+| `Y` | Copy the (filtered) grid to clipboard as CSV (NULL an empty field, an empty string `""`) |
+| `I` | Yank the focused row as an `INSERT` (single-table SELECTs only): NULL as `NULL`, every value quoted, `''` included |
 | `D` | Pin the current result as baseline A; press again after running another query to diff B against A |
 | `Enter` | Open row detail |
 
@@ -184,7 +191,7 @@ typing a find, `n` and `N` are letters of the pattern; `↓`/`↑` (or
 | `j` / `k` / `↓` / `↑` | Move to next / previous field |
 | `g` / `G` | First / last field |
 | `Enter` | Zoom into the focused field (cell detail) |
-| `y` | Yank the focused field value |
+| `y` | Yank the focused field value (a NULL yanks nothing, and says so) |
 | `Esc` / `q` | Close |
 
 ### Cell detail (`Enter` on a field)
@@ -359,7 +366,9 @@ per tab: switching tabs restores each tab's own layout.
 ## JDBC tap monitor
 
 Opened with `F4` from any mode. Seven views, cycled with `v`: **List**
-(recency-ordered event stream, default) → **Hotspots** (by SQL fingerprint)
+(recency-ordered event stream, default; the focused query's bound
+parameters show beneath it, labelled `params (some redacted)` when the
+producer masked any) → **Hotspots** (by SQL fingerprint)
 → **Callers** (by innermost caller frame) → **Transactions** (by synthetic
 txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 → **Baseline** (diff vs. a captured snapshot) → back to List.

@@ -93,6 +93,13 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
     if text.lines().any(super::pglog::is_query_record) {
         return Some(LogKind::PgServer);
     }
+    // A log of failures only (the default `log_min_error_statement`
+    // with nothing else on): whether an `ERROR:` + `STATEMENT:` pair
+    // reconstructs depends on the records around it, so ask the parser
+    // — only when a `STATEMENT:` is there at all.
+    if text.contains("STATEMENT:") && !super::pglog::parse(text).is_empty() {
+        return Some(LogKind::PgServer);
+    }
 
     if split_jdbc_paste(text).is_some() {
         return Some(LogKind::Jdbc);
@@ -199,6 +206,18 @@ mod tests {
             // A log with no statements in it at all.
             (
                 "2026-10-21 09:12:48 UTC [31840] LOG:  checkpoint starting: time",
+                false,
+            ),
+            // Failures only: an ERROR and its STATEMENT.
+            (
+                "2026-10-21 09:12:48 UTC [31840] ERROR:  relation \"t\" does not exist\n\
+                 2026-10-21 09:12:48 UTC [31840] STATEMENT:  select * from t",
+                true,
+            ),
+            // A WARNING's STATEMENT did not fail, and is not a query.
+            (
+                "2026-10-21 09:12:48 UTC [31840] WARNING:  there is no transaction in progress\n\
+                 2026-10-21 09:12:48 UTC [31840] STATEMENT:  commit",
                 false,
             ),
         ] {

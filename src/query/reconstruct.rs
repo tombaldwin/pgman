@@ -53,4 +53,8 @@ pub struct ReconstructedQuery {
     pub source: Source,
     /// Line number in the source log/paste, for jump-back.
     pub src_line: usize,
+    /// The statement failed where it was logged: the server's error
+    /// message (a Postgres log's `ERROR:` + `STATEMENT:` pair). `None`
+    /// for a statement that ran, or whose outcome the log doesn't say.
+    pub error: Option<String>,
 }

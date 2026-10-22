@@ -557,7 +557,7 @@ impl App {
             rows: self
                 .databases
                 .iter()
-                .map(|d| vec![d.name.clone(), d.size.clone()])
+                .map(|d| vec![Some(d.name.clone()), Some(d.size.clone())])
                 .collect(),
             truncated: false,
         };

@@ -25,8 +25,8 @@ expression: dump(&buf)
 │INV│       525µs          1  billing-api           SELECT id, description, quantity, unit_amo…│   │
 │   │       2.3ms          1  billing-api           UPDATE subscriptions SET status = ?, curre…│   │
 │   │                                                                                          │   │
-│   │                                                                                          │   │
-│   │                                                                                          │   │
+│   │──────────────────────────────────────────────────────────────────────────────────────────│   │
+│   │  params  1: 2107                                                                         │   │
 │   │                                                                                          │   │
 │   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
 │                                                                                                  │
