@@ -2214,6 +2214,18 @@ fn row_insert_sql_keeps_null_and_the_empty_string_apart() {
     );
 }
 
+/// A grid's column names are the real ones, case and all: bare,
+/// `createdAt` folded to `createdat`, a column the table does not have.
+#[test]
+fn row_insert_sql_quotes_column_names_that_need_it() {
+    let cols = ["id", "createdAt", "with space"].map(String::from);
+    let row = [Some("1".into()), None, None];
+    assert_eq!(
+        row_insert_sql("public", "orders", &cols, &row),
+        "INSERT INTO public.orders (id, \"createdAt\", \"with space\") VALUES ('1', NULL, NULL);"
+    );
+}
+
 /// The yank's output, pasted back, inserts the row it copied — numbers
 /// and booleans included, quoted as untyped literals.
 #[test]

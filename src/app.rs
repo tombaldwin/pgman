@@ -1021,11 +1021,15 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
 }
 
 /// `I`'s `INSERT INTO schema.table (cols…) VALUES (literals…);` for one
-/// grid row, each cell through [`format_sql_literal`]. Pure / testable.
+/// grid row, each cell through [`format_sql_literal`]. Column names are
+/// the server's own, case and all, so they go through [`quote_ident`]
+/// (`createdAt` bare is `createdat`, a column the table lacks). The
+/// schema and table stay as the query spelled them — `FROM Users`
+/// infers `Users`, which only works bare. Pure / testable.
 pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
     let cols = columns
         .iter()
-        .map(String::as_str)
+        .map(|c| quote_ident(c))
         .collect::<Vec<_>>()
         .join(", ");
     let vals = row
