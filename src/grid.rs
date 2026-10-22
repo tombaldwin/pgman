@@ -76,26 +76,28 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Compare two rendered cells for sorting. Numeric-aware: when both
-/// parse as `f64`, compare as numbers (so `2` sorts before `10`).
-/// Empty strings (the renderer's representation of SQL NULL) sort
-/// AFTER non-empty values, matching Postgres's default `NULLS LAST`
-/// for `ORDER BY … ASC`.
+/// Compare two cells for sorting. Numeric-aware: when both parse as
+/// `f64`, compare as numbers (so `2` sorts before `10`). SQL NULL
+/// (`None`) sorts AFTER every value, Postgres's default: `NULLS LAST`
+/// for `ORDER BY … ASC`, and — the sort reversing this for DESC —
+/// `NULLS FIRST` for `DESC`. An empty string is a value like any other:
+/// the smallest string, so first ascending.
 ///
 /// ```
 /// use std::cmp::Ordering;
 /// use pgman::grid::cmp_cells;
-/// assert_eq!(cmp_cells("2", "10"), Ordering::Less);          // numeric
-/// assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);     // lex
-/// assert_eq!(cmp_cells("", "anything"), Ordering::Greater);  // NULL last
+/// assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);      // numeric
+/// assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less); // lex
+/// assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);  // NULL last
+/// assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);        // '' first
 /// ```
-pub fn cmp_cells(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn cmp_cells(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    match (a.is_empty(), b.is_empty()) {
-        (true, true) => Ordering::Equal,
-        (true, false) => Ordering::Greater,
-        (false, true) => Ordering::Less,
-        _ => match (a.parse::<f64>(), b.parse::<f64>()) {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => match (a.parse::<f64>(), b.parse::<f64>()) {
             (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or_else(|| a.cmp(b)),
             _ => a.cmp(b),
         },
@@ -639,24 +641,29 @@ mod tests {
     #[test]
     fn cmp_cells_numbers_sort_numerically() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("2", "10"), Ordering::Less);
-        assert_eq!(cmp_cells("100", "20"), Ordering::Greater);
-        assert_eq!(cmp_cells("1.5", "1.05"), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("2"), Some("10")), Ordering::Less);
+        assert_eq!(cmp_cells(Some("100"), Some("20")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("1.5"), Some("1.05")), Ordering::Greater);
     }
 
     #[test]
     fn cmp_cells_falls_back_to_string_when_either_non_numeric() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("alice", "bob"), Ordering::Less);
+        assert_eq!(cmp_cells(Some("alice"), Some("bob")), Ordering::Less);
         // One number, one text: lexicographic.
-        assert_eq!(cmp_cells("10", "alice"), Ordering::Less);
+        assert_eq!(cmp_cells(Some("10"), Some("alice")), Ordering::Less);
     }
 
     #[test]
-    fn cmp_cells_empty_string_is_null_last() {
+    fn cmp_cells_null_is_last_and_the_empty_string_is_a_value() {
         use std::cmp::Ordering;
-        assert_eq!(cmp_cells("", "anything"), Ordering::Greater);
-        assert_eq!(cmp_cells("anything", ""), Ordering::Less);
-        assert_eq!(cmp_cells("", ""), Ordering::Equal);
+        assert_eq!(cmp_cells(None, Some("anything")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some("anything"), None), Ordering::Less);
+        assert_eq!(cmp_cells(None, None), Ordering::Equal);
+        // After the empty string too: it is a value, not a NULL.
+        assert_eq!(cmp_cells(None, Some("")), Ordering::Greater);
+        assert_eq!(cmp_cells(Some(""), Some("a")), Ordering::Less);
+        assert_eq!(cmp_cells(Some(""), Some("1")), Ordering::Less);
+        assert_eq!(cmp_cells(Some(""), Some("")), Ordering::Equal);
     }
 }

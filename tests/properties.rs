@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 use pgman::app::{compute_visible_rows, history_search_next, next_sort_state};
 use pgman::conn::{redact_url, Dsn};
-use pgman::grid::{cell_text, cmp_cells, Grid};
+use pgman::grid::{cmp_cells, Grid};
 use pgman::query::highlight::{tokenize, TokenClass};
 use pgman::safety::{classify, split_statements, StatementKind};
 
@@ -320,23 +320,27 @@ proptest! {
 proptest! {
     /// `cmp_cells` is antisymmetric.
     #[test]
-    fn cmp_cells_is_antisymmetric(a in ".{0,16}", b in ".{0,16}") {
-        let ab = cmp_cells(&a, &b);
-        let ba = cmp_cells(&b, &a);
+    fn cmp_cells_is_antisymmetric(
+        a in proptest::option::of(".{0,16}"),
+        b in proptest::option::of(".{0,16}"),
+    ) {
+        let ab = cmp_cells(a.as_deref(), b.as_deref());
+        let ba = cmp_cells(b.as_deref(), a.as_deref());
         prop_assert_eq!(ab.reverse(), ba);
     }
 
     /// `cmp_cells` is reflexive (a == a is Equal).
     #[test]
-    fn cmp_cells_is_reflexive(a in ".{0,16}") {
-        prop_assert_eq!(cmp_cells(&a, &a), std::cmp::Ordering::Equal);
+    fn cmp_cells_is_reflexive(a in proptest::option::of(".{0,16}")) {
+        prop_assert_eq!(cmp_cells(a.as_deref(), a.as_deref()), std::cmp::Ordering::Equal);
     }
 
-    /// Empty cell is always `Greater` than a non-empty one (NULLS LAST).
+    /// NULL is always `Greater` than any value, the empty string
+    /// included (NULLS LAST).
     #[test]
-    fn cmp_cells_null_last(b in "[^\\s].{0,16}") {
-        prop_assert_eq!(cmp_cells("", &b), std::cmp::Ordering::Greater);
-        prop_assert_eq!(cmp_cells(&b, ""), std::cmp::Ordering::Less);
+    fn cmp_cells_null_last(b in ".{0,16}") {
+        prop_assert_eq!(cmp_cells(None, Some(&b)), std::cmp::Ordering::Greater);
+        prop_assert_eq!(cmp_cells(Some(&b), None), std::cmp::Ordering::Less);
     }
 }
 
@@ -482,9 +486,9 @@ proptest! {
                 .collect(),
                     truncated: false,
         };
-        g.rows.sort_by(|a, b| cmp_cells(cell_text(&a[0]), cell_text(&b[0])));
+        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
         let after_first = g.rows.clone();
-        g.rows.sort_by(|a, b| cmp_cells(cell_text(&a[0]), cell_text(&b[0])));
+        g.rows.sort_by(|a, b| cmp_cells(a[1].as_deref(), b[1].as_deref()));
         prop_assert_eq!(after_first, g.rows);
     }
 }

@@ -2054,6 +2054,44 @@ fn cycle_sort_orders_numerically_asc_then_desc_then_off() {
     assert!(a.grid_view.sort.is_none());
 }
 
+/// Postgres's defaults: NULLS LAST ascending, NULLS FIRST descending —
+/// and the empty string is a value, the smallest one, not a NULL.
+#[test]
+fn cycle_sort_puts_nulls_where_postgres_does_and_the_empty_string_first() {
+    let mut a = app_with_grid(Grid {
+        columns: vec!["v".into()],
+        rows: vec![
+            vec![Some("b".into())],
+            vec![None],
+            vec![Some(String::new())],
+            vec![Some("a".into())],
+        ],
+        truncated: false,
+    });
+    let order =
+        |a: &App| -> Vec<Option<String>> { a.grid.rows.iter().map(|r| r[0].clone()).collect() };
+    a.cycle_sort();
+    assert_eq!(
+        order(&a),
+        [
+            Some(String::new()),
+            Some("a".into()),
+            Some("b".into()),
+            None
+        ]
+    );
+    a.cycle_sort();
+    assert_eq!(
+        order(&a),
+        [
+            None,
+            Some("b".into()),
+            Some("a".into()),
+            Some(String::new())
+        ]
+    );
+}
+
 #[test]
 fn cycle_sort_on_different_column_jumps_to_asc() {
     let mut a = app_with_grid(sample_grid());

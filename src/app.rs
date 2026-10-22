@@ -3754,7 +3754,8 @@ impl App {
     /// `s` in Normal mode — cycle sort on the focused column:
     /// `off → ASC → DESC → off`. ASC takes a snapshot of the raw
     /// row order so `off` can restore it without re-running the
-    /// query.
+    /// query. NULLs go where Postgres puts them by default: last
+    /// ascending, first descending ([`crate::grid::cmp_cells`]).
     fn cycle_sort(&mut self) {
         if self.grid.columns.is_empty() {
             return;
@@ -3767,8 +3768,9 @@ impl App {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
                 self.grid.rows.sort_by(|a, b| {
-                    let av = a.get(col).map(cell_text).unwrap_or("");
-                    let bv = b.get(col).map(cell_text).unwrap_or("");
+                    // A short row's missing cell sorts as a NULL.
+                    let av = a.get(col).and_then(Option::as_deref);
+                    let bv = b.get(col).and_then(Option::as_deref);
                     let ord = crate::grid::cmp_cells(av, bv);
                     if asc {
                         ord
