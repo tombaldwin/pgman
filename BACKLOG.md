@@ -110,11 +110,28 @@ buckets were folded in once their initial passes shipped).
 A second round of editor quality-of-life features past the syntax-
 highlighting / pg_format / auto-save / persistent-history / undo
 batch.
+- **A popup that narrows to nothing leaves its status behind**
+  (2026-10-22). Typing on through an auto-opened popup until nothing
+  matches (`… on t.` with no schema cache) closes it in
+  `refresh_completion`, which sets `completion: no matches for t.…`;
+  nothing clears it while the operator keeps typing ordinary SQL.
+  An auto-opened popup that dies of no matches should leave no status.
 - **Multi-line comment toggle for selection** — current
   `Ctrl-/` toggles the focused line. We don't have selection
   yet; once we do, apply per-line.
 
 ### Result grid
+- **NULL and the empty string look the same** (release panel M1,
+  2026-10-22). `grid::Grid` holds cells as `String` with NULL as `""`
+  (`conn::display_cells`), so the grid, row / cell detail and the `Y`
+  CSV yank cannot tell them apart, and the `I` INSERT yank
+  (`format_sql_literal`) writes `NULL` for an empty string. Needs the
+  cell type to carry NULL (`Option<String>`, or a parallel mask kept in
+  step with sort / filter): ~164 `.rows` use sites over conn, grid,
+  app, ui, batch, row_diff, demo and report — skipped as a refactor
+  past three modules. Then: a dimmed theme-coloured `NULL` marker in
+  grid and detail, `''` vs `NULL` in the INSERT yank, CSV keeping
+  NULL as an empty field (the RFC 4180 / `COPY … CSV` convention).
 - **Cell editing → UPDATE generation** — Enter on a cell in the
   grid (when the result is from a single table with a primary key)
   opens an inline editor; on save, generates `UPDATE … SET col =
