@@ -1553,20 +1553,30 @@ enum TlsVerify {
 fn build_tls_connector(
     verify: TlsVerify,
 ) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
-    // Install the default crypto provider once per process — rustls 0.23
-    // requires this before any ClientConfig is built.
-    static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
-    CRYPTO_INIT.call_once(|| {
-        // Ignore the result: re-installing after another caller already
-        // did is fine; first-write wins.
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    });
-
     let roots = if verify == TlsVerify::Nothing {
         rustls::RootCertStore::empty()
     } else {
         trusted_roots()
     };
+    tls_connector(verify, roots)
+}
+
+/// [`build_tls_connector`] with the trusted roots given, so the
+/// handshake tests can trust a fixture CA instead of the OS store.
+fn tls_connector(
+    verify: TlsVerify,
+    roots: rustls::RootCertStore,
+) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    // Install the crypto provider once per process — rustls 0.23 needs
+    // one before any ClientConfig is built. ring is the only provider
+    // compiled in (Cargo.toml), and the one reqwest's update check uses.
+    static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
+    CRYPTO_INIT.call_once(|| {
+        // Ignore the result: re-installing after another caller already
+        // did is fine; first-write wins.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+
     let config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(server_verifier(verify, roots)?)
@@ -2400,7 +2410,7 @@ mod tests {
         }
 
         fn roots() -> rustls::RootCertStore {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let _ = rustls::crypto::ring::default_provider().install_default();
             let mut roots = rustls::RootCertStore::empty();
             roots
                 .add(cert(include_bytes!("../tests/fixtures/tls/ca.pem")))
@@ -2483,6 +2493,216 @@ mod tests {
             // require / prefer: nothing checked.
             let none = v(TlsVerify::Nothing);
             assert!(check(none.as_ref(), UNTRUSTED, "localhost").is_ok());
+        }
+    }
+
+    /// Real TLS handshakes, end to end: pgman's connector, driven by
+    /// tokio-postgres, against an in-process server that speaks just
+    /// enough of the Postgres protocol — the SSLRequest, then a rustls
+    /// server session — to read the startup message *over TLS* and
+    /// answer with an ErrorResponse. The Docker test servers run without
+    /// SSL, so this is the one place a handshake, the crypto provider's
+    /// key exchange and signature checks, and the sslmode verifiers all
+    /// run for real. The certificates are made per test with rcgen (no
+    /// key is ever committed): a P-256 CA, and a leaf for
+    /// `db.internal.test` it signs.
+    mod handshake {
+        use super::super::{build_tls_connector, tls_connector, TlsVerify};
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+        use std::io::{Read, Write};
+
+        /// What the server says once it has read the startup message;
+        /// the client seeing it proves application data crossed the
+        /// encrypted channel both ways.
+        const GREETING: &str = "pgman tls handshake test: startup message received";
+
+        /// A throwaway CA and the server certificate it signed.
+        struct Pki {
+            ca: CertificateDer<'static>,
+            leaf: CertificateDer<'static>,
+            leaf_key: PrivateKeyDer<'static>,
+        }
+
+        fn pki() -> Pki {
+            pki_named("pgman handshake test ca")
+        }
+
+        /// A PKI whose CA is called `ca_name`. Two CAs need two names: a
+        /// verifier finds the issuer by name, so a namesake would fail as a
+        /// bad signature rather than an unknown issuer.
+        fn pki_named(ca_name: &str) -> Pki {
+            use rcgen::{
+                BasicConstraints, CertificateParams, CertifiedIssuer, DnType,
+                ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+            };
+            let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
+            ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            ca.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+            ca.distinguished_name.push(DnType::CommonName, ca_name);
+            let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+
+            let mut leaf = CertificateParams::new(vec!["db.internal.test".to_string()]).unwrap();
+            leaf.distinguished_name
+                .push(DnType::CommonName, "db.internal.test");
+            leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+            let leaf_key = KeyPair::generate().unwrap();
+            let leaf_cert = leaf.signed_by(&leaf_key, &ca).unwrap();
+            Pki {
+                ca: ca.der().clone(),
+                leaf: leaf_cert.der().clone(),
+                leaf_key: PrivatePkcs8KeyDer::from(leaf_key.serialize_der()).into(),
+            }
+        }
+
+        fn roots(ca: &CertificateDer<'static>) -> rustls::RootCertStore {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(ca.clone()).unwrap();
+            roots
+        }
+
+        /// Accept one connection on an ephemeral port and play the
+        /// server's side, presenting `pki`'s leaf. Returns the port and
+        /// a handle yielding the startup message's bytes, or why the
+        /// server gave up.
+        fn serve_once(pki: &Pki) -> (u16, std::thread::JoinHandle<Result<Vec<u8>, String>>) {
+            let chain = vec![pki.leaf.clone()];
+            let key = pki.leaf_key.clone_key();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let handle = std::thread::spawn(move || {
+                let (mut tcp, _) = listener.accept().map_err(|e| e.to_string())?;
+                let timeout = Some(std::time::Duration::from_secs(10));
+                tcp.set_read_timeout(timeout).map_err(|e| e.to_string())?;
+                // SSLRequest: length 8, code 80877103. Answer 'S'.
+                let mut req = [0u8; 8];
+                tcp.read_exact(&mut req).map_err(|e| e.to_string())?;
+                if req != [0, 0, 0, 8, 4, 210, 22, 47] {
+                    return Err(format!("not an SSLRequest: {req:?}"));
+                }
+                tcp.write_all(b"S").map_err(|e| e.to_string())?;
+
+                let config = rustls::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(chain, key)
+                    .map_err(|e| e.to_string())?;
+                let conn = rustls::ServerConnection::new(std::sync::Arc::new(config))
+                    .map_err(|e| e.to_string())?;
+                let mut tls = rustls::StreamOwned::new(conn, tcp);
+
+                // StartupMessage: Int32 length (itself included), then the body.
+                let mut len = [0u8; 4];
+                tls.read_exact(&mut len).map_err(|e| e.to_string())?;
+                let len = u32::from_be_bytes(len) as usize;
+                let mut startup = vec![0u8; len.saturating_sub(4)];
+                tls.read_exact(&mut startup).map_err(|e| e.to_string())?;
+
+                // ErrorResponse: 'E', Int32 length, fields, terminator.
+                let mut fields = Vec::new();
+                for (code, value) in [(b'S', "FATAL"), (b'C', "08000"), (b'M', GREETING)] {
+                    fields.push(code);
+                    fields.extend_from_slice(value.as_bytes());
+                    fields.push(0);
+                }
+                fields.push(0);
+                let mut msg = vec![b'E'];
+                msg.extend_from_slice(&(fields.len() as u32 + 4).to_be_bytes());
+                msg.extend_from_slice(&fields);
+                tls.write_all(&msg).map_err(|e| e.to_string())?;
+                tls.flush().map_err(|e| e.to_string())?;
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+                Ok(startup)
+            });
+            (port, handle)
+        }
+
+        /// Connect to `serve_once`'s server with `connector`, naming the
+        /// server `host` (SNI, and the name verify-full checks) while
+        /// dialling 127.0.0.1. Ok(server's message) or Err(client error).
+        async fn connect(
+            connector: tokio_postgres_rustls::MakeRustlsConnect,
+            port: u16,
+            host: &str,
+        ) -> Result<String, String> {
+            let mut cfg = tokio_postgres::Config::new();
+            cfg.host(host)
+                .hostaddr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
+                .port(port)
+                .user("pgman_tls")
+                .dbname("pgman_tls")
+                .ssl_mode(tokio_postgres::config::SslMode::Require)
+                .connect_timeout(std::time::Duration::from_secs(10));
+            match cfg.connect(connector).await {
+                Ok(_) => Err("the test server never accepts a login".into()),
+                Err(e) => match e.as_db_error() {
+                    Some(db) => Ok(db.message().to_string()),
+                    None => Err(super::super::chain_message(&e)),
+                },
+            }
+        }
+
+        /// The handshake completed: the server read the startup message
+        /// through TLS and the client read the server's reply.
+        fn assert_talked(client: Result<String, String>, server: Result<Vec<u8>, String>) {
+            assert_eq!(client.as_deref(), Ok(GREETING));
+            let startup = server.expect("server side of the handshake");
+            let text = String::from_utf8_lossy(&startup);
+            assert!(text.contains("user\0pgman_tls\0"), "{text:?}");
+        }
+
+        #[tokio::test]
+        async fn sslmode_require_handshakes_with_any_certificate() {
+            let (port, server) = serve_once(&pki());
+            // The production builder, as `connect` calls it.
+            let client = connect(build_tls_connector(TlsVerify::Nothing).unwrap(), port, "x").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_full_handshakes_with_a_trusted_named_certificate() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::ChainAndHostname, roots(&pki.ca)).unwrap();
+            let client = connect(connector, port, "db.internal.test").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_ca_handshakes_whatever_host_was_dialled() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::Chain, roots(&pki.ca)).unwrap();
+            let client = connect(connector, port, "localhost").await;
+            assert_talked(client, server.join().unwrap());
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_full_refuses_a_certificate_for_another_name() {
+            let pki = pki();
+            let (port, server) = serve_once(&pki);
+            let connector = tls_connector(TlsVerify::ChainAndHostname, roots(&pki.ca)).unwrap();
+            let err = connect(connector, port, "localhost").await.unwrap_err();
+            assert!(err.contains("not valid for name"), "{err}");
+            assert!(
+                server.join().unwrap().is_err(),
+                "server must not get the startup message"
+            );
+        }
+
+        #[tokio::test]
+        async fn sslmode_verify_ca_refuses_an_untrusted_chain() {
+            let (port, server) = serve_once(&pki());
+            // A CA that did not sign the server's certificate.
+            let other = pki_named("some other ca");
+            let connector = tls_connector(TlsVerify::Chain, roots(&other.ca)).unwrap();
+            let err = connect(connector, port, "db.internal.test")
+                .await
+                .unwrap_err();
+            assert!(err.contains("UnknownIssuer"), "{err}");
+            assert!(
+                server.join().unwrap().is_err(),
+                "server must not get the startup message"
+            );
         }
     }
 

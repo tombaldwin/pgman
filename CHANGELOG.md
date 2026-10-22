@@ -13,6 +13,13 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   the producer masked a value and `params (withheld by source)` for
   OpenTelemetry spans, which carry none.
 
+### Changed
+
+- One TLS crypto provider (ring) instead of two: no cmake / C build of
+  aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
+  Postgres connection no longer offers the post-quantum X25519MLKEM768
+  key exchange, which only the aws-lc provider had.
+
 ### Fixed
 
 - The tap monitor's status line kept reading "no events yet" after
