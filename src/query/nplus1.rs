@@ -243,6 +243,7 @@ mod tests {
             runnable_sql: raw_sql.to_string(),
             source: Source::HibernateLog,
             src_line: 0,
+            error: None,
         }
     }
 
@@ -329,6 +330,7 @@ mod tests {
             runnable_sql: runnable_sql.to_string(),
             source: Source::HibernateLog,
             src_line: 0,
+            error: None,
         }
     }
 

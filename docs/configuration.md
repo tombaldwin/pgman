@@ -58,8 +58,10 @@ Those defaults open every session read-only. When Postgres then refuses
 a write (SQLSTATE 25006), the footer — and `--batch` stderr — say where
 that came from: with no file on disk, `read-only by default · pgman
 --init-config writes safety.toml; set read_only = false for this
-database`; once the file exists, the same refusal names its path and the
-`read_only` key instead.
+database`; once the file exists, `read-only by safety.toml (read_only)`
+instead. The footer names the file but not its path, which would not fit
+it; the error overlay (F2, or `!` outside the editor) and `--batch`
+stderr carry the full path on a second `hint` line.
 
 ```toml
 # [default] is the profile for any database with no entry of its own.

@@ -753,6 +753,72 @@ fn auto_trigger_no_matches_preserves_status() {
     assert_eq!(a.last_status.as_deref(), Some("preserved status"));
 }
 
+/// Typing on through an auto-opened popup until nothing matches closes
+/// it without a word: `… ON t.` with no schema cache used to leave
+/// `completion: no matches for t.…` in the footer while the operator
+/// went on typing ordinary SQL.
+#[test]
+fn an_auto_opened_popup_that_narrows_to_nothing_leaves_no_status() {
+    let mut a = test_app_with_cache(&[]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM a JOIN b ON");
+    type_key(&mut a, KeyCode::Char(' '));
+    assert!(a.completion.is_some(), "`ON ` should auto-open the popup");
+    for c in "t.".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none(), "nothing matches `t.`");
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "stale status: {:?}",
+        a.last_status
+    );
+
+    // Still quiet when the popup narrowed through some matches first:
+    // the cycle `refresh_completion` rebuilds stays auto-opened.
+    let mut a = test_app_with_cache(&[("users", &["id", "email"])]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM users WHERE");
+    type_key(&mut a, KeyCode::Char(' '));
+    type_key(&mut a, KeyCode::Char('e'));
+    assert!(a.completion.is_some(), "`e` still matches `email`");
+    for c in "zzq".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none(), "nothing matches `ezzq`");
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "stale status: {:?}",
+        a.last_status
+    );
+}
+
+/// The same narrowing through a popup Tab opened still says why it
+/// closed: the operator asked for completion.
+#[test]
+fn a_tab_opened_popup_that_narrows_to_nothing_says_so() {
+    let mut a = test_app_with_cache(&[]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM a JOIN b ON ");
+    a.editor_complete();
+    assert!(
+        a.completion.is_some(),
+        "Tab after `ON ` should open the popup"
+    );
+    for c in "t.".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("completion: no matches for \"t\"")
+    );
+}
+
 #[test]
 fn tab_on_empty_buffer_offers_statement_keywords() {
     let mut a = test_app_with_cache(&[("users", &["id"])]);
@@ -2893,6 +2959,7 @@ fn log_picks_with_an_n_plus_one_cluster() -> Vec<crate::query::reconstruct::Reco
         runnable_sql: sql.into(),
         source: Source::HibernateLog,
         src_line: 0,
+        error: None,
     };
     vec![
         make("select * from item where order_id = 1"),
@@ -2944,6 +3011,7 @@ fn log_picks_with_a_cluster_of(
             runnable_sql: (*r).into(),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect()
 }
@@ -2970,6 +3038,37 @@ fn log_pick_enter_in_cluster_view_loads_a_runnable_member_not_the_template() {
         Some("loaded query · 38 char(s)"),
         "a bound member is an ordinary load"
     );
+}
+
+/// A pick that failed in the log says so as it loads: running it again
+/// will likely fail the same way.
+#[test]
+fn log_pick_enter_on_a_failed_statement_says_it_failed() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.log_pick.picks = crate::query::pglog::parse(
+        "[101] ERROR:  relation \"invoice_lnes\" does not exist at character 15\n\
+         [101] STATEMENT:  select * from invoice_lnes\n\
+         [101] LOG:  statement: select 1",
+    );
+    a.mode = Mode::LogPick;
+    // A cluster row is a shape, not a run: it has no error of its own.
+    a.log_pick.view = LogPickView::Clusters;
+    assert_eq!(a.focused_log_pick_error(), None);
+    a.log_pick.view = LogPickView::AllQueries;
+    assert!(a.focused_log_pick_error().is_some());
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "select * from invoice_lnes;");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some(
+            "loaded query · 27 char(s) · failed in the log: relation \"invoice_lnes\" does not exist at character 15"
+        )
+    );
+    // The one that ran loads as before.
+    a.log_pick.picks = crate::query::pglog::parse("[101] LOG:  statement: select 1");
+    a.mode = Mode::LogPick;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.last_status.as_deref(), Some("loaded query · 9 char(s)"));
 }
 
 #[test]
@@ -8902,6 +9001,7 @@ fn popup_with(a: &mut App, selected: Option<usize>) {
             },
         ],
         selected,
+        auto: false,
     });
 }
 

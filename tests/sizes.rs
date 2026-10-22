@@ -411,6 +411,7 @@ fn scr_log_pick() -> App {
             runnable_sql: "select * from users where id = 42".into(),
             source: Source::HibernateLog,
             src_line: 12,
+            error: None,
         },
         ReconstructedQuery {
             raw_sql: "select * from orders where user_id = ?".into(),
@@ -418,6 +419,7 @@ fn scr_log_pick() -> App {
             runnable_sql: "select * from orders where user_id = 42".into(),
             source: Source::PostgresLog,
             src_line: 45,
+            error: None,
         },
     ];
     a.log_pick.index = 0;

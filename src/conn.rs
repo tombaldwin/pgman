@@ -200,7 +200,7 @@ impl From<tokio_postgres::Error> for QueryErr {
         // When DbError carries a message itself, prefer it (no `db
         // error: ERROR:` wrapping) so the message line is clean.
         // Fall through to the default Display for non-server errors.
-        let mut msg = db
+        let msg = db
             .map(|d| d.message().to_string())
             .unwrap_or_else(|| e.to_string());
         // A write bounced off `default_transaction_read_only = on`
@@ -209,12 +209,9 @@ impl From<tokio_postgres::Error> for QueryErr {
         // the TUI (`last_error` is this `.msg`) and `--batch` (which
         // prints it to stderr) end up showing, so neither path has to
         // ask separately.
-        let safety_toml_exists = crate::util::config_file("safety.toml").exists();
-        if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml_exists) {
-            msg.push('\n');
-            msg.push_str("hint: ");
-            msg.push_str(&hint);
-        }
+        let safety_toml = crate::util::config_file("safety.toml");
+        let safety_toml = safety_toml.exists().then_some(safety_toml.as_path());
+        let (msg, detail) = explain_read_only_refusal(msg, detail, safety_toml);
         Self {
             msg,
             position,
@@ -230,35 +227,92 @@ impl From<tokio_postgres::Error> for QueryErr {
 /// `app::read_only_escape_refusal`), so the two paths cannot drift.
 pub const READ_ONLY_DEFAULT_HINT: &str = "read-only by default · pgman --init-config writes safety.toml; set read_only = false for this database";
 
+/// The two halves of a read-only refusal's explanation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadOnlyHint {
+    /// The `hint:` line appended to the message — what the footer and
+    /// `--batch` stderr show. Names `safety.toml` but never its full
+    /// path: at 80 columns a path made the footer three rows and was
+    /// cut anyway.
+    footer: String,
+    /// Where the setting lives, full path and all, for the F2 overlay
+    /// (and `--batch`, which prints the detail's hint) — `None` when
+    /// there is no file to point at.
+    detail: Option<String>,
+}
+
 /// Hint for a read-only-transaction refusal (SQLSTATE `25006`):
 /// `read_only = true` set `default_transaction_read_only = on` at
 /// connect, and Postgres itself — not a client-side guard — rejected the
 /// write. Says where the setting came from rather than leaving the
-/// operator to guess: the file's path and key when a `safety.toml`
-/// exists, and [`READ_ONLY_DEFAULT_HINT`] when the profile is the
-/// built-in default — naming a file that is not there sent the operator
-/// looking for it. Pure — pattern-matched on the SQLSTATE code, falling
-/// back to the message text when the server didn't populate `detail`
-/// (e.g. a `simple_query` error path that skips it); `safety_toml_exists`
-/// is checked by the caller at message time because the profile does not
-/// record its origin.
+/// operator to guess: `safety.toml` and its key when the file exists
+/// (its full path goes to the detail, not the one-row footer), and
+/// [`READ_ONLY_DEFAULT_HINT`] when the profile is the built-in default
+/// — naming a file that is not there sent the operator looking for it.
+/// Pure — pattern-matched on the SQLSTATE code, falling back to the
+/// message text when the server didn't populate `detail` (e.g. a
+/// `simple_query` error path that skips it); `safety_toml` (the file,
+/// when it exists) is checked by the caller at message time because the
+/// profile does not record its origin.
 fn read_only_refusal_hint(
     detail: Option<&QueryErrDetail>,
     msg: &str,
-    safety_toml_exists: bool,
-) -> Option<String> {
+    safety_toml: Option<&std::path::Path>,
+) -> Option<ReadOnlyHint> {
     let is_read_only_refusal = detail.and_then(|d| d.code.as_deref()) == Some("25006")
         || msg.to_ascii_lowercase().contains("read-only transaction");
     if !is_read_only_refusal {
         return None;
     }
-    if !safety_toml_exists {
-        return Some(READ_ONLY_DEFAULT_HINT.to_string());
+    let Some(path) = safety_toml else {
+        return Some(ReadOnlyHint {
+            footer: READ_ONLY_DEFAULT_HINT.to_string(),
+            detail: None,
+        });
+    };
+    Some(ReadOnlyHint {
+        footer: READ_ONLY_FILE_HINT.to_string(),
+        detail: Some(format!(
+            "read_only = true in {} · set read_only = false for this database there and restart pgman to write",
+            path.display()
+        )),
+    })
+}
+
+/// The footer's half of a read-only refusal when `safety.toml` exists:
+/// the file by name, never its path (see [`ReadOnlyHint::footer`]).
+pub const READ_ONLY_FILE_HINT: &str =
+    "read-only by safety.toml (read_only) — see docs/configuration.md";
+
+/// `msg` and `detail` with a read-only refusal's explanation added: the
+/// short `hint:` line on the message, the full path in the detail's
+/// hint (see [`read_only_refusal_hint`]). Anything else passes through
+/// untouched. Pure — `safety_toml` is the file when it exists.
+pub fn explain_read_only_refusal(
+    mut msg: String,
+    mut detail: Option<QueryErrDetail>,
+    safety_toml: Option<&std::path::Path>,
+) -> (String, Option<QueryErrDetail>) {
+    if let Some(hint) = read_only_refusal_hint(detail.as_ref(), &msg, safety_toml) {
+        msg.push('\n');
+        msg.push_str("hint: ");
+        msg.push_str(&hint.footer);
+        if let Some(full) = hint.detail {
+            attach_detail_hint(&mut detail, full);
+        }
     }
-    Some(format!(
-        "this connection is read-only by safety.toml ({}, read_only) — see docs/configuration.md",
-        crate::util::config_file("safety.toml").display()
-    ))
+    (msg, detail)
+}
+
+/// Put pgman's own `hint` into the error's detail for the F2 overlay —
+/// after the server's, when it sent one. A refusal with no server
+/// detail at all (the message-text fallback) gets a detail of its own.
+fn attach_detail_hint(detail: &mut Option<QueryErrDetail>, hint: String) {
+    let d = detail.get_or_insert_with(QueryErrDetail::default);
+    d.hint = Some(match d.hint.take() {
+        Some(server) => format!("{server}\n{hint}"),
+        None => hint,
+    });
 }
 
 impl std::fmt::Display for QueryErr {
@@ -2889,24 +2943,31 @@ mod tests {
     }
 
     #[test]
-    fn read_only_refusal_hint_names_the_file_when_there_is_one() {
+    fn read_only_refusal_hint_names_the_file_in_the_footer_and_its_path_in_the_detail() {
         let detail = QueryErrDetail {
             code: Some("25006".to_string()),
             ..Default::default()
         };
+        let path = std::path::Path::new("/home/op/.config/pgman/safety.toml");
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            true,
+            Some(path),
         )
         .expect("25006 should map to a hint");
-        let path = crate::util::config_file("safety.toml")
-            .display()
-            .to_string();
-        assert!(h.contains(&path), "should name the file's path: {h}");
-        assert!(h.contains("read_only"), "got: {h}");
-        assert!(h.contains("docs/configuration.md"), "got: {h}");
-        assert!(!h.contains("--init-config"), "got: {h}");
+        assert_eq!(h.footer, READ_ONLY_FILE_HINT);
+        assert!(h.footer.contains("safety.toml"), "got: {h:?}");
+        assert!(h.footer.contains("read_only"), "got: {h:?}");
+        assert!(h.footer.contains("docs/configuration.md"), "got: {h:?}");
+        // The one-row footer never carries the path; the detail does.
+        assert!(!h.footer.contains("/home/op"), "path in the footer: {h:?}");
+        let full = h.detail.expect("the detail names the path");
+        assert!(
+            full.contains("/home/op/.config/pgman/safety.toml"),
+            "got: {full}"
+        );
+        assert!(full.contains("read_only = false"), "got: {full}");
+        assert!(!h.footer.contains("--init-config"), "got: {}", h.footer);
     }
 
     #[test]
@@ -2920,19 +2981,13 @@ mod tests {
         let h = read_only_refusal_hint(
             Some(&detail),
             "cannot execute UPDATE in a read-only transaction",
-            false,
+            None,
         )
         .expect("25006 should map to a hint");
-        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
-        assert!(h.contains("--init-config"), "got: {h}");
-        assert!(h.contains("read_only = false"), "got: {h}");
-        let path = crate::util::config_file("safety.toml")
-            .display()
-            .to_string();
-        assert!(
-            !h.contains(&path),
-            "must not name a file that is not there: {h}"
-        );
+        assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
+        assert!(h.footer.contains("--init-config"), "got: {h:?}");
+        assert!(h.footer.contains("read_only = false"), "got: {h:?}");
+        assert_eq!(h.detail, None, "no file, no path to name");
     }
 
     #[test]
@@ -2941,12 +2996,29 @@ mod tests {
         // the message text alone must still be recognised — on both
         // branches.
         let msg = "cannot execute INSERT in a read-only transaction";
-        let h = read_only_refusal_hint(None, msg, true)
+        let path = std::path::Path::new("/x/safety.toml");
+        let h = read_only_refusal_hint(None, msg, Some(path))
             .expect("message text alone should map to a hint");
-        assert!(h.contains("safety.toml ("), "got: {h}");
-        let h = read_only_refusal_hint(None, msg, false)
+        assert_eq!(h.footer, READ_ONLY_FILE_HINT);
+        let h = read_only_refusal_hint(None, msg, None)
             .expect("message text alone should map to a hint");
-        assert_eq!(h, READ_ONLY_DEFAULT_HINT);
+        assert_eq!(h.footer, READ_ONLY_DEFAULT_HINT);
+    }
+
+    #[test]
+    fn attach_detail_hint_follows_the_servers_hint_and_creates_a_detail_when_there_is_none() {
+        let mut none = None;
+        attach_detail_hint(&mut none, "ours".to_string());
+        assert_eq!(none.and_then(|d| d.hint).as_deref(), Some("ours"));
+        let mut server = Some(QueryErrDetail {
+            code: Some("25006".to_string()),
+            hint: Some("theirs".to_string()),
+            ..Default::default()
+        });
+        attach_detail_hint(&mut server, "ours".to_string());
+        let d = server.unwrap();
+        assert_eq!(d.hint.as_deref(), Some("theirs\nours"));
+        assert_eq!(d.code.as_deref(), Some("25006"), "the rest is kept");
     }
 
     #[test]
@@ -2955,16 +3027,15 @@ mod tests {
             code: Some("42601".to_string()), // syntax_error
             ..Default::default()
         };
-        for exists in [true, false] {
+        let path = std::path::Path::new("/x/safety.toml");
+        for file in [Some(path), None] {
             assert!(read_only_refusal_hint(
                 Some(&detail),
                 "syntax error at or near \"FROM\"",
-                exists
+                file
             )
             .is_none());
-            assert!(
-                read_only_refusal_hint(None, "relation \"t\" does not exist", exists).is_none()
-            );
+            assert!(read_only_refusal_hint(None, "relation \"t\" does not exist", file).is_none());
         }
     }
 }

@@ -383,13 +383,20 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .take(visible_rows)
             .map(|(i, q)| {
                 let source = q.source.label();
+                // A statement that failed in the log wears a marker,
+                // which comes out of the preview's room.
+                let room = if q.error.is_some() {
+                    max_preview - FAILED_PICK_MARKER.chars().count()
+                } else {
+                    max_preview
+                };
                 let mut preview: String = q
                     .runnable_sql
                     .chars()
-                    .take(max_preview)
+                    .take(room)
                     .collect::<String>()
                     .replace('\n', " ");
-                if q.runnable_sql.chars().count() > max_preview {
+                if q.runnable_sql.chars().count() > room {
                     preview.push('…');
                 }
                 let prefix = if i == app.log_pick.index {
@@ -409,7 +416,14 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 // ` — so the bracket sits against its own tag instead
                 // of fencing off a run of spaces (`[    jdbc]`).
                 let tag = format!("[{source}]");
-                Line::from(Span::styled(format!("{prefix}{tag:<11} {preview}"), style))
+                let head = Span::styled(format!("{prefix}{tag:<11} "), style);
+                let body = Span::styled(preview, style);
+                if q.error.is_some() {
+                    let marker = Span::styled(FAILED_PICK_MARKER, style.fg(theme.health_red));
+                    Line::from(vec![head, marker, body])
+                } else {
+                    Line::from(vec![head, body])
+                }
             })
             .collect(),
         LogPickView::Clusters => app
@@ -450,16 +464,37 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .collect(),
     };
     lines.extend(row_lines);
+    let mut block = crate::ui::chrome::panel_block(theme)
+        .border_style(Style::default().fg(theme.border_active))
+        .style(Style::default().fg(theme.text))
+        .title(crate::ui::chrome::panel_title(theme, &title));
+    // The focused pick's error, on the bottom border: the row has room
+    // for the marker only, and a line of its own above the rows would
+    // come and go — moving every row — as the cursor did.
+    if let Some(err) = app.focused_log_pick_error() {
+        let width = (popup.width as usize).saturating_sub(2);
+        block = block.title_bottom(Line::from(Span::styled(
+            failed_pick_title(err, width),
+            Style::default().fg(theme.health_red),
+        )));
+    }
     f.render_widget(Clear, popup);
-    f.render_widget(
-        Paragraph::new(Text::from(lines)).block(
-            crate::ui::chrome::panel_block(theme)
-                .border_style(Style::default().fg(theme.border_active))
-                .style(Style::default().fg(theme.text))
-                .title(crate::ui::chrome::panel_title(theme, &title)),
-        ),
-        popup,
-    );
+    f.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
+}
+
+/// What marks a log pick that failed where it was logged.
+const FAILED_PICK_MARKER: &str = "✗ ";
+
+/// The picker's bottom-border line for a focused pick that failed in
+/// the log, at most `width` columns. One line — a multi-line server
+/// message is folded — and cut at its end: an error reads from the
+/// start, and a middle cut left its last word stranded after the
+/// ellipsis (`… at character… 15`). Pure.
+pub(crate) fn failed_pick_title(error: &str, width: usize) -> String {
+    const HEAD: &str = " failed in the log: ";
+    let room = width.saturating_sub(crate::ui::display_width(HEAD) + 1);
+    let msg = crate::ui::end_ellipsis(&crate::ui::footer_text(error), room);
+    format!("{HEAD}{msg} ")
 }
 
 /// The tag `main.rs` appends to a pick's name when its URL still holds

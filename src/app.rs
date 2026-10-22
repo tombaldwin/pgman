@@ -2952,26 +2952,32 @@ impl App {
         }
     }
 
+    /// Drop a status a completion popup left (`completion: 3 matches ·
+    /// Tab to pick`, …) once the popup is gone; any other status stays.
+    fn clear_completion_status(&mut self) {
+        if self
+            .last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion"))
+        {
+            self.last_status = None;
+        }
+    }
+
     /// Re-extract candidates from the current buffer/cursor. Called
     /// after a narrowing key while the completion popup is in
     /// pre-selection state so the popup stays live and narrows as the
     /// operator types. Preserves the cycle's `origin` fields so a
     /// later Esc still undoes back to the pre-Tab state.
     fn refresh_completion(&mut self) {
-        if self.completion.take().is_none() {
+        let Some(old) = self.completion.take() else {
             return;
-        }
+        };
         let Some(id) = complete_q::extract_identifier(&self.editor.buffer, self.editor.cursor)
         else {
             // The popup closed (a `;`, a `(`): its `completion: 1 match
             // · Tab to pick` would otherwise outlive it.
-            if self
-                .last_status
-                .as_deref()
-                .is_some_and(|s| s.starts_with("completion"))
-            {
-                self.last_status = None;
-            }
+            self.clear_completion_status();
             return;
         };
         // Empty prefix is fine — the candidate set falls back to "all
@@ -2981,6 +2987,14 @@ impl App {
         let cands =
             complete_q::candidates_for(&self.editor.buffer, self.editor.cursor, &self.schema_cache);
         if cands.is_empty() {
+            // A popup the editor opened on its own closes as quietly as
+            // it opened: the operator typing on through it never asked
+            // for completion, and `no matches for t.…` stayed in the
+            // footer while they went on writing ordinary SQL.
+            if old.auto {
+                self.clear_completion_status();
+                return;
+            }
             // Mirror the tailored messaging from editor_complete so the
             // status footer doesn't show `no matches for ""` when the
             // operator narrows the prefix down to empty in a clause
@@ -3011,6 +3025,7 @@ impl App {
             origin_cursor: self.editor.cursor,
             candidates: cands,
             selected: None,
+            auto: old.auto,
         });
         self.last_status = Some(format!(
             "completion: {} match{} · Tab to pick",
@@ -3181,6 +3196,20 @@ impl App {
     /// statement that cannot run. When no member is bound (the log had
     /// no bind lines for this shape) the template loads and the flag
     /// lets Enter say so instead of calling it `loaded query`.
+    /// The focused pick's error when it failed where it was logged —
+    /// the all-queries view only: a cluster row is a shape, not a run.
+    pub fn focused_log_pick_error(&self) -> Option<&str> {
+        match self.log_pick.view {
+            LogPickView::AllQueries => self
+                .log_pick
+                .picks
+                .get(self.log_pick.index)?
+                .error
+                .as_deref(),
+            LogPickView::Clusters => None,
+        }
+    }
+
     fn focused_log_pick_sql(&self) -> Option<(String, bool)> {
         let sql = match self.log_pick.view {
             LogPickView::AllQueries => self

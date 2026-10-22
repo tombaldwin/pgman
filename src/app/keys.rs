@@ -1086,6 +1086,7 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.log_pick.select_last(),
             KeyCode::Enter => {
                 if let Some((sql, unbound)) = self.focused_log_pick_sql() {
+                    let failed = self.focused_log_pick_error().map(str::to_string);
                     self.editor.buffer = sql;
                     self.editor.cursor = self.editor.buffer.len();
                     self.editor.preferred_col = None;
@@ -1095,6 +1096,12 @@ impl App {
                     } else {
                         format!("loaded query · {} char(s)", self.editor.buffer.len())
                     });
+                    // Running it again will likely fail the same way:
+                    // say so before the operator presses Enter.
+                    if let (Some(status), Some(err)) = (self.last_status.as_mut(), failed) {
+                        status.push_str(" · failed in the log: ");
+                        status.push_str(&crate::ui::footer_text(&err));
+                    }
                 }
                 self.log_pick.picks.clear();
                 self.log_pick.clusters.clear();

@@ -109,10 +109,6 @@ buckets were folded in once their initial passes shipped).
 ### Reconstruction
 - N+1: time-window heuristic once `ReconstructedQuery` carries
   timestamps.
-- pglog: reconstruct a failed statement from its `ERROR:` + `STATEMENT:`
-  pair (the default `log_min_error_statement` logs these with nothing
-  else enabled), without duplicating a statement `log_statement` already
-  logged. Today the pair is skipped.
 
 ### Editor — domain features
 - Saved queries — possible v3 nice-to-haves: tags / folders,
@@ -122,12 +118,6 @@ buckets were folded in once their initial passes shipped).
 A second round of editor quality-of-life features past the syntax-
 highlighting / pg_format / auto-save / persistent-history / undo
 batch.
-- **A popup that narrows to nothing leaves its status behind**
-  (2026-10-22). Typing on through an auto-opened popup until nothing
-  matches (`… on t.` with no schema cache) closes it in
-  `refresh_completion`, which sets `completion: no matches for t.…`;
-  nothing clears it while the operator keeps typing ordinary SQL.
-  An auto-opened popup that dies of no matches should leave no status.
 - **Multi-line comment toggle for selection** — current
   `Ctrl-/` toggles the focused line. We don't have selection
   yet; once we do, apply per-line.
@@ -648,12 +638,20 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
-- **The read-only hint's safety.toml path in the footer** (release
-  panel re-check, 2026-10-22). A write refused by a read-only
-  connection gives `hint: this connection is read-only by safety.toml
-  (<full path>)`; at 80x24 the path makes the footer three lines and
-  is cut anyway. Name `safety.toml` in the footer and leave the path to
-  F2.
+- **Two footer messages still carry a full config path** (2026-10-22,
+  found doing the read-only hint). Neither is a `hint:` line. One is the
+  startup error for a `config.toml` that doesn't parse
+  (`redact::config_default_from`: `<full path>: <toml error> —
+  redaction is on until it parses`, set as `last_error`, so F2 shows
+  the same text). The other is the environments save status (`added
+  <names> to <full path>`). Name the file in the footer, as the
+  read-only refusal now does. The parse error would need its path in
+  an error detail for F2 to keep it.
+- **The F2 error overlay wraps mid-word and cuts a long hint at 80x24**
+  (2026-10-22). `push_kv` wraps by character (`transact` / `ion`,
+  `do` / `cs/configuration.md`), and at 80x24 the read-only refusal's
+  path hint runs past the overlay's last row with no sign that there
+  is more.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs

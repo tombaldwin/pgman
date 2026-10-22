@@ -290,6 +290,11 @@ pub struct CompletionCycle {
     /// any specific candidate — the next Tab will pick `candidates[0]`.
     /// `Some(i)` means `candidates[i]` is currently in the buffer.
     pub selected: Option<usize>,
+    /// The editor opened this popup on its own (after `.` or a trigger
+    /// keyword), not Tab. Narrowing an auto-opened popup to nothing
+    /// closes it without a status: the operator never asked for
+    /// completion. One Tab opened says why it closed.
+    pub auto: bool,
 }
 
 /// Active `\watch` session — re-run the saved SQL every `interval`

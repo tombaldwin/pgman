@@ -12,6 +12,11 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
   OpenTelemetry spans, which carry none.
+- A Postgres log's `ERROR:` + `STATEMENT:` pair is reconstructed as a
+  query marked failed with the error message — what the default
+  `log_min_error_statement` logs with nothing else on. A statement
+  `log_statement` already logged is marked failed rather than listed
+  twice. The log picker marks a failed pick `✗` and shows its error.
 
 ### Changed
 
@@ -26,6 +31,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   events had arrived; it now follows them.
 - OpenTelemetry spans were stamped with their end time rather than
   their start, which inflated the Pools view's peak concurrency.
+- A write refused by a read-only connection no longer puts the full
+  `safety.toml` path in the footer, where at 80 columns it took three
+  rows and was cut anyway. The footer names `safety.toml`; the F2
+  overlay and `--batch` stderr give the path.
+- A completion popup the editor opened on its own (after `.` or `FROM `)
+  that narrows to nothing as you type on now closes without leaving
+  `completion: no matches for …` in the footer. A popup Tab opened still
+  says why it closed.
 
 ## [0.1.0] — 2026-10-22
 

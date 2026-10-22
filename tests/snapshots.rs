@@ -353,6 +353,7 @@ fn completion_popup_with_candidates() {
             },
         ],
         selected: None,
+        auto: false,
     });
     let buf = render(&mut a, 80, 18);
     insta::assert_snapshot!(dump(&buf));
@@ -390,6 +391,7 @@ fn completion_popup_narrow_terminal_clamps_width() {
             },
         ],
         selected: None,
+        auto: false,
     });
     let buf = render(&mut a, 40, 12);
     insta::assert_snapshot!(dump(&buf));
@@ -741,6 +743,7 @@ fn log_pick_at_a_short_terminal_still_shows_a_pick() {
             runnable_sql: format!("select * from users where id = {i}"),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect();
     a.log_pick.index = 17;
