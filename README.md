@@ -10,13 +10,15 @@ server logs, and pasted JDBC into runnable SQL, offline and with zero
 application changes — with N+1 detection built in. Sibling project to
 [`ebman`](https://github.com/tombaldwin/ebman).
 
-> ### ⚠️ Not released yet
-> There is no Homebrew formula, crate or binary yet: to try pgman today, build it
-> from source (below). It is beta — expect rough edges and breaking changes.
-> It defaults to **read-only** connections and routes every write through
-> per-statement safety guards, but don't point it at a production database
-> without reviewing your `safety.toml` first. Bug reports and feedback very
-> welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
+> ### ⚠️ Beta
+> pgman is beta — expect rough edges and breaking changes. It defaults to
+> **read-only** connections and routes every write through per-statement
+> safety guards, but don't point it at a production database without
+> reviewing your `safety.toml` first. Bug reports and feedback very welcome —
+> [open an issue](https://github.com/tombaldwin/pgman/issues).
+>
+> Install: `brew install tombaldwin/tap/pgman` or `cargo install pgman --locked`
+> ([more](#install)) · try it with no database: `pgman --demo`.
 
 ![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](https://raw.githubusercontent.com/tombaldwin/pgman/main/demo.gif)
 
@@ -149,16 +151,26 @@ Three things worth knowing:
 
 ## Install
 
-pgman has not had a release yet, so there is no Homebrew formula, no crate on
-crates.io and no pre-built binary. Build it from source with a Rust toolchain:
+**Homebrew (macOS / Linux):**
 
 ```sh
-cargo install --git https://github.com/tombaldwin/pgman --locked
+brew install tombaldwin/tap/pgman
 ```
 
-Homebrew (`tombaldwin/tap`), crates.io and binaries for Linux and macOS
-(x86_64 and arm64) follow with the first release, the same way as
-[`ebman`](https://github.com/tombaldwin/ebman).
+**Cargo:**
+
+```sh
+cargo install pgman --locked
+```
+
+**Pre-built binary:** download the tarball for your platform (Linux and
+macOS, x86_64 and arm64) from the
+[releases page](https://github.com/tombaldwin/pgman/releases/latest), check
+the `*.sha256` next to it, extract, and put `pgman` on your `PATH`. Each
+tarball also carries a build-provenance attestation:
+`gh attestation verify pgman-*.tar.gz --repo tombaldwin/pgman`.
+
+Then try it with no database: `pgman --demo`.
 
 To hack on it, install from a checkout:
 
@@ -177,9 +189,8 @@ pgman --upgrade
 
 Works in place for a checkout (`git pull` + `cargo install --path .`), a
 crates.io `cargo install` install, and a Homebrew install. An install made
-with `cargo install --git …` (the only way to install pgman until the first
-release) isn't one of these: re-run that `cargo install --git` command to
-upgrade it. A standalone binary (a downloaded release tarball) has no
+with `cargo install --git …` isn't one of these: re-run that
+`cargo install --git` command to upgrade it. A standalone binary (a downloaded release tarball) has no
 in-place upgrade — `--upgrade` prints the
 [releases page](https://github.com/tombaldwin/pgman/releases/latest) instead.
 

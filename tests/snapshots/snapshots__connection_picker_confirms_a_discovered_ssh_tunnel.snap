@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 650
+assertion_line: 651
 expression: dump(&buf)
 ---
- pgman X.X.X │ —  disconnected
+ pgman X.X.X · YYYY-MM-DD │ —  disconnected
 ╭[ ◆ editor (e to focus) ◆ ]─────────────────────────────────────────────────────────────╮
 │> (empty — press e to focus)                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯

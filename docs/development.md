@@ -33,9 +33,8 @@ checklist and `CLAUDE.md` for the AI-assisted-contributor rules.
 
 ## Distribution
 
-- **Cargo**: `cargo install pgman` from crates.io, or `cargo install --path .`
-  from a checkout. Not published yet — the first release is v0.1.0, which has
-  not happened yet.
+- **Cargo**: `cargo install pgman --locked` from crates.io, or
+  `cargo install --path .` from a checkout.
 - **GitHub Releases**: tagging `v<X.Y.Z>` triggers
   `.github/workflows/release.yml`, which builds release binaries for
   `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
