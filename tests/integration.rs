@@ -3140,7 +3140,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
         let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2, false)
             .unwrap()
             .statements;
-        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts)
+        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts, &|| false)
             .await
             .unwrap();
         assert!(done.recorded, "{done:?}");
@@ -3157,7 +3157,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
         let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3, false)
             .unwrap()
             .statements;
-        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts)
+        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts, &|| false)
             .await
             .unwrap_err();
         assert!(
@@ -3180,7 +3180,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
             .unwrap()
             .statements;
         let started = std::time::Instant::now();
-        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts)
+        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts, &|| false)
             .await
             .unwrap_err();
         assert!(err.contains("lock timeout"), "{err}");
@@ -3708,7 +3708,7 @@ fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
         .await
         .unwrap()
         .0;
-        let done = pgman::query::apply::apply_outside(&client, &cfg, &file, &statements)
+        let done = pgman::query::apply::apply_outside(&client, &cfg, &file, &statements, &|| false)
             .await
             .expect("ran past the session's 500 ms");
         assert!(done.recorded);
@@ -3721,7 +3721,7 @@ fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
         // And restored after a failure too.
         let bad = vec!["SELECT * FROM pgman_it_no_such_table".to_string()];
         assert!(
-            pgman::query::apply::apply_outside(&client, &cfg, &file, &bad)
+            pgman::query::apply::apply_outside(&client, &cfg, &file, &bad, &|| false)
                 .await
                 .is_err()
         );
@@ -3881,6 +3881,226 @@ fn cancelling_a_run_stops_the_running_statement() {
             "inside: rolled back: {err}"
         );
         assert_eq!(r.recorded_after, Some(2));
+    });
+}
+
+/// A cancel that lands between two statements — when nothing is running
+/// for the server's cancel to stop — still stops the patch: in its
+/// transaction nothing is committed or recorded, outside one it stops and
+/// says what stayed. Found by the 2026-10-22 release panel: the flag was
+/// read only between patches, so the rest of the patch ran and committed.
+///
+/// Deterministic: the patch waits on an advisory lock the test holds, the
+/// test swaps the run's server cancel for a no-op and cancels (only the
+/// flag is set), then lets the statement finish. The flag is set before
+/// that statement ends, so the next check sees it.
+#[test]
+fn a_cancel_between_statements_stops_the_patch() {
+    let home = scratch_home("env-patch-cancel-between", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_bv_{pid}");
+    let made = format!("pgman_it_bm_{pid}");
+    let key = i64::from(pid) + 7_000_000;
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    let wait = format!("SELECT pg_advisory_xact_lock({key});\n");
+    std::fs::write(
+        dir.join("002-tx.sql"),
+        format!("{}{wait}CREATE TABLE {made} (id int);\n", row(2)),
+    )
+    .unwrap();
+    let (env, target) = local_env("it-cancel-between", "pgman_test", &vt, &dir);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan, CancelSlot, PatchPlan, RunMode};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let admin = raw("pgman_test").await;
+        admin
+            .batch_execute(&format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"
+            ))
+            .await
+            .unwrap();
+        // Runs `p` while holding the lock; once the run waits on it,
+        // cancels with only the flag, then lets it go.
+        let run_cancelled_in_the_wait = |p: PatchPlan| {
+            let (env, target, writable, no_secrets) = (
+                env.clone(),
+                target.clone(),
+                writable.clone(),
+                no_secrets.clone(),
+            );
+            async move {
+                let holder = raw("pgman_test").await;
+                holder
+                    .execute("SELECT pg_advisory_lock($1)", &[&key])
+                    .await
+                    .unwrap();
+                let slot = CancelSlot::default();
+                let running = {
+                    let slot = slot.clone();
+                    tokio::spawn(async move {
+                        apply(
+                            &env,
+                            &target,
+                            &writable,
+                            &no_secrets,
+                            &p,
+                            RunMode::Apply,
+                            &slot,
+                        )
+                        .await
+                    })
+                };
+                let mut waiting = false;
+                for _ in 0..200 {
+                    let n: i64 = holder
+                        .query_one(
+                            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' \
+                             AND NOT granted AND objid = ($1::bigint & 4294967295)::oid",
+                            &[&key],
+                        )
+                        .await
+                        .unwrap()
+                        .get(0);
+                    if n > 0 {
+                        waiting = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                assert!(waiting, "the run reached the lock");
+                // The run set its server cancel before its first patch.
+                slot.set(std::sync::Arc::new(|| {}));
+                assert!(slot.cancel());
+                holder
+                    .execute("SELECT pg_advisory_unlock($1)", &[&key])
+                    .await
+                    .unwrap();
+                running.await.unwrap()
+            }
+        };
+
+        let p = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 1);
+        let r = run_cancelled_in_the_wait(p).await;
+        assert_eq!(r.results.len(), 1, "{r:?}");
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert_eq!(
+            err, "cancelled before statement 3 of 3; rolled back, nothing applied",
+            "inside: the rest of the patch never ran"
+        );
+        assert_eq!(r.recorded_after, Some(1), "its version row rolled back");
+        let present: bool = admin
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&made])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(!present, "nothing after the cancel ran");
+
+        // Outside a transaction: what ran stays, and it says so.
+        std::fs::write(
+            dir.join("002-tx.sql"),
+            format!("{}CREATE TABLE {made} (id int);\n", row(2)),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("003-out.sql"),
+            format!("{}{wait}VACUUM {made};\n", row(3)),
+        )
+        .unwrap();
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 2);
+        let r = run_cancelled_in_the_wait(p).await;
+        assert_eq!(r.results.len(), 2, "{r:?}");
+        assert_eq!(r.results[0].outcome, Ok(2));
+        let err = r.results[1].outcome.as_ref().unwrap_err();
+        assert!(
+            err.starts_with("cancelled before statement 3 of 3, outside a transaction")
+                && err.contains("2 earlier statement(s) stay applied")
+                && err.contains("version 3 IS recorded"),
+            "{err}"
+        );
+        assert_eq!(r.recorded_after, Some(3));
+    });
+}
+
+/// A cancel after a patch's last statement, before its commit, rolls it
+/// back too; and a dry run's patch stops the same way.
+#[test]
+fn a_cancel_before_the_commit_rolls_the_patch_back() {
+    let home = scratch_home("apply-cancel-commit", WRITABLE_PROFILE);
+    let vt = it_name("ccv");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let text = format!("INSERT INTO {vt} (id) VALUES (2);\nSELECT 1;");
+    let file = pgman::query::patches::patch_file("002-x.sql", &text, &cfg);
+    let statements = vec![
+        format!("INSERT INTO {vt} (id) VALUES (2)"),
+        "SELECT 1".into(),
+    ];
+    // `true` from the `n`th ask on: before statement n, or (n = 3) the commit.
+    let from = |n: usize| {
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        move || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 >= n
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let client = raw("pgman_test").await;
+        let err = pgman::query::apply::apply(&client, &cfg, &file, &statements, &from(3))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "cancelled before the commit, all 2 statement(s) run; rolled back, nothing applied"
+        );
+        let err = pgman::query::apply::apply(&client, &cfg, &file, &statements, &from(2))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "cancelled before statement 2 of 2; rolled back, nothing applied"
+        );
+        let ids = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert_eq!(ids, [1], "nothing committed");
+        // A dry run's patch, inside the transaction the caller holds.
+        pgman::query::apply::begin(&client).await.unwrap();
+        let err = pgman::query::apply::try_patch(&client, &cfg, &file, &statements, &from(2))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "cancelled before statement 2 of 2");
+        pgman::query::apply::rollback(&client).await.unwrap();
+        // And with no cancel it goes through.
+        let done = pgman::query::apply::apply(&client, &cfg, &file, &statements, &|| false)
+            .await
+            .unwrap();
+        assert!(done.recorded);
     });
 }
 
@@ -4471,7 +4691,7 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
         .await
         .unwrap()
         .0;
-        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements)
+        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements, &|| false)
             .await
             .unwrap_err();
         assert!(err.contains("statement 3 of 3 failed"), "{err}");

@@ -238,8 +238,9 @@ impl ApplyReport {
 #[derive(Clone, Default)]
 pub struct CancelSlot(
     std::sync::Arc<std::sync::Mutex<Option<CancelFn>>>,
-    /// Set by [`CancelSlot::cancel`]: the run starts no further patch,
-    /// so a cancel between statements, or before connecting, still holds.
+    /// Set by [`CancelSlot::cancel`]: the run starts no further statement
+    /// or patch, and commits nothing more, so a cancel between
+    /// statements, or before connecting, still holds.
     std::sync::Arc<std::sync::atomic::AtomicBool>,
 );
 
@@ -253,8 +254,9 @@ impl CancelSlot {
         }
     }
 
-    /// Stop the run: no further patch starts, and the server is asked to
-    /// cancel the running statement. `false` when the run hasn't
+    /// Stop the run: no further statement or patch starts, the patch in
+    /// its transaction rolls back, and the server is asked to cancel the
+    /// running statement. `false` when the run hasn't
     /// connected yet (or has finished), so no request was sent.
     pub fn cancel(&self) -> bool {
         self.1.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -598,8 +600,9 @@ pub fn still_as_planned(plan: &PatchPlan, done: usize, applied: &[i64]) -> Resul
 /// Run `plan` on `target` as `mode` says: each patch in its own
 /// transaction, in order, stopping at the first failure (on the database,
 /// or on a copy of it); or all in one transaction that is rolled back.
-/// Once connected, `cancel` can stop the running statement; that fails
-/// the patch like any other error.
+/// Once connected, `cancel` stops the running statement, or the patch
+/// before its next statement or its commit; that fails the patch like any
+/// other error.
 pub async fn apply(
     env: &Environment,
     target: &Target,
@@ -752,6 +755,9 @@ impl Run<'_> {
             return Err("the patch's statements differ from the plan".to_string());
         }
         let statements = checked.statements;
+        // Between statements no statement is running for the server's
+        // cancel to stop: the flag stops the patch instead.
+        let stop = || self.cancel.requested();
         let done = match (p.outside, dry) {
             (Some(what), true) => {
                 return Err(format!(
@@ -759,10 +765,11 @@ impl Run<'_> {
                 ))
             }
             (None, true) => {
-                crate::query::apply::try_patch(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::try_patch(client, self.cfg, &p.file, &statements, &stop)
+                    .await?
             }
             (None, false) => {
-                crate::query::apply::apply(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::apply(client, self.cfg, &p.file, &statements, &stop).await?
             }
             (Some(what), false) => {
                 tracing::warn!(
@@ -774,7 +781,8 @@ impl Run<'_> {
                     what,
                     "patch running outside a transaction"
                 );
-                crate::query::apply::apply_outside(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::apply_outside(client, self.cfg, &p.file, &statements, &stop)
+                    .await?
             }
         };
         if !done.recorded {

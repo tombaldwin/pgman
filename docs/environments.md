@@ -284,8 +284,10 @@ steps:
    What runs is the text you were shown, not a fresh read of the file.
    Afterwards the version table is read once more, and the result says
    which version the database records now. **Esc twice** while it runs
-   cancels the running statement on the server: a patch in its
-   transaction rolls back; outside one, what ran stays.
+   cancels the running statement on the server, and stops the patch
+   before its next statement (or its commit) should it land between
+   two: a patch in its transaction rolls back; outside one, what ran
+   stays, and the result says how much.
 
 **Tab** in the plan picks how it runs, and the plan says which in red
 before you confirm:
