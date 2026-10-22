@@ -416,26 +416,35 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                 // Leave the body as an empty frame and let the picker own
                 // the content.
                 f.render_widget(bordered(&app.theme, "pgman"), area);
-            } else if app.conn_pick.picks.is_empty() {
-                // Genuinely nothing to connect to and nothing discovered —
-                // spell out both ways forward.
-                f.render_widget(
-                    Paragraph::new(Text::from(vec![
-                        Line::from("no connection — start pgman with --dsn postgres://…"),
-                        Line::from(
-                            "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
-                        ),
-                    ]))
-                    .style(Style::default().fg(app.theme.muted))
-                    .block(bordered(&app.theme, "pgman")),
-                    area,
-                );
             } else {
-                // Discovered connections exist but the picker isn't open
-                // right now (e.g. dismissed via `q`) — point at how to
-                // reopen it instead of implying there's no way to connect.
+                // A broken environments.toml would otherwise look like
+                // no environments at all: pgman starts here instead of
+                // on the overview, which is the one place saying why.
+                let mut lines = Vec::new();
+                if app.environments_config_broken {
+                    lines.push(Line::from(Span::styled(
+                        "environments.toml didn't load — press E for the details",
+                        Style::default().fg(app.theme.health_yellow),
+                    )));
+                }
+                if app.conn_pick.picks.is_empty() {
+                    // Genuinely nothing to connect to and nothing
+                    // discovered — spell out both ways forward.
+                    lines.push(Line::from(
+                        "no connection — start pgman with --dsn postgres://…",
+                    ));
+                    lines.push(Line::from(
+                        "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
+                    ));
+                } else {
+                    // Discovered connections exist but the picker isn't
+                    // open right now (e.g. dismissed via `q`) — point at
+                    // how to reopen it instead of implying there's no
+                    // way to connect.
+                    lines.push(Line::from("no connection — press c to choose a connection"));
+                }
                 f.render_widget(
-                    Paragraph::new("no connection — press c to choose a connection")
+                    Paragraph::new(Text::from(lines))
                         .style(Style::default().fg(app.theme.muted))
                         .block(bordered(&app.theme, "pgman")),
                     area,

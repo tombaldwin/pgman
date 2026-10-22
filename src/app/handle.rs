@@ -262,6 +262,7 @@ impl App {
                         let here = self.environments.selection();
                         self.environments.reports = reports;
                         self.environments.error = None;
+                        self.environments_config_broken = false;
                         self.start_env_probes();
                         let restored = self
                             .environments
@@ -283,6 +284,8 @@ impl App {
                         self.environments.reports.clear();
                         self.environments.probes.clear();
                         self.environments.error = Some(e);
+                        // The listing fails only when the config does.
+                        self.environments_config_broken = true;
                         self.last_status = None;
                     }
                 }

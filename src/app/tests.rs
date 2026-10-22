@@ -11704,3 +11704,16 @@ fn demo_tap_feed_holds_the_frame_clock_until_drained() {
         "a drained feed must let the clock idle"
     );
 }
+
+/// The no-connection card's "environments.toml didn't load" follows the
+/// latest listing: an `E` after the file is fixed clears it.
+#[test]
+fn a_listing_says_whether_environments_toml_loaded() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::EnvironmentsLoaded(Err(
+        "parse error at line 3".into()
+    )));
+    assert!(a.environments_config_broken);
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(Vec::new())));
+    assert!(!a.environments_config_broken);
+}

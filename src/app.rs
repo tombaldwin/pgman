@@ -1223,6 +1223,11 @@ pub struct App {
     /// `redact::env_names()`, read once at startup: redaction's names
     /// from the process environment (`AWS_PROFILE`, the login name).
     pub redact_env_names: Vec<String>,
+    /// `environments.toml` exists but didn't load (a parse error, or
+    /// unreadable). Set at startup and by each listing, so the
+    /// no-connection card can point at `E` instead of looking as if
+    /// no environments were configured.
+    pub environments_config_broken: bool,
     /// psql `\x` toggle — when on, the QueryOk handler opens the
     /// existing row-detail view (`Mode::RowDetail`) for the first
     /// row of a new result instead of leaving it in the grid.
@@ -1584,6 +1589,7 @@ impl App {
             timing_on: false,
             redact: false,
             redact_env_names: Vec::new(),
+            environments_config_broken: false,
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
             // Read here rather than threaded in from `main` — the
