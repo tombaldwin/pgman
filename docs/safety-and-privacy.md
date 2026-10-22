@@ -440,7 +440,8 @@ layout doesn't move. A `REDACT` badge sits first in the footer.
 - your login name (from `HOME` and `USER`), and so your home directory
   in a path;
 - every name pgman holds for the session: the connection's host, user,
-  database and ssh bastion; the picker's data sources; the environments
+  database and ssh bastion; the picker's data sources and the
+  variables their credentials come from (`password ← $VAR`); the environments
   overview's environments, servers, hosts, databases, secrets, AWS
   profiles and password variables; an open discovery's proposals; and
   `AWS_PROFILE`. A name is matched case-insensitively as a whole word,

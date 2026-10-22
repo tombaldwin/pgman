@@ -240,7 +240,7 @@ pub fn apply(buf: &mut Buffer, r: &Redactor) {
 }
 
 /// Every infrastructure name `app` knows: its connection, the picker's
-/// data sources, the environments overview (servers, hosts, databases,
+/// data sources and their credential variables, the environments overview (servers, hosts, databases,
 /// bastions, secrets, password variables) and an open discovery, plus
 /// [`env_names`]. Fed to [`Redactor::new`] on each frame.
 pub fn app_names(app: &crate::app::App) -> Vec<String> {
@@ -262,6 +262,11 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
         if let Some(d) = &p.dsn {
             dsn(d, &mut out);
         }
+        // The variables its credentials come from: the picker row and
+        // the tunnel confirmation (whose creds are the pick's) draw
+        // them as `password ← $VAR  user ← $VAR`.
+        out.extend(p.creds.password_env.iter().cloned());
+        out.extend(p.creds.user_env.iter().cloned());
     }
     for e in &app.environments.reports {
         out.push(e.name.clone());

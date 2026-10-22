@@ -1888,3 +1888,32 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
         );
     }
 }
+
+#[test]
+fn redacted_picker_hides_the_credential_variable_names() {
+    // A picker row ends `password ← $VAR  user ← $VAR`; a project's
+    // variable names tend to carry its client's name.
+    let picks = vec![DataSourcePick {
+        name: "staging".into(),
+        origin: "project",
+        dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+        creds: pgman::app::CredsProvenance::new(
+            vec!["EXAMPLECORP_DB_USER".into()],
+            vec!["EXAMPLECORP_DB_PW".into()],
+        ),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    let off = dump(&render(&mut a, 160, 16));
+    assert!(off.contains("password ← $EXAMPLECORP_DB_PW"), "{off}");
+    assert!(off.contains("user ← $EXAMPLECORP_DB_USER"), "{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 16));
+    assert!(!on.to_lowercase().contains("examplecorp"), "leaked:\n{on}");
+    // The generic rest of the name, and the arrow, still say what it is.
+    assert!(on.contains("user ← $▓▓▓▓▓▓▓▓▓▓▓_DB_USER"), "{on}");
+}
