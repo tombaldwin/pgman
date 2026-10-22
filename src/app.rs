@@ -4270,8 +4270,7 @@ impl App {
             if let Some(var) = &spec.password_env {
                 origin.push_str(&format!(" · password from ${var}"));
             }
-            self.environments.opened_from = None;
-            self.connect_to_target(dsn, origin, read_only);
+            self.connect_from_environments(dsn, origin, read_only);
             return;
         };
         origin.push_str(&format!(" · creds from {}", secret.provenance()));
@@ -4291,6 +4290,16 @@ impl App {
                 "can't connect to {what}: secrets are not available in this session"
             ));
         }
+    }
+
+    /// Leave the overview for the database chosen in it. The footer's
+    /// overview text (`environments · 2 · 3 databases`, or the secret
+    /// being read) goes with it: it would sit under the start card,
+    /// describing a screen that's gone.
+    fn connect_from_environments(&mut self, dsn: Dsn, origin: String, read_only: bool) {
+        self.environments.opened_from = None;
+        self.last_status = None;
+        self.connect_to_target(dsn, origin, read_only);
     }
 
     /// `l` in the overview: recent errors from the focused server's RDS
@@ -4871,8 +4880,7 @@ impl App {
             Ok(creds) => {
                 let mut dsn = pending.dsn;
                 crate::creds::aws_secrets::apply(&mut dsn, creds);
-                self.environments.opened_from = None;
-                self.connect_to_target(dsn, pending.origin, pending.read_only);
+                self.connect_from_environments(dsn, pending.origin, pending.read_only);
             }
             Err(e) => {
                 self.last_status = None;

@@ -10096,6 +10096,37 @@ async fn readonly_off_on_a_read_only_replica_does_not_send_you_to_safety_toml() 
     assert!(!e.contains("restart"), "{e}");
 }
 
+/// The overview's footer text doesn't follow Enter onto the start card,
+/// with a secret to read first or without.
+#[tokio::test]
+async fn connecting_from_the_overview_clears_its_footer() {
+    let mut a = writable_app();
+    // As a listing leaves it (a first visit shows a tip instead).
+    a.last_status = Some(environments_status(1, 2, 0));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
+
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a
+        .last_status
+        .as_deref()
+        .is_some_and(|s| s.contains("reading secret")));
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "x".into(),
+        }),
+    });
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
+}
+
 #[tokio::test]
 async fn a_replica_stays_read_only_across_a_database_swap_and_readonly_off() {
     let mut a = writable_app();
