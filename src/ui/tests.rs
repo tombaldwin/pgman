@@ -1445,6 +1445,7 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: Some("delete without a where".into()),

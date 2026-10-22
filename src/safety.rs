@@ -263,6 +263,11 @@ pub struct Decision {
     /// `guard` to `Block` and carries its own message
     /// ([`READ_ONLY_ESCAPE_REFUSAL`]) — the category guard is not the reason.
     pub read_only_escape: bool,
+    /// A read-only profile, and the statement calls a server-control
+    /// function ([`calls_server_control`]): something Postgres's own
+    /// read-only mode lets through. Forces `guard` to `Block` with its own
+    /// message ([`SERVER_CONTROL_REFUSAL`]).
+    pub server_control: bool,
 }
 
 /// Classify a single SQL statement. Pure and heuristic — see the module docs.
@@ -322,8 +327,9 @@ pub fn classify(sql: &str) -> StatementKind {
             return StatementKind::Other;
         }
         // A `SELECT` whose payload is a side effect: killing sessions,
-        // reloading config, reading or writing server-side files.
-        if mentions_destructive_function(&stripped) {
+        // reloading config, reading or writing server-side files, steering
+        // replication or WAL.
+        if mentions_destructive_function(&stripped) || calls_server_control(&stripped) {
             return StatementKind::Other;
         }
         // A unicode-escaped name could be any function: unreadable here.
@@ -371,6 +377,61 @@ fn mentions_destructive_function(sql: &str) -> bool {
     toks.iter()
         .any(|t| DESTRUCTIVE_FUNCTIONS.contains(&t.as_str()))
 }
+
+/// Server-control functions Postgres runs inside a read-only transaction:
+/// they steer replication, WAL, backups and statistics rather than write
+/// data, so `default_transaction_read_only` never stops them. On a replica
+/// `pg_wal_replay_pause()` stops it applying WAL and `pg_promote()` makes it
+/// a primary; `pg_drop_replication_slot()` loses a CDC consumer's place.
+const SERVER_CONTROL_FUNCTIONS: &[&str] = &[
+    "pg_promote",
+    "pg_switch_wal",
+    "pg_create_restore_point",
+    "pg_backup_start",
+    "pg_backup_stop",
+    "pg_start_backup",
+    "pg_stop_backup",
+    "pg_logical_emit_message",
+    "pg_rotate_logfile",
+    "pg_log_backend_memory_contexts",
+    "pg_stat_statements_reset",
+    // Not a family: `pg_replication_origin_status` is a view to read.
+    "pg_replication_origin_create",
+    "pg_replication_origin_drop",
+    "pg_replication_origin_advance",
+    "pg_replication_origin_session_setup",
+    "pg_replication_origin_session_reset",
+    "pg_replication_origin_xact_setup",
+    "pg_replication_origin_xact_reset",
+];
+
+/// Name families of [`SERVER_CONTROL_FUNCTIONS`], so a function added in a
+/// later Postgres is caught without a new entry: `(prefix, suffix)`.
+const SERVER_CONTROL_FAMILIES: &[(&str, &str)] = &[
+    // pg_wal_replay_pause / _resume
+    ("pg_wal_replay_", ""),
+    // pg_create_physical_/_logical_, pg_drop_, pg_copy_*_replication_slot
+    ("pg_", "_replication_slot"),
+    ("pg_replication_slot_", ""),
+    // pg_stat_reset, pg_stat_reset_shared, _single_table_counters, …
+    ("pg_stat_reset", ""),
+];
+
+/// `true` if `sql`'s code (not its string literals) calls a server-control
+/// function. Pure.
+pub fn calls_server_control(sql: &str) -> bool {
+    code_tokens(sql).iter().any(|t| {
+        SERVER_CONTROL_FUNCTIONS.contains(&t.as_str())
+            || SERVER_CONTROL_FAMILIES
+                .iter()
+                .any(|(pre, suf)| t.starts_with(pre) && t.ends_with(suf))
+    })
+}
+
+/// The refusal for a server-control function under a read-only profile.
+pub const SERVER_CONTROL_REFUSAL: &str = "blocked: this calls a server-control function \
+     (replication, WAL, backup or statistics), which Postgres runs even in a read-only \
+     session · set read_only = false for this database in safety.toml to allow it";
 
 fn classify_cte(stripped: &str, has_where: bool) -> StatementKind {
     if word_present_in_code(stripped, "delete") {
@@ -819,11 +880,12 @@ pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
     let profile = config.profile_for(db);
     let kind = classify(sql);
     let read_only_escape = profile.read_only && attempts_read_only_escape(sql);
+    let server_control = profile.read_only && calls_server_control(&strip_sql_comments(sql));
     Decision {
         kind,
         // The escape overrides the category guard: whatever `other` is set to,
         // a read-only profile is not negotiable from inside the session.
-        guard: if read_only_escape {
+        guard: if read_only_escape || server_control {
             Guard::Block
         } else {
             guard_for(profile, kind)
@@ -831,6 +893,7 @@ pub fn evaluate(config: &SafetyConfig, db: &str, sql: &str) -> Decision {
         wrap_in_tx: profile.auto_tx && kind.is_write(),
         blocked_by_read_only: profile.read_only && kind.is_write(),
         read_only_escape,
+        server_control,
     }
 }
 
@@ -2269,6 +2332,60 @@ mod tests {
             StatementKind::Select
         );
         assert_eq!(classify(r#"SELECT * FROM "into""#), StatementKind::Select);
+    }
+
+    #[test]
+    fn server_control_functions_are_blocked_on_a_read_only_profile() {
+        let read_only = SafetyConfig::default();
+        assert!(read_only.default.read_only, "fixture: read-only default");
+        let mut writable = SafetyConfig::default();
+        writable.default.read_only = false;
+        for sql in [
+            "SELECT pg_wal_replay_pause()",
+            "select pg_wal_replay_resume()",
+            "SELECT pg_promote()",
+            "SELECT pg_promote(true, 60)",
+            "SELECT pg_create_physical_replication_slot('s')",
+            "SELECT pg_create_logical_replication_slot('s', 'pgoutput')",
+            "SELECT pg_copy_logical_replication_slot('a', 'b')",
+            "SELECT pg_drop_replication_slot('s')",
+            "SELECT pg_replication_slot_advance('s', '0/0')",
+            "SELECT pg_switch_wal()",
+            "SELECT pg_create_restore_point('x')",
+            "SELECT pg_backup_start('x')",
+            "SELECT pg_start_backup('x')",
+            "SELECT pg_stat_reset()",
+            "SELECT pg_stat_reset_shared('bgwriter')",
+            "SELECT pg_stat_statements_reset()",
+            "SELECT pg_replication_origin_create('o')",
+            "SELECT pg_logical_emit_message(true, 'p', 'm')",
+            "SELECT \"pg_promote\"()",
+            "SELECT pg_catalog.pg_promote()",
+            "WITH x AS (SELECT pg_drop_replication_slot('s')) SELECT * FROM x",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Other, "{sql}");
+            let d = evaluate(&read_only, "db", sql);
+            assert!(d.server_control && d.guard == Guard::Block, "{sql}: {d:?}");
+            // Writable: an ordinary Confirm, like any other non-read.
+            let d = evaluate(&writable, "db", sql);
+            assert!(
+                !d.server_control && d.guard == Guard::Confirm,
+                "{sql}: {d:?}"
+            );
+        }
+        // Reads that only look like them.
+        for sql in [
+            "SELECT * FROM pg_replication_slots",
+            "SELECT * FROM pg_replication_origin_status",
+            "SELECT pg_get_wal_replay_pause_state()",
+            "SELECT pg_is_wal_replay_paused()",
+            "SELECT stats_reset FROM pg_stat_bgwriter",
+            "SELECT * FROM audit WHERE fn = 'pg_promote'",
+        ] {
+            assert_eq!(classify(sql), StatementKind::Select, "{sql}");
+            let d = evaluate(&read_only, "db", sql);
+            assert!(!d.server_control && d.guard == Guard::Allow, "{sql}: {d:?}");
+        }
     }
 
     #[test]

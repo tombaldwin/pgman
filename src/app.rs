@@ -48,6 +48,9 @@ pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
     if decision.read_only_escape {
         return read_only_escape_refusal(safety_toml_exists());
     }
+    if decision.server_control {
+        return safety::SERVER_CONTROL_REFUSAL.to_string();
+    }
     format!(
         "blocked by safety: {} on '{db}' · change the guard in safety.toml to allow it",
         decision.kind.describe()
@@ -3586,6 +3589,7 @@ impl App {
             wrap_in_tx: decisions.iter().any(|d| d.wrap_in_tx),
             blocked_by_read_only: decisions.iter().any(|d| d.blocked_by_read_only),
             read_only_escape: decisions.iter().any(|d| d.read_only_escape),
+            server_control: decisions.iter().any(|d| d.server_control),
         };
 
         match max_guard {
@@ -3594,6 +3598,8 @@ impl App {
                 // the per-kind summary would blame the wrong statement.
                 self.last_error = Some(if synthesized.read_only_escape {
                     read_only_escape_refusal(safety_toml_exists())
+                } else if synthesized.server_control {
+                    safety::SERVER_CONTROL_REFUSAL.to_string()
                 } else {
                     format!("batch blocked by safety: {summary}")
                 });

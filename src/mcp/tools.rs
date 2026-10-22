@@ -1394,6 +1394,7 @@ pub fn mcp_refusal(r: crate::batch::Refusal) -> String {
     match r {
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
+        Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
         Refusal::Confirm { kind, db, stmt } | Refusal::Block { kind, db, stmt } => format!(
             "refused: {kind} on '{db}' is not a read, and this MCP server only reads — \
              there is no flag or setting that lets `query` run it (statement: {stmt})"

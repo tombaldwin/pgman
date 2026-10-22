@@ -1191,6 +1191,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,

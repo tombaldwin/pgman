@@ -106,6 +106,9 @@ pub fn check_patch(
             crate::batch::Refusal::ReadOnlyEscape => {
                 crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
             }
+            crate::batch::Refusal::ServerControl => {
+                crate::safety::SERVER_CONTROL_REFUSAL.to_string()
+            }
         })?;
     if statements.is_empty() {
         return Err("the patch has no statements".to_string());

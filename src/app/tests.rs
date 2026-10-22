@@ -6646,6 +6646,7 @@ fn blocked_by_safety_message_names_the_statement_without_debug_braces() {
             wrap_in_tx: false,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         "main",
     );
@@ -7891,6 +7892,7 @@ fn confirm_modal_app() -> App {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,
@@ -8053,6 +8055,7 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,
