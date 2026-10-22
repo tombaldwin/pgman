@@ -857,10 +857,11 @@ fn footer_error_rows(app: &App, width: u16, max_rows: usize) -> Vec<String> {
 
 /// An error wrapped on words into at most `max_rows` rows of `width`
 /// columns, `pointer` ending the last. What does not fit is cut on the
-/// last row by [`fit_status`], which keeps the pointer — the way to
-/// the rest. With one row this is the old single-line footer. A
-/// multi-line server error arrives folded into ` · ` segments by
-/// [`footer_text`]; the overlay keeps its original lines. Pure.
+/// last row by [`fit_error_row`]: the end of the message goes, the
+/// pointer — the way to the rest — stays. With one row this is the
+/// single-line footer. A multi-line server error arrives folded into
+/// ` · ` segments by [`footer_text`]; the overlay keeps its original
+/// lines. Pure.
 pub(crate) fn error_footer_rows(
     msg: &str,
     pointer: &str,
@@ -869,7 +870,7 @@ pub(crate) fn error_footer_rows(
 ) -> Vec<String> {
     let full = format!("{msg}{pointer}");
     if width == 0 || max_rows <= 1 || display_width(&full) <= width {
-        return vec![fit_status(&full, width)];
+        return vec![fit_error_row(msg, pointer, width)];
     }
     let mut rows = wrap_words(msg, width);
     if rows.len() > max_rows {
@@ -883,9 +884,32 @@ pub(crate) fn error_footer_rows(
         rows.push(last);
         rows.push(fit_status(pointer.trim_start_matches(" · "), width));
     } else {
-        rows.push(fit_status(&format!("{last}{pointer}"), width));
+        rows.push(fit_error_row(&last, pointer, width));
     }
     rows
+}
+
+/// Narrowest message an error row keeps beside its pointer; under it
+/// the pointer goes and the message has the row.
+const ERROR_ROW_MIN_MSG: usize = 8;
+
+/// One footer row of error: `msg` then `pointer`, at most `width`
+/// columns. Too wide, the END of the message is cut with `…` and the
+/// pointer kept — the start of an error says what failed, and the
+/// pointer leads to the rest. [`fit_status`]'s middle cut kept the
+/// first word and the last (`function… exist`), which reads as
+/// nothing. A row too narrow for the pointer and a few columns of
+/// message drops the pointer. Pure / testable.
+pub(crate) fn fit_error_row(msg: &str, pointer: &str, width: usize) -> String {
+    let full = format!("{msg}{pointer}");
+    if display_width(&full) <= width {
+        return full;
+    }
+    let pointer_w = display_width(pointer);
+    if !pointer.is_empty() && width >= pointer_w + ERROR_ROW_MIN_MSG {
+        return format!("{}{pointer}", end_ellipsis(msg, width - pointer_w));
+    }
+    end_ellipsis(msg, width)
 }
 
 /// Rows the editor block takes — its two border rows included — for a

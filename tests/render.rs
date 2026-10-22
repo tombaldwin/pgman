@@ -1901,6 +1901,42 @@ fn footer_rows(buf: &Buffer) -> Vec<String> {
 }
 
 #[test]
+fn a_long_error_footer_keeps_badges_start_and_pointer_at_60_80_120() {
+    // 24 rows: the error may wrap over a taller footer. 12 rows: the
+    // body is cramped and the footer has one row, so the message is cut.
+    for (w, h) in [(60, 24), (80, 24), (120, 24), (60, 12), (80, 12), (120, 12)] {
+        let mut a = app_with_a_long_error(Mode::Editor);
+        let buf = render(&mut a, w, h);
+        let footer = footer_rows(&buf);
+        let first = &footer[0];
+        let last = footer.last().unwrap();
+        assert!(
+            first.starts_with(" REDACT ") && first.contains(" RO "),
+            "{w}x{h}: badges first:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            first.contains("⚠ function"),
+            "{w}x{h}: the message from its start:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            last.ends_with("· F2 detail"),
+            "{w}x{h}: the pointer ends the footer:\n{}",
+            dump(&buf)
+        );
+        let shown: String = footer.concat();
+        if !shown.contains("does not exist") {
+            assert!(
+                shown.contains("… · F2 detail"),
+                "{w}x{h}: a cut message says so:\n{}",
+                dump(&buf)
+            );
+        }
+    }
+}
+
+#[test]
 fn an_overlay_leaves_a_wrapped_error_footer_whole() {
     // The help overlay is centred in the body; the body used to assume
     // a one-row footer, so the overlay's frame covered the first row

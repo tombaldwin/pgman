@@ -700,6 +700,28 @@ fn error_footer_rows_wrap_and_keep_the_pointer_last() {
 }
 
 #[test]
+fn fit_error_row_cuts_the_end_of_the_message_and_keeps_the_pointer() {
+    const P: &str = " · F2 detail";
+    let msg =
+        "function nonexistent_function_with_long_name(integer, integer, integer) does not exist";
+    // Fits: unchanged.
+    assert_eq!(fit_error_row("boom", P, 40), "boom · F2 detail");
+    // Too wide: the start stays, the end goes, the pointer stays.
+    let got = fit_error_row(msg, P, 40);
+    assert_eq!(got, "function nonexistent_functi… · F2 detail");
+    assert_eq!(display_width(&got), 40);
+    // Too narrow for pointer and message both: the message wins.
+    assert_eq!(fit_error_row(msg, P, 12), "function no…");
+    // No pointer: a plain end cut.
+    assert_eq!(fit_error_row(msg, "", 10), "function …");
+    assert_eq!(fit_error_row(msg, P, 0), "");
+    // Never wider than asked, at every width.
+    for w in 0..120 {
+        assert!(display_width(&fit_error_row(msg, P, w)) <= w, "{w}");
+    }
+}
+
+#[test]
 fn wrap_path_breaks_after_slashes_and_loses_nothing() {
     let p = "/Users/someone/.cache/pgman/pgman.log.2026-10-21";
     assert_eq!(wrap_path(p, 80), vec![p]);
