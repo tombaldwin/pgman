@@ -359,7 +359,9 @@ per tab: switching tabs restores each tab's own layout.
 ## JDBC tap monitor
 
 Opened with `F4` from any mode. Seven views, cycled with `v`: **List**
-(recency-ordered event stream, default) → **Hotspots** (by SQL fingerprint)
+(recency-ordered event stream, default; the focused query's bound
+parameters show beneath it, labelled `params (some redacted)` when the
+producer masked any) → **Hotspots** (by SQL fingerprint)
 → **Callers** (by innermost caller frame) → **Transactions** (by synthetic
 txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 → **Baseline** (diff vs. a captured snapshot) → back to List.

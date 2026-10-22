@@ -453,6 +453,24 @@ pub struct TapEvent {
     pub txn_outcome: Option<TxnOutcome>,
 }
 
+/// How the tap monitor shows one query's bound parameters: a label
+/// (which carries the redaction marker) and the values on one line.
+/// Built by [`TapEvent::params_summary`]; pure, so the wording is
+/// pinned by tests rather than by a render.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamsSummary {
+    /// `params`, or `params (some redacted)` / `params (withheld by
+    /// source)` when `params_redacted` is set — so a `[redacted]`
+    /// marker is never read as the value the application bound.
+    pub label: &'static str,
+    /// The values, `1: 2 · 2: 11 · 3: [redacted]`, or why there are
+    /// none. Control characters are made visible: the values come
+    /// from the application, not from pgman.
+    pub body: String,
+    /// `params_redacted` — the renderer styles the label as a warning.
+    pub redacted: bool,
+}
+
 /// serde helper for `#[serde(skip_serializing_if = ...)]` on
 /// `params_redacted: bool` — keeps the captured JSON minimal.
 fn is_false(b: &bool) -> bool {
@@ -479,6 +497,48 @@ impl TapEvent {
             }
             None => String::new(),
         }
+    }
+
+    /// The bound parameters as the tap monitor shows them under the
+    /// focused event. `None` for non-query kinds. Positions are
+    /// 1-based, as JDBC numbers them. When `params_redacted` is set the
+    /// label says so: with values present, some of them are the
+    /// producer's `[redacted]` marker; with none (the OTLP ingest, whose
+    /// spans never carry bound values), the source withheld them all.
+    pub fn params_summary(&self) -> Option<ParamsSummary> {
+        if !matches!(self.kind, TapKind::Query) {
+            return None;
+        }
+        let redacted = self.params_redacted;
+        let (label, body) = match self.params.as_deref() {
+            Some([]) => ("params", "none bound".to_string()),
+            Some(values) => (
+                if redacted {
+                    "params (some redacted)"
+                } else {
+                    "params"
+                },
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| format!("{}: {}", i + 1, crate::grid::show_controls(v, true)))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ),
+            None if redacted => (
+                "params (withheld by source)",
+                "the producer sends no bound values".to_string(),
+            ),
+            None => (
+                "params",
+                "none sent (a plain Statement or a batch)".to_string(),
+            ),
+        };
+        Some(ParamsSummary {
+            label,
+            body,
+            redacted,
+        })
     }
 
     /// Inner-most caller frame (`caller[0]`) for the
@@ -1335,6 +1395,71 @@ mod tests {
         e.kind = TapKind::Heartbeat;
         e.sql = None;
         assert_eq!(e.sql_preview(30), "");
+    }
+
+    fn with_params(params: Option<Vec<&str>>, redacted: bool) -> TapEvent {
+        let mut e = q("SELECT 1", 1, false, None, "svc");
+        e.params = params.map(|v| v.into_iter().map(String::from).collect());
+        e.params_redacted = redacted;
+        e
+    }
+
+    #[test]
+    fn params_summary_numbers_the_bound_values_from_one() {
+        let s = with_params(Some(vec!["2", "NULL", "it's"]), false)
+            .params_summary()
+            .unwrap();
+        assert_eq!(s.label, "params");
+        assert_eq!(s.body, "1: 2 · 2: NULL · 3: it's");
+        assert!(!s.redacted);
+    }
+
+    #[test]
+    fn params_summary_marks_a_redacted_value_as_redacted() {
+        let s = with_params(Some(vec!["2", "11", "[redacted]"]), true)
+            .params_summary()
+            .unwrap();
+        assert_eq!(s.label, "params (some redacted)");
+        assert_eq!(s.body, "1: 2 · 2: 11 · 3: [redacted]");
+        assert!(s.redacted);
+    }
+
+    #[test]
+    fn params_summary_says_when_the_source_withheld_every_value() {
+        // The OTLP ingest: no values, `params_redacted` set.
+        let s = with_params(None, true).params_summary().unwrap();
+        assert_eq!(s.label, "params (withheld by source)");
+        assert!(s.redacted);
+    }
+
+    #[test]
+    fn params_summary_distinguishes_none_sent_from_none_bound() {
+        let none = with_params(None, false).params_summary().unwrap();
+        assert_eq!(none.label, "params");
+        assert!(none.body.starts_with("none sent"), "{}", none.body);
+        let empty = with_params(Some(vec![]), false).params_summary().unwrap();
+        assert_eq!(empty.body, "none bound");
+    }
+
+    #[test]
+    fn params_summary_makes_control_characters_visible() {
+        // A value is application data off the network: a newline must
+        // not break the one-line detail, an ESC must not reach the
+        // terminal.
+        let s = with_params(Some(vec!["a\nb", "\u{1b}[2J"]), false)
+            .params_summary()
+            .unwrap();
+        assert!(!s.body.chars().any(char::is_control), "{:?}", s.body);
+        assert!(s.body.starts_with("1: a⏎b"), "{:?}", s.body);
+    }
+
+    #[test]
+    fn params_summary_is_none_for_non_query_kinds() {
+        let mut e = with_params(Some(vec!["x"]), true);
+        e.kind = TapKind::TxnBoundary;
+        assert_eq!(e.params_summary(), None);
+        e.kind = TapKind::Heartbeat;
+        assert_eq!(e.params_summary(), None);
     }
 
     #[test]

@@ -12,9 +12,9 @@ expression: dump(&buf)
 ╰─│       1.8ms          1  billing-api           SELEC…│──╯
 ╭[│       420µs          1  billing-api           SELEC…│──╮
 │n│       435µs          1  billing-api           SELEC…│  │
-│I│       450µs          1  billing-api           SELEC…│  │
-│I│       465µs          1  billing-api           SELEC…│  │
-│I│       480µs          1  billing-api           SELEC…│  │
+│I│─────────────────────────────────────────────────────│  │
+│I│  params  1: 2107                                    │  │
+│I│                                                     │  │
 │I╰─────────────────────────────────────────────────────╯  │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯

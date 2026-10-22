@@ -927,6 +927,7 @@ fn tap_events() -> Vec<TapEvent> {
         "SELECT id, name, billing_email, currency FROM customers WHERE id = ?",
         290,
         Some("CustomerRepository.findById:41"),
+        &["2107"],
     )];
     events.push(query(
         BASE + 40_000,
@@ -935,6 +936,7 @@ fn tap_events() -> Vec<TapEvent> {
         "SELECT id, number, status, total, due_at FROM invoices WHERE customer_id = ? ORDER BY issued_at DESC LIMIT ?",
         1_840,
         Some("InvoiceController.list:58"),
+        &["2107", "20"],
     ));
     // The N+1: eight near-identical selects in one txn, ~25ms apart.
     for i in 0..8u64 {
@@ -945,6 +947,7 @@ fn tap_events() -> Vec<TapEvent> {
             "SELECT id, description, quantity, unit_amount, amount FROM invoice_lines WHERE invoice_id = ?",
             420 + i * 15,
             Some("InvoiceService.loadLines:112"),
+            &[&(4824 + i).to_string()],
         ));
     }
     events.push(query(
@@ -954,6 +957,7 @@ fn tap_events() -> Vec<TapEvent> {
         "UPDATE subscriptions SET status = ?, current_period_end = ? WHERE id = ?",
         2_310,
         Some("DunningJob.advance:77"),
+        &["past_due", "2026-11-30 00:00:00+00", "381"],
     ));
     events
 }
@@ -966,6 +970,7 @@ fn query(
     sql: &str,
     dur: u64,
     caller: Option<&str>,
+    params: &[&str],
 ) -> TapEvent {
     TapEvent {
         v: 1,
@@ -977,7 +982,7 @@ fn query(
         conn: Some(conn.into()),
         txn: txn.map(str::to_string),
         sql: Some(sql.into()),
-        params: None,
+        params: Some(params.iter().map(|p| p.to_string()).collect()),
         params_redacted: false,
         duration_micros: Some(dur),
         rows: Some(1),

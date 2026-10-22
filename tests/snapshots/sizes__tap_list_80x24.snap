@@ -20,9 +20,9 @@ expression: dump(&buf)
 │IN│       450µs          1  billing-api           SELECT id, description,…│   │
 │IN│       465µs          1  billing-api           SELECT id, description,…│   │
 │IN│       480µs          1  billing-api           SELECT id, description,…│   │
-│IN│       495µs          1  billing-api           SELECT id, description,…│   │
-│IN│       510µs          1  billing-api           SELECT id, description,…│   │
-│  │       525µs          1  billing-api           SELECT id, description,…│   │
+│IN│───────────────────────────────────────────────────────────────────────│   │
+│IN│  params  1: 2107                                                      │   │
+│  │                                                                       │   │
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯

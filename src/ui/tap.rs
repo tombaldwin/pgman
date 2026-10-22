@@ -89,10 +89,25 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         return;
     }
 
-    let visible_h = inner.height as usize;
     // Cap cursor against the list len so a recent eviction
     // doesn't park us past the end.
     let cursor = app.tap_nav.events_cursor.min(app.tap_events.len() - 1);
+    // The focused query's bound parameters sit under the list. They
+    // are the one part of an event a row has no room for, and the
+    // reason to look at a single statement rather than its hotspot.
+    // Dropped on a panel too short to keep a few list rows above it.
+    // The rows are reserved whatever the focused event's kind, so the
+    // list's height doesn't jump as the cursor crosses a COMMIT row.
+    let inner = if inner.height >= TAP_DETAIL_MIN_PANEL_H {
+        let [list, rest] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(TAP_DETAIL_H)]).areas(inner);
+        let summary = app.tap_events[cursor].params_summary();
+        draw_tap_params_detail(f, rest, theme, summary.as_ref());
+        list
+    } else {
+        inner
+    };
+    let visible_h = inner.height as usize;
     let scroll = scroll_offset(cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -150,6 +165,79 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Rows the List view's params detail takes: a rule, then the values
+/// over up to two lines.
+const TAP_DETAIL_H: u16 = 3;
+/// Shortest List-view panel that still gets the params detail: the
+/// header and four event rows stay above it.
+const TAP_DETAIL_MIN_PANEL_H: u16 = TAP_DETAIL_H + 5;
+/// Indent of the values' continuation line.
+const TAP_DETAIL_INDENT: &str = "    ";
+
+/// The focused event's bound parameters, under the List view. A label
+/// that says when some are the producer's `[redacted]` marker — in the
+/// warning colour, so a masked value is never taken for the real one.
+/// `None` (a commit / rollback row) draws the rule and says so.
+fn draw_tap_params_detail(
+    f: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    summary: Option<&crate::tap::ParamsSummary>,
+) {
+    let width = area.width as usize;
+    let mut lines = vec![Line::from(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(theme.border_idle),
+    ))];
+    let Some(summary) = summary else {
+        lines.push(Line::from(Span::styled(
+            "  no parameters on a commit / rollback",
+            Style::default().fg(theme.muted),
+        )));
+        f.render_widget(Paragraph::new(Text::from(lines)), area);
+        return;
+    };
+    let label_style = if summary.redacted {
+        Style::default()
+            .fg(theme.health_yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
+    let label = format!("  {}  ", summary.label);
+    let (first, rest) = params_detail_split(display_width(&label), &summary.body, width);
+    let value = Style::default().fg(theme.text);
+    lines.push(Line::from(vec![
+        Span::styled(label, label_style),
+        Span::styled(first, value),
+    ]));
+    if let Some(rest) = rest {
+        lines.push(Line::from(Span::styled(
+            format!("{TAP_DETAIL_INDENT}{rest}"),
+            value,
+        )));
+    }
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+/// Lay `body` out after a `label_w`-column label on a `width`-column
+/// row: what fits on the first line, and the rest on an indented
+/// second line, cut with `…` if it still doesn't fit — so a long
+/// parameter list says it was cut rather than stopping mid-value.
+/// By display width, so a wide glyph never pushes a line past `width`.
+/// Pure.
+fn params_detail_split(label_w: usize, body: &str, width: usize) -> (String, Option<String>) {
+    let first_w = width.saturating_sub(label_w);
+    let (first, marker) = crate::grid::truncate_cell_parts(body, first_w);
+    if marker.is_empty() {
+        return (first, None);
+    }
+    // `truncate_cell_parts` keeps a prefix of `body`.
+    let rest = body[first.len()..].trim_start();
+    let second_w = width.saturating_sub(TAP_DETAIL_INDENT.len());
+    (first, Some(crate::grid::truncate_cell(rest, second_w)))
 }
 
 /// L2 hotspots view — groups the ring by SQL fingerprint and
@@ -760,4 +848,46 @@ fn short_fingerprint(fp: &str, width: usize) -> String {
     }
     let kept: String = chars.into_iter().take(width.saturating_sub(1)).collect();
     format!("{kept}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn params_detail_split_keeps_a_short_body_on_one_line() {
+        let (first, rest) = params_detail_split(10, "1: 2107", 40);
+        assert_eq!(first, "1: 2107");
+        assert_eq!(rest, None);
+    }
+
+    #[test]
+    fn params_detail_split_continues_then_marks_the_cut() {
+        let body = (1..=40)
+            .map(|i| format!("{i}: value-{i}"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let (first, rest) = params_detail_split(10, &body, 40);
+        let rest = rest.expect("a second line");
+        assert!(body.starts_with(&first), "{first:?}");
+        assert!(display_width(&first) <= 30, "{first:?}");
+        assert!(rest.ends_with('…'), "the cut must show: {rest:?}");
+        assert!(
+            display_width(&rest) <= 40 - TAP_DETAIL_INDENT.len(),
+            "{rest:?}"
+        );
+        // The second line picks up where the first stopped.
+        let joined = format!("{first}{}", rest.trim_end_matches('…'));
+        let compact: String = body.split_whitespace().collect();
+        let got: String = joined.split_whitespace().collect();
+        assert!(compact.starts_with(&got), "{joined:?}");
+    }
+
+    #[test]
+    fn params_detail_split_measures_wide_glyphs_by_display_width() {
+        let body = "1: 東京都千代田区丸の内一丁目九番二号東京都千代田区丸の内";
+        let (first, rest) = params_detail_split(4, body, 20);
+        assert!(display_width(&first) <= 16, "{first:?}");
+        assert!(display_width(&rest.unwrap()) <= 16);
+    }
 }
