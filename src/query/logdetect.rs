@@ -85,22 +85,10 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
         return Some(LogKind::Hibernate);
     }
 
-    // Postgres server log: a `LOG:` record whose message opens with
-    // `statement:` / `duration:` / `execute` / `parse` / `bind` (the forms
-    // `pglog::parse_log_message` recognises), or the paired
-    // `DETAIL: … parameters:` line. Whitespace after the level colon
-    // varies by `log_line_prefix`, so trim rather than requiring an exact
-    // number of spaces.
-    let looks_pglog = text.lines().any(|line| {
-        after_marker(line, "LOG:").is_some_and(|rest| {
-            rest.starts_with("statement:")
-                || rest.starts_with("duration:")
-                || rest.starts_with("execute ")
-                || rest.starts_with("parse ")
-                || rest.starts_with("bind ")
-        }) || after_marker(line, "DETAIL:").is_some_and(|rest| rest.starts_with("parameters:"))
-    });
-    if looks_pglog {
+    // Postgres server log: a record `pglog::parse` reconstructs from —
+    // asked of the parser itself, so a log the hint names is one the
+    // parser reads, whatever its `log_line_prefix`.
+    if text.lines().any(super::pglog::is_query_record) {
         return Some(LogKind::PgServer);
     }
 
@@ -109,12 +97,6 @@ pub fn detect_log(text: &str) -> Option<LogKind> {
     }
 
     None
-}
-
-/// If `line` contains `marker`, the trimmed text right after it.
-fn after_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
-    let idx = line.find(marker)?;
-    Some(line[idx + marker.len()..].trim_start())
 }
 
 /// Split `text` on its first blank line into `(head, tail)` when the
@@ -194,6 +176,41 @@ mod tests {
 2024-01-15 10:00:00.001 UTC [101] DETAIL:  parameters: $1 = '42'
 2024-01-15 10:00:01.500 UTC [102] LOG:  statement: select now()";
         assert_eq!(detect_log(log), Some(LogKind::PgServer));
+    }
+
+    #[test]
+    fn the_hint_fires_exactly_when_the_parser_finds_a_query() {
+        // The release-panel failure: the hint named a log the parser then
+        // found nothing in. Each case here must agree with `pglog::parse`.
+        for (text, parses) in [
+            // RDS's prefix, and Debian's `%u@%d` one.
+            (
+                "2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:LOG:  statement: select 1",
+                true,
+            ),
+            (
+                "2026-10-21 09:12:48.001 UTC [31840] billing@ledger LOG:  statement: select 1",
+                true,
+            ),
+            // SQL that merely mentions a log record, in a literal.
+            ("select 'x LOG:  statement: select 1'", false),
+            // A log with no statements in it at all.
+            (
+                "2026-10-21 09:12:48 UTC [31840] LOG:  checkpoint starting: time",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                detect_log(text) == Some(LogKind::PgServer),
+                parses,
+                "hint for {text:?}"
+            );
+            assert_eq!(
+                !super::super::pglog::parse(text).is_empty(),
+                parses,
+                "parse of {text:?}"
+            );
+        }
     }
 
     #[test]
