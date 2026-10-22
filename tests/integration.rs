@@ -5615,3 +5615,84 @@ fn lint107_finds_sequence_columns_nothing_keeps_unique() {
         ]
     );
 }
+
+/// The NULL / empty-string / space triple the "NULL and the empty string
+/// look the same" item is about.
+const NULL_SQL: &str = "SELECT '' AS e, NULL AS n, ' ' AS s";
+
+/// From the wire to every way out of the TUI's grid: three cells that
+/// stay three different values — the yank, CSV, TSV and JSON included.
+#[tokio::test]
+async fn null_empty_string_and_space_stay_three_cells_through_the_grid() {
+    let (client, _tunnel) = lib_client().await;
+    let grid = pgman::conn::run_statement(&client, NULL_SQL)
+        .await
+        .expect("query runs");
+    assert_eq!(grid.columns, ["e", "n", "s"]);
+    assert_eq!(
+        grid.rows,
+        vec![vec![Some(String::new()), None, Some(" ".to_string())]]
+    );
+    let row = &grid.rows[0];
+    assert_eq!(
+        pgman::app::row_insert_sql("public", "t", &grid.columns, row),
+        "INSERT INTO public.t (e, n, s) VALUES ('', NULL, ' ');"
+    );
+    assert_eq!(pgman::batch::format_csv(&grid), "e,n,s\n\"\",, \n");
+    assert_eq!(pgman::batch::format_tsv(&grid), "e\tn\ts\n\t\\N\t \n");
+    let json: serde_json::Value =
+        serde_json::from_str(&pgman::batch::format_json(&grid)).expect("JSON");
+    assert_eq!(json, serde_json::json!([{"e": "", "n": null, "s": " "}]));
+}
+
+/// `pgman query --json` (the typed path) and `--format csv`, end to end.
+#[test]
+fn batch_json_and_csv_keep_null_apart_from_the_empty_string() {
+    let out = pgman()
+        .args(["query", NULL_SQL, "--json", "--dsn", DSN])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    assert_eq!(rows, serde_json::json!([{"e": "", "n": null, "s": " "}]));
+
+    let out = pgman()
+        .args([
+            "--batch", "--sql", NULL_SQL, "--format", "csv", "--dsn", DSN,
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "e,n,s\n\"\",, \n");
+}
+
+/// MCP `query`: JSON null for the NULL, "" for the empty string.
+#[test]
+fn mcp_query_keeps_null_apart_from_the_empty_string() {
+    let home = mcp_home("mcp-null");
+    let frames = mcp_session(
+        &home,
+        &home,
+        &[],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "test", "sql": NULL_SQL}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["rows"],
+        serde_json::json!([{"e": "", "n": null, "s": " "}])
+    );
+}
