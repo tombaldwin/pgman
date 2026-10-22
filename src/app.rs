@@ -1223,6 +1223,11 @@ pub struct App {
     /// `redact::env_names()`, read once at startup: redaction's names
     /// from the process environment (`AWS_PROFILE`, the login name).
     pub redact_env_names: Vec<String>,
+    /// `environments.toml` exists but didn't load (a parse error, or
+    /// unreadable). Set at startup and by each listing, so the
+    /// no-connection card can point at `E` instead of looking as if
+    /// no environments were configured.
+    pub environments_config_broken: bool,
     /// psql `\x` toggle — when on, the QueryOk handler opens the
     /// existing row-detail view (`Mode::RowDetail`) for the first
     /// row of a new result instead of leaving it in the grid.
@@ -1584,6 +1589,7 @@ impl App {
             timing_on: false,
             redact: false,
             redact_env_names: Vec::new(),
+            environments_config_broken: false,
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
             // Read here rather than threaded in from `main` — the
@@ -3324,11 +3330,7 @@ impl App {
             || ui.discovery.is_some()
             || ui.loading
             // The last round hasn't answered yet: don't pile another on.
-            || ui
-                .probes
-                .iter()
-                .flatten()
-                .any(|p| *p == ProbeState::Probing)
+            || ui.probes_in_flight > 0
         {
             return;
         }
@@ -4268,8 +4270,7 @@ impl App {
             if let Some(var) = &spec.password_env {
                 origin.push_str(&format!(" · password from ${var}"));
             }
-            self.environments.opened_from = None;
-            self.connect_to_target(dsn, origin, read_only);
+            self.connect_from_environments(dsn, origin, read_only);
             return;
         };
         origin.push_str(&format!(" · creds from {}", secret.provenance()));
@@ -4289,6 +4290,16 @@ impl App {
                 "can't connect to {what}: secrets are not available in this session"
             ));
         }
+    }
+
+    /// Leave the overview for the database chosen in it. The footer's
+    /// overview text (`environments · 2 · 3 databases`, or the secret
+    /// being read) goes with it: it would sit under the start card,
+    /// describing a screen that's gone.
+    fn connect_from_environments(&mut self, dsn: Dsn, origin: String, read_only: bool) {
+        self.environments.opened_from = None;
+        self.last_status = None;
+        self.connect_to_target(dsn, origin, read_only);
     }
 
     /// `l` in the overview: recent errors from the focused server's RDS
@@ -4632,25 +4643,39 @@ impl App {
             "discovering with {}: RDS, secret names, EC2 hosts…",
             crate::inventory::discover::scope_label(&scope)
         ));
+        let token = self.environments.discovery_token.wrapping_add(1);
+        self.environments.discovery_token = token;
         self.environments.discovery = Some(DiscoveryUi {
+            token,
             loading: true,
             scope: scope.clone(),
             scopes,
             ..DiscoveryUi::default()
         });
         if discoverer.immediate {
-            self.on_env_discovered((discoverer.discover)(&scope));
+            self.on_env_discovered(token, (discoverer.discover)(&scope));
         } else {
             let tx = self.msg_tx.clone();
             tokio::task::spawn_blocking(move || {
-                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)(&scope)));
+                let result = (discoverer.discover)(&scope);
+                let _ = tx.send(AppMsg::EnvDiscovered { token, result });
             });
         }
     }
 
-    fn on_env_discovered(&mut self, result: Result<crate::inventory::discover::Found, String>) {
-        // Closed while it ran: nothing to show it in.
-        let Some(d) = self.environments.discovery.as_mut() else {
+    fn on_env_discovered(
+        &mut self,
+        token: u64,
+        result: Result<crate::inventory::discover::Found, String>,
+    ) {
+        // Closed while it ran (nothing to show it in), or closed and
+        // opened again (it belongs to a discovery that's gone).
+        let Some(d) = self
+            .environments
+            .discovery
+            .as_mut()
+            .filter(|d| d.token == token)
+        else {
             return;
         };
         d.loading = false;
@@ -4774,8 +4799,10 @@ impl App {
         }
         self.environments.probes = states;
         let Some(prober) = prober else {
+            self.environments.probes_in_flight = 0;
             return;
         };
+        self.environments.probes_in_flight = to_run.len();
         for i in to_run {
             let report = self.environments.reports[i].clone();
             match &prober {
@@ -4808,6 +4835,7 @@ impl App {
         if seq != self.environments.probe_seq {
             return;
         }
+        self.environments.probes_in_flight = self.environments.probes_in_flight.saturating_sub(1);
         let Some(states) = self.environments.probes.get_mut(report) else {
             return;
         };
@@ -4852,8 +4880,7 @@ impl App {
             Ok(creds) => {
                 let mut dsn = pending.dsn;
                 crate::creds::aws_secrets::apply(&mut dsn, creds);
-                self.environments.opened_from = None;
-                self.connect_to_target(dsn, pending.origin, pending.read_only);
+                self.connect_from_environments(dsn, pending.origin, pending.read_only);
             }
             Err(e) => {
                 self.last_status = None;

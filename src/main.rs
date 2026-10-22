@@ -413,9 +413,9 @@ async fn main() -> anyhow::Result<()> {
     // connection: the overview opens first, on the row used last time.
     let env_state = pgman::util::data_dir().join("environments-last");
     application.environments_state_file = Some(env_state.clone());
-    let has_environments = pgman::inventory::load()
-        .environments
-        .is_ok_and(|e| !e.is_empty());
+    let environments = pgman::inventory::load().environments;
+    application.environments_config_broken = environments.is_err();
+    let has_environments = environments.is_ok_and(|e| !e.is_empty());
     if application.dsn.is_none() && has_environments {
         let last = std::fs::read_to_string(&env_state)
             .ok()

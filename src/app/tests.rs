@@ -10025,7 +10025,10 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
     press(&mut a, KeyCode::Esc);
     assert!(a.environments.discovery.is_none());
     assert_eq!(a.mode, Mode::Environments, "q/esc backs out one level");
-    a.on_msg(AppMsg::EnvDiscovered(Ok(crate::demo::discovery())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: a.environments.discovery_token,
+        result: Ok(crate::demo::discovery()),
+    });
     assert!(
         a.environments.discovery.is_none(),
         "a late result reopens nothing"
@@ -10035,10 +10038,93 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
         loading: true,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("aws sts failed: expired".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("aws sts failed: expired".into()),
+    });
     let d = a.environments.discovery.as_ref().unwrap();
     assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
     assert!(!d.loading);
+}
+
+#[tokio::test]
+async fn a_discovery_backed_out_of_does_not_land_in_the_next() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        immediate: false,
+        ..recording_discoverer(Default::default(), false)
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    let first = a.environments.discovery.as_ref().unwrap().token;
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Char('d'));
+    let second = a.environments.discovery.as_ref().unwrap().token;
+    assert_ne!(first, second);
+
+    // The first discovery's answer arrives while the second runs.
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: first,
+        result: Err("expired SSO session".into()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(d.loading, "still waiting on its own");
+    assert!(d.error.is_none() && d.found.is_none(), "{:?}", d.error);
+
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: second,
+        result: Ok(crate::demo::discovery()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(!d.loading && d.found.is_some());
+}
+
+/// On a replica whose profile is read-only too (the default), the
+/// refusal is the replica's: safety.toml's advice can't unpin it.
+#[tokio::test]
+async fn readonly_off_on_a_read_only_replica_does_not_send_you_to_safety_toml() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.read_only && a.replica_pin);
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    let e = a.last_error.as_deref().unwrap();
+    assert_eq!(e, crate::app::cmd::REPLICA_READONLY_REFUSAL);
+    assert!(!e.contains("restart"), "{e}");
+}
+
+/// The overview's footer text doesn't follow Enter onto the start card,
+/// with a secret to read first or without.
+#[tokio::test]
+async fn connecting_from_the_overview_clears_its_footer() {
+    let mut a = writable_app();
+    // As a listing leaves it (a first visit shows a tip instead).
+    a.last_status = Some(environments_status(1, 2, 0));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
+
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a
+        .last_status
+        .as_deref()
+        .is_some_and(|s| s.contains("reading secret")));
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "x".into(),
+        }),
+    });
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
 }
 
 #[tokio::test]
@@ -10108,7 +10194,10 @@ fn p_discovers_again_in_the_next_scope_and_wraps() {
         scopes: crate::demo::discovery().scopes,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("AccessDenied".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("AccessDenied".into()),
+    });
     press(&mut a, KeyCode::Char('p'));
     assert_eq!(seen.lock().unwrap().last().unwrap(), "profile production");
 }
@@ -10230,21 +10319,31 @@ fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
     assert_eq!(a.environments.probes[2], [ProbeState::Off]);
 }
 
-#[test]
-fn auto_probe_is_opt_in_paced_and_never_piles_up() {
+#[tokio::test]
+async fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = rounds.clone();
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
-    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(move |r| {
+    // The real path: answers arrive as messages, and a round that
+    // hasn't answered is one whose messages haven't been handled.
+    a.env_prober = Some(EnvProber::Async(std::sync::Arc::new(move |r| {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        crate::demo::environment_probes(r)
+        let outcomes = crate::demo::environment_probes(&r);
+        Box::pin(async move { outcomes })
     })));
     let rounds_now = || rounds.load(std::sync::atomic::Ordering::SeqCst);
     // One call per environment that probes: production, staging, local.
     let per_round = 3;
+    async fn answer(a: &mut App, n: usize) {
+        for _ in 0..n {
+            let msg = a.msg_rx.as_mut().unwrap().recv().await.unwrap();
+            a.on_msg(msg);
+        }
+    }
     press(&mut a, KeyCode::Char('E'));
     assert_eq!(rounds_now(), per_round, "the listing probes once");
+    answer(&mut a, per_round).await;
 
     // Off by default: time passing probes nothing.
     a.environments.auto_probe_last = None;
@@ -10261,17 +10360,35 @@ fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     a.tick_auto_refresh();
     assert_eq!(rounds_now(), 2 * per_round, "due: probes again");
 
-    // A round still unanswered holds the next one back.
-    a.environments.probes[0][1] = ProbeState::Probing;
+    // Round 2 hasn't answered (its messages are unread). Every row
+    // still shows round 1's answer, none reads Probing, and yet the
+    // next round is held back.
+    assert!(!a
+        .environments
+        .probes
+        .iter()
+        .flatten()
+        .any(|p| *p == ProbeState::Probing));
     a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(
+        rounds_now(),
+        2 * per_round,
+        "round 2 unanswered: no round 3"
+    );
+
+    // Once it answers, the next round is due again.
+    answer(&mut a, per_round).await;
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 3 * per_round, "answered: round 3");
+    answer(&mut a, per_round).await;
 
     // Only while the overview is open.
-    a.environments.probes[0][1] = ProbeState::Off;
     a.mode = Mode::Normal;
+    a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(rounds_now(), 3 * per_round);
 }
 
 #[test]
@@ -11633,4 +11750,17 @@ fn demo_tap_feed_holds_the_frame_clock_until_drained() {
         !a.wants_animation(),
         "a drained feed must let the clock idle"
     );
+}
+
+/// The no-connection card's "environments.toml didn't load" follows the
+/// latest listing: an `E` after the file is fixed clears it.
+#[test]
+fn a_listing_says_whether_environments_toml_loaded() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::EnvironmentsLoaded(Err(
+        "parse error at line 3".into()
+    )));
+    assert!(a.environments_config_broken);
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(Vec::new())));
+    assert!(!a.environments_config_broken);
 }

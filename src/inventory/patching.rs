@@ -378,19 +378,31 @@ pub fn resolve(
     Ok((env, target))
 }
 
+/// The refusal for a replica: its primary is patched instead. Pure.
+pub fn replica_refusal(target: &Target) -> String {
+    format!(
+        "{} is a replica; patches go to its primary{}",
+        target.server,
+        target
+            .replica_of
+            .as_deref()
+            .map(|p| format!(" ({p})"))
+            .unwrap_or_default()
+    )
+}
+
+/// The refusal for a database outside its environment's
+/// `version_table` (`databases = [...]`) — a Flyway or Liquibase one,
+/// say, whose migrations its own tool applies. Pure.
+pub fn not_covered(environment: &str, database: &str) -> String {
+    format!("{environment}'s version_table doesn't cover {database}")
+}
+
 /// Why `target` of `env` can't be patched at all, before connecting.
 /// Pure.
 fn refuse(env: &Environment, target: &Target) -> Result<PatchesConfig, String> {
     if target.role == Role::Replica {
-        return Err(format!(
-            "{} is a replica; patches go to its primary{}",
-            target.server,
-            target
-                .replica_of
-                .as_deref()
-                .map(|p| format!(" ({p})"))
-                .unwrap_or_default()
-        ));
+        return Err(replica_refusal(target));
     }
     let vt = env.version_table.as_ref().ok_or_else(|| {
         format!(
@@ -399,10 +411,7 @@ fn refuse(env: &Environment, target: &Target) -> Result<PatchesConfig, String> {
         )
     })?;
     if !vt.applies_to(&target.database) {
-        return Err(format!(
-            "{}'s version_table doesn't cover {}",
-            env.name, target.database
-        ));
+        return Err(not_covered(&env.name, &target.database));
     }
     if vt.patches.is_none() {
         return Err(format!(

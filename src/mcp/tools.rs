@@ -770,7 +770,7 @@ pub fn render_row_probe(
         return render_probe(outcome);
     }
     match plan(targets).get(ti) {
-        Some(Step::NotRunning) => json!({"not_probed": "the server isn't running"}),
+        Some(Step::NotRunning) => json!({"not_probed": "the server isn't up (see its status)"}),
         _ => {
             let t = &targets[ti];
             let replica = targets.iter().position(|r| {
@@ -1620,7 +1620,10 @@ mod tests {
         let mut t = crate::demo::environments()[1].targets[0].clone();
         t.status = Some("stopped".into());
         let v = render_row_probe(&[t], &[None], 0);
-        assert_eq!(v, json!({"not_probed": "the server isn't running"}));
+        assert_eq!(
+            v,
+            json!({"not_probed": "the server isn't up (see its status)"})
+        );
     }
 
     #[test]

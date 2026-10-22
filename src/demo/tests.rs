@@ -661,3 +661,39 @@ fn demo_live_lint_flags_exactly_the_unindexed_foreign_keys() {
     assert!(findings.iter().any(|f| f.code == "LINT102"));
     assert!(findings.iter().any(|f| f.code == "LINT104"));
 }
+
+/// `P` in the demo answers as a real run would: a replica is refused, a
+/// database whose SCHEMA is Flyway's gets the version table's "doesn't
+/// cover", and only `ledger` gets the schema_version plan.
+#[test]
+fn p_in_the_demo_matches_the_database() {
+    let mut flyway_dbs = std::collections::HashSet::new();
+    for r in environments() {
+        for p in environment_probes(&r).into_iter().zip(&r.targets) {
+            if let (Some(Ok(p)), t) = p {
+                if p.migration_tool.as_deref() == Some("flyway") {
+                    flyway_dbs.insert((r.name.clone(), t.database.clone()));
+                }
+            }
+        }
+    }
+    assert!(flyway_dbs.contains(&("production".to_string(), "ledgerlog".to_string())));
+    for r in environments() {
+        for t in &r.targets {
+            let plan = plan_for(&r.name, &t.server, &t.database, false);
+            let what = format!("{}/{}/{}", r.name, t.server, t.database);
+            if t.role == crate::mcp::connections::Role::Replica {
+                assert!(plan.unwrap_err().contains("is a replica"), "{what}");
+            } else if flyway_dbs.contains(&(r.name.clone(), t.database.clone())) {
+                assert_eq!(
+                    plan.unwrap_err(),
+                    format!("{}'s version_table doesn't cover {}", r.name, t.database),
+                    "{what}"
+                );
+            } else {
+                assert_eq!(t.database, "ledger", "{what}");
+                assert!(plan.is_ok(), "{what}");
+            }
+        }
+    }
+}

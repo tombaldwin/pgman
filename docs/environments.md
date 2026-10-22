@@ -146,7 +146,7 @@ can't silently widen what an environment covers.
 | `kind` | Rows | Needs |
 | --- | --- | --- |
 | `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases` (default: the instance's `DBName`). Aurora keeps the writer, the readers and the database name on the cluster, so when an Aurora instance is listed `aws rds describe-db-clusters` is read too: readers list under the writer as replicas do, the cluster's `DatabaseName` is the default database, and naming any one instance brings the whole cluster, so a failover doesn't split it. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
-| `static` | One row per named connection in `connections.toml`, with its role. There's no engine version or status yet. | Nothing. |
+| `static` | One row per named connection in `connections.toml`, with its role. A `role = "replica"` connection is listed under the environment's `role = "primary"` connection of the same database, and probed in its place, as an `rds` replica is; with no such primary, or more than one, it's listed on its own. There's no engine version or status until a probe reads one. | Nothing. |
 | `docker` | Local containers that expose 5432 or run a `postgres` image, whose names match one of `containers` (globs; default all). One row per entry in `databases` (default `postgres`), reached on the port 5432 is published to. A stopped container, or one that doesn't publish 5432, is listed with the reason it can't connect. | The `docker` CLI on `PATH`. `user`, `password_env` and `sslmode` apply; `ssh_tunnel` and `secrets` don't. |
 
 Environments that share an `rds` scope (region, profile, account) share
@@ -247,8 +247,11 @@ How a probe connects:
   the same), and the detail line says so. `SESSIONS` and `SIZE` stay
   blank, because they're per server. A primary is probed only when
   there's no replica to read instead.
-- **A server that isn't running** (stopped, starting, or a container
-  that exited) isn't probed. Its status says why.
+- **A server that isn't up** isn't probed. On RDS that is any status
+  but `available`, `backing-up`, `modifying`, `configuring-…`,
+  `resetting-master-credentials` and `storage-optimization` (so
+  `stopped`, `rebooting`, `failed`, `storage-full`, `upgrading`, …); for
+  a container, any state but `running`. Its status says why.
 - **One ssh per bastion.** Every database behind the same bastion rides
   one `ssh` carrying a forward each, closed when the probe ends.
 - **Read-only, bounded.** Every connection is read-only, with a 5 s

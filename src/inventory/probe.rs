@@ -36,24 +36,28 @@ pub enum Step {
     NotRunning,
 }
 
-/// Whether a source's status says the server can be connected to. An
-/// unknown status (a `static` source) is given the benefit of the doubt.
-/// Pure.
+/// Whether a source's status says the server can be connected to: one
+/// of the states known to take connections. Any other — `failed`,
+/// `storage-full`, `rebooting`, `incompatible-*`, `stopped`, an exited
+/// container, or a state RDS adds later — isn't probed, rather than
+/// spend the connect timeout finding out; the row's status says why.
+/// No status at all (a `static` source) is given the benefit of the
+/// doubt. Pure.
 pub fn is_running(status: Option<&str>) -> bool {
-    !matches!(
+    let Some(status) = status else {
+        return true;
+    };
+    matches!(
         status,
-        Some(
-            "stopped"
-                | "stopping"
-                | "starting"
-                | "creating"
-                | "deleting"
-                | "exited"
-                | "created"
-                | "paused"
-                | "dead"
-        )
-    )
+        // RDS: up, with the instance being changed around it at most.
+        "available"
+            | "backing-up"
+            | "modifying"
+            | "resetting-master-credentials"
+            | "storage-optimization"
+            // docker
+            | "running"
+    ) || status.starts_with("configuring-")
 }
 
 /// One [`Step`] per target, in order. Pure.
@@ -606,10 +610,39 @@ mod tests {
             [Step::NotRunning, Step::Connect, Step::Connect],
             "an unknown status (static) is still tried"
         );
-        for s in ["stopped", "stopping", "starting", "exited", "paused"] {
+        for s in [
+            "stopped",
+            "stopping",
+            "starting",
+            "creating",
+            "deleting",
+            "exited",
+            "paused",
+            "failed",
+            "storage-full",
+            "rebooting",
+            "upgrading",
+            "maintenance",
+            "renaming",
+            "inaccessible-encryption-credentials",
+            "incompatible-parameters",
+            "incompatible-network",
+            "insufficient-capacity",
+            "restore-error",
+            "some-state-rds-adds-later",
+        ] {
             assert!(!is_running(Some(s)), "{s}");
         }
-        for s in ["available", "backing-up", "modifying", "running"] {
+        for s in [
+            "available",
+            "backing-up",
+            "modifying",
+            "configuring-enhanced-monitoring",
+            "configuring-log-exports",
+            "resetting-master-credentials",
+            "storage-optimization",
+            "running",
+        ] {
             assert!(is_running(Some(s)), "{s}");
         }
     }

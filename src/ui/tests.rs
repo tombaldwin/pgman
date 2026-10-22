@@ -1501,3 +1501,43 @@ fn a_floated_popup_is_centred_across_the_panel_and_off_its_frame() {
     let r = crate::ui::floated_in_panel(panel, 200, 40);
     assert_eq!((r.x, r.y, r.width, r.height), (1, 11, 118, 18));
 }
+
+/// A broken environments.toml means pgman starts here, not on the
+/// overview: the card says so, and where the details are.
+#[test]
+fn the_no_connection_card_points_at_a_broken_environments_toml() {
+    let screen = |broken: bool, picks: bool| {
+        let mut app = App::new(
+            Theme::default(),
+            None,
+            Vec::new(),
+            crate::safety::SafetyConfig::default(),
+        );
+        app.splash_visible = false;
+        app.environments_config_broken = broken;
+        if picks {
+            app.conn_pick.picks = vec![crate::app::DataSourcePick {
+                name: "dataSource (application)".into(),
+                origin: "Spring",
+                dsn: None,
+                unresolved: Vec::new(),
+                unresolved_host: Vec::new(),
+                creds: Default::default(),
+            }];
+        }
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_string())
+            .collect::<String>()
+    };
+    let hint = "environments.toml didn't load — press E for the details";
+    for picks in [false, true] {
+        let text = screen(true, picks);
+        assert!(text.contains(hint), "{text}");
+        assert!(text.contains("no connection"), "{text}");
+        assert!(!screen(false, picks).contains("environments.toml"));
+    }
+}

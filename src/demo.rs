@@ -59,7 +59,7 @@ pub fn app(theme: Theme) -> App {
     });
     a.env_patcher = Some(crate::app::EnvPatcher {
         plan: std::sync::Arc::new(|e, s, d, outside| {
-            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
+            Box::pin(std::future::ready(plan_for(&e, &s, &d, outside)))
         }),
         apply: std::sync::Arc::new(|p, mode, _cancel| {
             use crate::inventory::patching::{CopyNote, RunMode};
@@ -1322,6 +1322,33 @@ const PATCHES: &[(i64, &str, &[&str])] = &[
         ],
     ),
 ];
+
+/// `P` in `--demo`: what a real run says for the row. A replica is
+/// refused (its primary is patched). Only `ledger` keeps the demo's
+/// `schema_version` patches — its environments' `version_table` is for
+/// it alone — and every other demo database is Flyway's, which the
+/// version table doesn't cover.
+pub fn plan_for(
+    environment: &str,
+    server: &str,
+    database: &str,
+    outside: bool,
+) -> Result<crate::inventory::patching::PatchPlan, String> {
+    use crate::inventory::patching::{not_covered, replica_refusal};
+    use crate::mcp::connections::Role;
+    let replica = environments()
+        .into_iter()
+        .filter(|r| r.name == environment)
+        .flat_map(|r| r.targets)
+        .find(|t| t.server == server && t.database == database && t.role == Role::Replica);
+    if let Some(t) = replica {
+        Err(replica_refusal(&t))
+    } else if database == "ledger" {
+        Ok(patch_plan(environment, server, database, outside))
+    } else {
+        Err(not_covered(environment, database))
+    }
+}
 
 /// A patch plan in `--demo`: the patches the environment hasn't
 /// recorded — all three everywhere but the local container, which has

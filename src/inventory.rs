@@ -604,9 +604,11 @@ pub fn group_replicas_under_primaries(rows: &mut [Target]) {
 }
 
 /// Static rows from the personal connection entries, by name. An unknown
-/// name is an error for the environment, not a silent gap.
+/// name is an error for the environment, not a silent gap. Replicas are
+/// linked to their primaries ([`link_static_replicas`]) and listed under
+/// them, as an `rds` source's are.
 pub fn static_targets(names: &[String], entries: &[Entry]) -> Result<Vec<Target>, String> {
-    names
+    let mut rows = names
         .iter()
         .map(|n| {
             let e = entries
@@ -639,7 +641,33 @@ pub fn static_targets(names: &[String], entries: &[Entry]) -> Result<Vec<Target>
                 }),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+    link_static_replicas(&mut rows);
+    group_replicas_under_primaries(&mut rows);
+    Ok(rows)
+}
+
+/// `connections.toml` gives a role but not whose replica a connection
+/// is, so a static environment links them by database: a replica's
+/// primary is the environment's one `role = "primary"` row of the same
+/// database. With none, or more than one, it isn't guessed and the
+/// replica stays unlinked (listed flat, and no primary is read through
+/// it). Pure.
+pub fn link_static_replicas(rows: &mut [Target]) {
+    let primary_of = |db: &str, rows: &[Target]| -> Option<String> {
+        let mut primaries = rows
+            .iter()
+            .filter(|p| p.role == Role::Primary && p.database == db);
+        match (primaries.next(), primaries.next()) {
+            (Some(p), None) => Some(p.server.clone()),
+            _ => None,
+        }
+    };
+    for i in 0..rows.len() {
+        if rows[i].role == Role::Replica && rows[i].replica_of.is_none() {
+            rows[i].replica_of = primary_of(&rows[i].database, rows);
+        }
+    }
 }
 
 /// Every environment's report. `fetch_rds` lists instances for one scope;
@@ -1049,6 +1077,91 @@ source = { kind = "static", connections = ["ledger-local"] }
         assert!(static_targets(&["nope".into()], &entries)
             .unwrap_err()
             .contains("no connection"));
+    }
+
+    /// A static environment with a primary and its replica lists and
+    /// probes like an rds one: the replica under the primary, and the
+    /// primary read through it.
+    #[test]
+    fn a_static_replica_sits_under_its_primary_and_stands_in_for_it() {
+        let personal = crate::mcp::connections::parse_personal(
+            "[[connections]]\nname = \"panel-replica\"\nurl = \"postgres://u@replica.example/app\"\nrole = \"replica\"\n\
+             [[connections]]\nname = \"panel-primary\"\nurl = \"postgres://u@primary.example/app\"\nrole = \"primary\"\n\
+             [[connections]]\nname = \"panel-other\"\nurl = \"postgres://u@other.example/other\"\n",
+        );
+        let entries = crate::mcp::connections::build(&personal.connections, Vec::new(), false);
+        let names = ["panel-replica", "panel-primary", "panel-other"].map(String::from);
+        let t = static_targets(&names, &entries).unwrap();
+        let rows: Vec<_> = t
+            .iter()
+            .map(|t| (t.server.as_str(), t.replica_of.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("panel-primary", None),
+                ("panel-replica", Some("panel-primary")),
+                ("panel-other", None),
+            ]
+        );
+        use probe::Step;
+        assert_eq!(
+            probe::plan(&t),
+            [Step::ViaReplica, Step::Connect, Step::Connect]
+        );
+    }
+
+    #[test]
+    fn a_static_replica_is_linked_only_to_the_one_primary_of_its_database() {
+        let row = |server: &str, db: &str, role: Role| Target {
+            database: db.into(),
+            server: server.into(),
+            role,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Err("n/a".into()),
+        };
+        let link = |mut rows: Vec<Target>| {
+            link_static_replicas(&mut rows);
+            rows.into_iter().map(|t| t.replica_of).collect::<Vec<_>>()
+        };
+        // Another database's primary isn't this replica's.
+        assert_eq!(
+            link(vec![
+                row("p", "a", Role::Primary),
+                row("r", "b", Role::Replica)
+            ]),
+            [None, None]
+        );
+        // Two primaries of one database: not guessed.
+        assert_eq!(
+            link(vec![
+                row("p1", "a", Role::Primary),
+                row("p2", "a", Role::Primary),
+                row("r", "a", Role::Replica)
+            ]),
+            [None, None, None]
+        );
+        // A direct row is nobody's primary.
+        assert_eq!(
+            link(vec![
+                row("d", "a", Role::Direct),
+                row("r", "a", Role::Replica)
+            ]),
+            [None, None]
+        );
+        assert_eq!(
+            link(vec![
+                row("r", "a", Role::Replica),
+                row("p", "a", Role::Primary)
+            ]),
+            [Some("p".to_string()), None]
+        );
     }
 
     const CONNECTABLE: &str = r#"
