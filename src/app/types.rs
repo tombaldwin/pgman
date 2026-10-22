@@ -1003,6 +1003,8 @@ pub struct EnvironmentsUi {
     pub connect_token: u64,
     /// `Some` while the discovery view (`d`) is open over the overview.
     pub discovery: Option<DiscoveryUi>,
+    /// Numbers each discovery, so a late result matches only its own.
+    pub discovery_token: u64,
     /// Parallel to `reports`: each row's probe.
     pub probes: Vec<Vec<ProbeState>>,
     /// Numbers each listing, so probes of an older one are dropped.
@@ -1173,6 +1175,8 @@ impl EnvSelection {
 /// operator chose, and the cursor.
 #[derive(Debug, Default)]
 pub struct DiscoveryUi {
+    /// Which discovery this view is waiting on (`discovery_token`).
+    pub token: u64,
     pub loading: bool,
     pub found: Option<crate::inventory::discover::Found>,
     pub error: Option<String>,

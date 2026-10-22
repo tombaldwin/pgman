@@ -13,7 +13,7 @@ impl App {
                 | AppMsg::Terminate
                 | AppMsg::EnvironmentsLoaded(_)
                 | AppMsg::EnvSecretResolved { .. }
-                | AppMsg::EnvDiscovered(_)
+                | AppMsg::EnvDiscovered { .. }
                 | AppMsg::EnvProbed { .. }
                 | AppMsg::EnvLogs { .. }
                 | AppMsg::EnvPatchPlanned { .. }
@@ -288,7 +288,7 @@ impl App {
                 }
             }
             AppMsg::EnvSecretResolved { token, result } => self.on_env_secret(token, result),
-            AppMsg::EnvDiscovered(result) => self.on_env_discovered(result),
+            AppMsg::EnvDiscovered { token, result } => self.on_env_discovered(token, result),
             AppMsg::EnvPatchPlanned {
                 environment,
                 server,

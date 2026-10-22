@@ -10025,7 +10025,10 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
     press(&mut a, KeyCode::Esc);
     assert!(a.environments.discovery.is_none());
     assert_eq!(a.mode, Mode::Environments, "q/esc backs out one level");
-    a.on_msg(AppMsg::EnvDiscovered(Ok(crate::demo::discovery())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: a.environments.discovery_token,
+        result: Ok(crate::demo::discovery()),
+    });
     assert!(
         a.environments.discovery.is_none(),
         "a late result reopens nothing"
@@ -10035,10 +10038,46 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
         loading: true,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("aws sts failed: expired".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("aws sts failed: expired".into()),
+    });
     let d = a.environments.discovery.as_ref().unwrap();
     assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
     assert!(!d.loading);
+}
+
+#[tokio::test]
+async fn a_discovery_backed_out_of_does_not_land_in_the_next() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        immediate: false,
+        ..recording_discoverer(Default::default(), false)
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    let first = a.environments.discovery.as_ref().unwrap().token;
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Char('d'));
+    let second = a.environments.discovery.as_ref().unwrap().token;
+    assert_ne!(first, second);
+
+    // The first discovery's answer arrives while the second runs.
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: first,
+        result: Err("expired SSO session".into()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(d.loading, "still waiting on its own");
+    assert!(d.error.is_none() && d.found.is_none(), "{:?}", d.error);
+
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: second,
+        result: Ok(crate::demo::discovery()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(!d.loading && d.found.is_some());
 }
 
 #[tokio::test]
@@ -10108,7 +10147,10 @@ fn p_discovers_again_in_the_next_scope_and_wraps() {
         scopes: crate::demo::discovery().scopes,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("AccessDenied".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("AccessDenied".into()),
+    });
     press(&mut a, KeyCode::Char('p'));
     assert_eq!(seen.lock().unwrap().last().unwrap(), "profile production");
 }

@@ -104,8 +104,13 @@ pub enum AppMsg {
         plan: crate::inventory::patching::PatchPlan,
         report: crate::inventory::patching::ApplyReport,
     },
-    /// Environment discovery finished. Not tied to a connection.
-    EnvDiscovered(Result<crate::inventory::discover::Found, String>),
+    /// Environment discovery finished. Not tied to a connection;
+    /// matched to its discovery by `token`, so the result of one the
+    /// operator backed out of doesn't land in the next.
+    EnvDiscovered {
+        token: u64,
+        result: Result<crate::inventory::discover::Found, String>,
+    },
     /// An environment connect's secret was read (or not). Matched to its
     /// connect by `token`, not the generation: no connection owns it yet.
     EnvSecretResolved {
@@ -205,7 +210,7 @@ impl AppMsg {
             | AppMsg::Terminate
             | AppMsg::EnvironmentsLoaded(_)
             | AppMsg::EnvSecretResolved { .. }
-            | AppMsg::EnvDiscovered(_)
+            | AppMsg::EnvDiscovered { .. }
             | AppMsg::EnvProbed { .. }
             | AppMsg::EnvLogs { .. }
             | AppMsg::EnvPatchPlanned { .. }

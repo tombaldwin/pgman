@@ -980,6 +980,7 @@ fn scr_env_discovery() -> App {
         cursor: 0,
         scope: Default::default(),
         scopes: pgman::demo::discovery().scopes,
+        ..Default::default()
     });
     a
 }

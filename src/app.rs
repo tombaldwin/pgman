@@ -4628,25 +4628,39 @@ impl App {
             "discovering with {}: RDS, secret names, EC2 hosts…",
             crate::inventory::discover::scope_label(&scope)
         ));
+        let token = self.environments.discovery_token.wrapping_add(1);
+        self.environments.discovery_token = token;
         self.environments.discovery = Some(DiscoveryUi {
+            token,
             loading: true,
             scope: scope.clone(),
             scopes,
             ..DiscoveryUi::default()
         });
         if discoverer.immediate {
-            self.on_env_discovered((discoverer.discover)(&scope));
+            self.on_env_discovered(token, (discoverer.discover)(&scope));
         } else {
             let tx = self.msg_tx.clone();
             tokio::task::spawn_blocking(move || {
-                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)(&scope)));
+                let result = (discoverer.discover)(&scope);
+                let _ = tx.send(AppMsg::EnvDiscovered { token, result });
             });
         }
     }
 
-    fn on_env_discovered(&mut self, result: Result<crate::inventory::discover::Found, String>) {
-        // Closed while it ran: nothing to show it in.
-        let Some(d) = self.environments.discovery.as_mut() else {
+    fn on_env_discovered(
+        &mut self,
+        token: u64,
+        result: Result<crate::inventory::discover::Found, String>,
+    ) {
+        // Closed while it ran (nothing to show it in), or closed and
+        // opened again (it belongs to a discovery that's gone).
+        let Some(d) = self
+            .environments
+            .discovery
+            .as_mut()
+            .filter(|d| d.token == token)
+        else {
             return;
         };
         d.loading = false;
