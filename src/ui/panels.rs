@@ -285,11 +285,10 @@ fn pick_popup_budget(popup_height: u16, header_len: usize) -> (usize, usize) {
     (inner.saturating_sub(rows), rows)
 }
 
-/// Log-import picker: lists reconstructed queries (`hibernate` / `pglog`
-/// sources), highlights the selection.
+/// Log-import picker: lists reconstructed queries tagged by source
+/// (`Source::label`), highlights the selection.
 pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     use crate::app::LogPickView;
-    use crate::query::reconstruct::Source;
     let theme = &app.theme;
     let max_preview = 80usize;
     // One-line triage summary above the picker rows. Surfaces N+1
@@ -383,11 +382,7 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .skip(scroll)
             .take(visible_rows)
             .map(|(i, q)| {
-                let source = match q.source {
-                    Source::HibernateLog => "hibernate",
-                    Source::PostgresLog => "pglog",
-                    Source::JdbcPaste => "jdbc",
-                };
+                let source = q.source.label();
                 let mut preview: String = q
                     .runnable_sql
                     .chars()
@@ -410,9 +405,9 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(theme.text)
                 };
-                // Pad the source column OUTSIDE the brackets — `[pglog]
+                // Pad the source column OUTSIDE the brackets — `[jdbc]
                 // ` — so the bracket sits against its own tag instead
-                // of fencing off a run of spaces (`[    pglog]`).
+                // of fencing off a run of spaces (`[    jdbc]`).
                 let tag = format!("[{source}]");
                 Line::from(Span::styled(format!("{prefix}{tag:<11} {preview}"), style))
             })

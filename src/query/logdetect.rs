@@ -22,18 +22,20 @@ pub enum LogKind {
 }
 
 impl LogKind {
-    /// Short tag matching the label already used for reconstructed-query
-    /// sources elsewhere in the UI (see `ui::panels`'s
-    /// `Source::HibernateLog` → `"hibernate"` / `Source::PostgresLog` →
-    /// `"pglog"` / `Source::JdbcPaste` → `"jdbc"` mapping) — kept
-    /// identical so the hint and the picker use the same word for the
-    /// same thing.
-    pub fn label(self) -> &'static str {
+    /// The source this kind reconstructs into.
+    pub fn source(self) -> super::reconstruct::Source {
+        use super::reconstruct::Source;
         match self {
-            LogKind::Hibernate => "hibernate",
-            LogKind::PgServer => "pglog",
-            LogKind::Jdbc => "jdbc",
+            LogKind::Hibernate => Source::HibernateLog,
+            LogKind::PgServer => Source::PostgresLog,
+            LogKind::Jdbc => Source::JdbcPaste,
         }
+    }
+
+    /// The source's UI word (`Source::label`), so the hint and the
+    /// picker's `[tag]` can't drift apart.
+    pub fn label(self) -> &'static str {
+        self.source().label()
     }
 }
 

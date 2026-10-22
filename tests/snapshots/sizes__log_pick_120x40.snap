@@ -21,7 +21,7 @@ expression: dump(&buf)
 │INV-00482│  2 queries · view: all queries (press `c` to toggle)                                             │         │
 │INV-00482│                                                                                                  │         │
 │INV-00482│▶ [hibernate] select * from users where id = 42                                                   │         │
-│INV-00482│  [pglog]     select * from orders where user_id = 42                                             │         │
+│INV-00482│  [postgres]  select * from orders where user_id = 42                                             │         │
 │INV-00483╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
 │                                                                                                                      │
 │                                                                                                                      │

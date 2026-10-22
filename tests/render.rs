@@ -150,6 +150,19 @@ fn editor_renders_keyword_in_title_colour() {
 }
 
 #[test]
+fn editor_title_names_a_pasted_postgres_log_in_user_words() {
+    // The title once said `pglog log` — an internal module name.
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer =
+        "2026-10-21 09:12:48.001 UTC [31840] billing@ledger LOG:  statement: select 1".into();
+    a.editor.cursor = 0;
+    let text = dump(&render(&mut a, 120, 20));
+    assert!(text.contains("editor · postgres log"), "{text}");
+    assert!(!text.contains("pglog"), "{text}");
+}
+
+#[test]
 fn editor_flags_unknown_identifier_in_syn_unknown() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
