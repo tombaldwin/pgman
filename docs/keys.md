@@ -138,7 +138,8 @@ closes the popup, so an alias typed after a table name is never completed.
 `Esc` restores the originally-typed prefix and closes the popup. Repeated
 `Tab` cycles through candidates. `Enter` accepts the highlighted (or first)
 candidate — but only from a popup that is on screen, and not when nothing
-is highlighted and the statement already ends in `;` (then it runs). Any
+is highlighted and either the word is already a whole candidate (then it is
+a newline) or the statement already ends in `;` (then it runs). Any
 other key closes the popup and leaves the buffer as it is.
 
 ## Result grid

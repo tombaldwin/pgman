@@ -11724,3 +11724,22 @@ fn enter_under_a_popup_no_frame_has_drawn_is_a_newline() {
     draw_a_frame(&mut a);
     assert!(a.completion_popup_drawn, "a full-size frame draws it");
 }
+
+#[test]
+fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_items");
+    assert!(a.completion.is_some(), "the FROM popup is still narrowing");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items\n");
+    assert!(a.completion.is_none());
+
+    // A prefix that is not yet a whole name still accepts.
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_it");
+    draw_a_frame(&mut a);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items");
+}

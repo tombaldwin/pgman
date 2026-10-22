@@ -120,7 +120,18 @@ impl App {
                 .completion
                 .as_ref()
                 .is_some_and(|c| c.selected.is_some());
-            if picked || !enter_runs(&self.editor.buffer) {
+            // The word under the popup is already a whole candidate
+            // (`from users` with `users_archived` still listed):
+            // there is nothing to accept, and Enter is the newline the
+            // operator typed it for — not a no-op that eats it.
+            let already_complete = self.completion.as_ref().is_some_and(|c| {
+                let typed = self.editor.buffer.get(c.start..c.end).unwrap_or("");
+                !typed.is_empty()
+                    && c.candidates
+                        .iter()
+                        .any(|cand| cand.insert.eq_ignore_ascii_case(typed))
+            });
+            if picked || (!already_complete && !enter_runs(&self.editor.buffer)) {
                 self.editor_accept_completion();
                 return;
             }
