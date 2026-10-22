@@ -36,13 +36,21 @@ use tap::draw_tap_monitor;
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// The About card's credit line.
+pub(crate) const ABOUT_CREDIT: &str = "by Tom Baldwin / Polymorphism Ltd";
+
+/// Product text drawn word for word that redaction leaves alone: it is
+/// pgman's, not anyone's infrastructure, and a word in it can match a
+/// redacted name (a login name that is also the author's first name).
+const FIXED_TEXT: &[&str] = &[ABOUT_CREDIT];
+
 /// Render one frame — and, in redaction mode, block out the
 /// infrastructure names in all of it (`redact::apply`), so no panel
 /// has to remember to.
 pub fn draw(f: &mut Frame, app: &mut App) {
     draw_frame(f, app);
     if app.redact {
-        let r = crate::redact::Redactor::new(crate::redact::app_names(app));
+        let r = crate::redact::Redactor::new(crate::redact::app_names(app)).with_fixed(FIXED_TEXT);
         crate::redact::apply(f.buffer_mut(), &r);
     }
 }

@@ -463,7 +463,8 @@ are environment and role words (`prod`, `staging`, `replica`,
 
 **Not blocked out, by design:** schema (tables, columns, functions) and
 data (result rows, SQL in the editor). A table named after a client
-shows as it is.
+shows as it is. Nor is pgman's own fixed text, such as the About
+card's credit line, even where a word in it matches a redacted name.
 
 **Limits.** Matching is on what is drawn. A known name cut short by the
 layout is caught by its parts, but an *unknown* host or account ID cut

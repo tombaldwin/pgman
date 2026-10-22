@@ -88,7 +88,7 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "by Tom Baldwin / Polymorphism Ltd",
+        super::ABOUT_CREDIT,
         Style::default().fg(theme.muted),
     )));
     lines.push(Line::from(Span::styled(

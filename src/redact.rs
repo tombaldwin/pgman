@@ -169,9 +169,20 @@ pub struct Redactor {
     names: Vec<String>,
     /// Their non-generic segments, lowercased, matched as whole words.
     segments: Vec<String>,
+    /// pgman's own fixed text, matched exactly: never redacted.
+    fixed: &'static [&'static str],
 }
 
 impl Redactor {
+    /// Leave `fixed` alone wherever it appears word for word: text pgman
+    /// itself draws, such as the About card's credit line, which names
+    /// its author rather than anyone's infrastructure and can share a
+    /// word with a redacted login or user name.
+    pub fn with_fixed(mut self, fixed: &'static [&'static str]) -> Self {
+        self.fixed = fixed;
+        self
+    }
+
     /// A redactor for these known names (hosts, environment names,
     /// secret ids…). Empty and all-generic names are dropped.
     pub fn new<I, S>(names: I) -> Self
@@ -225,7 +236,13 @@ impl Redactor {
                 out.push(at..at + seg.len());
             }
         }
-        merge(out)
+        let mut out = merge(out);
+        for text in self.fixed {
+            for (at, m) in line.match_indices(text) {
+                out = cut(out, at..at + m.len());
+            }
+        }
+        out
     }
 
     /// `line` with its redacted chars replaced by [`BLOCK`], one per
@@ -643,6 +660,24 @@ fn url_userinfo(s: &str, out: &mut Vec<Range<usize>>) {
     }
 }
 
+/// `ranges` with `hole` taken out of them. Order is kept.
+fn cut(ranges: Vec<Range<usize>>, hole: Range<usize>) -> Vec<Range<usize>> {
+    let mut out = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        if r.end <= hole.start || hole.end <= r.start {
+            out.push(r);
+            continue;
+        }
+        if r.start < hole.start {
+            out.push(r.start..hole.start);
+        }
+        if hole.end < r.end {
+            out.push(hole.end..r.end);
+        }
+    }
+    out
+}
+
 fn merge(mut v: Vec<Range<usize>>) -> Vec<Range<usize>> {
     v.retain(|r| r.start < r.end);
     v.sort_by_key(|r| r.start);
@@ -760,6 +795,21 @@ mod tests {
         ] {
             assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
         }
+    }
+
+    #[test]
+    fn fixed_text_is_never_redacted_but_the_same_word_elsewhere_is() {
+        const FIXED: &[&str] = &["by Tom Baldwin"];
+        let r = Redactor::new(["tom"]).with_fixed(FIXED);
+        assert_eq!(
+            r.redact("by Tom Baldwin, for tom"),
+            "by Tom Baldwin, for ▓▓▓"
+        );
+        // Matched word for word: another casing is not the fixed text.
+        assert_eq!(r.redact("by TOM Baldwin"), "by ▓▓▓ Baldwin");
+        assert_eq!(cut(std::iter::once(0..10).collect(), 3..5), [0..3, 5..10]);
+        assert_eq!(cut(vec![0..4, 6..9, 12..13], 2..7), [0..2, 7..9, 12..13]);
+        assert_eq!(cut(std::iter::once(3..5).collect(), 0..10), []);
     }
 
     #[test]

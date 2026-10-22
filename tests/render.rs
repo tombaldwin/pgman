@@ -1147,6 +1147,27 @@ fn about_card_carries_the_full_server_version() {
     assert!(!header.contains("Debian"), "{header}");
 }
 
+/// Redaction leaves pgman's own credit line alone even when a word in
+/// it is a redacted name — here the login name — while the same word
+/// elsewhere on screen is still blocked out.
+#[test]
+fn redacted_about_card_keeps_its_credit_line() {
+    let mut a = settle_app();
+    a.redact_env_names = vec!["tom".into()];
+    a.last_error = Some("permission denied for tom".into());
+    a.mode = Mode::About;
+    a.redact = true;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        rendered.contains("by Tom Baldwin / Polymorphism Ltd"),
+        "credit line redacted:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("denied for tom") && rendered.contains("denied for ▓▓▓"),
+        "the name elsewhere must still go:\n{rendered}"
+    );
+}
+
 /// The footer renders the `:` bar only while the mode IS `CommandBar`.
 /// An async `TxClosed` landing mid-bar moves the mode to Editor
 /// without taking the bar; until the next key drops it, its text must
