@@ -89,7 +89,7 @@ the buffer. Opening the bar over a guarded-run confirmation cancels that run
 |---|---|---|
 | `:about` | — | The About card: version, install channel, server version, licence. |
 | `:update` | — | The About card, plus a footer line saying where the release check got to. "Up to date" is only claimed once a check has landed. |
-| `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`, `wizard`. The topic picks the section to show, not where you end up: closing help returns to the mode the `:` bar was opened from. |
+| `:help [topic]` | `\?` / `\h` | The help overlay, scrolled to `<topic>`: `grid`, `editor`, `commands`, `schema`, `saved`, `slow`, `sessions`, `environments`, `tap`, `explain`, `diff`, `wizard`. The topic picks the section to show, not where you end up: closing help returns to the mode the `:` bar was opened from. |
 | `:quit`, `:q` | `\q` | Quit pgman. |
 | `:error` | — | The last error in full — what `F2` (or `!` outside the editor) opens. |
 | `:notify` | — | The `LISTEN`/`NOTIFY` arrivals panel, as `F3`. |

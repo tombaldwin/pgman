@@ -385,8 +385,8 @@ bar itself). See [docs/commands.md](commands.md) for what each command does.
 | `Esc` / `?` / `q` / `F1` | Close — returns to the mode you opened help from |
 
 Open it at a named section with `:help <topic>` — `grid`, `editor`,
-`commands`, `schema`, `saved`, `slow`, `sessions`, `tap`, `explain`, `diff`,
-`wizard`.
+`commands`, `schema`, `saved`, `slow`, `sessions`, `environments`, `tap`,
+`explain`, `diff`, `wizard`.
 
 ### About (`A`)
 

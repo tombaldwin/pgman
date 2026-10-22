@@ -2418,7 +2418,7 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("                  o in the plan: patches needing no transaction, outside one;"),
+        row("                  o in the plan: patches that can't run in a transaction, outside one;"),
         &mut lines,
     );
     push(
@@ -2536,14 +2536,17 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
-        row("    :readonly on|off  the read-only flag pgman opens connections with; applies"),
+        row("    :readonly on|off  the read-only flag: on now for this session (not inside an"),
         &mut lines,
     );
     push(
-        row("                    at the next connect. Refused when safety.toml pins this"),
+        row("                    open transaction) and at every later connect. Refused when"),
         &mut lines,
     );
-    push(row("                    database read-only."), &mut lines);
+    push(
+        row("                    safety.toml pins this database read-only."),
+        &mut lines,
+    );
     push(
         row("    :redact [on|off] block out hosts, accounts and known names on screen, for"),
         &mut lines,
