@@ -113,7 +113,7 @@
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::flush",
-      "loc": "src/main.rs:1336:5: 1336:47",
+      "loc": "src/main.rs:1341:5: 1341:47",
       "inferred": [
         "Unknown"
       ],
@@ -131,7 +131,7 @@
     },
     {
       "fn": "<OwnerOnlyWriter<'_> as std::io::Write>::write",
-      "loc": "src/main.rs:1330:5: 1330:62",
+      "loc": "src/main.rs:1335:5: 1335:62",
       "inferred": [
         "Clock",
         "Fs",
@@ -165,7 +165,7 @@
     },
     {
       "fn": "OwnerOnlyRolling::new",
-      "loc": "src/main.rs:1284:5: 1284:99",
+      "loc": "src/main.rs:1289:5: 1289:99",
       "inferred": [
         "Clock"
       ],
@@ -181,7 +181,7 @@
     },
     {
       "fn": "apply_pgpassword",
-      "loc": "src/main.rs:1366:1: 1366:41",
+      "loc": "src/main.rs:1371:1: 1371:41",
       "inferred": [
         "Env"
       ],
@@ -197,7 +197,7 @@
     },
     {
       "fn": "batch_dsn_from_picks",
-      "loc": "src/main.rs:926:1: 929:31",
+      "loc": "src/main.rs:931:1: 934:31",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -209,7 +209,7 @@
     },
     {
       "fn": "check_log_max_size",
-      "loc": "src/main.rs:1140:1: 1140:68",
+      "loc": "src/main.rs:1145:1: 1145:68",
       "inferred": [
         "Fs"
       ],
@@ -231,7 +231,7 @@
     },
     {
       "fn": "chmod_owner_only_if_exists",
-      "loc": "src/main.rs:1347:1: 1347:54",
+      "loc": "src/main.rs:1352:1: 1352:54",
       "inferred": [
         "Fs"
       ],
@@ -254,7 +254,7 @@
     },
     {
       "fn": "chmod_pgman_logs_in",
-      "loc": "src/main.rs:1245:1: 1245:46",
+      "loc": "src/main.rs:1250:1: 1250:46",
       "inferred": [
         "Fs"
       ],
@@ -280,7 +280,7 @@
     },
     {
       "fn": "dev_tty_opens",
-      "loc": "src/main.rs:1189:1: 1189:27",
+      "loc": "src/main.rs:1194:1: 1194:27",
       "inferred": [
         "Fs"
       ],
@@ -299,7 +299,7 @@
     },
     {
       "fn": "format_connect_failure",
-      "loc": "src/main.rs:1077:1: 1077:64",
+      "loc": "src/main.rs:1082:1: 1082:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -311,7 +311,7 @@
     },
     {
       "fn": "init_config_cli",
-      "loc": "src/main.rs:1104:1: 1104:28",
+      "loc": "src/main.rs:1109:1: 1109:28",
       "inferred": [
         "Clock",
         "Env",
@@ -339,7 +339,7 @@
     },
     {
       "fn": "init_logging",
-      "loc": "src/main.rs:1211:1: 1211:18",
+      "loc": "src/main.rs:1216:1: 1216:18",
       "inferred": [
         "Clock",
         "Env",
@@ -375,7 +375,7 @@
     },
     {
       "fn": "load_project_safety",
-      "loc": "src/main.rs:1382:1: 1382:82",
+      "loc": "src/main.rs:1387:1: 1387:82",
       "inferred": [
         "Fs",
         "Log"
@@ -393,7 +393,7 @@
     },
     {
       "fn": "load_safety_config",
-      "loc": "src/main.rs:1388:1: 1388:48",
+      "loc": "src/main.rs:1393:1: 1393:48",
       "inferred": [
         "Env",
         "Fs",
@@ -493,7 +493,7 @@
     },
     {
       "fn": "read_log_arg_cli",
-      "loc": "src/main.rs:847:1: 847:98",
+      "loc": "src/main.rs:852:1: 852:98",
       "inferred": [
         "Fs"
       ],
@@ -515,7 +515,7 @@
     },
     {
       "fn": "repair_logs_on_day_change",
-      "loc": "src/main.rs:1296:1: 1300:10",
+      "loc": "src/main.rs:1301:1: 1305:10",
       "inferred": [
         "Fs"
       ],
@@ -538,7 +538,7 @@
     },
     {
       "fn": "repair_private_dirs",
-      "loc": "src/main.rs:1205:1: 1205:25",
+      "loc": "src/main.rs:1210:1: 1210:25",
       "inferred": [
         "Env",
         "Fs",
@@ -558,7 +558,7 @@
     },
     {
       "fn": "resolve_batch_dsn",
-      "loc": "src/main.rs:867:1: 867:61",
+      "loc": "src/main.rs:872:1: 872:61",
       "inferred": [
         "Env",
         "Fs",
@@ -586,7 +586,7 @@
     },
     {
       "fn": "run_batch",
-      "loc": "src/main.rs:998:1: 998:37",
+      "loc": "src/main.rs:1003:1: 1003:37",
       "inferred": [
         "Clock",
         "Db",
@@ -635,7 +635,7 @@
     },
     {
       "fn": "utc_day_number",
-      "loc": "src/main.rs:1259:1: 1259:27",
+      "loc": "src/main.rs:1264:1: 1264:27",
       "inferred": [
         "Clock"
       ],
