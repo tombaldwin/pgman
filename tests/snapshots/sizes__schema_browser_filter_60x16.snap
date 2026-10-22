@@ -7,9 +7,9 @@ expression: dump(&buf)
  1 SELECT number, cu…               ] [ switch · ctrl-t new
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │  F╭[ ◆ schema browser ◆ ] q / esc close ─────────────╮   │
-│  W│▼ public  (20)              schema: public        │   │
+│  W│▼ public  (11)              schema: public        │   │
 │  O│  ▼ accounts  (5 col, 1 co…                       │   │
-╰───│      · customer_id : bigi… 20 table(s)           │───╯
+╰───│      · customer_id : bigi… 11 table(s) matching …│───╯
 ╭[ ◆│  ▼ audit_log  (7 col, 1 c…                       │───╮
 │num│      · actor_user_id : bi… enter to expand — the…│   │
 │INV│  ▼ customers  (10 col, 2 …                       │   │

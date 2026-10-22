@@ -579,11 +579,28 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             j += 1;
         }
     }
-    rows.into_iter()
+    let mut out: Vec<SchemaBrowserRow> = rows
+        .into_iter()
         .zip(keep)
         .filter(|(_, k)| *k)
         .map(|(r, _)| r)
-        .collect()
+        .collect();
+    // A schema's table count is what the filter left under it: the
+    // detail pane said `7 table(s)` over the 3 on screen.
+    for i in 0..out.len() {
+        if !matches!(out[i], SchemaBrowserRow::Schema { .. }) {
+            continue;
+        }
+        let shown = out[i + 1..]
+            .iter()
+            .take_while(|r| !matches!(r, SchemaBrowserRow::Schema { .. }))
+            .filter(|r| matches!(r, SchemaBrowserRow::Table { .. }))
+            .count();
+        if let SchemaBrowserRow::Schema { table_count, .. } = &mut out[i] {
+            *table_count = shown;
+        }
+    }
+    out
 }
 
 /// Pure: walk the cache and emit visible rows in display order

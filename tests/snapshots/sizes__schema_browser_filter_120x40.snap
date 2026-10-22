@@ -13,9 +13,9 @@ expression: dump(&buf)
 │> SELECT number, customer_id, status, currency, total, due_at                                                         │
 │  FROM invoices                                                                                                       │
 │  WHER╭[ ◆ schema browser ◆ ] q / esc close ──────────────────────────────────────────────────────────────────╮       │
-│  ORDE│▼ public  (20)                           schema: public                                                │       │
+│  ORDE│▼ public  (11)                           schema: public                                                │       │
 │      │  ▼ accounts  (5 col, 1 cons)                                                                          │       │
-╰──────│      · customer_id : bigint NOT NULL    20 table(s)                                                   │───────╯
+╰──────│      · customer_id : bigint NOT NULL    11 table(s) matching /us                                      │───────╯
 ╭[ ◆ re│  ▼ audit_log  (7 col, 1 cons)                                                                         │───────╮
 │number│      · actor_user_id : bigint           enter to expand — then arrow / j/k into the tables            │       │
 │INV-00│  ▼ customers  (10 col, 2 cons)                                                                        │       │

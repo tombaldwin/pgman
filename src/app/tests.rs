@@ -3407,7 +3407,7 @@ fn filter_schema_browser_rows_keeps_path_to_deep_match() {
 }
 
 #[test]
-fn a_matched_table_keeps_its_columns() {
+fn a_matched_table_keeps_its_columns_and_the_schema_counts_what_shows() {
     let table = |name: &str| SchemaBrowserRow::Table {
         schema: "public".into(),
         name: name.into(),
@@ -3461,6 +3461,12 @@ fn a_matched_table_keeps_its_columns() {
             "panel_usr_items",
             "sku",
         ]
+    );
+    // Two of the schema's three tables are on screen, and it says two.
+    assert!(
+        matches!(out[0], SchemaBrowserRow::Schema { table_count: 2, .. }),
+        "{:?}",
+        out[0]
     );
 }
 

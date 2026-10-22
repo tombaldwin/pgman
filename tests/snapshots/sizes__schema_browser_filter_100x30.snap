@@ -12,9 +12,9 @@ expression: dump(&buf)
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────╮
 │> SELECT number, customer_id, status, currency, total, due_at                                     │
 │  FRO╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────╮     │
-│  WHE│▼ public  (20)                    schema: public                                      │     │
+│  WHE│▼ public  (11)                    schema: public                                      │     │
 │  ORD│  ▼ accounts  (5 col, 1 cons)                                                         │     │
-│     │      · customer_id : bigint NOT… 20 table(s)                                         │     │
+│     │      · customer_id : bigint NOT… 11 table(s) matching /us                            │     │
 ╰─────│  ▼ audit_log  (7 col, 1 cons)                                                        │─────╯
 ╭[ ◆ r│      · actor_user_id : bigint    enter to expand — then arrow / j/k into the tables  │─────╮
 │numbe│  ▼ customers  (10 col, 2 cons)                                                       │     │

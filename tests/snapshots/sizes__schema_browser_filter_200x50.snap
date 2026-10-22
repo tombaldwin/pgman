@@ -14,9 +14,9 @@ expression: dump(&buf)
 │  FROM invoices                                                                                                                                                                                       │
 │  WHERE status = 'open'                                                                                                                                                                               │
 │  ORDER BY ╭[ ◆ schema browser ◆ ] q / esc close ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮           │
-│           │▼ public  (20)                                                       schema: public                                                                                           │           │
+│           │▼ public  (11)                                                       schema: public                                                                                           │           │
 ╰───────────│  ▼ accounts  (5 col, 1 cons)                                                                                                                                                 │───────────╯
-╭[ ◆ result │      · customer_id : bigint NOT NULL                                20 table(s)                                                                                              │───────────╮
+╭[ ◆ result │      · customer_id : bigint NOT NULL                                11 table(s) matching /us                                                                                 │───────────╮
 │number     │  ▼ audit_log  (7 col, 1 cons)                                                                                                                                                │           │
 │INV-004822 │      · actor_user_id : bigint                                       enter to expand — then arrow / j/k into the tables                                                       │           │
 │INV-004824 │  ▼ customers  (10 col, 2 cons)                                                                                                                                               │           │
