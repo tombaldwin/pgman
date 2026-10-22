@@ -86,4 +86,4 @@ class:
 
 ## Supported versions
 
-pgman is pre-1.0; only the latest release/`main` receives security fixes.
+pgman is beta (pre-1.0); only the latest release/`main` receives security fixes.

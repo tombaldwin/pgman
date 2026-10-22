@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#install)
+[![status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#install)
 
 A k9s-style Postgres TUI aimed at Java / AWS shops. Where psql, pgcli, and
 DataGrip stop at the database, pgman also turns Hibernate logs, Postgres
@@ -12,7 +12,7 @@ application changes — with N+1 detection built in. Sibling project to
 
 > ### ⚠️ Not released yet
 > There is no Homebrew formula, crate or binary yet: to try pgman today, build it
-> from source (below). It is pre-1.0 — expect rough edges and breaking changes.
+> from source (below). It is beta — expect rough edges and breaking changes.
 > It defaults to **read-only** connections and routes every write through
 > per-statement safety guards, but don't point it at a production database
 > without reviewing your `safety.toml` first. Bug reports and feedback very
@@ -211,7 +211,7 @@ coverage, fuzzing, and what CI runs on every push.
 
 ## Status
 
-Pre-v1. See `BACKLOG.md` for what's shipped and what's next.
+Beta. See `BACKLOG.md` for what's next.
 
 ## License
 
