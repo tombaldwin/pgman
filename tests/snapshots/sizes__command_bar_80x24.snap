@@ -4,9 +4,9 @@ assertion_line: 250
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
-│ Server: localhost:5433  •  Database: ledger     ││      PostgreSQL   command │
+│ Server: ledger-staging…  •  Database: ledger    ││      PostgreSQL   command │
 │ Status: connected · pg 16.4                     ││     <?> help  <:> command │
-│ Via: --demo (synthetic data)                    ││    <E> envs  <ctrl-t> tab │
+│ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
 ╰─────────────────────────────────────────────────╯╰───────────────────────────╯
  1 SELECT number, cu…                    ] [ switch · ctrl-t new · ctrl-w close
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮

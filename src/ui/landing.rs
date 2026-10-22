@@ -186,7 +186,7 @@ pub(crate) fn landing_lines(app: &App, inner_width: u16, inner_height: u16) -> V
 
     // --- assemble ------------------------------------------------------
     let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(header_line(app, muted_style));
+    lines.push(header_line(app, muted_style, width));
     if include_databases {
         if let Some(text) = databases_line(app, width) {
             lines.push(Line::from(Span::styled(text, muted_style)));
@@ -315,8 +315,9 @@ fn pick_f8_desc(two_col: bool, width: usize) -> &'static str {
 /// pg <version> · RO|RW`. Never renders the password or raw DSN — only
 /// the individual `Dsn` fields. `RO` reuses the exact style
 /// `footer_badges` uses for the read-only pill, so the two never drift
-/// out of sync.
-fn header_line(app: &App, muted_style: Style) -> Line<'static> {
+/// out of sync. A long host is cut the way the header cuts it, so the
+/// version and the badge stay on the card.
+fn header_line(app: &App, muted_style: Style, width: usize) -> Line<'static> {
     let db = app.dsn.as_ref().map(|d| d.dbname.as_str()).unwrap_or("?");
     let host_port = app
         .dsn
@@ -327,8 +328,13 @@ fn header_line(app: &App, muted_style: Style) -> Line<'static> {
         ConnState::Connected { server_version } => super::short_server_version(server_version),
         _ => "?",
     };
+    let head = format!(" connected to {db} on ");
+    let tail = format!(" · pg {version} · ");
+    // `RO` / `RW`: two columns.
+    let budget = width.saturating_sub(display_width(&head) + display_width(&tail) + 2);
+    let host_port = super::header::fit_server(&host_port, budget.max(8));
     let mut spans = vec![Span::styled(
-        format!(" connected to {db} on {host_port} · pg {version} · "),
+        format!("{head}{host_port}{tail}"),
         muted_style,
     )];
     if app.read_only {
@@ -956,6 +962,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn connection_line_cuts_a_long_host_and_keeps_the_version_and_badge() {
+        let mut a = app();
+        a.dsn = Some(
+            Dsn::parse("postgres://u@ledger-prod.c9abc1def2gh.eu-west-2.rds.amazonaws.com/test")
+                .unwrap(),
+        );
+        a.read_only = true;
+        for width in [60, 80, 100] {
+            let line = plain(&landing_lines(&a, width, 30))[0].clone();
+            assert!(
+                display_width(&line) <= width as usize,
+                "width {width}: {line:?}"
+            );
+            assert!(
+                line.starts_with(" connected to test on ledger-prod")
+                    && line.ends_with(" · pg 16.0 · RO"),
+                "width {width}: {line:?}"
+            );
+        }
+        // Room to spare: the whole endpoint.
+        let line = plain(&landing_lines(&a, 120, 30))[0].clone();
+        assert!(line.contains("rds.amazonaws.com:5432"), "{line:?}");
     }
 
     #[test]

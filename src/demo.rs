@@ -36,11 +36,13 @@ const OPENING_QUERY: &str = "SELECT number, customer_id, status, currency, total
 
 /// Build the demo [`App`]. Pure (no I/O); everything is in memory.
 pub fn app(theme: Theme) -> App {
-    // Staging through an ssh tunnel, the usual way to an RDS database
-    // behind a bastion — and a target short enough that an 80-column
-    // chrome still shows the database. The run loop never connects in
-    // demo mode.
-    let dsn = Dsn::parse("postgres://billing@localhost:5433/ledger").ok();
+    // Staging's RDS endpoint, as connecting from the environments view
+    // would leave it; the header cuts it at a dot so Database and User
+    // keep their place. The run loop never connects in demo mode.
+    let dsn = Dsn::parse(
+        "postgres://billing@ledger-staging.c7xk2rpq9w1d.eu-west-2.rds.amazonaws.com:5432/ledger",
+    )
+    .ok();
     let mut a = App::new(theme, dsn, Vec::new(), SafetyConfig::default());
     a.demo = true;
     // Demo runs are for screenshots / the README gif — no network,
@@ -99,7 +101,8 @@ pub fn app(theme: Theme) -> App {
         save: std::sync::Arc::new(|_| Err("--demo saves nothing".into())),
         immediate: true,
     });
-    a.dsn_origin = Some("--demo (synthetic data)".into());
+    a.dsn_origin =
+        Some("--demo, synthetic data · environment staging ledger-staging/ledger (direct)".into());
     a.conn_state = ConnState::Connected {
         server_version: "16.4 (demo)".into(),
     };
