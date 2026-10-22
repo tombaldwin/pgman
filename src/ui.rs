@@ -142,7 +142,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
     // computed once, so no overlay can drift back out of it. The tab
     // bar is chrome like the header: an overlay centred over it
     // painted `┌ about ┐` across the tab labels on a short terminal.
-    let area = body_area(area, header_h, tabbar_height);
+    let area = body_area(area, header_h, tabbar_height, footer_h);
     // Completion popup sits over the top of the body, anchored just under
     // the editor — only when a cycle is active in Editor mode.
     if app.mode == Mode::Editor && app.completion.is_some() {
@@ -2939,21 +2939,23 @@ pub(crate) fn short_server_version(v: &str) -> &str {
 }
 
 /// The body rect of a full-terminal `area`: everything between the
-/// one-row header plus `tabbar` rows of tab bar, and the one-row
-/// footer. Overlays are centred inside this rather than the whole
+/// `header` rows plus `tabbar` rows of tab bar, and the `footer` rows
+/// below. Overlays are centred inside this rather than the whole
 /// terminal, so a popup can never paint over the connection state or
-/// the tab labels above, or the close hint below. Degrades to the
-/// input rect when there aren't enough rows to give up.
-fn body_area(area: Rect, header: u16, tabbar: u16) -> Rect {
-    let above = header + tabbar;
-    if area.height < above + 2 {
+/// the tab labels above, or the footer below — all of it: an error
+/// wrapped over a taller footer lost its first row, badges and all,
+/// to the help overlay when this assumed one. Degrades to the input
+/// rect when there aren't enough rows to give up.
+fn body_area(area: Rect, header: u16, tabbar: u16, footer: u16) -> Rect {
+    let reserved = header + tabbar + footer;
+    if area.height <= reserved {
         return area;
     }
     Rect {
         x: area.x,
-        y: area.y + above,
+        y: area.y + header + tabbar,
         width: area.width,
-        height: area.height - above - 1,
+        height: area.height - reserved,
     }
 }
 

@@ -1875,3 +1875,55 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
         );
     }
 }
+
+// ---- the footer under a long error ---------------------------------------
+
+const LONG_ERROR: &str =
+    "function nonexistent_function_with_long_name(integer, integer, integer) does not exist";
+
+fn app_with_a_long_error(mode: Mode) -> App {
+    let mut a = connected_app();
+    a.redact = true;
+    a.mode = mode;
+    a.last_error = Some(LONG_ERROR.into());
+    a.last_error_detail = Some(pgman::conn::QueryErrDetail::default());
+    a
+}
+
+/// The footer rows: everything under the last panel's bottom border.
+fn footer_rows(buf: &Buffer) -> Vec<String> {
+    let rows: Vec<String> = (0..buf.area.height).map(|y| row_text(buf, y)).collect();
+    let last_border = rows
+        .iter()
+        .rposition(|r| r.starts_with('╰'))
+        .expect("a panel bottom border");
+    rows[last_border + 1..].to_vec()
+}
+
+#[test]
+fn an_overlay_leaves_a_wrapped_error_footer_whole() {
+    // The help overlay is centred in the body; the body used to assume
+    // a one-row footer, so the overlay's frame covered the first row
+    // of a wrapped error — badges, icon and the start of the message —
+    // leaving `integer) does not exist · ! detail` alone on screen.
+    for mode in [Mode::Help, Mode::About] {
+        let mut a = app_with_a_long_error(mode);
+        let buf = render(&mut a, 80, 24);
+        let footer = footer_rows(&buf);
+        assert!(
+            footer.len() >= 2,
+            "{mode:?}: the error wraps over a taller footer:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            footer[0].contains("REDACT") && footer[0].contains("RO"),
+            "{mode:?}: the badges survive:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            footer[0].contains("⚠ function nonexistent_function"),
+            "{mode:?}: the message starts at its start:\n{}",
+            dump(&buf)
+        );
+    }
+}
