@@ -56,6 +56,10 @@ pub struct PlannedPatch {
     /// Set when it runs outside a transaction, naming why (`VACUUM`…):
     /// its statements commit one by one.
     pub outside: Option<&'static str>,
+    /// What its statements that safety.toml would ask about one by one
+    /// are (`query::apply::guard_confirms`): the plan's one confirmation
+    /// answers them, so the plan names them.
+    pub confirms: Vec<String>,
 }
 
 /// What [`apply`] would do, for the operator to confirm.
@@ -87,6 +91,27 @@ pub struct PatchPlan {
     pub outside_would_help: bool,
 }
 
+impl PlannedPatch {
+    /// Its [`PlannedPatch::confirms`], each kind once in first-seen order,
+    /// counted when more than one: `["INSERT ×2", "TRUNCATE"]`. Pure.
+    pub fn confirm_kinds(&self) -> Vec<String> {
+        let mut kinds: Vec<(&str, usize)> = Vec::new();
+        for k in &self.confirms {
+            match kinds.iter_mut().find(|(seen, _)| *seen == k.as_str()) {
+                Some((_, c)) => *c += 1,
+                None => kinds.push((k, 1)),
+            }
+        }
+        kinds
+            .into_iter()
+            .map(|(kind, count)| match count {
+                1 => kind.to_string(),
+                n => format!("{kind} ×{n}"),
+            })
+            .collect()
+    }
+}
+
 impl PatchPlan {
     /// The patch's id, as the version table records it.
     fn id(p: &PatchFile) -> Option<i64> {
@@ -97,6 +122,37 @@ impl PatchPlan {
     /// protected one, or any patch running outside a transaction.
     pub fn needs_typed(&self) -> bool {
         self.protected || self.patches.iter().any(|p| p.outside.is_some())
+    }
+
+    /// How many planned statements safety.toml's guards would ask about
+    /// one by one, were they run from the editor.
+    pub fn confirm_count(&self) -> usize {
+        self.patches.iter().map(|p| p.confirms.len()).sum()
+    }
+
+    /// Those statements, for the operator about to answer them all at
+    /// once: `2 statement(s) your guard rails would normally ask about:
+    /// TRUNCATE in 321-a.sql, DELETE without WHERE in 322-b.sql`, a kind
+    /// a patch holds more than once counted (`INSERT ×2 in …`). `None`
+    /// when there are none. Pure.
+    pub fn confirm_summary(&self) -> Option<String> {
+        let n = self.confirm_count();
+        if n == 0 {
+            return None;
+        }
+        let items: Vec<String> = self
+            .patches
+            .iter()
+            .flat_map(|p| {
+                p.confirm_kinds()
+                    .into_iter()
+                    .map(move |k| format!("{k} in {}", p.file.file))
+            })
+            .collect();
+        Some(format!(
+            "{n} statement(s) your guard rails would normally ask about: {}",
+            items.join(", ")
+        ))
     }
 }
 
@@ -527,6 +583,7 @@ pub async fn plan(
                 text,
                 statements: checked.statements,
                 outside: checked.outside,
+                confirms: checked.confirms,
             }),
             Err(e) => {
                 plan.outside_would_help = !outside
@@ -754,6 +811,14 @@ impl Run<'_> {
         if checked.statements != p.statements || checked.outside != p.outside {
             return Err("the patch's statements differ from the plan".to_string());
         }
+        // The confirmation answered the guards' questions the plan named;
+        // others now would be ones nobody saw.
+        if checked.confirms != p.confirms {
+            return Err(
+                "safety.toml's guards would ask about other statements than the plan named; plan again"
+                    .to_string(),
+            );
+        }
         let statements = checked.statements;
         // Between statements no statement is running for the server's
         // cancel to stop: the flag stops the patch instead.
@@ -956,6 +1021,7 @@ mod tests {
                     text: String::new(),
                     statements: Vec::new(),
                     outside: None,
+                    confirms: Vec::new(),
                 })
                 .collect(),
             stopped_at: None,
@@ -986,6 +1052,24 @@ mod tests {
         let (run, below) = split_at_recorded(vec![f(1), f(2)], None);
         assert_eq!(names(run), ["1-x.sql", "2-x.sql"], "nothing recorded yet");
         assert!(below.is_empty());
+    }
+
+    #[test]
+    fn the_plan_names_what_its_one_confirmation_answers() {
+        let mut p = planned(&[321, 322, 323]);
+        assert_eq!(p.confirm_summary(), None, "nothing to ask about");
+        p.patches[0].confirms = vec!["TRUNCATE".into()];
+        p.patches[1].confirms = vec![
+            "INSERT".into(),
+            "DELETE without WHERE".into(),
+            "INSERT".into(),
+        ];
+        assert_eq!(p.confirm_count(), 4);
+        assert_eq!(
+            p.confirm_summary().unwrap(),
+            "4 statement(s) your guard rails would normally ask about: TRUNCATE in 321-x.sql, \
+             INSERT ×2 in 322-x.sql, DELETE without WHERE in 322-x.sql"
+        );
     }
 
     #[test]

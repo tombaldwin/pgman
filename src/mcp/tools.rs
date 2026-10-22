@@ -858,6 +858,11 @@ pub fn confirm_request(
             .map_or("none".to_string(), |m| m.to_string()),
         files.join(", ")
     );
+    if let Some(asked) = plan.confirm_summary() {
+        message.push_str(&format!(
+            " {asked}. This one confirmation answers them all."
+        ));
+    }
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
@@ -965,6 +970,7 @@ pub fn render_apply(
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
         "below_recorded": plan.below_recorded,
+        "guard_confirms": plan.confirm_summary(),
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
         "recorded_after": report.and_then(|r| r.recorded_after),

@@ -14,16 +14,16 @@ expression: dump(&buf)
 │                                                                              │
 │  2 to apply, in order, each in its own transaction · recorded up to 318      │
 │  mode: for real · Tab dry run or copy                                        │
+│  4 statement(s) your guard rails would normally ask about · confirming       │
+│    answers them all                                                          │
 │  319-APP-101-invoice-dunning-stage.sql                                       │
+│    guard rails would ask about: INSERT, ALTER / DDL                          │
 │      INSERT INTO schema_version (id) VALUES (319)                            │
 │      ALTER TABLE invoices ADD COLUMN dunning_stage smallint NOT NULL         │
 │        DEFAULT 0                                                             │
 │  320-APP-102-credit-note-reason-code.sql                                     │
+│    guard rails would ask about: INSERT, ALTER / DDL                          │
 │      INSERT INTO schema_version (id) VALUES (320)                            │
-│      ALTER TABLE credit_notes ADD COLUMN reason_code text NOT NULL DEFAULT   │
-│        'other'                                                               │
-│  not included: 321-APP-104-open-invoices-by-customer-idx.sql — the patch     │
-│    uses CONCURRENTLY, which can't run in a transaction; pgman's environments │
 │  type production to apply: produc▏   (ctrl-o: plan the rest outside a transa…│
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · enter connect · d discover · ? +3 more

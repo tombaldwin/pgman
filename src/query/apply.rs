@@ -87,6 +87,26 @@ pub struct Checked {
     /// the patch holds one: it then runs statement by statement, each
     /// committing as it goes ([`apply_outside`]). Only with `outside`.
     pub outside: Option<&'static str>,
+    /// What the statements a `Confirm` guard would ask about are, in
+    /// order ([`guard_confirms`]): the plan's one confirmation answers
+    /// them, so the plan names them.
+    pub confirms: Vec<String>,
+}
+
+/// What each of `statements` that safety.toml's guards would ask about
+/// for `db` (a `Confirm`) is, in order: `TRUNCATE`, `DELETE without
+/// WHERE`… Pure.
+pub fn guard_confirms(
+    safety: &crate::safety::SafetyConfig,
+    db: &str,
+    statements: &[String],
+) -> Vec<String> {
+    statements
+        .iter()
+        .map(|s| crate::safety::evaluate(safety, db, s))
+        .filter(|d| d.guard == crate::safety::Guard::Confirm)
+        .map(|d| d.kind.describe())
+        .collect()
 }
 
 /// The statements of `sql`, checked for applying to `db`, or why not.
@@ -154,6 +174,7 @@ pub fn check_patch(
         }
     }
     Ok(Checked {
+        confirms: guard_confirms(safety, db, &statements),
         statements,
         outside: needs,
     })
@@ -692,6 +713,37 @@ mod tests {
             let e = check_patch(&writable(), "ledger", bad, false).unwrap_err();
             assert!(e.contains(why), "{bad:?}: {e}");
         }
+    }
+
+    #[test]
+    fn a_patch_names_what_the_guards_would_ask_about() {
+        let mut safety = writable();
+        safety.default.guards.insert = crate::safety::Guard::Allow;
+        safety.default.guards.delete_without_where = crate::safety::Guard::Confirm;
+        let sql = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
+                   TRUNCATE audit;\n\
+                   DELETE FROM sessions;\n\
+                   SELECT 1;";
+        let c = check_patch(&safety, "ledger", sql, false).unwrap();
+        // Allowed (INSERT here, SELECT always) isn't asked about.
+        assert_eq!(c.confirms, ["TRUNCATE", "DELETE without WHERE"]);
+        // A database whose profile asks about nothing: none.
+        let mut quiet = safety.clone();
+        quiet.default.guards = crate::safety::Guards {
+            insert: crate::safety::Guard::Allow,
+            update: crate::safety::Guard::Allow,
+            update_without_where: crate::safety::Guard::Allow,
+            delete: crate::safety::Guard::Allow,
+            delete_without_where: crate::safety::Guard::Allow,
+            truncate: crate::safety::Guard::Allow,
+            drop: crate::safety::Guard::Allow,
+            ddl: crate::safety::Guard::Allow,
+            other: crate::safety::Guard::Allow,
+        };
+        assert!(check_patch(&quiet, "ledger", sql, false)
+            .unwrap()
+            .confirms
+            .is_empty());
     }
 
     #[test]

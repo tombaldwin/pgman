@@ -295,6 +295,7 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
             text: String::new(),
             statements: vec!["ALTER TABLE orders\n  DROP COLUMN notes".into()],
             outside: None,
+            confirms: vec!["ALTER / DDL".into()],
         }],
         stopped_at: Some(("253-idx.sql".into(), "CONCURRENTLY".into())),
         dir: "/src/patches".into(),
@@ -311,6 +312,30 @@ fn only_an_accepted_matching_answer_confirms_a_patch_plan() {
         "{message}"
     );
     assert!(message.contains("type its name"), "{message}");
+    // What the guards would have asked about one by one is put to the
+    // operator answering for all of it at once.
+    assert!(
+        message.contains(
+            " 1 statement(s) your guard rails would normally ask about: ALTER / DDL in 252-x.sql. \
+             This one confirmation answers them all."
+        ),
+        "{message}"
+    );
+    let result: Value = serde_json::from_str(&tools::render_apply(&plan, None, "")).unwrap();
+    assert_eq!(
+        result["guard_confirms"],
+        json!("1 statement(s) your guard rails would normally ask about: ALTER / DDL in 252-x.sql")
+    );
+    let mut quiet = plan.clone();
+    quiet.patches[0].confirms.clear();
+    assert!(
+        !tools::confirm_request(&quiet, crate::inventory::patching::RunMode::Apply)
+            .0
+            .contains("guard rails"),
+        "nothing to name, nothing said"
+    );
+    let result: Value = serde_json::from_str(&tools::render_apply(&quiet, None, "")).unwrap();
+    assert_eq!(result["guard_confirms"], Value::Null);
     assert!(
         message.contains("files in /src/patches") && message.contains("\n  DROP COLUMN notes;"),
         "every line that will run is shown: {message}"

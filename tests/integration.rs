@@ -3620,6 +3620,26 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("differ from the plan"), "{err}");
+        // Nor with what the guards would ask about left out of it: the
+        // confirmation didn't see those.
+        assert!(!p.patches[0].confirms.is_empty(), "{:?}", p.patches[0]);
+        let mut forged = p.clone();
+        forged.patches[0].confirms.clear();
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &forged,
+            pgman::inventory::patching::RunMode::Apply,
+            &Default::default(),
+        )
+        .await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("would ask about other statements than the plan named"),
+            "{err}"
+        );
         let r = apply(
             &env,
             &target,

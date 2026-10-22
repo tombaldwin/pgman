@@ -1345,6 +1345,12 @@ pub fn patch_plan(
         text: statements.join("\n"),
         statements: statements.iter().map(|s| s.to_string()).collect(),
         outside: None,
+        // As the default guards would ask, the demo having no safety.toml.
+        confirms: crate::query::apply::guard_confirms(
+            &crate::safety::SafetyConfig::default(),
+            database,
+            &statements.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        ),
     };
     let (last, rest) = PATCHES.split_last().expect("demo patches");
     let mut patches: Vec<PlannedPatch> = rest

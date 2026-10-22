@@ -1928,6 +1928,17 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     if !plan.patches.is_empty() {
         mode_lines(v, plan, &mut out);
     }
+    // Run from the editor each would be asked about; this one
+    // confirmation answers them all, so it says so. Informational.
+    let asked = plan.confirm_count();
+    if asked > 0 {
+        out.push((
+            format!(
+                "  {asked} statement(s) your guard rails would normally ask about · confirming answers them all"
+            ),
+            false,
+        ));
+    }
     for p in &plan.patches {
         match p.outside {
             None => out.push((format!("  {}", p.file.file), false)),
@@ -1942,6 +1953,15 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
                     true,
                 ));
             }
+        }
+        if !p.confirms.is_empty() {
+            out.push((
+                format!(
+                    "    guard rails would ask about: {}",
+                    p.confirm_kinds().join(", ")
+                ),
+                false,
+            ));
         }
         // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
@@ -3542,15 +3562,24 @@ mod tests {
             "  2 to apply, in order, each in its own transaction · recorded up to 318"
         );
         assert_eq!(text[2], "  mode: for real · Tab dry run or copy");
-        assert_eq!(text[3], "  319-APP-101-invoice-dunning-stage.sql");
+        // The one confirmation stands in for the guards' questions: said.
+        assert_eq!(
+            text[3],
+            "  4 statement(s) your guard rails would normally ask about · confirming answers them all"
+        );
+        assert_eq!(text[4], "  319-APP-101-invoice-dunning-stage.sql");
         assert_eq!(
             text[5],
+            "    guard rails would ask about: INSERT, ALTER / DDL"
+        );
+        assert_eq!(
+            text[7],
             "      ALTER TABLE invoices ADD COLUMN dunning_stage smallint NOT NULL DEFAULT 0"
         );
         assert!(
-            text[9].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
+            text[12].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
         );
-        assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
+        assert_eq!(text.len(), 13, "the prompt is pinned, not in the list");
         assert_eq!(
             patch_prompt(&v),
             Some((

@@ -277,7 +277,11 @@ steps:
    below). A pending file numbered *below* the highest recorded version
    is a gap the database skipped: it's left out and named in red, since
    running it now would put it after patches numbered above it. Apply
-   it by hand if it's needed.
+   it by hand if it's needed. Statements your guard rails would ask
+   about one by one in the editor (a `Confirm` guard: `TRUNCATE`,
+   `ALTER`, an `INSERT` under the defaults…) are counted at the top and
+   named under each patch: the plan's one confirmation answers them
+   all.
 2. **Your confirmation, then the patches.** Each runs in its own
    transaction with `lock_timeout = 5s`, so a busy table fails fast
    instead of queueing behind live traffic, and a 10-minute statement
