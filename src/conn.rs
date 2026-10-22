@@ -1553,13 +1553,14 @@ enum TlsVerify {
 fn build_tls_connector(
     verify: TlsVerify,
 ) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
-    // Install the default crypto provider once per process — rustls 0.23
-    // requires this before any ClientConfig is built.
+    // Install the crypto provider once per process — rustls 0.23 needs
+    // one before any ClientConfig is built. ring is the only provider
+    // compiled in (Cargo.toml), and the one reqwest's update check uses.
     static CRYPTO_INIT: std::sync::Once = std::sync::Once::new();
     CRYPTO_INIT.call_once(|| {
         // Ignore the result: re-installing after another caller already
         // did is fine; first-write wins.
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let _ = rustls::crypto::ring::default_provider().install_default();
     });
 
     let roots = if verify == TlsVerify::Nothing {
@@ -2400,7 +2401,7 @@ mod tests {
         }
 
         fn roots() -> rustls::RootCertStore {
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let _ = rustls::crypto::ring::default_provider().install_default();
             let mut roots = rustls::RootCertStore::empty();
             roots
                 .add(cert(include_bytes!("../tests/fixtures/tls/ca.pem")))

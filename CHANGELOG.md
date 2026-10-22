@@ -6,6 +6,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Changed
+- One TLS crypto provider (ring) instead of two: no cmake / C build of
+  aws-lc, and a smaller binary (x86_64 macOS 11.9 MB to 9.1 MB). The
+  Postgres connection no longer offers the post-quantum X25519MLKEM768
+  key exchange, which only the aws-lc provider had.
+
 ## [0.1.0] — 2026-10-22
 
 First public release. pgman is a terminal UI for PostgreSQL in the k9s
