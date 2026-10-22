@@ -4395,6 +4395,7 @@ impl App {
             server.clone(),
             database.clone(),
             outside,
+            self.safety_config.clone(),
         );
         if patcher.immediate {
             let result = futures::executor::block_on(fut);
@@ -4476,7 +4477,7 @@ impl App {
             plan.database
         ));
         tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = mode.name(), "patches confirmed");
-        let fut = (patcher.apply)(plan.clone(), mode, cancel);
+        let fut = (patcher.apply)(plan.clone(), mode, cancel, self.safety_config.clone());
         if patcher.immediate {
             let report = futures::executor::block_on(fut);
             self.on_env_patched(plan, report);

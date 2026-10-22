@@ -10786,15 +10786,35 @@ fn l_reads_an_rds_servers_log_errors_into_a_view() {
 /// An app over the demo environments with a patcher that records what it
 /// was asked to apply.
 fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
-    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    patching_app_with(applied, SafetyConfig::default(), Default::default())
+}
+
+/// [`patching_app`] with `safety` as the App's safety config, recording
+/// the statement timeout of `ledger`'s profile in each safety config the
+/// patcher was handed, plan then apply.
+fn patching_app_with(
+    applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    safety: SafetyConfig,
+    handed: std::sync::Arc<std::sync::Mutex<Vec<(&'static str, u64)>>>,
+) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), safety);
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    let planned = handed.clone();
     a.env_patcher = Some(EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d, outside| {
+        plan: std::sync::Arc::new(move |e, s, d, outside, safety| {
+            planned
+                .lock()
+                .unwrap()
+                .push(("plan", safety.profile_for("ledger").statement_timeout_ms));
             Box::pin(std::future::ready(Ok(crate::demo::patch_plan(
                 &e, &s, &d, outside,
             ))))
         }),
-        apply: std::sync::Arc::new(move |p, mode, _cancel| {
+        apply: std::sync::Arc::new(move |p, mode, _cancel, safety| {
+            handed
+                .lock()
+                .unwrap()
+                .push(("apply", safety.profile_for("ledger").statement_timeout_ms));
             // The mode is named when it isn't the real thing.
             let how = match mode {
                 crate::inventory::patching::RunMode::Apply => String::new(),
@@ -10825,6 +10845,27 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
         press(&mut a, KeyCode::Char('j'));
     }
     a
+}
+
+/// `P` plans and applies under the App's safety config — the personal
+/// one as the project's `[safety]` tightened it — not a fresh read of
+/// safety.toml, which would leave the project's tightening out. Found by
+/// the 2026-10-22 release panel.
+#[test]
+fn patching_is_handed_the_apps_safety_config() {
+    let mut safety = SafetyConfig::default();
+    safety.databases.insert(
+        "ledger".into(),
+        crate::safety::SafetyProfile {
+            statement_timeout_ms: 4_321,
+            ..Default::default()
+        },
+    );
+    let handed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app_with(Default::default(), safety, handed.clone());
+    press(&mut a, KeyCode::Char('P'));
+    press(&mut a, KeyCode::Char('y'));
+    assert_eq!(*handed.lock().unwrap(), [("plan", 4_321), ("apply", 4_321)]);
 }
 
 #[test]
@@ -10887,7 +10928,7 @@ fn tab_picks_a_dry_run_or_a_copy_and_confirming_runs_that() {
     // A protected one: Tab works while the name is typed, and isn't typed.
     let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut a = patching_app(applied.clone());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -10910,7 +10951,7 @@ fn tab_picks_a_dry_run_or_a_copy_and_confirming_runs_that() {
 fn a_protected_environment_applies_only_on_its_typed_name() {
     let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut a = patching_app(applied.clone());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -10983,7 +11024,7 @@ fn a_plan_with_nothing_but_a_no_transaction_patch_offers_o() {
 #[test]
 fn while_a_name_is_typed_o_is_a_letter_and_ctrl_o_plans_outside() {
     let mut a = patching_app(Default::default());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -11270,7 +11311,7 @@ fn a_protected_name_types_digits_brackets_and_punctuation() {
     let mut a = patching_app(applied.clone());
     a.new_tab();
     a.mode = Mode::Environments;
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))

@@ -191,7 +191,11 @@ the MCP `environments` tool when called with `probe: true`):
   in yellow; it's the same matching as the MCP `pending_patches` tool.
   A text column holding no integer ids at all (`1.2`, `1.10`) shows
   its highest as written instead of failing; applying patches still
-  refuses such a table.
+  refuses such a table. When pgman can't read the patch files (or a
+  `migrations_dir`), the version still shows, with `(+?)` in yellow
+  for the unknown pending count and the reason in the detail line: a
+  red `✗` is kept for the database's side, an unreadable version table
+  or a failed migration.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
   `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has
@@ -269,7 +273,9 @@ steps:
 
 1. **A plan, read-only.** The patches the database hasn't recorded and
    that are numbered above the highest version it has, in order, each
-   checked against `safety.toml` like a `--batch` script. The plan stops
+   checked against `safety.toml` like a `--batch` script — as a
+   project's `.pgman/pgman.toml` `[safety]` block tightens it, when
+   pgman (or the MCP server) runs in that project. The plan stops
    before the first patch that can't run here: the database's profile
    is read-only (the default — set `read_only = false` for it), a guard
    blocks a statement, the patch has its own `BEGIN`/`COMMIT` or changes
@@ -278,17 +284,24 @@ steps:
    below). A pending file numbered *below* the highest recorded version
    is a gap the database skipped: it's left out and named in red, since
    running it now would put it after patches numbered above it. Apply
-   it by hand if it's needed.
+   it by hand if it's needed. Statements your guard rails would ask
+   about one by one in the editor (a `Confirm` guard: `TRUNCATE`,
+   `ALTER`, an `INSERT` under the defaults…) are counted at the top and
+   named under each patch: the plan's one confirmation answers them
+   all.
 2. **Your confirmation, then the patches.** Each runs in its own
    transaction with `lock_timeout = 5s`, so a busy table fails fast
-   instead of queueing behind live traffic. Before each one the version
+   instead of queueing behind live traffic, and a 10-minute statement
+   timeout; both are set again before every statement. Before each one the version
    table is read again; a patch someone else applied since the plan
    stops the run. The first failure rolls that patch back and stops.
    What runs is the text you were shown, not a fresh read of the file.
    Afterwards the version table is read once more, and the result says
    which version the database records now. **Esc twice** while it runs
-   cancels the running statement on the server: a patch in its
-   transaction rolls back; outside one, what ran stays.
+   cancels the running statement on the server, and stops the patch
+   before its next statement (or its commit) should it land between
+   two: a patch in its transaction rolls back; outside one, what ran
+   stays, and the result says how much.
 
 **Tab** in the plan picks how it runs, and the plan says which in red
 before you confirm:
@@ -311,6 +324,17 @@ before you confirm:
   copy. If the copy can't be dropped afterwards, the result names it
   for you to drop. That `DROP DATABASE` is the only one pgman runs, and
   it takes only a name pgman made.
+
+**`DO` blocks and `CALL`.** The plan checks a `DO` block or a `CALL`
+as one statement; what its body does isn't read, so its body can do
+what the plan refuses in plain SQL, such as `set_config` on a timeout.
+pgman doesn't refuse them, since migrations use them, but it sets
+`lock_timeout` and `statement_timeout` again before every statement,
+so such a change ends with the statement that made it. Within that
+statement it holds: a lock the body waits for after lifting
+`lock_timeout` waits as long as the body says (the statement timeout
+already running doesn't change). Read a `DO` block's body, or the
+procedure a `CALL` runs, before you confirm.
 
 Patches are all or nothing *each*, not as a batch: when the third of
 three fails, the first two stay applied and recorded, and the database

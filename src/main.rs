@@ -383,16 +383,21 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.env_patcher = Some(app::EnvPatcher {
-        plan: std::sync::Arc::new(|environment, server, database, outside| {
+        // The App hands over its safety config: the project's `[safety]`
+        // tightens patching as it does the editor.
+        plan: std::sync::Arc::new(|environment, server, database, outside, safety| {
             Box::pin(pgman::inventory::patching::plan_for(
                 environment,
                 server,
                 database,
                 outside,
+                safety,
             ))
         }),
-        apply: std::sync::Arc::new(|plan, mode, cancel| {
-            Box::pin(pgman::inventory::patching::apply_for(plan, mode, cancel))
+        apply: std::sync::Arc::new(|plan, mode, cancel, safety| {
+            Box::pin(pgman::inventory::patching::apply_for(
+                plan, mode, cancel, safety,
+            ))
         }),
         immediate: false,
     });

@@ -353,11 +353,11 @@ pub async fn run(report: EnvReport, fetch_secret: FetchSecret) -> Vec<Outcome> {
                 Err(_) => Err(format!("no answer within {}s", PROBE_DEADLINE.as_secs())),
             };
             Some(result.map(|mut p| {
-                if p.schema_error.is_none() {
-                    p.schema_error = files_err
-                        .map(|e| format!("patch files: {e}"))
-                        .or(flyway_err.map(|e| format!("migrations_dir: {e}")));
-                }
+                // Not a schema error: the version read stands, and a
+                // failed migration mustn't be what it looks like.
+                p.files_error = files_err
+                    .map(|e| format!("patch files: {e}"))
+                    .or(flyway_err.map(|e| format!("migrations_dir: {e}")));
                 p
             }))
         }

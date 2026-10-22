@@ -1070,8 +1070,11 @@ pub enum PatchStage {
 /// [`EnvLogFetcher`]; `None` applies nothing.
 #[derive(Clone)]
 pub struct EnvPatcher {
-    /// (environment, server, database, outside) → the plan; `outside`
-    /// lets patches that need it run outside a transaction.
+    /// (environment, server, database, outside, safety) → the plan;
+    /// `outside` lets patches that need it run outside a transaction.
+    /// `safety` is the App's: the personal safety.toml as the project's
+    /// `[safety]` tightened it, which both the plan and the run check
+    /// each patch against.
     pub plan: PatchPlanFn,
     pub apply: PatchApplyFn,
     /// Run at once on this thread (`--demo`, tests): the futures must
@@ -1085,6 +1088,7 @@ pub type PatchPlanFn = std::sync::Arc<
             String,
             String,
             bool,
+            crate::safety::SafetyConfig,
         ) -> futures::future::BoxFuture<
             'static,
             Result<crate::inventory::patching::PatchPlan, String>,
@@ -1097,6 +1101,7 @@ pub type PatchApplyFn = std::sync::Arc<
             crate::inventory::patching::PatchPlan,
             crate::inventory::patching::RunMode,
             crate::inventory::patching::CancelSlot,
+            crate::safety::SafetyConfig,
         ) -> futures::future::BoxFuture<'static, crate::inventory::patching::ApplyReport>
         + Send
         + Sync,

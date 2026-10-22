@@ -58,10 +58,10 @@ pub fn app(theme: Theme) -> App {
         immediate: true,
     });
     a.env_patcher = Some(crate::app::EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d, outside| {
+        plan: std::sync::Arc::new(|e, s, d, outside, _safety| {
             Box::pin(std::future::ready(plan_for(&e, &s, &d, outside)))
         }),
-        apply: std::sync::Arc::new(|p, mode, _cancel| {
+        apply: std::sync::Arc::new(|p, mode, _cancel, _safety| {
             use crate::inventory::patching::{CopyNote, RunMode};
             let ran = p
                 .patches
@@ -1376,6 +1376,12 @@ pub fn patch_plan(
         text: statements.join("\n"),
         statements: statements.iter().map(|s| s.to_string()).collect(),
         outside: None,
+        // As the default guards would ask, the demo having no safety.toml.
+        confirms: crate::query::apply::guard_confirms(
+            &crate::safety::SafetyConfig::default(),
+            database,
+            &statements.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        ),
     };
     let (last, rest) = PATCHES.split_last().expect("demo patches");
     let mut patches: Vec<PlannedPatch> = rest
