@@ -13,8 +13,8 @@ expression: dump(&buf)
 ╭[ ◆│  ▼ audit_log  (7 col, 1 c…                       │───╮
 │num│      · actor_user_id : bi… enter to expand — the…│   │
 │INV│  ▼ customers  (10 col, 2 …                       │   │
-│INV│      · status : text NOT …                       │   │
-│INV│      ◆ customers_pkey                            │   │
+│INV│      · id : bigint NOT NU…                       │   │
+│INV│      · public_id : uuid N…                       │   │
 │INV╰──────────────────────────────────────────────────╯   │
 │INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯

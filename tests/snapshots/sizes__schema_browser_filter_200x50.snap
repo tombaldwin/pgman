@@ -20,9 +20,18 @@ expression: dump(&buf)
 │number     │  ▼ audit_log  (7 col, 1 cons)                                                                                                                                                │           │
 │INV-004822 │      · actor_user_id : bigint                                       enter to expand — then arrow / j/k into the tables                                                       │           │
 │INV-004824 │  ▼ customers  (10 col, 2 cons)                                                                                                                                               │           │
-│INV-004827 │      · status : text NOT NULL                                                                                                                                                │           │
-│INV-004829 │      ◆ customers_pkey                                                                                                                                                        │           │
-│INV-004831 │      ◆ customers_public_id_key                                                                                                                                               │           │
+│INV-004827 │      · id : bigint NOT NULL                                                                                                                                                  │           │
+│INV-004829 │      · public_id : uuid NOT NULL                                                                                                                                             │           │
+│INV-004831 │      · name : text NOT NULL                                                                                                                                                  │           │
+│           │      · billing_email : citext NOT NULL                                                                                                                                       │           │
+│           │      · country : character(2) NOT NULL                                                                                                                                       │           │
+│           │      · currency : character(3) NOT NULL                                                                                                                                      │           │
+│           │      · tax_rate_id : bigint                                                                                                                                                  │           │
+│           │      · status : text NOT NULL                                                                                                                                                │           │
+│           │      · created_at : timestamp with time zone NOT NULL                                                                                                                        │           │
+│           │      · metadata : jsonb NOT NULL                                                                                                                                             │           │
+│           │      ◆ customers_pkey                                                                                                                                                        │           │
+│           │      ◆ customers_public_id_key                                                                                                                                               │           │
 │           │  ▼ invoices  (12 col, 2 cons)                                                                                                                                                │           │
 │           │      · customer_id : bigint NOT NULL                                                                                                                                         │           │
 │           │      · status : text NOT NULL                                                                                                                                                │           │
@@ -36,20 +45,11 @@ expression: dump(&buf)
 │           │  ▼ tax_rates  (5 col, 1 cons)                                                                                                                                                │           │
 │           │      · inclusive : boolean NOT NULL                                                                                                                                          │           │
 │           │  ▼ usage_events  (6 col, 1 cons)                                                                                                                                             │           │
-│           │      ◆ usage_events_pkey                                                                                                                                                     │           │
-│           │      ⌁ usage_events_subscription_item_id_occurred_at_idx                                                                                                                     │           │
-│           │    ▼ 3 partitions                                                                                                                                                            │           │
-│           │        · usage_events_2026_08                                                                                                                                                │           │
-│           │        · usage_events_2026_09                                                                                                                                                │           │
-│           │        · usage_events_2026_10                                                                                                                                                │           │
-│           │  ▼ users  (7 col, 2 cons)                                                                                                                                                    │           │
-│           │      · customer_id : bigint NOT NULL                                                                                                                                         │           │
-│           │      ◆ users_email_key                                                                                                                                                       │           │
-│           │      ◆ users_pkey                                                                                                                                                            │           │
+│           │      · id : bigint NOT NULL                                                                                                                                                  │           │
 │           ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯           │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 63 row(s) · enter accept · esc clear

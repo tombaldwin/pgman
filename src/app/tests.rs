@@ -3407,6 +3407,64 @@ fn filter_schema_browser_rows_keeps_path_to_deep_match() {
 }
 
 #[test]
+fn a_matched_table_keeps_its_columns() {
+    let table = |name: &str| SchemaBrowserRow::Table {
+        schema: "public".into(),
+        name: name.into(),
+        expanded: true,
+        column_count: 2,
+        constraint_count: 1,
+    };
+    let column = |table: &str, name: &str| SchemaBrowserRow::Column {
+        schema: "public".into(),
+        table: table.into(),
+        name: name.into(),
+    };
+    let rows = vec![
+        SchemaBrowserRow::Schema {
+            name: "public".into(),
+            expanded: true,
+            table_count: 3,
+        },
+        table("panel_usr_orders"),
+        column("panel_usr_orders", "id"),
+        column("panel_usr_orders", "total"),
+        SchemaBrowserRow::Constraint {
+            schema: "public".into(),
+            table: "panel_usr_orders".into(),
+            name: "panel_usr_orders_pkey".into(),
+        },
+        table("events"),
+        column("events", "id"),
+        table("panel_usr_items"),
+        column("panel_usr_items", "sku"),
+    ];
+    let out = filter_schema_browser_rows(rows, "panel_usr");
+    let names: Vec<String> = out
+        .iter()
+        .map(|r| match r {
+            SchemaBrowserRow::Schema { name, .. }
+            | SchemaBrowserRow::Table { name, .. }
+            | SchemaBrowserRow::Column { name, .. }
+            | SchemaBrowserRow::Constraint { name, .. } => name.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "public",
+            "panel_usr_orders",
+            "id",
+            "total",
+            "panel_usr_orders_pkey",
+            "panel_usr_items",
+            "sku",
+        ]
+    );
+}
+
+#[test]
 fn filter_schema_browser_rows_is_case_insensitive() {
     let rows = vec![SchemaBrowserRow::Schema {
         name: "PUBLIC".into(),

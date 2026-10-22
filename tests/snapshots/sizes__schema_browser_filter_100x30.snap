@@ -18,18 +18,18 @@ expression: dump(&buf)
 ╰─────│  ▼ audit_log  (7 col, 1 cons)                                                        │─────╯
 ╭[ ◆ r│      · actor_user_id : bigint    enter to expand — then arrow / j/k into the tables  │─────╮
 │numbe│  ▼ customers  (10 col, 2 cons)                                                       │     │
-│INV-0│      · status : text NOT NULL                                                        │     │
-│INV-0│      ◆ customers_pkey                                                                │     │
-│INV-0│      ◆ customers_public_id_key                                                       │     │
-│INV-0│  ▼ invoices  (12 col, 2 cons)                                                        │     │
-│INV-0│      · customer_id : bigint NOT…                                                     │     │
+│INV-0│      · id : bigint NOT NULL                                                          │     │
+│INV-0│      · public_id : uuid NOT NULL                                                     │     │
+│INV-0│      · name : text NOT NULL                                                          │     │
+│INV-0│      · billing_email : citext N…                                                     │     │
+│INV-0│      · country : character(2) N…                                                     │     │
+│     │      · currency : character(3) …                                                     │     │
+│     │      · tax_rate_id : bigint                                                          │     │
 │     │      · status : text NOT NULL                                                        │     │
-│     │      ⌁ invoices_customer_id_iss…                                                     │     │
-│     │  ▼ payments  (8 col, 2 cons)                                                         │     │
-│     │      · status : text NOT NULL                                                        │     │
-│     │  ▼ subscriptions  (9 col, 1 con…                                                     │     │
+│     │      · created_at : timestamp w…                                                     │     │
+│     │      · metadata : jsonb NOT NULL                                                     │     │
 │     ╰──────────────────────────────────────────────────────────────────────────────────────╯     │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 63 row(s) · enter accept · esc clear

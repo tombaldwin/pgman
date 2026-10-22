@@ -549,6 +549,19 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
     for i in 0..n {
         if matches_self(&rows[i]) {
             keep[i] = true;
+            // A matched table (or anything under one) keeps what is
+            // under it: `/orders` showed the `orders` row with only
+            // its `orders_pkey` constraint, every column filtered
+            // away. A matched schema does not — the filter expands
+            // everything, and `/public` would be the whole database.
+            let d = depth(&rows[i]);
+            if d >= 1 {
+                let mut j = i + 1;
+                while j < n && depth(&rows[j]) > d {
+                    keep[j] = true;
+                    j += 1;
+                }
+            }
             continue;
         }
         let d = depth(&rows[i]);

@@ -19,27 +19,27 @@ expression: dump(&buf)
 ╭[ ◆ re│  ▼ audit_log  (7 col, 1 cons)                                                                         │───────╮
 │number│      · actor_user_id : bigint           enter to expand — then arrow / j/k into the tables            │       │
 │INV-00│  ▼ customers  (10 col, 2 cons)                                                                        │       │
-│INV-00│      · status : text NOT NULL                                                                         │       │
-│INV-00│      ◆ customers_pkey                                                                                 │       │
-│INV-00│      ◆ customers_public_id_key                                                                        │       │
-│INV-00│  ▼ invoices  (12 col, 2 cons)                                                                         │       │
+│INV-00│      · id : bigint NOT NULL                                                                           │       │
+│INV-00│      · public_id : uuid NOT NULL                                                                      │       │
+│INV-00│      · name : text NOT NULL                                                                           │       │
+│INV-00│      · billing_email : citext NOT NULL                                                                │       │
+│      │      · country : character(2) NOT NULL                                                                │       │
+│      │      · currency : character(3) NOT NULL                                                               │       │
+│      │      · tax_rate_id : bigint                                                                           │       │
+│      │      · status : text NOT NULL                                                                         │       │
+│      │      · created_at : timestamp with tim…                                                               │       │
+│      │      · metadata : jsonb NOT NULL                                                                      │       │
+│      │      ◆ customers_pkey                                                                                 │       │
+│      │      ◆ customers_public_id_key                                                                        │       │
+│      │  ▼ invoices  (12 col, 2 cons)                                                                         │       │
 │      │      · customer_id : bigint NOT NULL                                                                  │       │
 │      │      · status : text NOT NULL                                                                         │       │
 │      │      ⌁ invoices_customer_id_issued_at_…                                                               │       │
 │      │  ▼ payments  (8 col, 2 cons)                                                                          │       │
 │      │      · status : text NOT NULL                                                                         │       │
-│      │  ▼ subscriptions  (9 col, 1 cons)                                                                     │       │
-│      │      · customer_id : bigint NOT NULL                                                                  │       │
-│      │      · status : text NOT NULL                                                                         │       │
-│      │      ⌁ subscriptions_customer_id_idx                                                                  │       │
-│      │  ▼ tax_rates  (5 col, 1 cons)                                                                         │       │
-│      │      · inclusive : boolean NOT NULL                                                                   │       │
-│      │  ▼ usage_events  (6 col, 1 cons)                                                                      │       │
-│      │      ◆ usage_events_pkey                                                                              │       │
-│      │      ⌁ usage_events_subscription_item_…                                                               │       │
 │      ╰───────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 63 row(s) · enter accept · esc clear

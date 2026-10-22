@@ -18,12 +18,12 @@ expression: dump(&buf)
 ╭[ ◆ │  ▼ audit_log  (7 col, 1 c…                                         │────╮
 │numb│      · actor_user_id : bi… enter to expand — then arrow / j/k into…│    │
 │INV-│  ▼ customers  (10 col, 2 …                                         │0   │
-│INV-│      · status : text NOT …                                         │0   │
-│INV-│      ◆ customers_pkey                                              │0   │
-│INV-│      ◆ customers_public_i…                                         │0   │
-│INV-│  ▼ invoices  (12 col, 2 c…                                         │0   │
-│    │      · customer_id : bigi…                                         │    │
+│INV-│      · id : bigint NOT NU…                                         │0   │
+│INV-│      · public_id : uuid N…                                         │0   │
+│INV-│      · name : text NOT NU…                                         │0   │
+│INV-│      · billing_email : ci…                                         │0   │
+│    │      · country : characte…                                         │    │
 │    ╰────────────────────────────────────────────────────────────────────╯    │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   filter: /us  · 42 row(s) · enter accept · esc clear
+ RO   TAP   N+1 ×1   filter: /us  · 63 row(s) · enter accept · esc clear
