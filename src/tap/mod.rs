@@ -16,7 +16,11 @@
 //! # Wire format (v1)
 //!
 //! One JSON object per frame. Required at all kinds: `v`,
-//! `kind`, `ts_unix_micros`. Each kind layers required fields
+//! `kind`, `ts_unix_micros`. `ts_unix_micros` is microseconds
+//! since the Unix epoch; for a `query` it is when the statement
+//! **started**, so `[ts, ts + duration_micros)` is the interval
+//! it held a connection (the Pools view's peak concurrency is
+//! built from exactly that). Each kind layers required fields
 //! on top:
 //!
 //! - `kind: "query"` — also requires `sql`, `duration_micros`.
@@ -354,8 +358,14 @@ pub struct TapEvent {
     /// with the pre-discriminator JAR shape.
     #[serde(default)]
     pub kind: TapKind,
-    /// JAR-stamped wall-clock at the event boundary,
-    /// microseconds since the Unix epoch.
+    /// Producer-stamped wall-clock, microseconds since the Unix
+    /// epoch. For a `query` it is when the statement STARTED —
+    /// not when it finished: the Pools view's peak concurrency
+    /// treats each query as `[ts, ts + duration_micros)`, so an
+    /// end stamp shifts every statement right by its own duration
+    /// and inflates the peak. The OTLP ingest stamps a span's
+    /// `startTimeUnixNano` for the same reason. For a
+    /// `heartbeat` or `txn_boundary`, the moment it was emitted.
     pub ts_unix_micros: u64,
     /// Listener-stamped receive time (not on the wire).
     /// Set by the receiver post-parse; lets us reconstruct
@@ -2555,11 +2565,51 @@ mod tests {
         );
         // duration = 10ms = 10_000us
         assert_eq!(e.duration_micros, Some(10_000));
-        // ts = end / 1000 (ns → µs)
-        assert_eq!(e.ts_unix_micros, 1_700_000_000_010_000);
+        // ts = start / 1000 (ns → µs): the statement's start, as on
+        // the pgman-tap wire — not its end.
+        assert_eq!(e.ts_unix_micros, 1_700_000_000_000_000);
         // OTel typically strips params for PII safety.
         assert!(e.params_redacted);
         assert!(e.error.is_none());
+    }
+
+    /// One OTLP Postgres span from `start_ms` lasting `dur_ms`.
+    fn otlp_span_ms(start_ms: u64, dur_ms: u64) -> serde_json::Value {
+        const BASE_NS: u64 = 1_700_000_000_000_000_000;
+        serde_json::json!({
+            "startTimeUnixNano": (BASE_NS + start_ms * 1_000_000).to_string(),
+            "endTimeUnixNano": (BASE_NS + (start_ms + dur_ms) * 1_000_000).to_string(),
+            "attributes": [
+                {"key": "db.system", "value": {"stringValue": "postgresql"}},
+                {"key": "db.statement", "value": {"stringValue": "SELECT 1"}},
+            ],
+        })
+    }
+
+    fn otlp_pool_peak(spans: &[(u64, u64)]) -> usize {
+        let events: Vec<TapEvent> = spans
+            .iter()
+            .map(|&(s, d)| span_to_tap_event(&otlp_span_ms(s, d), Some("svc")).unwrap())
+            .collect();
+        let pools = group_by_pool(events.iter());
+        assert_eq!(pools.len(), 1);
+        pools[0].peak_concurrent
+    }
+
+    #[test]
+    fn otlp_sequential_spans_peak_at_one_in_the_pools_view() {
+        // A: 0..10ms, B: 11..15ms, C: 16..46ms — one after another, never
+        // two at once (1ms gaps: `peak_concurrency` counts an exact
+        // end-meets-start as briefly concurrent). Stamped at the END, A
+        // lands at 10 and B at 15, so A's [10,20) and B's [15,19) overlap
+        // and the pool reads a peak of 2 that never happened.
+        assert_eq!(otlp_pool_peak(&[(0, 10), (11, 4), (16, 30)]), 1);
+    }
+
+    #[test]
+    fn otlp_overlapping_spans_peak_at_their_overlap_in_the_pools_view() {
+        // A: 0..50ms and B: 10..20ms really overlap; C: 60..61ms is alone.
+        assert_eq!(otlp_pool_peak(&[(0, 50), (10, 10), (60, 1)]), 2);
     }
 
     #[test]
