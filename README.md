@@ -126,7 +126,7 @@ connects until you choose it — see [Safety](#safety).
 
 pgman connects to production databases. It opens read-only by default, enforces
 a `statement_timeout`, classifies every statement, and applies **per-database
-guard rails** (`safety.rs`) — e.g. block `DROP`, confirm `TRUNCATE` /
+guard rails** — e.g. block `DROP`, confirm `TRUNCATE` /
 unqualified `DELETE`, and wrap DML in a transaction you can roll back. (This is
 a guard rail, not a replacement for least-privilege database roles — scope the
 role you connect with.)
@@ -176,8 +176,11 @@ pgman --upgrade
 ```
 
 Works in place for a checkout (`git pull` + `cargo install --path .`), a
-`cargo install` install, and a Homebrew install. A standalone binary (a
-downloaded release tarball) has no in-place upgrade — `--upgrade` prints the
+crates.io `cargo install` install, and a Homebrew install. An install made
+with `cargo install --git …` (the only way to install pgman until the first
+release) isn't one of these: re-run that `cargo install --git` command to
+upgrade it. A standalone binary (a downloaded release tarball) has no
+in-place upgrade — `--upgrade` prints the
 [releases page](https://github.com/tombaldwin/pgman/releases/latest) instead.
 
 pgman also checks crates.io for a newer release at most once every six hours
@@ -199,6 +202,8 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/keys.md`](docs/keys.md) — every keybinding, by mode.
 - [`docs/commands.md`](docs/commands.md) — command reference.
 - [`docs/configuration.md`](docs/configuration.md) — config file locations and options.
+- [`docs/environments.md`](docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
+- [`docs/mcp.md`](docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
 - [`docs/logs-to-sql.md`](docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
 - [`docs/development.md`](docs/development.md) — build / test / clippy + distribution notes.
