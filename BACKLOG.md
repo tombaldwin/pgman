@@ -621,6 +621,20 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
+- **Two footer messages still carry a full config path** (2026-10-22,
+  found doing the read-only hint). Neither is a `hint:` line. One is the
+  startup error for a `config.toml` that doesn't parse
+  (`redact::config_default_from`: `<full path>: <toml error> —
+  redaction is on until it parses`, set as `last_error`, so F2 shows
+  the same text). The other is the environments save status (`added
+  <names> to <full path>`). Name the file in the footer, as the
+  read-only refusal now does. The parse error would need its path in
+  an error detail for F2 to keep it.
+- **The F2 error overlay wraps mid-word and cuts a long hint at 80x24**
+  (2026-10-22). `push_kv` wraps by character (`transact` / `ion`,
+  `do` / `cs/configuration.md`), and at 80x24 the read-only refusal's
+  path hint runs past the overlay's last row with no sign that there
+  is more.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs
