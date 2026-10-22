@@ -74,8 +74,8 @@ pub fn parse_args(args: &[String]) -> Result<Opts, String> {
             "--project-connections" => opts.project_connections = true,
             s if s == "--allow-writes" || s.starts_with("--allow-writes=") => {
                 return Err(
-                    "--allow-writes: this build of pgman's MCP server has no database write \
-                     tools, so there is nothing to allow"
+                    "--allow-writes: there is no blanket write switch to allow; apply_patches \
+                     is the one database-writing tool and asks the operator to confirm each run"
                         .to_string(),
                 )
             }

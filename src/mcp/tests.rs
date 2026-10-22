@@ -51,7 +51,7 @@ fn allow_writes_is_refused_rather_than_accepted_and_ignored() {
         "--allow-writes=",
     ] {
         let err = parse_args(&args(&["serve", a])).unwrap_err();
-        assert!(err.contains("nothing to allow"), "{a}: {err}");
+        assert!(err.contains("no blanket write switch"), "{a}: {err}");
     }
 }
 

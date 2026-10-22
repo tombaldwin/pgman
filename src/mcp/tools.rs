@@ -25,7 +25,7 @@ pub fn tool_table() -> Value {
     json!([
         {
             "name": "doctor",
-            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (none in this build), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
+            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches, the one tool that writes to a database, after the operator confirms each run; environments_save, which appends to their environments.toml; neither under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         },
