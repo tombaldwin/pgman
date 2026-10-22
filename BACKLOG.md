@@ -125,12 +125,6 @@ buckets were folded in once their initial passes shipped).
 A second round of editor quality-of-life features past the syntax-
 highlighting / pg_format / auto-save / persistent-history / undo
 batch.
-- **A popup that narrows to nothing leaves its status behind**
-  (2026-10-22). Typing on through an auto-opened popup until nothing
-  matches (`… on t.` with no schema cache) closes it in
-  `refresh_completion`, which sets `completion: no matches for t.…`;
-  nothing clears it while the operator keeps typing ordinary SQL.
-  An auto-opened popup that dies of no matches should leave no status.
 - **Multi-line comment toggle for selection** — current
   `Ctrl-/` toggles the focused line. We don't have selection
   yet; once we do, apply per-line.

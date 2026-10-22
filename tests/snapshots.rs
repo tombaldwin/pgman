@@ -353,6 +353,7 @@ fn completion_popup_with_candidates() {
             },
         ],
         selected: None,
+        auto: false,
     });
     let buf = render(&mut a, 80, 18);
     insta::assert_snapshot!(dump(&buf));
@@ -390,6 +391,7 @@ fn completion_popup_narrow_terminal_clamps_width() {
             },
         ],
         selected: None,
+        auto: false,
     });
     let buf = render(&mut a, 40, 12);
     insta::assert_snapshot!(dump(&buf));

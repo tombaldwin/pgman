@@ -1526,6 +1526,7 @@ fn completion_popup_floats_inside_a_zoomed_editor() {
             },
         ],
         selected: Some(0),
+        auto: false,
     });
     a.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT));
     let buf = render(&mut a, 80, 24);

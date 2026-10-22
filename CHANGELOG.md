@@ -12,6 +12,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2
   overlay and `--batch` stderr give the path.
+- A completion popup the editor opened on its own (after `.` or `FROM `)
+  that narrows to nothing as you type on now closes without leaving
+  `completion: no matches for …` in the footer. A popup Tab opened still
+  says why it closed.
 
 ## [0.1.0] — 2026-10-22
 

@@ -753,6 +753,72 @@ fn auto_trigger_no_matches_preserves_status() {
     assert_eq!(a.last_status.as_deref(), Some("preserved status"));
 }
 
+/// Typing on through an auto-opened popup until nothing matches closes
+/// it without a word: `… ON t.` with no schema cache used to leave
+/// `completion: no matches for t.…` in the footer while the operator
+/// went on typing ordinary SQL.
+#[test]
+fn an_auto_opened_popup_that_narrows_to_nothing_leaves_no_status() {
+    let mut a = test_app_with_cache(&[]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM a JOIN b ON");
+    type_key(&mut a, KeyCode::Char(' '));
+    assert!(a.completion.is_some(), "`ON ` should auto-open the popup");
+    for c in "t.".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none(), "nothing matches `t.`");
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "stale status: {:?}",
+        a.last_status
+    );
+
+    // Still quiet when the popup narrowed through some matches first:
+    // the cycle `refresh_completion` rebuilds stays auto-opened.
+    let mut a = test_app_with_cache(&[("users", &["id", "email"])]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM users WHERE");
+    type_key(&mut a, KeyCode::Char(' '));
+    type_key(&mut a, KeyCode::Char('e'));
+    assert!(a.completion.is_some(), "`e` still matches `email`");
+    for c in "zzq".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none(), "nothing matches `ezzq`");
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "stale status: {:?}",
+        a.last_status
+    );
+}
+
+/// The same narrowing through a popup Tab opened still says why it
+/// closed: the operator asked for completion.
+#[test]
+fn a_tab_opened_popup_that_narrows_to_nothing_says_so() {
+    let mut a = test_app_with_cache(&[]);
+    a.mode = Mode::Editor;
+    set_editor(&mut a, "SELECT * FROM a JOIN b ON ");
+    a.editor_complete();
+    assert!(
+        a.completion.is_some(),
+        "Tab after `ON ` should open the popup"
+    );
+    for c in "t.".chars() {
+        type_key(&mut a, KeyCode::Char(c));
+    }
+    assert!(a.completion.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("completion: no matches for \"t\"")
+    );
+}
+
 #[test]
 fn tab_on_empty_buffer_offers_statement_keywords() {
     let mut a = test_app_with_cache(&[("users", &["id"])]);
@@ -8849,6 +8915,7 @@ fn popup_with(a: &mut App, selected: Option<usize>) {
             },
         ],
         selected,
+        auto: false,
     });
 }
 
