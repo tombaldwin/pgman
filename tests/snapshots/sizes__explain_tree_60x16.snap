@@ -11,11 +11,11 @@ expression: dump(&buf)
 │  O│    Hash Cond: (o.user_id = u.id)                 │   │
 ╰───│  · Seq Scan on orders o · 30.00ms · ~10000 rows  │───╯
 ╭[ ◆│  ▼ Hash · 5.00ms                                 │───╮
-│num│    · Seq Scan on users u · 4.00ms                │t  │
-│INV│                                                  │10-│
-│INV│                                                  │10-│
-│INV│                                                  │10-│
-│INV╰──────────────────────────────────────────────────╯10-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+│num│    · Seq Scan on users u · 4.00ms                │   │
+│INV│                                                  │   │
+│INV│                                                  │   │
+│INV│                                                  │   │
+│INV╰──────────────────────────────────────────────────╯   │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   j/k navigate · ? +4 more

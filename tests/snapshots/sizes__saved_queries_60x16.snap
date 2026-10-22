@@ -11,11 +11,11 @@ expression: dump(&buf)
 │  O│  customer-invoices             SELECT number, sta│   │
 ╰───│  mrr-by-month                  SELECT month, curr│───╯
 ╭[ ◆│  failing-webhooks-24h          SELECT webhook_id,│───╮
-│num│                                                  │t  │
-│INV│  overdue-invoices                                │10-│
-│INV│  SELECT number, customer_id, currency, total,    │10-│
-│INV│  due_at                                          │10-│
-│INV╰──────────────────────────────────────────────────╯10-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+│num│                                                  │   │
+│INV│  overdue-invoices                                │   │
+│INV│  SELECT number, customer_id, currency, total,    │   │
+│INV│  due_at                                          │   │
+│INV╰──────────────────────────────────────────────────╯   │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   saved queries · 4 entries

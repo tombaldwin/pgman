@@ -6,8 +6,8 @@
   },
   "package": "pgman",
   "analyzed": {
-    "count": 2985,
-    "digest": "866617298a20d533"
+    "count": 3023,
+    "digest": "5e82279fb7301d1d"
   },
   "resolves": [
     "fs",
@@ -17,7 +17,7 @@
   "functions": [
     {
       "fn": "<app::EditScratchDir as std::ops::Drop>::drop",
-      "loc": "src/app.rs:5262:5: 5262:23",
+      "loc": "src/app.rs:5334:5: 5334:23",
       "inferred": [
         "Fs"
       ],
@@ -245,19 +245,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "ba1331825eda266ac7bc66e844abc1b7",
-      "invisible": [
-        "serde_core"
-      ]
-    },
-    {
-      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
-      "loc": "src/inventory.rs:220:39: 220:57",
-      "inferred": [],
-      "declared": [],
-      "undeclared": [],
-      "overdeclared": [],
-      "hash": "ba1331825eda266a6dcaaec0f669e9ba",
+      "hash": "ba1331825eda266ab0a11d8595e15553",
       "invisible": [
         "serde_core"
       ]
@@ -281,7 +269,19 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "ba1331825eda266ab0a11d8595e15553",
+      "hash": "ba1331825eda266a6dcaaec0f669e9ba",
+      "invisible": [
+        "serde_core"
+      ]
+    },
+    {
+      "fn": "<inventory::_::<impl dbunit::_::_serde::Deserialize<'de> for inventory::Source>::deserialize::__FieldVisitor as dbunit::_::_serde::de::Visitor<'de>>::visit_bytes",
+      "loc": "src/inventory.rs:220:39: 220:57",
+      "inferred": [],
+      "declared": [],
+      "undeclared": [],
+      "overdeclared": [],
+      "hash": "ba1331825eda266ac7bc66e844abc1b7",
       "invisible": [
         "serde_core"
       ]
@@ -305,7 +305,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "ba1331825eda266a80c5ef9cd23f729d",
+      "hash": "ba1331825eda266aa9dd57c30f4a05cc",
       "invisible": [
         "serde_core"
       ]
@@ -317,7 +317,7 @@
       "declared": [],
       "undeclared": [],
       "overdeclared": [],
-      "hash": "ba1331825eda266aa9dd57c30f4a05cc",
+      "hash": "ba1331825eda266a80c5ef9cd23f729d",
       "invisible": [
         "serde_core"
       ]
@@ -910,7 +910,7 @@
     },
     {
       "fn": "app::App::cancel_running_query",
-      "loc": "src/app.rs:3376:5: 3376:39",
+      "loc": "src/app.rs:3419:5: 3419:39",
       "inferred": [
         "Log",
         "Net"
@@ -935,7 +935,7 @@
     },
     {
       "fn": "app::App::capture_tap_baseline",
-      "loc": "src/app.rs:2514:5: 2514:39",
+      "loc": "src/app.rs:2560:5: 2560:39",
       "inferred": [
         "Clock"
       ],
@@ -951,7 +951,7 @@
     },
     {
       "fn": "app::App::close_tx",
-      "loc": "src/app.rs:2998:5: 2998:41",
+      "loc": "src/app.rs:3045:5: 3045:41",
       "inferred": [
         "Db",
         "Exec"
@@ -974,7 +974,7 @@
     },
     {
       "fn": "app::App::confirm_env_patch",
-      "loc": "src/app.rs:4425:5: 4425:36",
+      "loc": "src/app.rs:4481:5: 4481:36",
       "inferred": [
         "Exec",
         "Log",
@@ -1007,8 +1007,60 @@
       ]
     },
     {
+      "fn": "app::App::connect_from_environments",
+      "loc": "src/app.rs:4337:5: 4337:87",
+      "inferred": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net",
+        "Unknown"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Clock",
+        "Db",
+        "Env",
+        "Exec",
+        "Fs",
+        "Log",
+        "Net"
+      ],
+      "overdeclared": [],
+      "unresolved": true,
+      "hash": "ba1331825eda266a7ac67dcd39437844",
+      "fs": [
+        "read"
+      ],
+      "cmds": [
+        "ssh"
+      ],
+      "calls": [
+        "app::spawn::<impl app::App>::connect_to_target"
+      ],
+      "invisible": [
+        "futures_util",
+        "rustls",
+        "tokio",
+        "tokio_postgres",
+        "tokio_postgres_rustls",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Db",
+        "Fs",
+        "Net"
+      ],
+      "netClass": [
+        "unknown-host"
+      ]
+    },
+    {
       "fn": "app::App::connect_to_environment_target",
-      "loc": "src/app.rs:4233:5: 4233:48",
+      "loc": "src/app.rs:4279:5: 4279:48",
       "inferred": [
         "Clock",
         "Db",
@@ -1040,8 +1092,8 @@
         "ssh"
       ],
       "calls": [
+        "app::App::connect_from_environments",
         "app::App::remember_env_selection",
-        "app::spawn::<impl app::App>::connect_to_target",
         "app::spawn::<impl app::App>::spawn_secret_fetch",
         "inventory::ConnectSpec::apply_password_env"
       ],
@@ -1064,7 +1116,7 @@
     },
     {
       "fn": "app::App::cycle_sort",
-      "loc": "src/app.rs:3694:5: 3694:29",
+      "loc": "src/app.rs:3740:5: 3740:29",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1076,7 +1128,7 @@
     },
     {
       "fn": "app::App::export_grid_to_clipboard",
-      "loc": "src/app.rs:3915:5: 3915:43",
+      "loc": "src/app.rs:3961:5: 3961:43",
       "inferred": [
         "Clipboard"
       ],
@@ -1092,7 +1144,7 @@
     },
     {
       "fn": "app::App::filter_or_find_step",
-      "loc": "src/app.rs:3967:5: 3967:53",
+      "loc": "src/app.rs:4013:5: 4013:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1104,7 +1156,7 @@
     },
     {
       "fn": "app::App::filter_step",
-      "loc": "src/app.rs:3994:5: 3994:45",
+      "loc": "src/app.rs:4040:5: 4040:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1116,7 +1168,7 @@
     },
     {
       "fn": "app::App::focused_saved_index",
-      "loc": "src/app.rs:2690:5: 2690:51",
+      "loc": "src/app.rs:2737:5: 2737:51",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1128,7 +1180,7 @@
     },
     {
       "fn": "app::App::jump_to_bookmark",
-      "loc": "src/app.rs:4937:5: 4937:53",
+      "loc": "src/app.rs:5009:5: 5009:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1140,7 +1192,7 @@
     },
     {
       "fn": "app::App::load_dbunit_fixture",
-      "loc": "src/app.rs:3624:5: 3624:38",
+      "loc": "src/app.rs:3670:5: 3670:38",
       "inferred": [
         "Fs"
       ],
@@ -1165,7 +1217,7 @@
     },
     {
       "fn": "app::App::load_saved_query",
-      "loc": "src/app.rs:2646:5: 2646:64",
+      "loc": "src/app.rs:2693:5: 2693:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1177,7 +1229,7 @@
     },
     {
       "fn": "app::App::navigate_fk_from_focused_cell",
-      "loc": "src/app.rs:3753:5: 3753:48",
+      "loc": "src/app.rs:3799:5: 3799:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1189,7 +1241,7 @@
     },
     {
       "fn": "app::App::new",
-      "loc": "src/app.rs:1520:5: 1525:14",
+      "loc": "src/app.rs:1564:5: 1569:14",
       "inferred": [
         "Clock",
         "Env",
@@ -1229,7 +1281,7 @@
     },
     {
       "fn": "app::App::on_env_patch_key",
-      "loc": "src/app.rs:4511:5: 4511:79",
+      "loc": "src/app.rs:4567:5: 4567:79",
       "inferred": [
         "Exec",
         "Log",
@@ -1261,7 +1313,7 @@
     },
     {
       "fn": "app::App::on_env_patched",
-      "loc": "src/app.rs:4482:5: 4486:6",
+      "loc": "src/app.rs:4538:5: 4542:6",
       "inferred": [
         "Exec",
         "Unknown"
@@ -1282,7 +1334,7 @@
     },
     {
       "fn": "app::App::on_env_secret",
-      "loc": "src/app.rs:4837:5: 4841:6",
+      "loc": "src/app.rs:4910:5: 4914:6",
       "inferred": [
         "Clock",
         "Db",
@@ -1313,7 +1365,7 @@
         "ssh"
       ],
       "calls": [
-        "app::spawn::<impl app::App>::connect_to_target"
+        "app::App::connect_from_environments"
       ],
       "invisible": [
         "futures_util",
@@ -1334,7 +1386,7 @@
     },
     {
       "fn": "app::App::on_key",
-      "loc": "src/app.rs:2038:5: 2038:44",
+      "loc": "src/app.rs:2084:5: 2084:44",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1398,7 +1450,7 @@
     },
     {
       "fn": "app::App::on_key_inner",
-      "loc": "src/app.rs:2082:5: 2082:46",
+      "loc": "src/app.rs:2128:5: 2128:46",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1480,7 +1532,7 @@
     },
     {
       "fn": "app::App::open_cell_detail",
-      "loc": "src/app.rs:2769:5: 2769:35",
+      "loc": "src/app.rs:2816:5: 2816:35",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1493,7 +1545,7 @@
     },
     {
       "fn": "app::App::open_environments_at_start",
-      "loc": "src/app.rs:4862:5: 4862:77",
+      "loc": "src/app.rs:4934:5: 4934:77",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1549,7 +1601,7 @@
     },
     {
       "fn": "app::App::open_row_detail",
-      "loc": "src/app.rs:2720:5: 2720:34",
+      "loc": "src/app.rs:2767:5: 2767:34",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1561,7 +1613,7 @@
     },
     {
       "fn": "app::App::plan_env_patch",
-      "loc": "src/app.rs:4356:5: 4363:6",
+      "loc": "src/app.rs:4411:5: 4418:6",
       "inferred": [
         "Exec",
         "Unknown"
@@ -1589,7 +1641,7 @@
     },
     {
       "fn": "app::App::push_undo",
-      "loc": "src/app.rs:2964:5: 2964:83",
+      "loc": "src/app.rs:3011:5: 3011:83",
       "inferred": [
         "Clock"
       ],
@@ -1605,7 +1657,7 @@
     },
     {
       "fn": "app::App::rebuild_grid_find",
-      "loc": "src/app.rs:4993:5: 4993:36",
+      "loc": "src/app.rs:5065:5: 5065:36",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1617,7 +1669,7 @@
     },
     {
       "fn": "app::App::rebuild_visible_rows",
-      "loc": "src/app.rs:3677:5: 3677:39",
+      "loc": "src/app.rs:3723:5: 3723:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -1629,7 +1681,7 @@
     },
     {
       "fn": "app::App::reformat_buffer",
-      "loc": "src/app.rs:3174:5: 3174:34",
+      "loc": "src/app.rs:3221:5: 3221:34",
       "inferred": [
         "Env",
         "Exec",
@@ -1664,7 +1716,7 @@
     },
     {
       "fn": "app::App::reformat_buffer_with_path",
-      "loc": "src/app.rs:3183:5: 3183:84",
+      "loc": "src/app.rs:3230:5: 3230:84",
       "inferred": [
         "Env",
         "Exec",
@@ -1697,7 +1749,7 @@
     },
     {
       "fn": "app::App::refresh_environments",
-      "loc": "src/app.rs:4215:5: 4215:39",
+      "loc": "src/app.rs:4261:5: 4261:39",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -1753,7 +1805,7 @@
     },
     {
       "fn": "app::App::refresh_sessions",
-      "loc": "src/app.rs:4897:5: 4897:35",
+      "loc": "src/app.rs:4969:5: 4969:35",
       "inferred": [
         "Db",
         "Env",
@@ -1790,7 +1842,7 @@
     },
     {
       "fn": "app::App::refresh_slow_queries",
-      "loc": "src/app.rs:4194:5: 4194:39",
+      "loc": "src/app.rs:4240:5: 4240:39",
       "inferred": [
         "Db",
         "Env",
@@ -1827,7 +1879,7 @@
     },
     {
       "fn": "app::App::reload_schema",
-      "loc": "src/app.rs:4090:5: 4090:43",
+      "loc": "src/app.rs:4136:5: 4136:43",
       "inferred": [
         "Db",
         "Exec",
@@ -1855,7 +1907,7 @@
     },
     {
       "fn": "app::App::remember_env_selection",
-      "loc": "src/app.rs:4869:5: 4869:48",
+      "loc": "src/app.rs:4941:5: 4941:48",
       "inferred": [
         "Clock",
         "Fs",
@@ -1889,7 +1941,7 @@
     },
     {
       "fn": "app::App::replan_env_patch_outside",
-      "loc": "src/app.rs:4346:5: 4346:43",
+      "loc": "src/app.rs:4401:5: 4401:43",
       "inferred": [
         "Exec",
         "Unknown"
@@ -1911,7 +1963,7 @@
     },
     {
       "fn": "app::App::report_snapshot",
-      "loc": "src/app.rs:3388:5: 3388:67",
+      "loc": "src/app.rs:3431:5: 3431:67",
       "inferred": [
         "Clock"
       ],
@@ -1927,7 +1979,7 @@
     },
     {
       "fn": "app::App::request_run",
-      "loc": "src/app.rs:3422:5: 3422:45",
+      "loc": "src/app.rs:3465:5: 3465:45",
       "inferred": [
         "Clock",
         "Db",
@@ -1990,7 +2042,7 @@
     },
     {
       "fn": "app::App::request_run_batch",
-      "loc": "src/app.rs:3551:5: 3551:76",
+      "loc": "src/app.rs:3594:5: 3594:76",
       "inferred": [
         "Clock",
         "Db",
@@ -2034,7 +2086,7 @@
     },
     {
       "fn": "app::App::run",
-      "loc": "src/app.rs:1686:5: 1686:69",
+      "loc": "src/app.rs:1732:5: 1732:69",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -2107,7 +2159,7 @@
     },
     {
       "fn": "app::App::run_external_editor",
-      "loc": "src/app.rs:1848:5: 1848:63",
+      "loc": "src/app.rs:1894:5: 1894:63",
       "inferred": [
         "Clock",
         "Env",
@@ -2150,7 +2202,7 @@
     },
     {
       "fn": "app::App::run_with",
-      "loc": "src/app.rs:1733:5: 1737:28",
+      "loc": "src/app.rs:1779:5: 1783:28",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -2240,7 +2292,7 @@
     },
     {
       "fn": "app::App::save_env_proposals",
-      "loc": "src/app.rs:4698:5: 4698:37",
+      "loc": "src/app.rs:4768:5: 4768:37",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -2302,7 +2354,7 @@
     },
     {
       "fn": "app::App::schema_cache_missing",
-      "loc": "src/app.rs:4077:5: 4077:50",
+      "loc": "src/app.rs:4123:5: 4123:50",
       "inferred": [
         "Db",
         "Exec",
@@ -2330,7 +2382,7 @@
     },
     {
       "fn": "app::App::scroll",
-      "loc": "src/app.rs:5031:5: 5031:39",
+      "loc": "src/app.rs:5103:5: 5103:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2342,7 +2394,7 @@
     },
     {
       "fn": "app::App::select_row",
-      "loc": "src/app.rs:5041:5: 5041:41",
+      "loc": "src/app.rs:5113:5: 5113:41",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2354,7 +2406,7 @@
     },
     {
       "fn": "app::App::spawn_quit_on_signal",
-      "loc": "src/app.rs:1708:5: 1708:35",
+      "loc": "src/app.rs:1754:5: 1754:35",
       "inferred": [
         "Exec",
         "Log"
@@ -2379,7 +2431,7 @@
     },
     {
       "fn": "app::App::start_env_discovery",
-      "loc": "src/app.rs:4606:5: 4606:71",
+      "loc": "src/app.rs:4662:5: 4662:71",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2406,7 +2458,7 @@
     },
     {
       "fn": "app::App::start_env_logs",
-      "loc": "src/app.rs:4290:5: 4290:44",
+      "loc": "src/app.rs:4345:5: 4345:44",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2433,7 +2485,7 @@
     },
     {
       "fn": "app::App::start_env_patch",
-      "loc": "src/app.rs:4331:5: 4331:45",
+      "loc": "src/app.rs:4386:5: 4386:45",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2455,7 +2507,7 @@
     },
     {
       "fn": "app::App::start_env_probes",
-      "loc": "src/app.rs:4730:5: 4730:35",
+      "loc": "src/app.rs:4800:5: 4800:35",
       "inferred": [
         "Exec",
         "Unknown"
@@ -2482,7 +2534,7 @@
     },
     {
       "fn": "app::App::start_environments",
-      "loc": "src/app.rs:4207:5: 4207:48",
+      "loc": "src/app.rs:4253:5: 4253:48",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -2538,7 +2590,7 @@
     },
     {
       "fn": "app::App::start_filter",
-      "loc": "src/app.rs:3949:5: 3949:31",
+      "loc": "src/app.rs:3995:5: 3995:31",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2550,7 +2602,7 @@
     },
     {
       "fn": "app::App::start_rename_query",
-      "loc": "src/app.rs:2703:5: 2703:37",
+      "loc": "src/app.rs:2750:5: 2750:37",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2562,7 +2614,7 @@
     },
     {
       "fn": "app::App::start_saved_queries_filter",
-      "loc": "src/app.rs:2696:5: 2696:45",
+      "loc": "src/app.rs:2743:5: 2743:45",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2574,7 +2626,7 @@
     },
     {
       "fn": "app::App::start_schema_browser",
-      "loc": "src/app.rs:4103:5: 4103:39",
+      "loc": "src/app.rs:4149:5: 4149:39",
       "inferred": [
         "Db",
         "Exec",
@@ -2602,7 +2654,7 @@
     },
     {
       "fn": "app::App::start_schema_lint",
-      "loc": "src/app.rs:4124:5: 4124:36",
+      "loc": "src/app.rs:4170:5: 4170:36",
       "inferred": [
         "Db",
         "Exec",
@@ -2633,7 +2685,7 @@
     },
     {
       "fn": "app::App::start_sessions",
-      "loc": "src/app.rs:4881:5: 4881:33",
+      "loc": "src/app.rs:4953:5: 4953:33",
       "inferred": [
         "Db",
         "Env",
@@ -2670,7 +2722,7 @@
     },
     {
       "fn": "app::App::start_slow_queries",
-      "loc": "src/app.rs:4175:5: 4175:37",
+      "loc": "src/app.rs:4221:5: 4221:37",
       "inferred": [
         "Db",
         "Env",
@@ -2707,7 +2759,7 @@
     },
     {
       "fn": "app::App::start_watch",
-      "loc": "src/app.rs:3216:5: 3216:30",
+      "loc": "src/app.rs:3263:5: 3263:30",
       "inferred": [
         "Clock"
       ],
@@ -2723,7 +2775,7 @@
     },
     {
       "fn": "app::App::step_grid_find",
-      "loc": "src/app.rs:5006:5: 5006:48",
+      "loc": "src/app.rs:5078:5: 5078:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2735,7 +2787,7 @@
     },
     {
       "fn": "app::App::step_row_detail",
-      "loc": "src/app.rs:2739:5: 2739:48",
+      "loc": "src/app.rs:2786:5: 2786:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2747,7 +2799,7 @@
     },
     {
       "fn": "app::App::tick_auto_refresh",
-      "loc": "src/app.rs:3277:5: 3277:36",
+      "loc": "src/app.rs:3324:5: 3324:36",
       "inferred": [
         "Clock",
         "Db",
@@ -2792,7 +2844,7 @@
     },
     {
       "fn": "app::App::tick_env_auto_probe",
-      "loc": "src/app.rs:3317:5: 3317:38",
+      "loc": "src/app.rs:3364:5: 3364:38",
       "inferred": [
         "Clock",
         "Exec",
@@ -2818,7 +2870,7 @@
     },
     {
       "fn": "app::App::tick_splash",
-      "loc": "src/app.rs:1893:5: 1893:30",
+      "loc": "src/app.rs:1939:5: 1939:30",
       "inferred": [
         "Clock"
       ],
@@ -2834,7 +2886,7 @@
     },
     {
       "fn": "app::App::tick_watch",
-      "loc": "src/app.rs:3343:5: 3343:29",
+      "loc": "src/app.rs:3386:5: 3386:29",
       "inferred": [
         "Clock",
         "Db",
@@ -2892,7 +2944,7 @@
     },
     {
       "fn": "app::App::toggle_auto_refresh",
-      "loc": "src/app.rs:3263:5: 3263:38",
+      "loc": "src/app.rs:3310:5: 3310:38",
       "inferred": [
         "Clock"
       ],
@@ -2908,7 +2960,7 @@
     },
     {
       "fn": "app::App::toggle_env_auto_probe",
-      "loc": "src/app.rs:3301:5: 3301:40",
+      "loc": "src/app.rs:3348:5: 3348:40",
       "inferred": [
         "Clock"
       ],
@@ -2924,7 +2976,7 @@
     },
     {
       "fn": "app::App::toggle_json_cell_node",
-      "loc": "src/app.rs:2798:5: 2798:40",
+      "loc": "src/app.rs:2845:5: 2845:40",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2936,7 +2988,7 @@
     },
     {
       "fn": "app::App::visible_saved_indices",
-      "loc": "src/app.rs:2681:5: 2681:54",
+      "loc": "src/app.rs:2728:5: 2728:54",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -2972,7 +3024,7 @@
     },
     {
       "fn": "app::cache_stamped_path",
-      "loc": "src/app.rs:5361:1: 5361:67",
+      "loc": "src/app.rs:5433:1: 5433:67",
       "inferred": [
         "Clock",
         "Env"
@@ -2993,7 +3045,7 @@
     },
     {
       "fn": "app::chrono_like_now_utc",
-      "loc": "src/app.rs:5394:1: 5394:39",
+      "loc": "src/app.rs:5466:1: 5466:39",
       "inferred": [
         "Clock"
       ],
@@ -3009,7 +3061,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::apply_backslash",
-      "loc": "src/app/cmd.rs:139:5: 139:89",
+      "loc": "src/app/cmd.rs:145:5: 145:89",
       "inferred": [
         "Clock",
         "Db",
@@ -3069,7 +3121,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_backslash",
-      "loc": "src/app/cmd.rs:116:5: 116:92",
+      "loc": "src/app/cmd.rs:122:5: 122:92",
       "inferred": [
         "Clock",
         "Db",
@@ -3124,7 +3176,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_command",
-      "loc": "src/app/cmd.rs:260:5: 260:58",
+      "loc": "src/app/cmd.rs:266:5: 266:58",
       "inferred": [
         "Clock",
         "Db",
@@ -3181,7 +3233,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_connect",
-      "loc": "src/app/cmd.rs:577:5: 577:59",
+      "loc": "src/app/cmd.rs:584:5: 584:59",
       "inferred": [
         "Clock",
         "Db",
@@ -3236,7 +3288,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_fixture",
-      "loc": "src/app/cmd.rs:721:5: 721:70",
+      "loc": "src/app/cmd.rs:728:5: 728:70",
       "inferred": [
         "Clock",
         "Env",
@@ -3268,7 +3320,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_include",
-      "loc": "src/app/cmd.rs:656:5: 656:59",
+      "loc": "src/app/cmd.rs:663:5: 663:59",
       "inferred": [
         "Fs",
         "Unknown"
@@ -3292,7 +3344,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_list_databases",
-      "loc": "src/app/cmd.rs:537:5: 537:42",
+      "loc": "src/app/cmd.rs:544:5: 544:42",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -3304,7 +3356,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_list_functions",
-      "loc": "src/app/cmd.rs:468:5: 468:67",
+      "loc": "src/app/cmd.rs:475:5: 475:67",
       "inferred": [
         "Clock",
         "Db",
@@ -3341,7 +3393,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_read_only",
-      "loc": "src/app/cmd.rs:394:5: 394:58",
+      "loc": "src/app/cmd.rs:400:5: 400:58",
       "inferred": [
         "Db",
         "Env",
@@ -3376,7 +3428,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::dispatch_report",
-      "loc": "src/app/cmd.rs:687:5: 687:58",
+      "loc": "src/app/cmd.rs:694:5: 694:58",
       "inferred": [
         "Clock",
         "Env",
@@ -3409,7 +3461,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::open_command_bar",
-      "loc": "src/app/cmd.rs:223:5: 223:46",
+      "loc": "src/app/cmd.rs:229:5: 229:46",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -3421,7 +3473,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::preview_schema_browser_rows",
-      "loc": "src/app/cmd.rs:487:5: 487:57",
+      "loc": "src/app/cmd.rs:494:5: 494:57",
       "inferred": [
         "Clock",
         "Db",
@@ -3457,7 +3509,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::run_generated_select",
-      "loc": "src/app/cmd.rs:505:5: 505:71",
+      "loc": "src/app/cmd.rs:512:5: 512:71",
       "inferred": [
         "Clock",
         "Db",
@@ -3495,7 +3547,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::show_update_status",
-      "loc": "src/app/cmd.rs:314:5: 314:37",
+      "loc": "src/app/cmd.rs:320:5: 320:37",
       "inferred": [
         "Env",
         "Fs"
@@ -3519,7 +3571,7 @@
     },
     {
       "fn": "app::cmd::<impl app::App>::write_export",
-      "loc": "src/app/cmd.rs:706:5: 706:97",
+      "loc": "src/app/cmd.rs:713:5: 713:97",
       "inferred": [
         "Clock",
         "Fs",
@@ -3545,7 +3597,7 @@
     },
     {
       "fn": "app::default_fixture_path",
-      "loc": "src/app.rs:5375:1: 5375:63",
+      "loc": "src/app.rs:5447:1: 5447:63",
       "inferred": [
         "Clock",
         "Env"
@@ -3563,7 +3615,7 @@
     },
     {
       "fn": "app::default_report_path",
-      "loc": "src/app.rs:5353:1: 5353:51",
+      "loc": "src/app.rs:5425:1: 5425:51",
       "inferred": [
         "Clock",
         "Env"
@@ -3581,7 +3633,7 @@
     },
     {
       "fn": "app::draft_path",
-      "loc": "src/app.rs:5328:1: 5328:38",
+      "loc": "src/app.rs:5400:1: 5400:38",
       "inferred": [
         "Env"
       ],
@@ -3597,7 +3649,7 @@
     },
     {
       "fn": "app::draft_save_at",
-      "loc": "src/app.rs:1069:1: 1069:79",
+      "loc": "src/app.rs:1102:1: 1102:79",
       "inferred": [
         "Clock"
       ],
@@ -3613,7 +3665,7 @@
     },
     {
       "fn": "app::editor::<impl app::App>::editor_redo",
-      "loc": "src/app/editor.rs:495:5: 495:34",
+      "loc": "src/app/editor.rs:521:5: 521:34",
       "inferred": [
         "Clock"
       ],
@@ -3629,7 +3681,7 @@
     },
     {
       "fn": "app::editor::<impl app::App>::editor_undo",
-      "loc": "src/app/editor.rs:467:5: 467:34",
+      "loc": "src/app/editor.rs:493:5: 493:34",
       "inferred": [
         "Clock"
       ],
@@ -3708,7 +3760,7 @@
     },
     {
       "fn": "app::execute",
-      "loc": "src/app.rs:5598:1: 5604:34",
+      "loc": "src/app.rs:5670:1: 5676:34",
       "inferred": [
         "Db",
         "Env",
@@ -3742,7 +3794,7 @@
     },
     {
       "fn": "app::external_edit_via",
-      "loc": "src/app.rs:5282:1: 5282:82",
+      "loc": "src/app.rs:5354:1: 5354:82",
       "inferred": [
         "Clock",
         "Env",
@@ -3782,7 +3834,7 @@
     },
     {
       "fn": "app::find_on_path_in",
-      "loc": "src/app.rs:5227:1: 5227:93",
+      "loc": "src/app.rs:5299:1: 5299:93",
       "inferred": [
         "Env",
         "Fs"
@@ -3809,7 +3861,7 @@
     },
     {
       "fn": "app::handle::<impl app::App>::apply_bootstrap_grid",
-      "loc": "src/app/handle.rs:453:5: 453:62",
+      "loc": "src/app/handle.rs:456:5: 456:62",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -3821,7 +3873,7 @@
     },
     {
       "fn": "app::handle::<impl app::App>::on_event",
-      "loc": "src/app/handle.rs:460:5: 460:49",
+      "loc": "src/app/handle.rs:463:5: 463:49",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -3885,7 +3937,7 @@
     },
     {
       "fn": "app::handle::<impl app::App>::on_live_lint_loaded",
-      "loc": "src/app/handle.rs:571:5: 574:6",
+      "loc": "src/app/handle.rs:574:5: 577:6",
       "inferred": [
         "Log"
       ],
@@ -3972,7 +4024,7 @@
     },
     {
       "fn": "app::handle::<impl app::App>::on_sessions_loaded",
-      "loc": "src/app/handle.rs:539:5: 542:6",
+      "loc": "src/app/handle.rs:542:5: 545:6",
       "inferred": [
         "Log"
       ],
@@ -3994,7 +4046,7 @@
     },
     {
       "fn": "app::handle::<impl app::App>::on_slow_queries_loaded",
-      "loc": "src/app/handle.rs:483:5: 486:6",
+      "loc": "src/app/handle.rs:486:5: 489:6",
       "inferred": [
         "Log"
       ],
@@ -4016,7 +4068,7 @@
     },
     {
       "fn": "app::history_path",
-      "loc": "src/app.rs:5335:1: 5335:40",
+      "loc": "src/app.rs:5407:1: 5407:40",
       "inferred": [
         "Env"
       ],
@@ -4032,7 +4084,7 @@
     },
     {
       "fn": "app::is_executable_file",
-      "loc": "src/app.rs:5234:1: 5234:54",
+      "loc": "src/app.rs:5306:1: 5306:54",
       "inferred": [
         "Fs"
       ],
@@ -4054,7 +4106,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::complete_command_bar",
-      "loc": "src/app/keys.rs:351:5: 351:63",
+      "loc": "src/app/keys.rs:364:5: 364:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4066,7 +4118,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_cell_detail_json_key",
-      "loc": "src/app/keys.rs:637:5: 637:68",
+      "loc": "src/app/keys.rs:650:5: 650:68",
       "inferred": [
         "Clipboard"
       ],
@@ -4085,7 +4137,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_cell_detail_key",
-      "loc": "src/app/keys.rs:594:5: 594:63",
+      "loc": "src/app/keys.rs:607:5: 607:63",
       "inferred": [
         "Clipboard"
       ],
@@ -4106,7 +4158,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_cell_detail_text_key",
-      "loc": "src/app/keys.rs:602:5: 602:68",
+      "loc": "src/app/keys.rs:615:5: 615:68",
       "inferred": [
         "Clipboard"
       ],
@@ -4125,7 +4177,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_command_bar_key",
-      "loc": "src/app/keys.rs:291:5: 291:63",
+      "loc": "src/app/keys.rs:304:5: 304:63",
       "inferred": [
         "Clock",
         "Db",
@@ -4181,7 +4233,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_confirm_key",
-      "loc": "src/app/keys.rs:1023:5: 1023:59",
+      "loc": "src/app/keys.rs:1036:5: 1036:59",
       "inferred": [
         "Clock",
         "Db",
@@ -4218,7 +4270,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_confirm_terminate_key",
-      "loc": "src/app/keys.rs:509:5: 509:69",
+      "loc": "src/app/keys.rs:522:5: 522:69",
       "inferred": [
         "Db",
         "Env",
@@ -4251,7 +4303,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_conn_pick_key",
-      "loc": "src/app/keys.rs:671:5: 671:61",
+      "loc": "src/app/keys.rs:684:5: 684:61",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -4309,7 +4361,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_editor_key",
-      "loc": "src/app/keys.rs:905:5: 905:58",
+      "loc": "src/app/keys.rs:918:5: 918:58",
       "inferred": [
         "Clock",
         "Db",
@@ -4371,7 +4423,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_env_discovery_key",
-      "loc": "src/app/keys.rs:1414:5: 1414:54",
+      "loc": "src/app/keys.rs:1427:5: 1427:54",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -4428,7 +4480,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_environments_key",
-      "loc": "src/app/keys.rs:1351:5: 1351:64",
+      "loc": "src/app/keys.rs:1364:5: 1364:64",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -4495,7 +4547,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_grid_filter_key",
-      "loc": "src/app/keys.rs:1534:5: 1534:63",
+      "loc": "src/app/keys.rs:1547:5: 1547:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4508,7 +4560,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_grid_find_key",
-      "loc": "src/app/keys.rs:1488:5: 1488:61",
+      "loc": "src/app/keys.rs:1501:5: 1501:61",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4521,7 +4573,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_history_search_key",
-      "loc": "src/app/keys.rs:954:5: 954:66",
+      "loc": "src/app/keys.rs:967:5: 967:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4533,7 +4585,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_normal_key",
-      "loc": "src/app/keys.rs:766:5: 766:58",
+      "loc": "src/app/keys.rs:779:5: 779:58",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -4614,7 +4666,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_param_prompt_key",
-      "loc": "src/app/keys.rs:237:5: 237:64",
+      "loc": "src/app/keys.rs:250:5: 250:64",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4626,7 +4678,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_rename_query_key",
-      "loc": "src/app/keys.rs:468:5: 468:64",
+      "loc": "src/app/keys.rs:481:5: 481:64",
       "inferred": [
         "Clock",
         "Fs",
@@ -4656,7 +4708,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_row_detail_key",
-      "loc": "src/app/keys.rs:551:5: 551:62",
+      "loc": "src/app/keys.rs:564:5: 564:62",
       "inferred": [
         "Clipboard"
       ],
@@ -4706,7 +4758,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_saved_queries_filter_key",
-      "loc": "src/app/keys.rs:439:5: 439:72",
+      "loc": "src/app/keys.rs:452:5: 452:72",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4718,7 +4770,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_saved_queries_key",
-      "loc": "src/app/keys.rs:378:5: 378:65",
+      "loc": "src/app/keys.rs:391:5: 391:65",
       "inferred": [
         "Clock",
         "Fs",
@@ -4748,7 +4800,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_schema_browser_filter_key",
-      "loc": "src/app/keys.rs:1282:5: 1282:73",
+      "loc": "src/app/keys.rs:1295:5: 1295:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -4760,7 +4812,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_schema_browser_key",
-      "loc": "src/app/keys.rs:1159:5: 1159:66",
+      "loc": "src/app/keys.rs:1172:5: 1172:66",
       "inferred": [
         "Clipboard",
         "Clock",
@@ -4805,7 +4857,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_schema_lint_key",
-      "loc": "src/app/keys.rs:1141:5: 1141:63",
+      "loc": "src/app/keys.rs:1154:5: 1154:63",
       "inferred": [
         "Clipboard",
         "Db",
@@ -4836,7 +4888,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_sessions_key",
-      "loc": "src/app/keys.rs:1441:5: 1441:60",
+      "loc": "src/app/keys.rs:1454:5: 1454:60",
       "inferred": [
         "Clock",
         "Db",
@@ -4875,7 +4927,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_slow_queries_key",
-      "loc": "src/app/keys.rs:1319:5: 1319:64",
+      "loc": "src/app/keys.rs:1332:5: 1332:64",
       "inferred": [
         "Clock",
         "Db",
@@ -4933,7 +4985,7 @@
     },
     {
       "fn": "app::keys::<impl app::App>::on_tx_decision_key",
-      "loc": "src/app/keys.rs:1052:5: 1052:63",
+      "loc": "src/app/keys.rs:1065:5: 1065:63",
       "inferred": [
         "Db",
         "Exec"
@@ -4983,7 +5035,7 @@
     },
     {
       "fn": "app::load_draft",
-      "loc": "src/app.rs:5558:1: 5558:38",
+      "loc": "src/app.rs:5630:1: 5630:38",
       "inferred": [
         "Env",
         "Fs"
@@ -5008,7 +5060,7 @@
     },
     {
       "fn": "app::load_draft_from",
-      "loc": "src/app.rs:5565:1: 5565:65",
+      "loc": "src/app.rs:5637:1: 5637:65",
       "inferred": [
         "Fs"
       ],
@@ -5030,7 +5082,7 @@
     },
     {
       "fn": "app::load_history",
-      "loc": "src/app.rs:5515:1: 5515:37",
+      "loc": "src/app.rs:5587:1: 5587:37",
       "inferred": [
         "Env",
         "Fs"
@@ -5055,7 +5107,7 @@
     },
     {
       "fn": "app::load_history_from",
-      "loc": "src/app.rs:5520:1: 5520:64",
+      "loc": "src/app.rs:5592:1: 5592:64",
       "inferred": [
         "Fs"
       ],
@@ -5077,7 +5129,7 @@
     },
     {
       "fn": "app::persist_draft_to",
-      "loc": "src/app.rs:5579:1: 5579:82",
+      "loc": "src/app.rs:5651:1: 5651:82",
       "inferred": [
         "Clock",
         "Fs",
@@ -5103,7 +5155,7 @@
     },
     {
       "fn": "app::persist_history_to",
-      "loc": "src/app.rs:5545:1: 5545:93",
+      "loc": "src/app.rs:5617:1: 5617:93",
       "inferred": [
         "Clock",
         "Fs",
@@ -5129,7 +5181,7 @@
     },
     {
       "fn": "app::pg_format_via",
-      "loc": "src/app.rs:5188:1: 5188:74",
+      "loc": "src/app.rs:5260:1: 5260:74",
       "inferred": [
         "Exec",
         "Unknown"
@@ -5154,7 +5206,7 @@
     },
     {
       "fn": "app::safety_toml_exists",
-      "loc": "src/app.rs:191:1: 191:32",
+      "loc": "src/app.rs:194:1: 194:32",
       "inferred": [
         "Env",
         "Fs"
@@ -5181,7 +5233,7 @@
     },
     {
       "fn": "app::saved_queries_path",
-      "loc": "src/app.rs:5340:1: 5340:50",
+      "loc": "src/app.rs:5412:1: 5412:50",
       "inferred": [
         "Env"
       ],
@@ -6132,7 +6184,7 @@
     },
     {
       "fn": "batch::check_batch_safety",
-      "loc": "src/batch.rs:196:1: 201:33",
+      "loc": "src/batch.rs:199:1: 204:33",
       "inferred": [
         "Log"
       ],
@@ -6151,7 +6203,7 @@
     },
     {
       "fn": "batch::check_statements",
-      "loc": "src/batch.rs:145:1: 150:34",
+      "loc": "src/batch.rs:147:1: 152:34",
       "inferred": [
         "Log"
       ],
@@ -6170,7 +6222,7 @@
     },
     {
       "fn": "batch::run",
-      "loc": "src/batch.rs:276:1: 276:52",
+      "loc": "src/batch.rs:291:1: 291:52",
       "inferred": [
         "Clock",
         "Db",
@@ -6227,7 +6279,7 @@
     },
     {
       "fn": "batch::run_statement_typed_json",
-      "loc": "src/batch.rs:595:1: 598:30",
+      "loc": "src/batch.rs:610:1: 613:30",
       "inferred": [
         "Db",
         "Env",
@@ -7314,7 +7366,7 @@
     },
     {
       "fn": "demo::discovery",
-      "loc": "src/demo.rs:1403:1: 1403:56",
+      "loc": "src/demo.rs:1443:1: 1443:56",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7326,7 +7378,7 @@
     },
     {
       "fn": "demo::explain_plan_grid",
-      "loc": "src/demo.rs:545:1: 545:80",
+      "loc": "src/demo.rs:548:1: 548:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7341,7 +7393,7 @@
     },
     {
       "fn": "demo::join_plan",
-      "loc": "src/demo.rs:717:1: 717:85",
+      "loc": "src/demo.rs:720:1: 720:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7356,7 +7408,7 @@
     },
     {
       "fn": "demo::launch_app",
-      "loc": "src/demo.rs:150:1: 150:39",
+      "loc": "src/demo.rs:153:1: 153:39",
       "inferred": [
         "Clock",
         "Env",
@@ -7396,7 +7448,7 @@
     },
     {
       "fn": "demo::node",
-      "loc": "src/demo.rs:570:1: 577:48",
+      "loc": "src/demo.rs:573:1: 580:48",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -7408,7 +7460,7 @@
     },
     {
       "fn": "demo::scan_plan",
-      "loc": "src/demo.rs:629:1: 633:48",
+      "loc": "src/demo.rs:632:1: 636:48",
       "inferred": [
         "Unknown"
       ],
@@ -7997,7 +8049,7 @@
     },
     {
       "fn": "inventory::fetch_rds",
-      "loc": "src/inventory.rs:736:1: 736:76",
+      "loc": "src/inventory.rs:768:1: 768:76",
       "inferred": [
         "Exec",
         "Log"
@@ -8026,7 +8078,7 @@
     },
     {
       "fn": "inventory::fetch_rds_listing",
-      "loc": "src/inventory.rs:727:1: 727:84",
+      "loc": "src/inventory.rs:759:1: 759:84",
       "inferred": [
         "Exec",
         "Log"
@@ -8052,7 +8104,7 @@
     },
     {
       "fn": "inventory::gather",
-      "loc": "src/inventory.rs:648:1: 653:20",
+      "loc": "src/inventory.rs:679:1: 684:20",
       "inferred": [
         "Unknown"
       ],
@@ -8071,7 +8123,7 @@
     },
     {
       "fn": "inventory::list_rds",
-      "loc": "src/inventory.rs:709:1: 709:82",
+      "loc": "src/inventory.rs:741:1: 741:82",
       "inferred": [
         "Exec",
         "Log"
@@ -8099,7 +8151,7 @@
     },
     {
       "fn": "inventory::load",
-      "loc": "src/inventory.rs:768:1: 768:24",
+      "loc": "src/inventory.rs:800:1: 800:24",
       "inferred": [
         "Env",
         "Fs"
@@ -8129,7 +8181,7 @@
     },
     {
       "fn": "inventory::load_and_gather",
-      "loc": "src/inventory.rs:779:1: 779:59",
+      "loc": "src/inventory.rs:811:1: 811:59",
       "inferred": [
         "Env",
         "Exec",
@@ -8186,7 +8238,7 @@
     },
     {
       "fn": "inventory::patching::CancelSlot::cancel",
-      "loc": "src/inventory/patching.rs:259:5: 259:33",
+      "loc": "src/inventory/patching.rs:317:5: 317:33",
       "inferred": [
         "Unknown"
       ],
@@ -8197,20 +8249,21 @@
       "undeclared": [],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "ba1331825eda266ad6d1c698fa4131fc",
+      "hash": "ba1331825eda266a4bd775dd20afdf35",
       "unknownWhy": [
         "callback:fn-pointer / closure"
       ]
     },
     {
       "fn": "inventory::patching::Run::<'_>::on",
-      "loc": "src/inventory/patching.rs:686:5: 686:93",
+      "loc": "src/inventory/patching.rs:755:5: 755:93",
       "inferred": [
         "Db",
         "Env",
         "Fs",
         "Log",
-        "Net"
+        "Net",
+        "Unknown"
       ],
       "direct": [
         "Log"
@@ -8224,7 +8277,8 @@
         "Net"
       ],
       "overdeclared": [],
-      "hash": "ba1331825eda266ae4ecb15192ad534f",
+      "unresolved": true,
+      "hash": "ba1331825eda266aaf580ffe7480e33c",
       "fs": [
         "read"
       ],
@@ -8252,7 +8306,7 @@
     },
     {
       "fn": "inventory::patching::Run::<'_>::on_copy",
-      "loc": "src/inventory/patching.rs:800:5: 800:91",
+      "loc": "src/inventory/patching.rs:882:5: 882:91",
       "inferred": [
         "Clock",
         "Db",
@@ -8279,7 +8333,7 @@
       ],
       "overdeclared": [],
       "unresolved": true,
-      "hash": "ba1331825eda266af3117e9a3bf6041a",
+      "hash": "ba1331825eda266af75dd7ce4141f0eb",
       "fs": [
         "read"
       ],
@@ -8320,12 +8374,13 @@
     },
     {
       "fn": "inventory::patching::Run::<'_>::patch",
-      "loc": "src/inventory/patching.rs:734:5: 740:31",
+      "loc": "src/inventory/patching.rs:803:5: 809:31",
       "inferred": [
         "Db",
         "Env",
         "Fs",
-        "Log"
+        "Log",
+        "Unknown"
       ],
       "direct": [
         "Log"
@@ -8338,7 +8393,8 @@
         "Log"
       ],
       "overdeclared": [],
-      "hash": "ba1331825eda266abf35a1e20268f172",
+      "unresolved": true,
+      "hash": "ba1331825eda266a7c6059f43b4af9ef",
       "fs": [
         "read"
       ],
@@ -8362,7 +8418,7 @@
     },
     {
       "fn": "inventory::patching::apply",
-      "loc": "src/inventory/patching.rs:603:1: 611:17",
+      "loc": "src/inventory/patching.rs:672:1: 680:17",
       "inferred": [
         "Clock",
         "Db",
@@ -8421,7 +8477,7 @@
     },
     {
       "fn": "inventory::patching::apply_for",
-      "loc": "src/inventory/patching.rs:892:1: 892:87",
+      "loc": "src/inventory/patching.rs:976:1: 981:17",
       "inferred": [
         "Clock",
         "Db",
@@ -8459,8 +8515,7 @@
       "calls": [
         "inventory::patching::apply",
         "inventory::patching::aws_secrets",
-        "inventory::patching::resolve",
-        "safety::SafetyConfig::load_personal"
+        "inventory::patching::resolve"
       ],
       "invisible": [
         "futures_util",
@@ -8483,7 +8538,7 @@
     },
     {
       "fn": "inventory::patching::aws_secrets",
-      "loc": "src/inventory/patching.rs:911:1: 911:32",
+      "loc": "src/inventory/patching.rs:997:1: 997:32",
       "inferred": [
         "Exec"
       ],
@@ -8505,7 +8560,7 @@
     },
     {
       "fn": "inventory::patching::canceller",
-      "loc": "src/inventory/patching.rs:321:1: 321:58",
+      "loc": "src/inventory/patching.rs:379:1: 379:58",
       "inferred": [
         "Log",
         "Net"
@@ -8535,7 +8590,7 @@
     },
     {
       "fn": "inventory::patching::connect",
-      "loc": "src/inventory/patching.rs:541:1: 551:2",
+      "loc": "src/inventory/patching.rs:609:1: 619:2",
       "inferred": [
         "Clock",
         "Db",
@@ -8581,7 +8636,7 @@
     },
     {
       "fn": "inventory::patching::dsn_for",
-      "loc": "src/inventory/patching.rs:421:1: 421:98",
+      "loc": "src/inventory/patching.rs:488:1: 488:98",
       "inferred": [
         "Env",
         "Unknown"
@@ -8608,7 +8663,7 @@
     },
     {
       "fn": "inventory::patching::open_admin",
-      "loc": "src/inventory/patching.rs:847:1: 856:2",
+      "loc": "src/inventory/patching.rs:929:1: 938:2",
       "inferred": [
         "Clock",
         "Db",
@@ -8654,7 +8709,7 @@
     },
     {
       "fn": "inventory::patching::open_writable",
-      "loc": "src/inventory/patching.rs:653:1: 662:2",
+      "loc": "src/inventory/patching.rs:722:1: 731:2",
       "inferred": [
         "Clock",
         "Db",
@@ -8702,7 +8757,7 @@
     },
     {
       "fn": "inventory::patching::plan",
-      "loc": "src/inventory/patching.rs:452:1: 458:31",
+      "loc": "src/inventory/patching.rs:519:1: 525:31",
       "inferred": [
         "Clock",
         "Db",
@@ -8763,7 +8818,7 @@
     },
     {
       "fn": "inventory::patching::plan_for",
-      "loc": "src/inventory/patching.rs:877:1: 882:31",
+      "loc": "src/inventory/patching.rs:960:1: 966:31",
       "inferred": [
         "Clock",
         "Db",
@@ -8798,8 +8853,7 @@
       "calls": [
         "inventory::patching::aws_secrets",
         "inventory::patching::plan",
-        "inventory::patching::resolve",
-        "safety::SafetyConfig::load_personal"
+        "inventory::patching::resolve"
       ],
       "invisible": [
         "futures_util",
@@ -8822,7 +8876,7 @@
     },
     {
       "fn": "inventory::patching::resolve",
-      "loc": "src/inventory/patching.rs:343:1: 347:43",
+      "loc": "src/inventory/patching.rs:401:1: 405:43",
       "inferred": [
         "Env",
         "Exec",
@@ -8867,7 +8921,7 @@
     },
     {
       "fn": "inventory::probe::flyway_files_in",
-      "loc": "src/inventory/probe.rs:124:1: 124:79",
+      "loc": "src/inventory/probe.rs:128:1: 128:79",
       "inferred": [
         "Fs"
       ],
@@ -8889,7 +8943,7 @@
     },
     {
       "fn": "inventory::probe::flyway_files_within",
-      "loc": "src/inventory/probe.rs:129:1: 133:33",
+      "loc": "src/inventory/probe.rs:133:1: 137:33",
       "inferred": [
         "Fs"
       ],
@@ -8911,7 +8965,7 @@
     },
     {
       "fn": "inventory::probe::run",
-      "loc": "src/inventory/probe.rs:191:1: 191:79",
+      "loc": "src/inventory/probe.rs:195:1: 195:79",
       "inferred": [
         "Clock",
         "Db",
@@ -9529,7 +9583,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::prepare",
-      "loc": "src/mcp/tools.rs:502:5: 502:72",
+      "loc": "src/mcp/tools.rs:507:5: 507:72",
       "inferred": [
         "Env",
         "Fs",
@@ -9550,8 +9604,7 @@
       ],
       "calls": [
         "mcp::connections::load",
-        "project::load_from",
-        "project::merge_safety",
+        "mcp::tools::merged_safety",
         "safety::SafetyConfig::load_personal"
       ],
       "invisible": [
@@ -9607,7 +9660,9 @@
         "inventory::patching::apply_for",
         "inventory::patching::plan_for",
         "mcp::tools::<impl mcp::Server>::tool_apply_patches::{closure#0}::__CALLSITE",
-        "mcp::tools::<impl mcp::Server>::tool_apply_patches::{closure#0}::__CALLSITE"
+        "mcp::tools::<impl mcp::Server>::tool_apply_patches::{closure#0}::__CALLSITE",
+        "mcp::tools::merged_safety",
+        "safety::SafetyConfig::load_personal"
       ],
       "invisible": [
         "futures_util",
@@ -9630,7 +9685,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_connections",
-      "loc": "src/mcp/tools.rs:407:5: 407:41",
+      "loc": "src/mcp/tools.rs:412:5: 412:41",
       "inferred": [
         "Env",
         "Fs",
@@ -9664,7 +9719,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_doctor",
-      "loc": "src/mcp/tools.rs:350:5: 350:36",
+      "loc": "src/mcp/tools.rs:355:5: 355:36",
       "inferred": [
         "Env",
         "Fs",
@@ -9705,7 +9760,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_environments_save",
-      "loc": "src/mcp/tools.rs:290:5: 290:83",
+      "loc": "src/mcp/tools.rs:295:5: 295:83",
       "inferred": [
         "Clock",
         "Env",
@@ -9750,7 +9805,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_pending_patches",
-      "loc": "src/mcp/tools.rs:470:5: 470:81",
+      "loc": "src/mcp/tools.rs:475:5: 475:81",
       "inferred": [
         "Clock",
         "Db",
@@ -9818,7 +9873,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_query",
-      "loc": "src/mcp/tools.rs:412:5: 412:71",
+      "loc": "src/mcp/tools.rs:417:5: 417:71",
       "inferred": [
         "Clock",
         "Db",
@@ -9884,7 +9939,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_schema_lint",
-      "loc": "src/mcp/tools.rs:317:5: 317:77",
+      "loc": "src/mcp/tools.rs:322:5: 322:77",
       "inferred": [
         "Clock",
         "Db",
@@ -9949,7 +10004,7 @@
     },
     {
       "fn": "mcp::tools::<impl mcp::Server>::tool_sessions_locks",
-      "loc": "src/mcp/tools.rs:432:5: 432:80",
+      "loc": "src/mcp/tools.rs:437:5: 437:80",
       "inferred": [
         "Clock",
         "Db",
@@ -10014,7 +10069,7 @@
     },
     {
       "fn": "mcp::tools::arg_str",
-      "loc": "src/mcp/tools.rs:1266:1: 1266:70",
+      "loc": "src/mcp/tools.rs:1290:1: 1290:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10026,7 +10081,7 @@
     },
     {
       "fn": "mcp::tools::confirm_request",
-      "loc": "src/mcp/tools.rs:812:1: 815:21",
+      "loc": "src/mcp/tools.rs:829:1: 832:21",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10038,7 +10093,7 @@
     },
     {
       "fn": "mcp::tools::confirmed",
-      "loc": "src/mcp/tools.rs:898:1: 901:24",
+      "loc": "src/mcp/tools.rs:920:1: 923:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10050,7 +10105,7 @@
     },
     {
       "fn": "mcp::tools::connect",
-      "loc": "src/mcp/tools.rs:538:1: 548:2",
+      "loc": "src/mcp/tools.rs:555:1: 565:2",
       "inferred": [
         "Clock",
         "Db",
@@ -10110,7 +10165,7 @@
     },
     {
       "fn": "mcp::tools::find_on_path",
-      "loc": "src/mcp/tools.rs:712:1: 712:58",
+      "loc": "src/mcp/tools.rs:729:1: 729:58",
       "inferred": [
         "Env",
         "Fs"
@@ -10131,8 +10186,37 @@
       ]
     },
     {
+      "fn": "mcp::tools::merged_safety",
+      "loc": "src/mcp/tools.rs:529:1: 532:33",
+      "inferred": [
+        "Fs",
+        "Log"
+      ],
+      "declared": [],
+      "undeclared": [
+        "Fs",
+        "Log"
+      ],
+      "overdeclared": [],
+      "hash": "ba1331825eda266adf8d1b7aa3666bc1",
+      "fs": [
+        "read"
+      ],
+      "calls": [
+        "project::load_from",
+        "project::merge_safety"
+      ],
+      "invisible": [
+        "toml",
+        "tracing_core"
+      ],
+      "incomplete": [
+        "Fs"
+      ]
+    },
+    {
       "fn": "mcp::tools::parse_max_rows",
-      "loc": "src/mcp/tools.rs:1326:1: 1326:66",
+      "loc": "src/mcp/tools.rs:1350:1: 1350:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10144,7 +10228,7 @@
     },
     {
       "fn": "mcp::tools::parse_tables",
-      "loc": "src/mcp/tools.rs:1274:1: 1274:70",
+      "loc": "src/mcp/tools.rs:1298:1: 1298:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10156,7 +10240,7 @@
     },
     {
       "fn": "mcp::tools::patch_dir_within",
-      "loc": "src/mcp/tools.rs:665:1: 665:97",
+      "loc": "src/mcp/tools.rs:682:1: 682:97",
       "inferred": [
         "Fs"
       ],
@@ -10178,7 +10262,7 @@
     },
     {
       "fn": "mcp::tools::patches_config",
-      "loc": "src/mcp/tools.rs:638:1: 641:44",
+      "loc": "src/mcp/tools.rs:655:1: 658:44",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10190,7 +10274,7 @@
     },
     {
       "fn": "mcp::tools::render_apply",
-      "loc": "src/mcp/tools.rs:927:1: 931:12",
+      "loc": "src/mcp/tools.rs:949:1: 953:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10202,7 +10286,7 @@
     },
     {
       "fn": "mcp::tools::render_connections",
-      "loc": "src/mcp/tools.rs:1414:1: 1414:85",
+      "loc": "src/mcp/tools.rs:1439:1: 1439:85",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10214,7 +10298,7 @@
     },
     {
       "fn": "mcp::tools::render_environments",
-      "loc": "src/mcp/tools.rs:1122:1: 1126:12",
+      "loc": "src/mcp/tools.rs:1146:1: 1150:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10226,7 +10310,7 @@
     },
     {
       "fn": "mcp::tools::render_found",
-      "loc": "src/mcp/tools.rs:1057:1: 1057:73",
+      "loc": "src/mcp/tools.rs:1081:1: 1081:73",
       "inferred": [
         "Env"
       ],
@@ -10246,7 +10330,7 @@
     },
     {
       "fn": "mcp::tools::render_log_errors",
-      "loc": "src/mcp/tools.rs:966:1: 971:12",
+      "loc": "src/mcp/tools.rs:989:1: 994:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10258,7 +10342,7 @@
     },
     {
       "fn": "mcp::tools::render_pending_patches",
-      "loc": "src/mcp/tools.rs:685:1: 690:12",
+      "loc": "src/mcp/tools.rs:702:1: 707:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10270,7 +10354,7 @@
     },
     {
       "fn": "mcp::tools::render_probe",
-      "loc": "src/mcp/tools.rs:1018:1: 1018:73",
+      "loc": "src/mcp/tools.rs:1041:1: 1041:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10282,7 +10366,7 @@
     },
     {
       "fn": "mcp::tools::render_query",
-      "loc": "src/mcp/tools.rs:1449:1: 1454:12",
+      "loc": "src/mcp/tools.rs:1474:1: 1479:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10295,7 +10379,7 @@
     },
     {
       "fn": "mcp::tools::render_row_probe",
-      "loc": "src/mcp/tools.rs:760:1: 764:11",
+      "loc": "src/mcp/tools.rs:777:1: 781:11",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10307,7 +10391,7 @@
     },
     {
       "fn": "mcp::tools::render_schema_lint",
-      "loc": "src/mcp/tools.rs:983:1: 988:12",
+      "loc": "src/mcp/tools.rs:1006:1: 1011:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10319,7 +10403,7 @@
     },
     {
       "fn": "mcp::tools::render_sessions_locks",
-      "loc": "src/mcp/tools.rs:1291:1: 1298:12",
+      "loc": "src/mcp/tools.rs:1315:1: 1322:12",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10331,7 +10415,7 @@
     },
     {
       "fn": "mcp::tools::replica_state",
-      "loc": "src/mcp/tools.rs:1190:1: 1193:26",
+      "loc": "src/mcp/tools.rs:1214:1: 1217:26",
       "inferred": [
         "Db",
         "Env",
@@ -10361,7 +10445,7 @@
     },
     {
       "fn": "mcp::tools::save_names",
-      "loc": "src/mcp/tools.rs:1102:1: 1102:63",
+      "loc": "src/mcp/tools.rs:1126:1: 1126:63",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10373,7 +10457,7 @@
     },
     {
       "fn": "mcp::tools::scope_from_args",
-      "loc": "src/mcp/tools.rs:1040:1: 1040:81",
+      "loc": "src/mcp/tools.rs:1064:1: 1064:81",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10385,7 +10469,7 @@
     },
     {
       "fn": "mcp::tools::single_checked_statement",
-      "loc": "src/mcp/tools.rs:1369:1: 1373:28",
+      "loc": "src/mcp/tools.rs:1393:1: 1397:28",
       "inferred": [
         "Log"
       ],
@@ -10404,7 +10488,7 @@
     },
     {
       "fn": "mcp::tools::tool_environment_logs",
-      "loc": "src/mcp/tools.rs:790:1: 790:71",
+      "loc": "src/mcp/tools.rs:807:1: 807:71",
       "inferred": [
         "Env",
         "Exec",
@@ -10441,7 +10525,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments",
-      "loc": "src/mcp/tools.rs:720:1: 720:67",
+      "loc": "src/mcp/tools.rs:737:1: 737:67",
       "inferred": [
         "Clock",
         "Db",
@@ -10500,7 +10584,7 @@
     },
     {
       "fn": "mcp::tools::tool_environments_discover",
-      "loc": "src/mcp/tools.rs:1081:1: 1084:28",
+      "loc": "src/mcp/tools.rs:1105:1: 1108:28",
       "inferred": [
         "Env",
         "Exec",
@@ -10564,7 +10648,7 @@
     },
     {
       "fn": "mcp::tools::with_replica",
-      "loc": "src/mcp/tools.rs:1245:1: 1245:80",
+      "loc": "src/mcp/tools.rs:1269:1: 1269:80",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10576,7 +10660,7 @@
     },
     {
       "fn": "mcp::tools::within_budget",
-      "loc": "src/mcp/tools.rs:1494:1: 1494:58",
+      "loc": "src/mcp/tools.rs:1519:1: 1519:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -10824,7 +10908,7 @@
     },
     {
       "fn": "query::apply::applied_ids",
-      "loc": "src/query/apply.rs:486:1: 489:30",
+      "loc": "src/query/apply.rs:600:1: 603:30",
       "inferred": [
         "Db",
         "Env",
@@ -10854,14 +10938,16 @@
     },
     {
       "fn": "query::apply::apply",
-      "loc": "src/query/apply.rs:165:1: 170:29",
+      "loc": "src/query/apply.rs:224:1: 230:29",
       "inferred": [
         "Db",
         "Env",
-        "Fs"
+        "Fs",
+        "Unknown"
       ],
       "direct": [
-        "Db"
+        "Db",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
@@ -10870,6 +10956,7 @@
         "Fs"
       ],
       "overdeclared": [],
+      "unresolved": true,
       "hash": "ba1331825eda266a3586a80307f37253",
       "fs": [
         "read"
@@ -10878,6 +10965,9 @@
         "query::apply::applied_ids",
         "query::apply::begin",
         "query::apply::run_in_transaction"
+      ],
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
       ],
       "invisible": [
         "tokio_postgres"
@@ -10889,11 +10979,12 @@
     },
     {
       "fn": "query::apply::apply_outside",
-      "loc": "src/query/apply.rs:283:1: 288:29",
+      "loc": "src/query/apply.rs:376:1: 382:29",
       "inferred": [
         "Db",
         "Env",
-        "Fs"
+        "Fs",
+        "Unknown"
       ],
       "direct": [
         "Db"
@@ -10905,6 +10996,7 @@
         "Fs"
       ],
       "overdeclared": [],
+      "unresolved": true,
       "hash": "ba1331825eda266ab102c20faa0ca478",
       "fs": [
         "read"
@@ -10923,7 +11015,7 @@
     },
     {
       "fn": "query::apply::begin",
-      "loc": "src/query/apply.rs:197:1: 197:74",
+      "loc": "src/query/apply.rs:268:1: 268:74",
       "inferred": [
         "Db"
       ],
@@ -10939,7 +11031,7 @@
     },
     {
       "fn": "query::apply::check_patch",
-      "loc": "src/query/apply.rs:87:1: 92:29",
+      "loc": "src/query/apply.rs:128:1: 133:29",
       "inferred": [
         "Log"
       ],
@@ -10959,7 +11051,7 @@
     },
     {
       "fn": "query::apply::create_copy",
-      "loc": "src/query/apply.rs:429:1: 433:24",
+      "loc": "src/query/apply.rs:543:1: 547:24",
       "inferred": [
         "Db"
       ],
@@ -10981,7 +11073,7 @@
     },
     {
       "fn": "query::apply::drop_copy",
-      "loc": "src/query/apply.rs:454:1: 454:90",
+      "loc": "src/query/apply.rs:568:1: 568:90",
       "inferred": [
         "Db"
       ],
@@ -11004,7 +11096,7 @@
     },
     {
       "fn": "query::apply::in_recovery",
-      "loc": "src/query/apply.rs:477:1: 477:82",
+      "loc": "src/query/apply.rs:591:1: 591:82",
       "inferred": [
         "Db"
       ],
@@ -11023,7 +11115,7 @@
     },
     {
       "fn": "query::apply::other_sessions",
-      "loc": "src/query/apply.rs:415:1: 415:94",
+      "loc": "src/query/apply.rs:529:1: 529:94",
       "inferred": [
         "Db"
       ],
@@ -11045,7 +11137,7 @@
     },
     {
       "fn": "query::apply::rollback",
-      "loc": "src/query/apply.rs:205:1: 205:77",
+      "loc": "src/query/apply.rs:276:1: 276:77",
       "inferred": [
         "Db"
       ],
@@ -11061,19 +11153,25 @@
     },
     {
       "fn": "query::apply::run_in_transaction",
-      "loc": "src/query/apply.rs:243:1: 246:33",
+      "loc": "src/query/apply.rs:326:1: 330:22",
       "inferred": [
-        "Db"
+        "Db",
+        "Unknown"
       ],
       "direct": [
-        "Db"
+        "Db",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
         "Db"
       ],
       "overdeclared": [],
+      "unresolved": true,
       "hash": "ba1331825eda266a876a07274ba09eb6",
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
+      ],
       "invisible": [
         "tokio_postgres"
       ],
@@ -11083,19 +11181,25 @@
     },
     {
       "fn": "query::apply::run_without_timeout",
-      "loc": "src/query/apply.rs:332:1: 335:33",
+      "loc": "src/query/apply.rs:430:1: 434:22",
       "inferred": [
-        "Db"
+        "Db",
+        "Unknown"
       ],
       "direct": [
-        "Db"
+        "Db",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
         "Db"
       ],
       "overdeclared": [],
+      "unresolved": true,
       "hash": "ba1331825eda266a266abc0860368473",
+      "unknownWhy": [
+        "callback:fn-pointer / closure"
+      ],
       "invisible": [
         "tokio_postgres"
       ],
@@ -11105,7 +11209,7 @@
     },
     {
       "fn": "query::apply::server_message",
-      "loc": "src/query/apply.rs:266:1: 266:55",
+      "loc": "src/query/apply.rs:358:1: 358:55",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11117,11 +11221,12 @@
     },
     {
       "fn": "query::apply::try_patch",
-      "loc": "src/query/apply.rs:217:1: 222:29",
+      "loc": "src/query/apply.rs:288:1: 294:29",
       "inferred": [
         "Db",
         "Env",
-        "Fs"
+        "Fs",
+        "Unknown"
       ],
       "declared": [],
       "undeclared": [
@@ -11130,6 +11235,7 @@
         "Fs"
       ],
       "overdeclared": [],
+      "unresolved": true,
       "hash": "ba1331825eda266adbeedefe56f49193",
       "fs": [
         "read"
@@ -11524,7 +11630,7 @@
     },
     {
       "fn": "query::probe::run",
-      "loc": "src/query/probe.rs:139:1: 142:27",
+      "loc": "src/query/probe.rs:144:1: 147:27",
       "inferred": [
         "Db",
         "Env",
@@ -11582,7 +11688,7 @@
     },
     {
       "fn": "redact::Redactor::new",
-      "loc": "src/redact.rs:136:5: 139:23",
+      "loc": "src/redact.rs:188:5: 191:23",
       "inferred": [
         "Unknown"
       ],
@@ -11600,7 +11706,7 @@
     },
     {
       "fn": "redact::Redactor::ranges",
-      "loc": "src/redact.rs:167:5: 167:58",
+      "loc": "src/redact.rs:219:5: 219:58",
       "inferred": [
         "Unknown"
       ],
@@ -11617,7 +11723,7 @@
     },
     {
       "fn": "redact::Redactor::redact",
-      "loc": "src/redact.rs:192:5: 192:47",
+      "loc": "src/redact.rs:250:5: 250:47",
       "inferred": [
         "Unknown"
       ],
@@ -11632,7 +11738,7 @@
     },
     {
       "fn": "redact::account_ids",
-      "loc": "src/redact.rs:428:1: 428:53",
+      "loc": "src/redact.rs:517:1: 517:53",
       "inferred": [
         "Unknown"
       ],
@@ -11653,7 +11759,7 @@
     },
     {
       "fn": "redact::apply",
-      "loc": "src/redact.rs:211:1: 211:45",
+      "loc": "src/redact.rs:269:1: 269:45",
       "inferred": [
         "Unknown"
       ],
@@ -11671,7 +11777,7 @@
     },
     {
       "fn": "redact::config_default",
-      "loc": "src/redact.rs:324:1: 324:50",
+      "loc": "src/redact.rs:413:1: 413:50",
       "inferred": [
         "Env",
         "Fs"
@@ -11701,7 +11807,7 @@
     },
     {
       "fn": "redact::config_default_from",
-      "loc": "src/redact.rs:330:1: 330:93",
+      "loc": "src/redact.rs:419:1: 419:93",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11713,7 +11819,7 @@
     },
     {
       "fn": "redact::env_names",
-      "loc": "src/redact.rs:311:1: 311:34",
+      "loc": "src/redact.rs:400:1: 400:34",
       "inferred": [
         "Env"
       ],
@@ -11729,7 +11835,7 @@
     },
     {
       "fn": "redact::ipv4",
-      "loc": "src/redact.rs:449:1: 449:46",
+      "loc": "src/redact.rs:538:1: 538:46",
       "inferred": [
         "Unknown"
       ],
@@ -11750,7 +11856,7 @@
     },
     {
       "fn": "redact::ipv6",
-      "loc": "src/redact.rs:470:1: 470:46",
+      "loc": "src/redact.rs:559:1: 559:46",
       "inferred": [
         "Unknown"
       ],
@@ -11771,7 +11877,7 @@
     },
     {
       "fn": "redact::parse_config",
-      "loc": "src/redact.rs:345:1: 345:56",
+      "loc": "src/redact.rs:434:1: 434:56",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -11783,7 +11889,7 @@
     },
     {
       "fn": "redact::runs",
-      "loc": "src/redact.rs:406:1: 406:64",
+      "loc": "src/redact.rs:495:1: 495:64",
       "inferred": [
         "Unknown"
       ],
@@ -11843,7 +11949,7 @@
     },
     {
       "fn": "safety::code_tokens",
-      "loc": "src/safety.rs:1460:1: 1460:52",
+      "loc": "src/safety.rs:1523:1: 1523:52",
       "inferred": [
         "Unknown"
       ],
@@ -11861,7 +11967,7 @@
     },
     {
       "fn": "safety::word_present",
-      "loc": "src/safety.rs:1409:1: 1409:63",
+      "loc": "src/safety.rs:1472:1: 1472:63",
       "inferred": [
         "Unknown"
       ],
@@ -12793,7 +12899,7 @@
     },
     {
       "fn": "ui::bordered",
-      "loc": "src/ui.rs:3019:1: 3019:58",
+      "loc": "src/ui.rs:3071:1: 3071:58",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12845,7 +12951,7 @@
     },
     {
       "fn": "ui::draw",
-      "loc": "src/ui.rs:42:1: 42:42",
+      "loc": "src/ui.rs:50:1: 50:42",
       "inferred": [
         "Clock",
         "Env",
@@ -12881,7 +12987,7 @@
     },
     {
       "fn": "ui::draw_body",
-      "loc": "src/ui.rs:399:1: 399:55",
+      "loc": "src/ui.rs:410:1: 410:55",
       "inferred": [
         "Clock",
         "Env"
@@ -12904,7 +13010,7 @@
     },
     {
       "fn": "ui::draw_connection_failed",
-      "loc": "src/ui.rs:476:1: 476:75",
+      "loc": "src/ui.rs:499:1: 499:75",
       "inferred": [
         "Clock",
         "Env"
@@ -12930,7 +13036,7 @@
     },
     {
       "fn": "ui::draw_footer",
-      "loc": "src/ui.rs:1391:1: 1391:53",
+      "loc": "src/ui.rs:1438:1: 1438:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12944,7 +13050,7 @@
     },
     {
       "fn": "ui::draw_frame",
-      "loc": "src/ui.rs:50:1: 50:44",
+      "loc": "src/ui.rs:61:1: 61:44",
       "inferred": [
         "Clock",
         "Env",
@@ -12979,7 +13085,7 @@
     },
     {
       "fn": "ui::draw_header",
-      "loc": "src/ui.rs:315:1: 315:53",
+      "loc": "src/ui.rs:326:1: 326:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -12992,7 +13098,7 @@
     },
     {
       "fn": "ui::draw_splash",
-      "loc": "src/ui.rs:244:1: 244:41",
+      "loc": "src/ui.rs:255:1: 255:41",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13005,7 +13111,7 @@
     },
     {
       "fn": "ui::draw_tab_bar",
-      "loc": "src/ui.rs:2747:1: 2747:54",
+      "loc": "src/ui.rs:2797:1: 2797:54",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13018,7 +13124,7 @@
     },
     {
       "fn": "ui::editor::draw_completion_popup",
-      "loc": "src/ui/editor.rs:467:1: 467:98",
+      "loc": "src/ui/editor.rs:470:1: 475:10",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13070,7 +13176,7 @@
     },
     {
       "fn": "ui::footer_badges",
-      "loc": "src/ui.rs:655:1: 655:90",
+      "loc": "src/ui.rs:678:1: 678:90",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13082,7 +13188,7 @@
     },
     {
       "fn": "ui::footer_badges_with",
-      "loc": "src/ui.rs:664:1: 668:24",
+      "loc": "src/ui.rs:687:1: 691:24",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13094,7 +13200,7 @@
     },
     {
       "fn": "ui::footer_error_rows",
-      "loc": "src/ui.rs:838:1: 838:76",
+      "loc": "src/ui.rs:861:1: 861:76",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13106,7 +13212,7 @@
     },
     {
       "fn": "ui::header::draw_tall_header",
-      "loc": "src/ui/header.rs:101:1: 101:69",
+      "loc": "src/ui/header.rs:106:1: 106:69",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13120,7 +13226,7 @@
     },
     {
       "fn": "ui::help_body",
-      "loc": "src/ui.rs:1971:1: 1976:2",
+      "loc": "src/ui.rs:2018:1: 2023:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13132,7 +13238,7 @@
     },
     {
       "fn": "ui::hint_spans",
-      "loc": "src/ui.rs:1054:1: 1054:76",
+      "loc": "src/ui.rs:1101:1: 1101:76",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13158,7 +13264,7 @@
     },
     {
       "fn": "ui::landing::header_line",
-      "loc": "src/ui/landing.rs:319:1: 319:63",
+      "loc": "src/ui/landing.rs:320:1: 320:77",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13182,7 +13288,7 @@
     },
     {
       "fn": "ui::landing::paired_line",
-      "loc": "src/ui/landing.rs:456:1: 462:19",
+      "loc": "src/ui/landing.rs:462:1: 468:19",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13194,7 +13300,7 @@
     },
     {
       "fn": "ui::landing::read_only_style",
-      "loc": "src/ui/landing.rs:345:1: 345:39",
+      "loc": "src/ui/landing.rs:351:1: 351:39",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13206,7 +13312,7 @@
     },
     {
       "fn": "ui::landing::single_line",
-      "loc": "src/ui/landing.rs:446:1: 446:82",
+      "loc": "src/ui/landing.rs:452:1: 452:82",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13218,7 +13324,7 @@
     },
     {
       "fn": "ui::paint_title_suffix",
-      "loc": "src/ui.rs:1007:1: 1007:74",
+      "loc": "src/ui.rs:1054:1: 1054:74",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13273,7 +13379,7 @@
     },
     {
       "fn": "ui::panels::draw_conn_pick",
-      "loc": "src/ui/panels.rs:599:1: 599:67",
+      "loc": "src/ui/panels.rs:594:1: 594:67",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13287,7 +13393,7 @@
     },
     {
       "fn": "ui::panels::draw_drift",
-      "loc": "src/ui/panels.rs:2170:1: 2170:53",
+      "loc": "src/ui/panels.rs:2205:1: 2205:53",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13300,7 +13406,7 @@
     },
     {
       "fn": "ui::panels::draw_env_discovery",
-      "loc": "src/ui/panels.rs:2285:1: 2285:90",
+      "loc": "src/ui/panels.rs:2320:1: 2320:90",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13314,7 +13420,7 @@
     },
     {
       "fn": "ui::panels::draw_env_lines",
-      "loc": "src/ui/panels.rs:2108:1: 2115:2",
+      "loc": "src/ui/panels.rs:2143:1: 2150:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13327,7 +13433,7 @@
     },
     {
       "fn": "ui::panels::draw_environments",
-      "loc": "src/ui/panels.rs:2376:1: 2376:70",
+      "loc": "src/ui/panels.rs:2411:1: 2411:70",
       "inferred": [
         "Env"
       ],
@@ -13349,7 +13455,7 @@
     },
     {
       "fn": "ui::panels::draw_error_detail",
-      "loc": "src/ui/panels.rs:3008:1: 3008:70",
+      "loc": "src/ui/panels.rs:3052:1: 3052:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13363,7 +13469,7 @@
     },
     {
       "fn": "ui::panels::draw_explain_tree",
-      "loc": "src/ui/panels.rs:908:1: 908:70",
+      "loc": "src/ui/panels.rs:903:1: 903:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13377,7 +13483,7 @@
     },
     {
       "fn": "ui::panels::draw_help",
-      "loc": "src/ui/panels.rs:789:1: 789:66",
+      "loc": "src/ui/panels.rs:784:1: 784:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13405,7 +13511,7 @@
     },
     {
       "fn": "ui::panels::draw_notifications",
-      "loc": "src/ui/panels.rs:2943:1: 2943:71",
+      "loc": "src/ui/panels.rs:2987:1: 2987:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13419,7 +13525,7 @@
     },
     {
       "fn": "ui::panels::draw_param_prompt",
-      "loc": "src/ui/panels.rs:2890:1: 2890:70",
+      "loc": "src/ui/panels.rs:2934:1: 2934:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13433,7 +13539,7 @@
     },
     {
       "fn": "ui::panels::draw_rename_prompt",
-      "loc": "src/ui/panels.rs:2821:1: 2821:71",
+      "loc": "src/ui/panels.rs:2856:1: 2856:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13447,7 +13553,7 @@
     },
     {
       "fn": "ui::panels::draw_save_query_prompt",
-      "loc": "src/ui/panels.rs:2855:1: 2855:75",
+      "loc": "src/ui/panels.rs:2890:1: 2890:75",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13461,7 +13567,7 @@
     },
     {
       "fn": "ui::panels::draw_saved_queries",
-      "loc": "src/ui/panels.rs:2710:1: 2710:71",
+      "loc": "src/ui/panels.rs:2745:1: 2745:71",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13475,7 +13581,7 @@
     },
     {
       "fn": "ui::panels::draw_sessions",
-      "loc": "src/ui/panels.rs:2554:1: 2554:66",
+      "loc": "src/ui/panels.rs:2589:1: 2589:66",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13492,7 +13598,7 @@
     },
     {
       "fn": "ui::panels::draw_slow_queries",
-      "loc": "src/ui/panels.rs:1016:1: 1016:70",
+      "loc": "src/ui/panels.rs:1011:1: 1011:70",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13506,7 +13612,7 @@
     },
     {
       "fn": "ui::panels::push_kv",
-      "loc": "src/ui/panels.rs:3336:1: 3342:2",
+      "loc": "src/ui/panels.rs:3380:1: 3386:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13518,7 +13624,7 @@
     },
     {
       "fn": "ui::panels::sessions_state_col_width",
-      "loc": "src/ui/panels.rs:2698:1: 2698:80",
+      "loc": "src/ui/panels.rs:2733:1: 2733:80",
       "inferred": [
         "Unknown"
       ],
@@ -13536,7 +13642,7 @@
     },
     {
       "fn": "ui::panels::wrap_help_lines",
-      "loc": "src/ui/panels.rs:3140:1: 3147:2",
+      "loc": "src/ui/panels.rs:3184:1: 3191:2",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13548,7 +13654,7 @@
     },
     {
       "fn": "ui::render_json_tree",
-      "loc": "src/ui.rs:1792:1: 1792:78",
+      "loc": "src/ui.rs:1839:1: 1839:78",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13560,7 +13666,7 @@
     },
     {
       "fn": "ui::results::draw_cell_detail",
-      "loc": "src/ui/results.rs:285:1: 285:73",
+      "loc": "src/ui/results.rs:337:1: 337:73",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13588,7 +13694,7 @@
     },
     {
       "fn": "ui::results::draw_result_diff",
-      "loc": "src/ui/results.rs:419:1: 419:69",
+      "loc": "src/ui/results.rs:471:1: 471:69",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13602,7 +13708,7 @@
     },
     {
       "fn": "ui::results::draw_row_detail",
-      "loc": "src/ui/results.rs:119:1: 119:72",
+      "loc": "src/ui/results.rs:171:1: 171:72",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13642,7 +13748,7 @@
     },
     {
       "fn": "ui::schema::draw_schema_lint",
-      "loc": "src/ui/schema.rs:480:1: 480:69",
+      "loc": "src/ui/schema.rs:485:1: 485:69",
       "inferred": [],
       "declared": [],
       "undeclared": [],
@@ -13791,7 +13897,7 @@
     },
     {
       "fn": "ui::tap_setup_hint_lines",
-      "loc": "src/ui.rs:2859:1: 2859:75",
+      "loc": "src/ui.rs:2909:1: 2909:75",
       "inferred": [],
       "declared": [],
       "undeclared": [],

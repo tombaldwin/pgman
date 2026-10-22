@@ -11,11 +11,11 @@ expression: dump(&buf)
 │  ORD│       installed via a standalone binary      │     │
 ╰─────│   k9s-style Postgres TUI for Java/AWS shops  │─────╯
 ╭[ ◆ r│            server: pg 16.4 (demo)            │─────╮
-│numbe│                                              │_at  │
-│INV-0│       by Tom Baldwin / Polymorphism Ltd      │6-10-│
-│INV-0│          license: MIT OR Apache-2.0          │6-10-│
-│INV-0│                                              │6-10-│
-│INV-0│           esc / enter / A to close           │6-10-│
-│INV-0╰──────────────────────────────────────────────╯6-10-│
+│numbe│                                              │     │
+│INV-0│       by Tom Baldwin / Polymorphism Ltd      │     │
+│INV-0│          license: MIT OR Apache-2.0          │     │
+│INV-0│                                              │     │
+│INV-0│           esc / enter / A to close           │     │
+│INV-0╰──────────────────────────────────────────────╯     │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / enter / A close · ? help

@@ -11,8 +11,10 @@
 //! since that's the path real users can't exercise without Postgres.
 //!
 //! A test names what it creates with [`it_name`] (`pgman_it_<what>_<pid>`),
-//! and the binary drops all of it when it exits, along with anything a
-//! killed run left. `PGMAN_IT_KEEP_TABLES=1` keeps them for a post-mortem.
+//! tables and databases alike, and the binary drops all of it when it
+//! exits, along with anything a killed run left; what an earlier run left
+//! is dropped when it starts, too. `PGMAN_IT_KEEP_TABLES=1` keeps them
+//! for a post-mortem.
 
 #![cfg(feature = "integration")]
 
@@ -65,10 +67,9 @@ fn test_relation_pid_reads_the_first_number_after_the_prefix() {
     assert_eq!(test_relation_pid("other_123"), None);
 }
 
-/// Drop the `pgman_it_*` relations this process made, and any left by a
-/// run that is no longer running (killed, or from before this existed).
-/// A live pid's are left alone, so a run in parallel keeps its tables.
-/// The compose database is throwaway in CI, but a developer's copy
+/// Drop the `pgman_it_*` relations [`is_stale`] picks: this process's,
+/// and any left by a run that is no longer running (killed, or from
+/// before this existed). The compose database is throwaway in CI, but a developer's copy
 /// otherwise fills with them, crowding the schema browser and
 /// completion when testing by hand. Errors are ignored: this is
 /// housekeeping, and it runs at exit where nothing can report them.
@@ -96,19 +97,10 @@ async fn drop_test_relations() {
     else {
         return;
     };
-    let me = std::process::id();
-    let alive = |pid: u32| {
-        pid != me
-            && Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-    };
     let mut doomed: Vec<(String, String)> = rows
         .iter()
         .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
-        .filter(|(name, _)| test_relation_pid(name).is_some_and(|pid| !alive(pid)))
+        .filter(|(name, _)| test_relation_pid(name).is_some_and(is_stale))
         .collect();
     // Views before the tables under them; sequences last, since a
     // table's CASCADE may already have taken its own.
@@ -130,11 +122,90 @@ async fn drop_test_relations() {
     }
 }
 
-/// Runs [`drop_test_relations`] when the test binary exits, after every
-/// test. At exit parts of std are already shut down on the main thread,
-/// so the work gets a thread and a runtime of its own.
-#[ctor::dtor]
-unsafe fn drop_test_relations_at_exit() {
+/// Whether the cleanup drops what run `pid` made: this run's own, or a
+/// run's that is no longer running. A live pid's are left alone, so a
+/// run in parallel (another worktree) keeps its tables and databases.
+fn is_stale(pid: u32) -> bool {
+    pid == std::process::id()
+        || !Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+/// Which of `names` (databases on the server) the cleanup drops: a test's
+/// (`pgman_it_<what>_<pid>[_…]`, a copy pgman made of one included) whose
+/// pid is `stale`. Nothing without the `pgman_it_` prefix. Pure.
+fn doomed_databases(names: &[String], stale: impl Fn(u32) -> bool) -> Vec<String> {
+    names
+        .iter()
+        .filter(|n| test_relation_pid(n).is_some_and(&stale))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn only_a_stale_test_database_is_dropped() {
+    let names: Vec<String> = [
+        "pgman_test",
+        "pgman_noconnect",
+        "postgres",
+        "template1",
+        "pgman_test_42",
+        "app_pgman_it_x_42",
+        "pgman_it_versions",
+        "pgman_it_src_42",
+        "pgman_it_src_42_pgman_copy_1792521719",
+        "pgman_it_django_7",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(
+        doomed_databases(&names, |pid| pid == 42),
+        ["pgman_it_src_42", "pgman_it_src_42_pgman_copy_1792521719"]
+    );
+    assert!(doomed_databases(&names, |_| false).is_empty());
+}
+
+/// Drop the `pgman_it_*` databases [`doomed_databases`] picks: the
+/// migration-tool probes' and the copy test's (and the copy pgman made of
+/// it, when a failed run left one). `WITH (FORCE)`: a session a killed
+/// run left on one would otherwise keep it. Errors are ignored, as in
+/// [`drop_test_relations`].
+async fn drop_test_databases() {
+    let Ok(dsn) = pgman::conn::Dsn::parse(DSN) else {
+        return;
+    };
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let Ok((client, _task)) =
+        pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx).await
+    else {
+        return;
+    };
+    let Ok(rows) = client
+        .query(
+            "SELECT datname FROM pg_database WHERE datname LIKE 'pgman\\_it\\_%'",
+            &[],
+        )
+        .await
+    else {
+        return;
+    };
+    let names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    for name in doomed_databases(&names, is_stale) {
+        let name = name.replace('"', "\"\"");
+        let _ = client
+            .batch_execute(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+            .await;
+    }
+}
+
+/// [`drop_test_relations`] and [`drop_test_databases`], on a thread and
+/// a runtime of their own: at exit parts of std are already shut down on
+/// the main thread, and before `main` nothing else is running yet.
+fn clean_up_test_objects() {
     if std::env::var_os("PGMAN_IT_KEEP_TABLES").is_some() {
         return;
     }
@@ -143,10 +214,55 @@ unsafe fn drop_test_relations_at_exit() {
             .enable_all()
             .build()
         {
-            rt.block_on(drop_test_relations());
+            rt.block_on(async {
+                drop_test_relations().await;
+                drop_test_databases().await;
+            });
         }
     });
     let _ = worker.join();
+}
+
+/// Before any test: what earlier runs left (a killed run, or one whose
+/// exit cleanup didn't get to it).
+#[ctor::ctor]
+unsafe fn clean_up_test_objects_at_start() {
+    clean_up_test_objects();
+}
+
+/// When the test binary exits, after every test: this run's own, and
+/// anything a run that ended meanwhile left.
+#[ctor::dtor]
+unsafe fn clean_up_test_objects_at_exit() {
+    clean_up_test_objects();
+}
+
+/// The start-of-run cleanup ran: no test database of a run that isn't
+/// running is still there. A 2026-10-20 run left
+/// `pgman_it_src_<pid>_pgman_copy_<stamp>` on the compose server, and the
+/// migration-tool probe test never dropped its databases at all.
+#[test]
+fn no_earlier_runs_test_database_survives_the_start_of_a_run() {
+    if std::env::var_os("PGMAN_IT_KEEP_TABLES").is_some() {
+        return;
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let names: Vec<String> = rt.block_on(async {
+        raw("pgman_test")
+            .await
+            .query(
+                "SELECT datname FROM pg_database WHERE datname LIKE 'pgman\\_it\\_%'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect()
+    });
+    let me = std::process::id();
+    let left = doomed_databases(&names, |pid| pid != me && is_stale(pid));
+    assert!(left.is_empty(), "left by an earlier run: {left:?}");
 }
 
 /// A read-only probe connection to `dsn`.
@@ -2356,6 +2472,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
             }),
         }],
         error: None,
+        profile: None,
         probe: Some(pgman::inventory::ProbeSettings {
             version_table: Some(pgman::inventory::VersionTable {
                 table: table.into(),
@@ -2806,6 +2923,7 @@ fn probes_recognise_common_migration_tools() {
                 }),
             }],
             error: None,
+            profile: None,
             probe: Some(pgman::inventory::ProbeSettings {
                 version_table: None,
                 migrations_dir: Some(migdir.display().to_string()),
@@ -2858,10 +2976,17 @@ fn probes_recognise_common_migration_tools() {
                 .remove(0)
                 .unwrap()
                 .unwrap();
-            let e = p.schema_error.unwrap_or_default();
+            let e = p.files_error.clone().unwrap_or_default();
             assert!(
                 e.starts_with("migrations_dir: cannot list /nonexistent"),
                 "{e}"
+            );
+            // pgman's side failed, not a migration: the version stands.
+            assert_eq!(p.schema_error, None, "{p:?}");
+            assert_eq!(
+                (p.migration_tool.as_deref(), p.schema_label.as_deref()),
+                (Some("django"), Some("shop.0007_orders")),
+                "{p:?}"
             );
         }
     }
@@ -3140,7 +3265,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
         let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql2, false)
             .unwrap()
             .statements;
-        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts)
+        let done = pgman::query::apply::apply(&client, &cfg, &p2, &stmts, &|| false)
             .await
             .unwrap();
         assert!(done.recorded, "{done:?}");
@@ -3157,7 +3282,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
         let stmts = pgman::query::apply::check_patch(&writable, "pgman_test", &sql3, false)
             .unwrap()
             .statements;
-        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts)
+        let err = pgman::query::apply::apply(&client, &cfg, &p3, &stmts, &|| false)
             .await
             .unwrap_err();
         assert!(
@@ -3180,7 +3305,7 @@ fn applying_a_patch_runs_records_rolls_back_and_times_out() {
             .unwrap()
             .statements;
         let started = std::time::Instant::now();
-        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts)
+        let err = pgman::query::apply::apply(&client, &cfg, &p4, &stmts, &|| false)
             .await
             .unwrap_err();
         assert!(err.contains("lock timeout"), "{err}");
@@ -3620,6 +3745,26 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("differ from the plan"), "{err}");
+        // Nor when what the guards would ask about disagrees with what the
+        // apply-time check finds: the confirmation answered other questions.
+        assert!(p.patches[0].confirms.is_empty(), "{:?}", p.patches[0]);
+        let mut forged = p.clone();
+        forged.patches[0].confirms.push("TRUNCATE".into());
+        let r = apply(
+            &env,
+            &target,
+            &writable,
+            &no_secrets,
+            &forged,
+            pgman::inventory::patching::RunMode::Apply,
+            &Default::default(),
+        )
+        .await;
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert!(
+            err.contains("would ask about other statements than the plan named"),
+            "{err}"
+        );
         let r = apply(
             &env,
             &target,
@@ -3708,7 +3853,7 @@ fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
         .await
         .unwrap()
         .0;
-        let done = pgman::query::apply::apply_outside(&client, &cfg, &file, &statements)
+        let done = pgman::query::apply::apply_outside(&client, &cfg, &file, &statements, &|| false)
             .await
             .expect("ran past the session's 500 ms");
         assert!(done.recorded);
@@ -3721,7 +3866,7 @@ fn outside_a_transaction_lifts_the_statement_timeout_then_restores_it() {
         // And restored after a failure too.
         let bad = vec!["SELECT * FROM pgman_it_no_such_table".to_string()];
         assert!(
-            pgman::query::apply::apply_outside(&client, &cfg, &file, &bad)
+            pgman::query::apply::apply_outside(&client, &cfg, &file, &bad, &|| false)
                 .await
                 .is_err()
         );
@@ -3881,6 +4026,302 @@ fn cancelling_a_run_stops_the_running_statement() {
             "inside: rolled back: {err}"
         );
         assert_eq!(r.recorded_after, Some(2));
+    });
+}
+
+/// A cancel that lands between two statements — when nothing is running
+/// for the server's cancel to stop — still stops the patch: in its
+/// transaction nothing is committed or recorded, outside one it stops and
+/// says what stayed. Found by the 2026-10-22 release panel: the flag was
+/// read only between patches, so the rest of the patch ran and committed.
+///
+/// Deterministic: the patch waits on an advisory lock the test holds, the
+/// test swaps the run's server cancel for a no-op and cancels (only the
+/// flag is set), then lets the statement finish. The flag is set before
+/// that statement ends, so the next check sees it.
+#[test]
+fn a_cancel_between_statements_stops_the_patch() {
+    let home = scratch_home("env-patch-cancel-between", WRITABLE_PROFILE);
+    let pid = std::process::id();
+    let vt = format!("pgman_it_bv_{pid}");
+    let made = format!("pgman_it_bm_{pid}");
+    let key = i64::from(pid) + 7_000_000;
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    let row = |id: i64| format!("INSERT INTO {vt} (id) VALUES ({id});\n");
+    let wait = format!("SELECT pg_advisory_xact_lock({key});\n");
+    std::fs::write(
+        dir.join("002-tx.sql"),
+        format!("{}{wait}CREATE TABLE {made} (id int);\n", row(2)),
+    )
+    .unwrap();
+    let (env, target) = local_env("it-cancel-between", "pgman_test", &vt, &dir);
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let no_secrets: pgman::inventory::patching::FetchSecret =
+        std::sync::Arc::new(|_| Err("no secrets in this test".into()));
+    use pgman::inventory::patching::{apply, plan, CancelSlot, PatchPlan, RunMode};
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let admin = raw("pgman_test").await;
+        admin
+            .batch_execute(&format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"
+            ))
+            .await
+            .unwrap();
+        // Runs `p` while holding the lock; once the run waits on it,
+        // cancels with only the flag, then lets it go.
+        let run_cancelled_in_the_wait = |p: PatchPlan| {
+            let (env, target, writable, no_secrets) = (
+                env.clone(),
+                target.clone(),
+                writable.clone(),
+                no_secrets.clone(),
+            );
+            async move {
+                let holder = raw("pgman_test").await;
+                holder
+                    .execute("SELECT pg_advisory_lock($1)", &[&key])
+                    .await
+                    .unwrap();
+                let slot = CancelSlot::default();
+                let running = {
+                    let slot = slot.clone();
+                    tokio::spawn(async move {
+                        apply(
+                            &env,
+                            &target,
+                            &writable,
+                            &no_secrets,
+                            &p,
+                            RunMode::Apply,
+                            &slot,
+                        )
+                        .await
+                    })
+                };
+                let mut waiting = false;
+                for _ in 0..200 {
+                    let n: i64 = holder
+                        .query_one(
+                            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' \
+                             AND NOT granted AND objid = ($1::bigint & 4294967295)::oid",
+                            &[&key],
+                        )
+                        .await
+                        .unwrap()
+                        .get(0);
+                    if n > 0 {
+                        waiting = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                assert!(waiting, "the run reached the lock");
+                // The run set its server cancel before its first patch.
+                slot.set(std::sync::Arc::new(|| {}));
+                assert!(slot.cancel());
+                holder
+                    .execute("SELECT pg_advisory_unlock($1)", &[&key])
+                    .await
+                    .unwrap();
+                running.await.unwrap()
+            }
+        };
+
+        let p = plan(&env, &target, &writable, &no_secrets, false)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 1);
+        let r = run_cancelled_in_the_wait(p).await;
+        assert_eq!(r.results.len(), 1, "{r:?}");
+        let err = r.results[0].outcome.as_ref().unwrap_err();
+        assert_eq!(
+            err, "cancelled before statement 3 of 3; rolled back, nothing applied",
+            "inside: the rest of the patch never ran"
+        );
+        assert_eq!(r.recorded_after, Some(1), "its version row rolled back");
+        let present: bool = admin
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&made])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(!present, "nothing after the cancel ran");
+
+        // Outside a transaction: what ran stays, and it says so.
+        std::fs::write(
+            dir.join("002-tx.sql"),
+            format!("{}CREATE TABLE {made} (id int);\n", row(2)),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("003-out.sql"),
+            format!("{}{wait}VACUUM {made};\n", row(3)),
+        )
+        .unwrap();
+        let p = plan(&env, &target, &writable, &no_secrets, true)
+            .await
+            .unwrap();
+        assert_eq!(p.patches.len(), 2);
+        let r = run_cancelled_in_the_wait(p).await;
+        assert_eq!(r.results.len(), 2, "{r:?}");
+        assert_eq!(r.results[0].outcome, Ok(2));
+        let err = r.results[1].outcome.as_ref().unwrap_err();
+        assert!(
+            err.starts_with("cancelled before statement 3 of 3, outside a transaction")
+                && err.contains("2 earlier statement(s) stay applied")
+                && err.contains("version 3 IS recorded"),
+            "{err}"
+        );
+        assert_eq!(r.recorded_after, Some(3));
+    });
+}
+
+/// A cancel after a patch's last statement, before its commit, rolls it
+/// back too; and a dry run's patch stops the same way.
+#[test]
+fn a_cancel_before_the_commit_rolls_the_patch_back() {
+    let home = scratch_home("apply-cancel-commit", WRITABLE_PROFILE);
+    let vt = it_name("ccv");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let text = format!("INSERT INTO {vt} (id) VALUES (2);\nSELECT 1;");
+    let file = pgman::query::patches::patch_file("002-x.sql", &text, &cfg);
+    let statements = vec![
+        format!("INSERT INTO {vt} (id) VALUES (2)"),
+        "SELECT 1".into(),
+    ];
+    // `true` from the `n`th ask on: before statement n, or (n = 3) the commit.
+    let from = |n: usize| {
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        move || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 >= n
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let client = raw("pgman_test").await;
+        let err = pgman::query::apply::apply(&client, &cfg, &file, &statements, &from(3))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "cancelled before the commit, all 2 statement(s) run; rolled back, nothing applied"
+        );
+        let err = pgman::query::apply::apply(&client, &cfg, &file, &statements, &from(2))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "cancelled before statement 2 of 2; rolled back, nothing applied"
+        );
+        let ids = pgman::query::apply::applied_ids(&client, &cfg)
+            .await
+            .unwrap();
+        assert_eq!(ids, [1], "nothing committed");
+        // A dry run's patch, inside the transaction the caller holds.
+        pgman::query::apply::begin(&client).await.unwrap();
+        let err = pgman::query::apply::try_patch(&client, &cfg, &file, &statements, &from(2))
+            .await
+            .unwrap_err();
+        assert_eq!(err, "cancelled before statement 2 of 2");
+        pgman::query::apply::rollback(&client).await.unwrap();
+        // And with no cancel it goes through.
+        let done = pgman::query::apply::apply(&client, &cfg, &file, &statements, &|| false)
+            .await
+            .unwrap();
+        assert!(done.recorded);
+    });
+}
+
+/// A `DO` block can call `set_config` where the patch check can't see it
+/// (it's in a dollar-quoted body) and lift the statement timeout for the
+/// session, past its own commit. Both timeouts are set again before every
+/// statement, so the next statement — the next patch's here — runs under
+/// pgman's limits all the same. Found by the 2026-10-22 release panel.
+#[test]
+fn a_do_block_cannot_lift_the_timeouts_for_the_statements_after_it() {
+    let home = scratch_home("apply-do-timeout", WRITABLE_PROFILE);
+    let vt = it_name("dov");
+    let seen = it_name("dos");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); \
+                 CREATE TABLE {seen} (st text, lt text)"
+            ),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let lift = format!(
+        "INSERT INTO {vt} (id) VALUES (2);\n\
+         DO $$ BEGIN \
+           PERFORM set_config('statement_timeout', '0', false); \
+           PERFORM set_config('lock_timeout', '0', false); \
+         END $$;\n"
+    );
+    let record = format!(
+        "INSERT INTO {vt} (id) VALUES (3);\n\
+         INSERT INTO {seen} SELECT current_setting('statement_timeout'), current_setting('lock_timeout');\n"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let client = raw("pgman_test").await;
+        for (name, text) in [("002-lift.sql", &lift), ("003-record.sql", &record)] {
+            let file = pgman::query::patches::patch_file(name, text, &cfg);
+            let statements = pgman::query::apply::check_patch(&writable, "pgman_test", text, false)
+                .unwrap_or_else(|e| panic!("{name}: the check lets it through: {e}"))
+                .statements;
+            let done = pgman::query::apply::apply(&client, &cfg, &file, &statements, &|| false)
+                .await
+                .unwrap();
+            assert!(done.recorded, "{name}");
+        }
+        // The lift did reach the session, past its commit…
+        let session: String = client
+            .query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(session, "0", "the DO block's change outlived its commit");
+        // …but the next statement ran under pgman's own limits.
+        let row = client
+            .query_one(&format!("SELECT st, lt FROM {seen}"), &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            (row.get::<_, String>(0), row.get::<_, String>(1)),
+            ("10min".to_string(), "5s".to_string())
+        );
     });
 }
 
@@ -4297,6 +4738,91 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(child.wait().unwrap().success());
 }
 
+/// A project's `.pgman/pgman.toml` that keeps a database read-only stops
+/// `apply_patches` there, though the personal safety.toml lets it write:
+/// a project's `[safety]` can only tighten, and patching takes it as
+/// `query` does. Found by the 2026-10-22 release panel.
+#[test]
+fn mcp_apply_patches_takes_the_projects_safety_tightening() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-project-safety", WRITABLE_PROFILE);
+    let vt = it_name("mpv");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-dev\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    // The server's working directory is the project.
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args =
+        serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test"});
+    writeln!(stdin, "{}", tool_call(2, "apply_patches", args)).unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 2, "a reply, not a question: {frame}");
+    let (text, is_error) = reply(&[frame], 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["planned"], serde_json::json!([]), "{text}");
+    assert_eq!(v["not_included"]["file"], "002-x.sql", "{text}");
+    let why = v["not_included"]["reason"].as_str().unwrap();
+    assert!(why.contains("read-only"), "{why}");
+    assert!(!table_has_id(&home, &vt, 2));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
 /// `apply_patches` (and the overview's `P`, which shares `plan_for` /
 /// `apply_for`) finds an `rds` environment's server through the RDS
 /// listing — with its secret — and never asks for upgrade targets,
@@ -4471,7 +4997,7 @@ fn a_patch_cannot_smuggle_statements_past_the_scanner() {
         .await
         .unwrap()
         .0;
-        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements)
+        let err = pgman::query::apply::apply(&client, &cfg, &patch, &statements, &|| false)
             .await
             .unwrap_err();
         assert!(err.contains("statement 3 of 3 failed"), "{err}");

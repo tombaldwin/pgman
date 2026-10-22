@@ -1240,7 +1240,7 @@ fn cargo_package_ships_only_the_allowlist() {
             continue;
         }
         let Ok(contents) = fs::read_to_string(f) else {
-            continue; // binary (demo.gif) or otherwise unreadable as text
+            continue; // binary or otherwise unreadable as text
         };
         let scoped = strip_test_module_content(&contents);
         for needle in &needles {

@@ -787,6 +787,11 @@ pub struct SavedQueriesUi {
     pub cursor: usize,
     /// Name being typed in `Mode::SaveQueryPrompt`.
     pub save_name: String,
+    /// `save_name` is still the suggestion `Ctrl-S` filled in, shown
+    /// selected: the first character typed replaces it (Backspace
+    /// clears it, `→` / `End` keep it to edit, Enter saves it as is).
+    /// Typed text used to be appended to the slug.
+    pub save_name_suggested: bool,
     /// Active `:param` collection while loading a parameterised
     /// saved query (`Mode::ParamPrompt`). `None` otherwise.
     pub param_prompt: Option<ParamPrompt>,
@@ -1003,10 +1008,16 @@ pub struct EnvironmentsUi {
     pub connect_token: u64,
     /// `Some` while the discovery view (`d`) is open over the overview.
     pub discovery: Option<DiscoveryUi>,
+    /// Numbers each discovery, so a late result matches only its own.
+    pub discovery_token: u64,
     /// Parallel to `reports`: each row's probe.
     pub probes: Vec<Vec<ProbeState>>,
     /// Numbers each listing, so probes of an older one are dropped.
     pub probe_seq: u64,
+    /// Environments of round `probe_seq` whose answers haven't landed.
+    /// Rows can't say this: they keep their last answer while the next
+    /// probe runs, so none reads `Probing` after the first round.
+    pub probes_in_flight: usize,
     /// `R`: probe again every `ENV_AUTO_PROBE_INTERVAL` while the
     /// overview is open. Off by default, and apart from the sessions
     /// panel's auto-refresh, so turning that on never starts
@@ -1064,8 +1075,11 @@ pub enum PatchStage {
 /// [`EnvLogFetcher`]; `None` applies nothing.
 #[derive(Clone)]
 pub struct EnvPatcher {
-    /// (environment, server, database, outside) → the plan; `outside`
-    /// lets patches that need it run outside a transaction.
+    /// (environment, server, database, outside, safety) → the plan;
+    /// `outside` lets patches that need it run outside a transaction.
+    /// `safety` is the App's: the personal safety.toml as the project's
+    /// `[safety]` tightened it, which both the plan and the run check
+    /// each patch against.
     pub plan: PatchPlanFn,
     pub apply: PatchApplyFn,
     /// Run at once on this thread (`--demo`, tests): the futures must
@@ -1079,6 +1093,7 @@ pub type PatchPlanFn = std::sync::Arc<
             String,
             String,
             bool,
+            crate::safety::SafetyConfig,
         ) -> futures::future::BoxFuture<
             'static,
             Result<crate::inventory::patching::PatchPlan, String>,
@@ -1091,6 +1106,7 @@ pub type PatchApplyFn = std::sync::Arc<
             crate::inventory::patching::PatchPlan,
             crate::inventory::patching::RunMode,
             crate::inventory::patching::CancelSlot,
+            crate::safety::SafetyConfig,
         ) -> futures::future::BoxFuture<'static, crate::inventory::patching::ApplyReport>
         + Send
         + Sync,
@@ -1169,6 +1185,8 @@ impl EnvSelection {
 /// operator chose, and the cursor.
 #[derive(Debug, Default)]
 pub struct DiscoveryUi {
+    /// Which discovery this view is waiting on (`discovery_token`).
+    pub token: u64,
     pub loading: bool,
     pub found: Option<crate::inventory::discover::Found>,
     pub error: Option<String>,

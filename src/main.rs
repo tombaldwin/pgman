@@ -15,8 +15,8 @@ use std::io::IsTerminal;
 #[command(
     name = "pgman",
     version = concat!(env!("CARGO_PKG_VERSION"), " · beta"),
-    about = "k9s-style Postgres TUI for Java/AWS shops (public beta)",
-    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
+    about = "k9s-style Postgres TUI for Java/AWS shops (beta)",
+    after_help = "One statement, no TUI: `pgman query 'SQL' [--json]` (= --batch --sql 'SQL' [--format json]).\nEnvironments from AWS: `pgman env discover [--save]`; see docs/environments.md.\nMCP server: `pgman mcp serve` runs a stdio MCP server (read-only queries; apply_patches asks you first); see docs/mcp.md."
 )]
 struct Cli {
     /// Connect using a postgres:// DSN — same as --dsn.
@@ -83,12 +83,12 @@ struct Cli {
     #[arg(long, help_heading = "Batch mode")]
     discovered: bool,
 
-    /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON events).
+    /// Bind a TCP listener for the planned pgman-tap library (length-prefixed JSON events).
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_listen: Option<String>,
 
     /// Bind an OTLP/HTTP listener so any OpenTelemetry JVM can stream
-    /// Postgres spans in, no pgman-tap JAR needed.
+    /// Postgres spans in; works today, without the planned pgman-tap library.
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_otlp: Option<String>,
 
@@ -383,16 +383,21 @@ async fn main() -> anyhow::Result<()> {
         immediate: false,
     });
     application.env_patcher = Some(app::EnvPatcher {
-        plan: std::sync::Arc::new(|environment, server, database, outside| {
+        // The App hands over its safety config: the project's `[safety]`
+        // tightens patching as it does the editor.
+        plan: std::sync::Arc::new(|environment, server, database, outside, safety| {
             Box::pin(pgman::inventory::patching::plan_for(
                 environment,
                 server,
                 database,
                 outside,
+                safety,
             ))
         }),
-        apply: std::sync::Arc::new(|plan, mode, cancel| {
-            Box::pin(pgman::inventory::patching::apply_for(plan, mode, cancel))
+        apply: std::sync::Arc::new(|plan, mode, cancel, safety| {
+            Box::pin(pgman::inventory::patching::apply_for(
+                plan, mode, cancel, safety,
+            ))
         }),
         immediate: false,
     });
@@ -413,9 +418,9 @@ async fn main() -> anyhow::Result<()> {
     // connection: the overview opens first, on the row used last time.
     let env_state = pgman::util::data_dir().join("environments-last");
     application.environments_state_file = Some(env_state.clone());
-    let has_environments = pgman::inventory::load()
-        .environments
-        .is_ok_and(|e| !e.is_empty());
+    let environments = pgman::inventory::load().environments;
+    application.environments_config_broken = environments.is_err();
+    let has_environments = environments.is_ok_and(|e| !e.is_empty());
     if application.dsn.is_none() && has_environments {
         let last = std::fs::read_to_string(&env_state)
             .ok()

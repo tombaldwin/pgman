@@ -146,7 +146,7 @@ can't silently widen what an environment covers.
 | `kind` | Rows | Needs |
 | --- | --- | --- |
 | `rds` | Every Postgres instance whose identifier matches one of `instances` (globs, `*` only), plus the read replicas of every match, each listed under its primary. One row per entry in `databases` (default: the instance's `DBName`). Aurora keeps the writer, the readers and the database name on the cluster, so when an Aurora instance is listed `aws rds describe-db-clusters` is read too: readers list under the writer as replicas do, the cluster's `DatabaseName` is the default database, and naming any one instance brings the whole cluster, so a failover doesn't split it. The engine column names the newest minor and major versions RDS will upgrade it to (`postgres 16.10 (↑16.15 · 18.6)`). | The `aws` CLI on `PATH`. `region`, `profile` and `account` are optional; when `account` is set, `aws sts get-caller-identity` must match it before anything is listed. |
-| `static` | One row per named connection in `connections.toml`, with its role. There's no engine version or status yet. | Nothing. |
+| `static` | One row per named connection in `connections.toml`, with its role. A `role = "replica"` connection is listed under the environment's `role = "primary"` connection of the same database, and probed in its place, as an `rds` replica is; with no such primary, or more than one, it's listed on its own. There's no engine version or status until a probe reads one. | Nothing. |
 | `docker` | Local containers that expose 5432 or run a `postgres` image, whose names match one of `containers` (globs; default all). One row per entry in `databases` (default `postgres`), reached on the port 5432 is published to. A stopped container, or one that doesn't publish 5432, is listed with the reason it can't connect. | The `docker` CLI on `PATH`. `user`, `password_env` and `sslmode` apply; `ssh_tunnel` and `secrets` don't. |
 
 Environments that share an `rds` scope (region, profile, account) share
@@ -191,7 +191,11 @@ the MCP `environments` tool when called with `probe: true`):
   in yellow; it's the same matching as the MCP `pending_patches` tool.
   A text column holding no integer ids at all (`1.2`, `1.10`) shows
   its highest as written instead of failing; applying patches still
-  refuses such a table.
+  refuses such a table. When pgman can't read the patch files (or a
+  `migrations_dir`), the version still shows, with `(+?)` in yellow
+  for the unknown pending count and the reason in the detail line: a
+  red `✗` is kept for the database's side, an unreadable version table
+  or a failed migration.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
   `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has
@@ -247,8 +251,11 @@ How a probe connects:
   the same), and the detail line says so. `SESSIONS` and `SIZE` stay
   blank, because they're per server. A primary is probed only when
   there's no replica to read instead.
-- **A server that isn't running** (stopped, starting, or a container
-  that exited) isn't probed. Its status says why.
+- **A server that isn't up** isn't probed. On RDS that is any status
+  but `available`, `backing-up`, `modifying`, `configuring-…`,
+  `resetting-master-credentials` and `storage-optimization` (so
+  `stopped`, `rebooting`, `failed`, `storage-full`, `upgrading`, …); for
+  a container, any state but `running`. Its status says why.
 - **One ssh per bastion.** Every database behind the same bastion rides
   one `ssh` carrying a forward each, closed when the probe ends.
 - **Read-only, bounded.** Every connection is read-only, with a 5 s
@@ -266,7 +273,9 @@ steps:
 
 1. **A plan, read-only.** The patches the database hasn't recorded and
    that are numbered above the highest version it has, in order, each
-   checked against `safety.toml` like a `--batch` script. The plan stops
+   checked against `safety.toml` like a `--batch` script — as a
+   project's `.pgman/pgman.toml` `[safety]` block tightens it, when
+   pgman (or the MCP server) runs in that project. The plan stops
    before the first patch that can't run here: the database's profile
    is read-only (the default — set `read_only = false` for it), a guard
    blocks a statement, the patch has its own `BEGIN`/`COMMIT` or changes
@@ -275,17 +284,24 @@ steps:
    below). A pending file numbered *below* the highest recorded version
    is a gap the database skipped: it's left out and named in red, since
    running it now would put it after patches numbered above it. Apply
-   it by hand if it's needed.
+   it by hand if it's needed. Statements your guard rails would ask
+   about one by one in the editor (a `Confirm` guard: `TRUNCATE`,
+   `ALTER`, an `INSERT` under the defaults…) are counted at the top and
+   named under each patch: the plan's one confirmation answers them
+   all.
 2. **Your confirmation, then the patches.** Each runs in its own
    transaction with `lock_timeout = 5s`, so a busy table fails fast
-   instead of queueing behind live traffic. Before each one the version
+   instead of queueing behind live traffic, and a 10-minute statement
+   timeout; both are set again before every statement. Before each one the version
    table is read again; a patch someone else applied since the plan
    stops the run. The first failure rolls that patch back and stops.
    What runs is the text you were shown, not a fresh read of the file.
    Afterwards the version table is read once more, and the result says
    which version the database records now. **Esc twice** while it runs
-   cancels the running statement on the server: a patch in its
-   transaction rolls back; outside one, what ran stays.
+   cancels the running statement on the server, and stops the patch
+   before its next statement (or its commit) should it land between
+   two: a patch in its transaction rolls back; outside one, what ran
+   stays, and the result says how much.
 
 **Tab** in the plan picks how it runs, and the plan says which in red
 before you confirm:
@@ -308,6 +324,17 @@ before you confirm:
   copy. If the copy can't be dropped afterwards, the result names it
   for you to drop. That `DROP DATABASE` is the only one pgman runs, and
   it takes only a name pgman made.
+
+**`DO` blocks and `CALL`.** The plan checks a `DO` block or a `CALL`
+as one statement; what its body does isn't read, so its body can do
+what the plan refuses in plain SQL, such as `set_config` on a timeout.
+pgman doesn't refuse them, since migrations use them, but it sets
+`lock_timeout` and `statement_timeout` again before every statement,
+so such a change ends with the statement that made it. Within that
+statement it holds: a lock the body waits for after lifting
+`lock_timeout` waits as long as the body says (the statement timeout
+already running doesn't change). Read a `DO` block's body, or the
+procedure a `CALL` runs, before you confirm.
 
 Patches are all or nothing *each*, not as a batch: when the third of
 three fails, the first two stay applied and recorded, and the database

@@ -382,6 +382,7 @@ fn scr_confirm() -> App {
         wrap_in_tx: true,
         blocked_by_read_only: false,
         read_only_escape: false,
+        server_control: false,
     };
     a.pending_run = Some(PendingRun {
         sql: "DELETE FROM orders".into(),
@@ -979,6 +980,7 @@ fn scr_env_discovery() -> App {
         cursor: 0,
         scope: Default::default(),
         scopes: pgman::demo::discovery().scopes,
+        ..Default::default()
     });
     a
 }

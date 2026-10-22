@@ -16,7 +16,11 @@
 //! changes session settings (`SET`, `RESET`, `set_config`) — it could lift
 //! the lock timeout, or change how the server reads the next statement
 //! (`standard_conforming_strings`) so that it isn't the statement pgman
-//! checked. Those are run by hand. The caller confirms each patch first;
+//! checked. Those are run by hand. A `DO` block or a function the patch
+//! calls can still reach `set_config` where the check can't see it, so
+//! the lock and statement timeouts are both set again before every
+//! statement: such a change lasts no longer than the statement that made
+//! it. The caller confirms each patch first;
 //! that confirmation is what answers the guards' `Confirm`.
 //!
 //! The one way past the transaction: an operator who plans with
@@ -40,6 +44,11 @@ use crate::conn;
 
 /// How long a patch statement waits for a lock before failing.
 pub const LOCK_TIMEOUT: &str = "5s";
+
+/// How long a patch statement in a transaction may run: a table rewrite
+/// takes time; waiting on a lock does not ([`LOCK_TIMEOUT`]). The
+/// patching connection opens with it too.
+pub const STATEMENT_TIMEOUT_MS: u64 = 600_000;
 
 /// What makes `stmt` unable to run inside a transaction block, if
 /// anything: the server refuses these there, so a patch holding one
@@ -78,6 +87,38 @@ pub struct Checked {
     /// the patch holds one: it then runs statement by statement, each
     /// committing as it goes ([`apply_outside`]). Only with `outside`.
     pub outside: Option<&'static str>,
+    /// The risky statements a `Confirm` guard would ask about, in order
+    /// ([`guard_confirms`]): the plan's one confirmation answers them, so
+    /// the plan names them.
+    pub confirms: Vec<String>,
+}
+
+/// What each of `statements` that safety.toml's guards would ask about
+/// for `db` (a `Confirm`) is, in order: `TRUNCATE`, `DELETE without
+/// WHERE`… Left out: an `INSERT`, a keyed `UPDATE` / `DELETE` and DDL —
+/// the default guards ask about those too, and they are what a migration
+/// is made of, so naming them on every plan would hide the few that
+/// matter. Pure.
+pub fn guard_confirms(
+    safety: &crate::safety::SafetyConfig,
+    db: &str,
+    statements: &[String],
+) -> Vec<String> {
+    statements
+        .iter()
+        .map(|s| crate::safety::evaluate(safety, db, s))
+        .filter(|d| d.guard == crate::safety::Guard::Confirm)
+        .filter(|d| {
+            !matches!(
+                d.kind,
+                crate::safety::StatementKind::Insert
+                    | crate::safety::StatementKind::Update { has_where: true }
+                    | crate::safety::StatementKind::Delete { has_where: true }
+                    | crate::safety::StatementKind::AlterDdl
+            )
+        })
+        .map(|d| d.kind.describe())
+        .collect()
 }
 
 /// The statements of `sql`, checked for applying to `db`, or why not.
@@ -105,6 +146,9 @@ pub fn check_patch(
             crate::batch::Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
             crate::batch::Refusal::ReadOnlyEscape => {
                 crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string()
+            }
+            crate::batch::Refusal::ServerControl => {
+                crate::safety::SERVER_CONTROL_REFUSAL.to_string()
             }
         })?;
     if statements.is_empty() {
@@ -142,6 +186,7 @@ pub fn check_patch(
         }
     }
     Ok(Checked {
+        confirms: guard_confirms(safety, db, &statements),
         statements,
         outside: needs,
     })
@@ -150,6 +195,19 @@ pub fn check_patch(
 /// How a patch [`needs_no_transaction`] gets applied.
 pub const OUTSIDE_HINT: &str =
     "pgman's environments view can plan it to run outside one (o), or apply it by hand";
+
+/// Asked before each statement of a patch, and before its commit: `true`
+/// stops the patch there (the operator cancelled). A cancel sent to the
+/// server stops only the statement running when it arrives; this is what
+/// holds one that arrives between two.
+pub type Stop<'a> = &'a (dyn Fn() -> bool + Send + Sync);
+
+/// Why a patch's statements stopped: statement `i` failed, or a [`Stop`]
+/// came before it ran.
+enum Halt {
+    Failed(usize, String),
+    Cancelled(usize),
+}
 
 /// What an apply did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,21 +219,34 @@ pub struct Applied {
 }
 
 /// Run `statements` (from [`check_patch`]) in one transaction on a
-/// writable `client`, then read the version table again.
+/// writable `client`, then read the version table again. A `stop` before
+/// any statement, or before the commit, rolls it all back.
 pub async fn apply(
     client: &tokio_postgres::Client,
     cfg: &PatchesConfig,
     patch: &PatchFile,
     statements: &[String],
+    stop: Stop<'_>,
 ) -> Result<Applied, String> {
     begin(client).await?;
-    if let Err((i, msg)) = run_in_transaction(client, statements).await {
+    let n = statements.len();
+    let halted = match run_in_transaction(client, statements, stop).await {
+        Err(Halt::Failed(i, msg)) => Some(format!(
+            "statement {} of {n} failed, nothing applied: {msg}",
+            i + 1
+        )),
+        Err(Halt::Cancelled(i)) => Some(format!(
+            "cancelled before statement {} of {n}; rolled back, nothing applied",
+            i + 1
+        )),
+        Ok(()) if stop() => Some(format!(
+            "cancelled before the commit, all {n} statement(s) run; rolled back, nothing applied"
+        )),
+        Ok(()) => None,
+    };
+    if let Some(e) = halted {
         let _ = client.batch_execute("ROLLBACK").await;
-        return Err(format!(
-            "statement {} of {} failed, nothing applied: {msg}",
-            i + 1,
-            statements.len()
-        ));
+        return Err(e);
     }
     client
         .batch_execute("COMMIT")
@@ -219,13 +290,24 @@ pub async fn try_patch(
     cfg: &PatchesConfig,
     patch: &PatchFile,
     statements: &[String],
+    stop: Stop<'_>,
 ) -> Result<Applied, String> {
-    if let Err((i, msg)) = run_in_transaction(client, statements).await {
-        return Err(format!(
-            "statement {} of {} failed: {msg}",
-            i + 1,
-            statements.len()
-        ));
+    match run_in_transaction(client, statements, stop).await {
+        Ok(()) => {}
+        Err(Halt::Failed(i, msg)) => {
+            return Err(format!(
+                "statement {} of {} failed: {msg}",
+                i + 1,
+                statements.len()
+            ))
+        }
+        Err(Halt::Cancelled(i)) => {
+            return Err(format!(
+                "cancelled before statement {} of {}",
+                i + 1,
+                statements.len()
+            ))
+        }
     }
     let applied = applied_ids(client, cfg)
         .await
@@ -238,17 +320,27 @@ pub async fn try_patch(
     })
 }
 
-/// `statements` inside an open transaction, each with the lock timeout;
-/// the index and server message of the first that fails.
+/// `statements` inside an open transaction, each with the lock and
+/// statement timeouts; the first that fails, or the one a `stop` came
+/// before.
 async fn run_in_transaction(
     client: &tokio_postgres::Client,
     statements: &[String],
-) -> Result<(), (usize, String)> {
+    stop: Stop<'_>,
+) -> Result<(), Halt> {
     for (i, stmt) in statements.iter().enumerate() {
-        // Before each statement: a function the patch calls could have
-        // changed it (`SET` and `set_config` themselves are refused).
+        if stop() {
+            return Err(Halt::Cancelled(i));
+        }
+        // Both, before each statement: a `DO` block or a function the
+        // patch calls can change either with `set_config` where the check
+        // can't see it (`SET` and a bare `set_config` are refused), and a
+        // session-wide change outlives the statement and the commit.
         let reset = client
-            .batch_execute(&format!("SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'; \
+                 SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"
+            ))
             .await;
         // `execute` prepares: one command per string, or the server refuses.
         let run = match reset {
@@ -256,7 +348,7 @@ async fn run_in_transaction(
             Err(e) => Err(e),
         };
         if let Err(e) = run {
-            return Err((i, server_message(&e)));
+            return Err(Halt::Failed(i, server_message(&e)));
         }
     }
     Ok(())
@@ -273,7 +365,8 @@ fn server_message(e: &tokio_postgres::Error) -> String {
 /// time with no transaction around them, each committing as it runs, then
 /// read the version table again. A failure part-way leaves the earlier
 /// statements applied — and, when the version row came first, the patch
-/// recorded — so the error says exactly where it stopped.
+/// recorded — so the error says exactly where it stopped. A `stop` before
+/// a statement ends it there the same way.
 ///
 /// No statement timeout: a `VACUUM` or a concurrent build on a large
 /// table can outlast any limit, and a concurrent build cut short is left
@@ -285,6 +378,7 @@ pub async fn apply_outside(
     cfg: &PatchesConfig,
     patch: &PatchFile,
     statements: &[String],
+    stop: Stop<'_>,
 ) -> Result<Applied, String> {
     let id = patch.version_id.or(patch.filename_number);
     let saved: String = client
@@ -292,7 +386,7 @@ pub async fn apply_outside(
         .await
         .map(|r| r.get(0))
         .map_err(|e| format!("could not read statement_timeout, nothing applied: {e}"))?;
-    let ran = run_without_timeout(client, statements).await;
+    let ran = run_without_timeout(client, statements, stop).await;
     // Restored whatever happened: the next patch runs on this session.
     let restored = client
         .execute(
@@ -300,7 +394,11 @@ pub async fn apply_outside(
             &[&saved],
         )
         .await;
-    if let Err((i, msg)) = ran {
+    if let Err(halt) = ran {
+        let (i, msg) = match &halt {
+            Halt::Failed(i, msg) => (*i, Some(msg.as_str())),
+            Halt::Cancelled(i) => (*i, None),
+        };
         let stmt = &statements[i];
         let recorded = match (applied_ids(client, cfg).await, id) {
             (Ok(ids), Some(id)) if ids.contains(&id) => {
@@ -309,7 +407,7 @@ pub async fn apply_outside(
             (Ok(_), Some(id)) => format!("version {id} is not recorded"),
             _ => "the version table couldn't be read".to_string(),
         };
-        return Err(outside_failure(i, statements.len(), stmt, &msg, &recorded));
+        return Err(outside_failure(i, statements.len(), stmt, msg, &recorded));
     }
     if let Err(e) = restored {
         return Err(format!(
@@ -327,13 +425,17 @@ pub async fn apply_outside(
 }
 
 /// [`apply_outside`]'s statements, each with the lock timeout and no
-/// statement timeout; the index and server message of the first that
-/// fails.
+/// statement timeout; the first that fails, or the one a `stop` came
+/// before.
 async fn run_without_timeout(
     client: &tokio_postgres::Client,
     statements: &[String],
-) -> Result<(), (usize, String)> {
+    stop: Stop<'_>,
+) -> Result<(), Halt> {
     for (i, stmt) in statements.iter().enumerate() {
+        if stop() {
+            return Err(Halt::Cancelled(i));
+        }
         // Session-wide, there being no transaction to scope them; again
         // before each statement, as in `apply`.
         let reset = client
@@ -346,20 +448,32 @@ async fn run_without_timeout(
             Err(e) => Err(e),
         };
         if let Err(e) = run {
-            return Err((i, server_message(&e)));
+            return Err(Halt::Failed(i, server_message(&e)));
         }
     }
     Ok(())
 }
 
 /// What [`apply_outside`] says when statement `i` (of `n`) failed with
-/// `msg`. Pure.
-fn outside_failure(i: usize, n: usize, stmt: &str, msg: &str, recorded: &str) -> String {
+/// `msg`, or — `msg` `None` — was cancelled before it ran. Pure.
+fn outside_failure(i: usize, n: usize, stmt: &str, msg: Option<&str>, recorded: &str) -> String {
+    let what = match msg {
+        Some(msg) => format!(
+            "statement {} of {n} failed outside a transaction: {msg}",
+            i + 1
+        ),
+        None => format!(
+            "cancelled before statement {} of {n}, outside a transaction",
+            i + 1
+        ),
+    };
     let mut out = format!(
-        "statement {} of {n} failed outside a transaction: {msg}. {i} earlier statement(s) \
-         stay applied and {recorded}; finish the patch by hand",
-        i + 1
+        "{what}. {i} earlier statement(s) stay applied and {recorded}; finish the patch by hand"
     );
+    // Not run, so it left nothing behind.
+    if msg.is_none() {
+        return out;
+    }
     let tokens = crate::safety::code_tokens(stmt);
     if tokens.first().is_some_and(|t| t == "create") && tokens.iter().any(|t| t == "concurrently") {
         out.push_str(
@@ -614,6 +728,39 @@ mod tests {
     }
 
     #[test]
+    fn a_patch_names_what_the_guards_would_ask_about() {
+        let mut safety = writable();
+        safety.default.guards.delete_without_where = crate::safety::Guard::Confirm;
+        let sql = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
+                   ALTER TABLE audit ADD COLUMN c int;\n\
+                   UPDATE audit SET c = 0 WHERE id = 1;\n\
+                   TRUNCATE audit;\n\
+                   DELETE FROM sessions;\n\
+                   SELECT 1;";
+        let c = check_patch(&safety, "ledger", sql, false).unwrap();
+        // A migration's ordinary statements (the default guards confirm
+        // them too) and SELECT aren't named; the risky ones are.
+        assert_eq!(c.confirms, ["TRUNCATE", "DELETE without WHERE"]);
+        // A database whose profile asks about nothing: none.
+        let mut quiet = safety.clone();
+        quiet.default.guards = crate::safety::Guards {
+            insert: crate::safety::Guard::Allow,
+            update: crate::safety::Guard::Allow,
+            update_without_where: crate::safety::Guard::Allow,
+            delete: crate::safety::Guard::Allow,
+            delete_without_where: crate::safety::Guard::Allow,
+            truncate: crate::safety::Guard::Allow,
+            drop: crate::safety::Guard::Allow,
+            ddl: crate::safety::Guard::Allow,
+            other: crate::safety::Guard::Allow,
+        };
+        assert!(check_patch(&quiet, "ledger", sql, false)
+            .unwrap()
+            .confirms
+            .is_empty());
+    }
+
+    #[test]
     fn outside_lets_through_only_what_needs_no_transaction() {
         let vacuum = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
                       VACUUM ANALYZE t;";
@@ -649,7 +796,7 @@ mod tests {
     #[test]
     fn a_failure_outside_a_transaction_says_what_stayed_and_what_to_drop() {
         assert_eq!(
-            outside_failure(1, 3, "VACUUM t", "canceled", "version 4 IS recorded"),
+            outside_failure(1, 3, "VACUUM t", Some("canceled"), "version 4 IS recorded"),
             "statement 2 of 3 failed outside a transaction: canceled. 1 earlier statement(s) \
              stay applied and version 4 IS recorded; finish the patch by hand"
         );
@@ -657,11 +804,25 @@ mod tests {
             0,
             1,
             "CREATE UNIQUE INDEX CONCURRENTLY i ON t (c)",
-            "canceling statement due to statement timeout",
+            Some("canceling statement due to statement timeout"),
             "x"
         )
         .ends_with("leaves an INVALID index: drop it before trying again)"));
-        assert!(!outside_failure(0, 1, "DROP INDEX CONCURRENTLY i", "m", "x").contains("INVALID"));
+        assert!(
+            !outside_failure(0, 1, "DROP INDEX CONCURRENTLY i", Some("m"), "x").contains("INVALID")
+        );
+        // Cancelled before it ran: it built nothing, INVALID or not.
+        assert_eq!(
+            outside_failure(
+                1,
+                2,
+                "CREATE INDEX CONCURRENTLY i ON t (c)",
+                None,
+                "version 4 IS recorded"
+            ),
+            "cancelled before statement 2 of 2, outside a transaction. 1 earlier statement(s) \
+             stay applied and version 4 IS recorded; finish the patch by hand"
+        );
     }
 
     #[test]

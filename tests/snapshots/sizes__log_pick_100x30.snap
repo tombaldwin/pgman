@@ -21,7 +21,7 @@ expression: dump(&buf)
 ││  2 queries · view: all queries (press `c` to toggle)                                           ││
 ││                                                                                                ││
 ││▶ [hibernate] select * from users where id = 42                                                 ││
-││  [pglog]     select * from orders where user_id = 42                                           ││
+││  [postgres]  select * from orders where user_id = 42                                           ││
 │╰────────────────────────────────────────────────────────────────────────────────────────────────╯│
 │                                                                                                  │
 │                                                                                                  │

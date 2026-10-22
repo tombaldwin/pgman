@@ -150,6 +150,19 @@ fn editor_renders_keyword_in_title_colour() {
 }
 
 #[test]
+fn editor_title_names_a_pasted_postgres_log_in_user_words() {
+    // The title once said `pglog log` — an internal module name.
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer =
+        "2026-10-21 09:12:48.001 UTC [31840] billing@ledger LOG:  statement: select 1".into();
+    a.editor.cursor = 0;
+    let text = dump(&render(&mut a, 120, 20));
+    assert!(text.contains("editor · postgres log"), "{text}");
+    assert!(!text.contains("pglog"), "{text}");
+}
+
+#[test]
 fn editor_flags_unknown_identifier_in_syn_unknown() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
@@ -1134,6 +1147,27 @@ fn about_card_carries_the_full_server_version() {
     assert!(!header.contains("Debian"), "{header}");
 }
 
+/// Redaction leaves pgman's own credit line alone even when a word in
+/// it is a redacted name — here the login name — while the same word
+/// elsewhere on screen is still blocked out.
+#[test]
+fn redacted_about_card_keeps_its_credit_line() {
+    let mut a = settle_app();
+    a.redact_env_names = vec!["tom".into()];
+    a.last_error = Some("permission denied for tom".into());
+    a.mode = Mode::About;
+    a.redact = true;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        rendered.contains("by Tom Baldwin / Polymorphism Ltd"),
+        "credit line redacted:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("denied for tom") && rendered.contains("denied for ▓▓▓"),
+        "the name elsewhere must still go:\n{rendered}"
+    );
+}
+
 /// The footer renders the `:` bar only while the mode IS `CommandBar`.
 /// An async `TxClosed` landing mid-bar moves the mode to Editor
 /// without taking the bar; until the next key drops it, its text must
@@ -1191,6 +1225,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,
@@ -1798,6 +1833,7 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
             connect: Err("no secret".into()),
         }],
         error: None,
+        profile: None,
         probe: None,
     }];
     a.environments.probes = vec![vec![pgman::app::ProbeState::Off]];
@@ -1871,6 +1907,300 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
                 .split(|c: char| !c.is_alphanumeric() && c != '_')
                 .any(|w| w == name || w.starts_with("ledger_")),
             "{name} shows in clear:\n{rendered}"
+        );
+    }
+}
+
+#[test]
+fn redacted_overview_hides_an_rds_profile_named_in_its_error() {
+    // An `rds` environment whose listing failed has no rows, so its
+    // profile is known only from the source — and the aws CLI's error
+    // on its heading names it.
+    use pgman::inventory::EnvReport;
+    let mut a = settle_app();
+    a.environments.reports = vec![EnvReport {
+        name: "staging".into(),
+        source: "RDS us-west-1".into(),
+        targets: Vec::new(),
+        error: Some("The config profile (examplecorp-sso) could not be found".into()),
+        profile: Some("examplecorp-sso".into()),
+        probe: None,
+    }];
+    a.environments.probes = vec![Vec::new()];
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 120, 30));
+    assert!(off.contains("examplecorp-sso"), "never on screen:\n{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 120, 30));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    assert!(on.contains("The config profile (▓▓▓▓▓▓▓▓▓▓▓-▓▓▓)"), "{on}");
+}
+
+#[test]
+fn redacted_discovery_hides_the_project_in_its_version_table_paths() {
+    // A proposal picks up the project's version table: its patch
+    // directory and the config file it came from both name the
+    // project's directory, which is often the client's name.
+    use pgman::inventory::discover::with_version_table;
+    let mut found = pgman::demo::discovery();
+    let root = "/home/dev/git/examplecorp-api";
+    with_version_table(
+        &mut found.proposals,
+        Some(&(
+            std::path::PathBuf::from(format!("{root}/.pgman/pgman.toml")),
+            pgman::inventory::VersionTable {
+                table: "public.db_version".into(),
+                column: "id".into(),
+                patches: Some(format!("{root}/db/patches")),
+                databases: Vec::new(),
+            },
+        )),
+    );
+    let chosen = vec![false; found.proposals.len()];
+    let mut a = settle_app();
+    a.environments.discovery = Some(pgman::app::DiscoveryUi {
+        found: Some(found),
+        chosen,
+        ..Default::default()
+    });
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 160, 45));
+    assert!(
+        off.contains("examplecorp-api/db/patches") && off.contains("examplecorp-api/.pgman"),
+        "the paths never on screen:\n{off}"
+    );
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 45));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    // The generic directories still say what the path is.
+    assert!(on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches"), "{on}");
+    assert!(
+        on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/.pgman/pgman.toml"),
+        "{on}"
+    );
+}
+
+#[test]
+fn redacted_picker_hides_the_credential_variable_names() {
+    // A picker row ends `password ← $VAR  user ← $VAR`; a project's
+    // variable names tend to carry its client's name.
+    let picks = vec![DataSourcePick {
+        name: "staging".into(),
+        origin: "project",
+        dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+        creds: pgman::app::CredsProvenance::new(
+            vec!["EXAMPLECORP_DB_USER".into()],
+            vec!["EXAMPLECORP_DB_PW".into()],
+        ),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    let off = dump(&render(&mut a, 160, 16));
+    assert!(off.contains("password ← $EXAMPLECORP_DB_PW"), "{off}");
+    assert!(off.contains("user ← $EXAMPLECORP_DB_USER"), "{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 16));
+    assert!(!on.to_lowercase().contains("examplecorp"), "leaked:\n{on}");
+    // The generic rest of the name, and the arrow, still say what it is.
+    assert!(on.contains("user ← $▓▓▓▓▓▓▓▓▓▓▓_DB_USER"), "{on}");
+}
+
+// ---- grid column widths --------------------------------------------------
+
+fn wide_result_app() -> App {
+    let mut a = connected_app();
+    let long = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod";
+    a.grid = Grid {
+        columns: ["id", "ref", "total", "note", "memo", "body", "tag"]
+            .map(String::from)
+            .to_vec(),
+        rows: vec![vec![
+            "1".into(),
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427".into(),
+            "-999999999999999999.99".into(),
+            long.into(),
+            long.into(),
+            long.into(),
+            "x".into(),
+        ]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a
+}
+
+#[test]
+fn the_grid_never_cuts_a_number_and_uses_the_width_it_has() {
+    for (w, h) in [(200, 50), (120, 30), (80, 24)] {
+        let mut a = wide_result_app();
+        let text = dump(&render(&mut a, w, h));
+        assert!(
+            text.contains(" -999999999999999999.99 "),
+            "{w}x{h}: the whole number:\n{text}"
+        );
+        let data_row = text
+            .lines()
+            .find(|l| l.contains("-999999999999999999.99"))
+            .unwrap();
+        assert_eq!(
+            data_row.chars().count(),
+            w as usize,
+            "{w}x{h}: the row reaches the panel's right border:\n{text}"
+        );
+    }
+    // 200 columns: room for the whole uuid beside three squeezed text
+    // columns, which say they were cut.
+    let mut a = wide_result_app();
+    let text = dump(&render(&mut a, 200, 50));
+    assert!(
+        text.contains("1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+        "{text}"
+    );
+    assert!(text.contains("consectetur a"), "{text}");
+    assert!(text.contains('…'), "{text}");
+}
+
+#[test]
+fn a_grid_too_wide_even_squeezed_shows_the_columns_around_the_cursor() {
+    let mut a = wide_result_app();
+    let text = dump(&render(&mut a, 40, 24));
+    assert!(text.contains("cols 1–"), "{text}");
+    assert!(text.contains("/7 "), "{text}");
+    a.grid_view.col_cursor = 6;
+    let text = dump(&render(&mut a, 40, 24));
+    assert!(text.contains("–7/7 "), "{text}");
+    let header = text.lines().find(|l| l.contains("tag")).unwrap_or("");
+    assert!(
+        !header.contains(" id "),
+        "the window moved right with the cursor:\n{text}"
+    );
+}
+
+#[test]
+fn tabs_and_newlines_in_a_value_show_in_the_grid_and_row_detail() {
+    let mut a = connected_app();
+    a.grid = Grid {
+        columns: ["id", "note", "after"].map(String::from).to_vec(),
+        rows: vec![vec![
+            "1".into(),
+            "tab\there\nline two\r\nthree".into(),
+            "x".into(),
+        ]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(
+        text.contains("1   tab⇥here⏎line two⏎three  x"),
+        "one grid line, the tab and the newlines marked:\n{text}"
+    );
+    a.mode = Mode::RowDetail;
+    let text = dump(&render(&mut a, 80, 24));
+    let note = text.lines().position(|l| l.contains("tab⇥here"));
+    let note = note.unwrap_or_else(|| panic!("the tab is marked:\n{text}"));
+    let next: Vec<&str> = text.lines().skip(note + 1).take(2).collect();
+    assert!(
+        next[0].contains("│ line two ") && next[1].contains("│ three "),
+        "the lines wrap where the value breaks:\n{text}"
+    );
+    a.row_detail.field = 1;
+    a.mode = Mode::CellDetail;
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(
+        text.contains("tab⇥here") && !text.contains("tabhere"),
+        "the cell detail marks the tab too:\n{text}"
+    );
+}
+
+// ---- the footer under a long error ---------------------------------------
+
+const LONG_ERROR: &str =
+    "function nonexistent_function_with_long_name(integer, integer, integer) does not exist";
+
+fn app_with_a_long_error(mode: Mode) -> App {
+    let mut a = connected_app();
+    a.redact = true;
+    a.mode = mode;
+    a.last_error = Some(LONG_ERROR.into());
+    a.last_error_detail = Some(pgman::conn::QueryErrDetail::default());
+    a
+}
+
+/// The footer rows: everything under the last panel's bottom border.
+fn footer_rows(buf: &Buffer) -> Vec<String> {
+    let rows: Vec<String> = (0..buf.area.height).map(|y| row_text(buf, y)).collect();
+    let last_border = rows
+        .iter()
+        .rposition(|r| r.starts_with('╰'))
+        .expect("a panel bottom border");
+    rows[last_border + 1..].to_vec()
+}
+
+#[test]
+fn a_long_error_footer_keeps_badges_start_and_pointer_at_60_80_120() {
+    // 24 rows: the error may wrap over a taller footer. 12 rows: the
+    // body is cramped and the footer has one row, so the message is cut.
+    for (w, h) in [(60, 24), (80, 24), (120, 24), (60, 12), (80, 12), (120, 12)] {
+        let mut a = app_with_a_long_error(Mode::Editor);
+        let buf = render(&mut a, w, h);
+        let footer = footer_rows(&buf);
+        let first = &footer[0];
+        let last = footer.last().unwrap();
+        assert!(
+            first.starts_with(" REDACT ") && first.contains(" RO "),
+            "{w}x{h}: badges first:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            first.contains("⚠ function"),
+            "{w}x{h}: the message from its start:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            last.ends_with("· F2 detail"),
+            "{w}x{h}: the pointer ends the footer:\n{}",
+            dump(&buf)
+        );
+        let shown: String = footer.concat();
+        if !shown.contains("does not exist") {
+            assert!(
+                shown.contains("… · F2 detail"),
+                "{w}x{h}: a cut message says so:\n{}",
+                dump(&buf)
+            );
+        }
+    }
+}
+
+#[test]
+fn an_overlay_leaves_a_wrapped_error_footer_whole() {
+    // The help overlay is centred in the body; the body used to assume
+    // a one-row footer, so the overlay's frame covered the first row
+    // of a wrapped error — badges, icon and the start of the message —
+    // leaving `integer) does not exist · ! detail` alone on screen.
+    for mode in [Mode::Help, Mode::About] {
+        let mut a = app_with_a_long_error(mode);
+        let buf = render(&mut a, 80, 24);
+        let footer = footer_rows(&buf);
+        assert!(
+            footer.len() >= 2,
+            "{mode:?}: the error wraps over a taller footer:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            footer[0].contains("REDACT") && footer[0].contains("RO"),
+            "{mode:?}: the badges survive:\n{}",
+            dump(&buf)
+        );
+        assert!(
+            footer[0].contains("⚠ function nonexistent_function"),
+            "{mode:?}: the message starts at its start:\n{}",
+            dump(&buf)
         );
     }
 }

@@ -11,11 +11,11 @@ expression: dump(&buf)
 │  ORDER │run (DELETE without WHERE) · Postgres   │        │
 ╰────────│will refuse it — this session is        │────────╯
 ╭[ ◆ resu│read-only                               │────────╮
-│number  │                                        │due_at  │
-│INV-0048│DELETE FROM orders                      │2026-10-│
-│INV-0048│                                        │2026-10-│
-│INV-0048│y = send it anyway · n / esc = cancel   │2026-10-│
-│INV-0048╰────────────────────────────────────────╯2026-10-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+│number  │                                        │        │
+│INV-0048│DELETE FROM orders                      │        │
+│INV-0048│                                        │        │
+│INV-0048│y = send it anyway · n / esc = cancel   │0       │
+│INV-0048╰────────────────────────────────────────╯        │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   y run · n / esc cancel

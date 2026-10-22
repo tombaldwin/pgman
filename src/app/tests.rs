@@ -3407,6 +3407,70 @@ fn filter_schema_browser_rows_keeps_path_to_deep_match() {
 }
 
 #[test]
+fn a_matched_table_keeps_its_columns_and_the_schema_counts_what_shows() {
+    let table = |name: &str| SchemaBrowserRow::Table {
+        schema: "public".into(),
+        name: name.into(),
+        expanded: true,
+        column_count: 2,
+        constraint_count: 1,
+    };
+    let column = |table: &str, name: &str| SchemaBrowserRow::Column {
+        schema: "public".into(),
+        table: table.into(),
+        name: name.into(),
+    };
+    let rows = vec![
+        SchemaBrowserRow::Schema {
+            name: "public".into(),
+            expanded: true,
+            table_count: 3,
+        },
+        table("panel_usr_orders"),
+        column("panel_usr_orders", "id"),
+        column("panel_usr_orders", "total"),
+        SchemaBrowserRow::Constraint {
+            schema: "public".into(),
+            table: "panel_usr_orders".into(),
+            name: "panel_usr_orders_pkey".into(),
+        },
+        table("events"),
+        column("events", "id"),
+        table("panel_usr_items"),
+        column("panel_usr_items", "sku"),
+    ];
+    let out = filter_schema_browser_rows(rows, "panel_usr");
+    let names: Vec<String> = out
+        .iter()
+        .map(|r| match r {
+            SchemaBrowserRow::Schema { name, .. }
+            | SchemaBrowserRow::Table { name, .. }
+            | SchemaBrowserRow::Column { name, .. }
+            | SchemaBrowserRow::Constraint { name, .. } => name.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "public",
+            "panel_usr_orders",
+            "id",
+            "total",
+            "panel_usr_orders_pkey",
+            "panel_usr_items",
+            "sku",
+        ]
+    );
+    // Two of the schema's three tables are on screen, and it says two.
+    assert!(
+        matches!(out[0], SchemaBrowserRow::Schema { table_count: 2, .. }),
+        "{:?}",
+        out[0]
+    );
+}
+
+#[test]
 fn filter_schema_browser_rows_is_case_insensitive() {
     let rows = vec![SchemaBrowserRow::Schema {
         name: "PUBLIC".into(),
@@ -4070,6 +4134,45 @@ fn save_query_prompt_persists_buffer_under_name() {
     assert_eq!(a.mode, Mode::Editor);
     let q = a.saved_queries.get("mine").expect("entry saved");
     assert_eq!(q.body, "select 1");
+}
+
+#[test]
+fn the_suggested_save_name_is_replaced_by_typing_not_appended_to() {
+    let open = || {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.saved_queries_file = temp_saved_path("suggested");
+        a.mode = Mode::Editor;
+        a.editor.buffer = "select * from orders".into();
+        a.editor.cursor = a.editor.buffer.len();
+        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(a.mode, Mode::SaveQueryPrompt);
+        let suggestion = a.saved_ui.save_name.clone();
+        assert!(!suggestion.is_empty());
+        assert!(a.saved_ui.save_name_suggested);
+        (a, suggestion)
+    };
+    // Typing replaces the whole suggestion.
+    let (mut a, _) = open();
+    type_str(&mut a, "mine");
+    assert_eq!(a.saved_ui.save_name, "mine");
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "min", "then Backspace is one char");
+    // Backspace first clears it.
+    let (mut a, _) = open();
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "");
+    // → keeps it to edit from its end.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Right);
+    type_str(&mut a, "_v2");
+    assert_eq!(a.saved_ui.save_name, format!("{suggestion}_v2"));
+    // Enter saves it untouched.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Enter);
+    assert!(a.saved_queries.get(&suggestion).is_some());
+    // The next prompt starts selected again.
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert!(a.saved_ui.save_name_suggested);
 }
 
 #[test]
@@ -6556,7 +6659,7 @@ fn paste_of_plain_sql_does_not_set_reconstruct_hint() {
     a.on_paste("select * from users where id = $1".to_string());
     assert_ne!(
         a.last_status.as_deref(),
-        Some("looks like a pglog log · ctrl-l / F8 to reconstruct queries")
+        Some("looks like a postgres log · ctrl-l / F8 to reconstruct queries")
     );
 }
 
@@ -6646,6 +6749,7 @@ fn blocked_by_safety_message_names_the_statement_without_debug_braces() {
             wrap_in_tx: false,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         "main",
     );
@@ -7891,6 +7995,7 @@ fn confirm_modal_app() -> App {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,
@@ -8053,6 +8158,7 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
             wrap_in_tx: true,
             blocked_by_read_only: false,
             read_only_escape: false,
+            server_control: false,
         },
         is_batch: false,
         summary: None,
@@ -8694,6 +8800,7 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "i.customer_id = c.id");
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(
         a.editor.buffer,
@@ -8705,6 +8812,16 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "l.invoice_id = i.id");
+}
+
+/// Render one frame, as the run loop does between keys — what the
+/// operator sees, and so what Enter may act on (see
+/// `App::completion_popup_drawn`).
+fn draw_a_frame(a: &mut App) {
+    a.splash_visible = false;
+    a.splash_until = None;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    term.draw(|f| crate::ui::draw(f, a)).unwrap();
 }
 
 fn popup_with(a: &mut App, selected: Option<usize>) {
@@ -8739,6 +8856,7 @@ fn popup_with(a: &mut App, selected: Option<usize>) {
 fn enter_with_the_completion_popup_open_accepts_the_first_candidate() {
     let mut a = editor_with("");
     popup_with(&mut a, None);
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM users", "no newline, no run");
     assert_eq!(a.editor.cursor, a.editor.buffer.len());
@@ -8758,6 +8876,7 @@ fn enter_with_a_highlighted_candidate_keeps_that_one() {
     a.editor.buffer = "SELECT * FROM user_logs".into();
     a.editor.cursor = a.editor.buffer.len();
     a.completion.as_mut().unwrap().end = a.editor.cursor;
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM user_logs");
     assert!(a.completion.is_none());
@@ -9756,6 +9875,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
             broken,
         ],
         error: None,
+        profile: None,
         probe: None,
     }]
 }
@@ -10022,7 +10142,10 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
     press(&mut a, KeyCode::Esc);
     assert!(a.environments.discovery.is_none());
     assert_eq!(a.mode, Mode::Environments, "q/esc backs out one level");
-    a.on_msg(AppMsg::EnvDiscovered(Ok(crate::demo::discovery())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: a.environments.discovery_token,
+        result: Ok(crate::demo::discovery()),
+    });
     assert!(
         a.environments.discovery.is_none(),
         "a late result reopens nothing"
@@ -10032,10 +10155,93 @@ fn closing_discovery_returns_to_the_overview_and_drops_a_late_result() {
         loading: true,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("aws sts failed: expired".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("aws sts failed: expired".into()),
+    });
     let d = a.environments.discovery.as_ref().unwrap();
     assert_eq!(d.error.as_deref(), Some("aws sts failed: expired"));
     assert!(!d.loading);
+}
+
+#[tokio::test]
+async fn a_discovery_backed_out_of_does_not_land_in_the_next() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(Vec::new()));
+    a.env_discoverer = Some(EnvDiscoverer {
+        immediate: false,
+        ..recording_discoverer(Default::default(), false)
+    });
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Char('d'));
+    let first = a.environments.discovery.as_ref().unwrap().token;
+    press(&mut a, KeyCode::Esc);
+    press(&mut a, KeyCode::Char('d'));
+    let second = a.environments.discovery.as_ref().unwrap().token;
+    assert_ne!(first, second);
+
+    // The first discovery's answer arrives while the second runs.
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: first,
+        result: Err("expired SSO session".into()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(d.loading, "still waiting on its own");
+    assert!(d.error.is_none() && d.found.is_none(), "{:?}", d.error);
+
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: second,
+        result: Ok(crate::demo::discovery()),
+    });
+    let d = a.environments.discovery.as_ref().unwrap();
+    assert!(!d.loading && d.found.is_some());
+}
+
+/// On a replica whose profile is read-only too (the default), the
+/// refusal is the replica's: safety.toml's advice can't unpin it.
+#[tokio::test]
+async fn readonly_off_on_a_read_only_replica_does_not_send_you_to_safety_toml() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.environments_loader = Some(EnvironmentsLoader::Immediate(connectable_environments()));
+    press(&mut a, KeyCode::Char('E'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a.read_only && a.replica_pin);
+    run_command(&mut a, "readonly off");
+    assert!(a.read_only);
+    let e = a.last_error.as_deref().unwrap();
+    assert_eq!(e, crate::app::cmd::REPLICA_READONLY_REFUSAL);
+    assert!(!e.contains("restart"), "{e}");
+}
+
+/// The overview's footer text doesn't follow Enter onto the start card,
+/// with a secret to read first or without.
+#[tokio::test]
+async fn connecting_from_the_overview_clears_its_footer() {
+    let mut a = writable_app();
+    // As a listing leaves it (a first visit shows a tip instead).
+    a.last_status = Some(environments_status(1, 2, 0));
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
+
+    let mut a = writable_app();
+    a.secret_fetcher = Some(std::sync::Arc::new(|_| Err("not in a test".into())));
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Enter);
+    assert!(a
+        .last_status
+        .as_deref()
+        .is_some_and(|s| s.contains("reading secret")));
+    let token = a.environments.connecting.as_ref().unwrap().token;
+    a.on_msg(AppMsg::EnvSecretResolved {
+        token,
+        result: Ok(crate::creds::aws_secrets::SecretCreds {
+            username: None,
+            password: "x".into(),
+        }),
+    });
+    assert_eq!(a.mode, Mode::Normal);
+    assert_eq!(a.last_status, None);
 }
 
 #[tokio::test]
@@ -10105,7 +10311,10 @@ fn p_discovers_again_in_the_next_scope_and_wraps() {
         scopes: crate::demo::discovery().scopes,
         ..DiscoveryUi::default()
     });
-    a.on_msg(AppMsg::EnvDiscovered(Err("AccessDenied".into())));
+    a.on_msg(AppMsg::EnvDiscovered {
+        token: 0,
+        result: Err("AccessDenied".into()),
+    });
     press(&mut a, KeyCode::Char('p'));
     assert_eq!(seen.lock().unwrap().last().unwrap(), "profile production");
 }
@@ -10227,21 +10436,31 @@ fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
     assert_eq!(a.environments.probes[2], [ProbeState::Off]);
 }
 
-#[test]
-fn auto_probe_is_opt_in_paced_and_never_piles_up() {
+#[tokio::test]
+async fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = rounds.clone();
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
-    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(move |r| {
+    // The real path: answers arrive as messages, and a round that
+    // hasn't answered is one whose messages haven't been handled.
+    a.env_prober = Some(EnvProber::Async(std::sync::Arc::new(move |r| {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        crate::demo::environment_probes(r)
+        let outcomes = crate::demo::environment_probes(&r);
+        Box::pin(async move { outcomes })
     })));
     let rounds_now = || rounds.load(std::sync::atomic::Ordering::SeqCst);
     // One call per environment that probes: production, staging, local.
     let per_round = 3;
+    async fn answer(a: &mut App, n: usize) {
+        for _ in 0..n {
+            let msg = a.msg_rx.as_mut().unwrap().recv().await.unwrap();
+            a.on_msg(msg);
+        }
+    }
     press(&mut a, KeyCode::Char('E'));
     assert_eq!(rounds_now(), per_round, "the listing probes once");
+    answer(&mut a, per_round).await;
 
     // Off by default: time passing probes nothing.
     a.environments.auto_probe_last = None;
@@ -10258,17 +10477,35 @@ fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     a.tick_auto_refresh();
     assert_eq!(rounds_now(), 2 * per_round, "due: probes again");
 
-    // A round still unanswered holds the next one back.
-    a.environments.probes[0][1] = ProbeState::Probing;
+    // Round 2 hasn't answered (its messages are unread). Every row
+    // still shows round 1's answer, none reads Probing, and yet the
+    // next round is held back.
+    assert!(!a
+        .environments
+        .probes
+        .iter()
+        .flatten()
+        .any(|p| *p == ProbeState::Probing));
     a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(
+        rounds_now(),
+        2 * per_round,
+        "round 2 unanswered: no round 3"
+    );
+
+    // Once it answers, the next round is due again.
+    answer(&mut a, per_round).await;
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 3 * per_round, "answered: round 3");
+    answer(&mut a, per_round).await;
 
     // Only while the overview is open.
-    a.environments.probes[0][1] = ProbeState::Off;
     a.mode = Mode::Normal;
+    a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(rounds_now(), 3 * per_round);
 }
 
 #[test]
@@ -10665,15 +10902,35 @@ fn l_reads_an_rds_servers_log_errors_into_a_view() {
 /// An app over the demo environments with a patcher that records what it
 /// was asked to apply.
 fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
-    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    patching_app_with(applied, SafetyConfig::default(), Default::default())
+}
+
+/// [`patching_app`] with `safety` as the App's safety config, recording
+/// the statement timeout of `ledger`'s profile in each safety config the
+/// patcher was handed, plan then apply.
+fn patching_app_with(
+    applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    safety: SafetyConfig,
+    handed: std::sync::Arc<std::sync::Mutex<Vec<(&'static str, u64)>>>,
+) -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), safety);
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
+    let planned = handed.clone();
     a.env_patcher = Some(EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d, outside| {
+        plan: std::sync::Arc::new(move |e, s, d, outside, safety| {
+            planned
+                .lock()
+                .unwrap()
+                .push(("plan", safety.profile_for("ledger").statement_timeout_ms));
             Box::pin(std::future::ready(Ok(crate::demo::patch_plan(
                 &e, &s, &d, outside,
             ))))
         }),
-        apply: std::sync::Arc::new(move |p, mode, _cancel| {
+        apply: std::sync::Arc::new(move |p, mode, _cancel, safety| {
+            handed
+                .lock()
+                .unwrap()
+                .push(("apply", safety.profile_for("ledger").statement_timeout_ms));
             // The mode is named when it isn't the real thing.
             let how = match mode {
                 crate::inventory::patching::RunMode::Apply => String::new(),
@@ -10704,6 +10961,27 @@ fn patching_app(applied: std::sync::Arc<std::sync::Mutex<Vec<String>>>) -> App {
         press(&mut a, KeyCode::Char('j'));
     }
     a
+}
+
+/// `P` plans and applies under the App's safety config — the personal
+/// one as the project's `[safety]` tightened it — not a fresh read of
+/// safety.toml, which would leave the project's tightening out. Found by
+/// the 2026-10-22 release panel.
+#[test]
+fn patching_is_handed_the_apps_safety_config() {
+    let mut safety = SafetyConfig::default();
+    safety.databases.insert(
+        "ledger".into(),
+        crate::safety::SafetyProfile {
+            statement_timeout_ms: 4_321,
+            ..Default::default()
+        },
+    );
+    let handed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut a = patching_app_with(Default::default(), safety, handed.clone());
+    press(&mut a, KeyCode::Char('P'));
+    press(&mut a, KeyCode::Char('y'));
+    assert_eq!(*handed.lock().unwrap(), [("plan", 4_321), ("apply", 4_321)]);
 }
 
 #[test]
@@ -10766,7 +11044,7 @@ fn tab_picks_a_dry_run_or_a_copy_and_confirming_runs_that() {
     // A protected one: Tab works while the name is typed, and isn't typed.
     let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut a = patching_app(applied.clone());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -10789,7 +11067,7 @@ fn tab_picks_a_dry_run_or_a_copy_and_confirming_runs_that() {
 fn a_protected_environment_applies_only_on_its_typed_name() {
     let applied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let mut a = patching_app(applied.clone());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -10862,7 +11140,7 @@ fn a_plan_with_nothing_but_a_no_transaction_patch_offers_o() {
 #[test]
 fn while_a_name_is_typed_o_is_a_letter_and_ctrl_o_plans_outside() {
     let mut a = patching_app(Default::default());
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -11149,7 +11427,7 @@ fn a_protected_name_types_digits_brackets_and_punctuation() {
     let mut a = patching_app(applied.clone());
     a.new_tab();
     a.mode = Mode::Environments;
-    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside| {
+    a.env_patcher.as_mut().unwrap().plan = std::sync::Arc::new(|e, s, d, outside, _safety| {
         let mut p = crate::demo::patch_plan(&e, &s, &d, outside);
         p.protected = true;
         Box::pin(std::future::ready(Ok(p)))
@@ -11442,6 +11720,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     press(&mut a, KeyCode::Left);
     type_str(&mut a, " where ");
     assert!(a.completion.as_ref().is_some_and(|c| c.selected.is_none()));
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.completion.is_none());
     assert_eq!(
@@ -11465,6 +11744,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
         a.last_status,
         a.completion.as_ref().map(|c| c.selected)
     );
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from events;");
     assert!(!reached_request_run(&a), "accepting isn't running");
@@ -11475,6 +11755,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     a.mode = Mode::Editor;
     type_str(&mut a, "select * from ");
     assert!(a.completion.is_some());
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
     assert!(!reached_request_run(&a));
@@ -11630,4 +11911,110 @@ fn demo_tap_feed_holds_the_frame_clock_until_drained() {
         !a.wants_animation(),
         "a drained feed must let the clock idle"
     );
+}
+
+/// The no-connection card's "environments.toml didn't load" follows the
+/// latest listing: an `E` after the file is fixed clears it.
+#[test]
+fn a_listing_says_whether_environments_toml_loaded() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::EnvironmentsLoaded(Err(
+        "parse error at line 3".into()
+    )));
+    assert!(a.environments_config_broken);
+    a.on_msg(AppMsg::EnvironmentsLoaded(Ok(Vec::new())));
+    assert!(!a.environments_config_broken);
+}
+
+// ---- H1: a popup the operator did not ask for never eats Enter ----------
+
+fn invoice_cache_app() -> App {
+    let mut a = test_app_with_cache(&[
+        ("panel_usr_invoices", &["id", "customer_id", "total"]),
+        ("panel_usr_customers", &["id", "name"]),
+        ("panel_usr_items", &["id", "invoice_id"]),
+    ]);
+    a.mode = Mode::Editor;
+    a
+}
+
+#[test]
+fn a_space_after_a_completed_table_name_closes_the_popup() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices");
+    assert!(
+        a.completion.is_some(),
+        "the FROM popup narrowed to the table"
+    );
+    type_str(&mut a, " i");
+    assert!(
+        a.completion.is_none(),
+        "the alias is not a completion prefix: {:?}",
+        a.completion.as_ref().map(|c| &c.candidates)
+    );
+    assert!(
+        !a.last_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with("completion")),
+        "no stale completion status: {:?}",
+        a.last_status
+    );
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_invoices i\n");
+}
+
+#[test]
+fn an_alias_then_enter_then_a_join_types_through_verbatim() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_invoices i");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "left join panel_usr_items t");
+    press(&mut a, KeyCode::Enter);
+    type_str(&mut a, "on t.invoice_id = i.id");
+    assert_eq!(
+        a.editor.buffer,
+        "select * from panel_usr_invoices i\nleft join panel_usr_items t\non t.invoice_id = i.id"
+    );
+}
+
+#[test]
+fn enter_under_a_popup_no_frame_has_drawn_is_a_newline() {
+    // Same popup the accepting test opens, but no frame has put it on
+    // screen (the renderer had no room for it, say): Enter is the
+    // operator's newline, not an answer to a question they never saw.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    assert!(!a.completion_popup_drawn);
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "SELECT * FROM us\n");
+    assert!(a.completion.is_none(), "the cycle closed with the newline");
+
+    // A frame too short for the popup draws none, and says so.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    a.splash_visible = false;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 6)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    assert!(!a.completion_popup_drawn, "no room, no popup");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn, "a full-size frame draws it");
+}
+
+#[test]
+fn enter_after_typing_a_whole_table_name_is_a_newline_not_a_no_op_accept() {
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_items");
+    assert!(a.completion.is_some(), "the FROM popup is still narrowing");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items\n");
+    assert!(a.completion.is_none());
+
+    // A prefix that is not yet a whole name still accepts.
+    let mut a = invoice_cache_app();
+    type_str(&mut a, "select * from panel_usr_it");
+    draw_a_frame(&mut a);
+    press(&mut a, KeyCode::Enter);
+    assert_eq!(a.editor.buffer, "select * from panel_usr_items");
 }

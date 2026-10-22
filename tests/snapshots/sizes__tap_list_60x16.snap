@@ -12,10 +12,10 @@ expression: dump(&buf)
 ╰─│       1.8ms          1  billing-api           SELEC…│──╯
 ╭[│       420µs          1  billing-api           SELEC…│──╮
 │n│       435µs          1  billing-api           SELEC…│  │
-│I│       450µs          1  billing-api           SELEC…│0-│
-│I│       465µs          1  billing-api           SELEC…│0-│
-│I│       480µs          1  billing-api           SELEC…│0-│
-│I╰─────────────────────────────────────────────────────╯0-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+│I│       450µs          1  billing-api           SELEC…│  │
+│I│       465µs          1  billing-api           SELEC…│  │
+│I│       480µs          1  billing-api           SELEC…│  │
+│I╰─────────────────────────────────────────────────────╯  │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   j/k navigate · v cycle 7 views · ? +5 more

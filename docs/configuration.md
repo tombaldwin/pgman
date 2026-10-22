@@ -14,7 +14,7 @@ URL-embedded password.
 | `~/.config/pgman/safety.toml` | Personal safety guard rails: default profile + per-database overrides. |
 | `~/.config/pgman/config.toml` | Personal UI defaults: `redact_default`. See [below](#configtoml). |
 | `<repo>/.pgman/pgman.toml` | Project-committed connections + safety overrides. Discovered by walking up from cwd. |
-| `~/.config/pgman/connections.toml` | Personal named connections for `pgman mcp serve`, ssh tunnels included. See [MCP server](mcp.md). |
+| `~/.config/pgman/connections.toml` | Personal named connections, ssh tunnels included: the connections `pgman mcp serve` accepts, and the ones a `static` environment lists. See [MCP server](mcp.md) and [Environments](environments.md). |
 | `~/.config/pgman/environments.toml` | Environments for the `E` overview and the MCP `environments` tool. See [Environments](environments.md). |
 | `~/.local/share/pgman/draft.sql` | Auto-saved editor buffer, restored on next launch. |
 | `~/.local/share/pgman/history.log` | Query history, newest kept up to the last 50 statements run. |

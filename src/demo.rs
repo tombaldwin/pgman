@@ -58,10 +58,10 @@ pub fn app(theme: Theme) -> App {
         immediate: true,
     });
     a.env_patcher = Some(crate::app::EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d, outside| {
-            Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
+        plan: std::sync::Arc::new(|e, s, d, outside, _safety| {
+            Box::pin(std::future::ready(plan_for(&e, &s, &d, outside)))
         }),
-        apply: std::sync::Arc::new(|p, mode, _cancel| {
+        apply: std::sync::Arc::new(|p, mode, _cancel, _safety| {
             use crate::inventory::patching::{CopyNote, RunMode};
             let ran = p
                 .patches
@@ -1045,6 +1045,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ),
             ],
             error: None,
+            profile: None,
             probe: probe(),
         },
         EnvReport {
@@ -1067,6 +1068,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ),
             ],
             error: None,
+            profile: None,
             probe: probe(),
         },
         EnvReport {
@@ -1077,6 +1079,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ..rds("ledger", "ledger-dev", Role::Direct, None, STAGING_ENGINE)
             }],
             error: None,
+            profile: None,
             probe: None,
         },
         EnvReport {
@@ -1096,6 +1099,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 connect: Err(NO_SERVER.into()),
             }],
             error: None,
+            profile: None,
             probe: probe(),
         },
     ]
@@ -1323,6 +1327,33 @@ const PATCHES: &[(i64, &str, &[&str])] = &[
     ),
 ];
 
+/// `P` in `--demo`: what a real run says for the row. A replica is
+/// refused (its primary is patched). Only `ledger` keeps the demo's
+/// `schema_version` patches — its environments' `version_table` is for
+/// it alone — and every other demo database is Flyway's, which the
+/// version table doesn't cover.
+pub fn plan_for(
+    environment: &str,
+    server: &str,
+    database: &str,
+    outside: bool,
+) -> Result<crate::inventory::patching::PatchPlan, String> {
+    use crate::inventory::patching::{not_covered, replica_refusal};
+    use crate::mcp::connections::Role;
+    let replica = environments()
+        .into_iter()
+        .filter(|r| r.name == environment)
+        .flat_map(|r| r.targets)
+        .find(|t| t.server == server && t.database == database && t.role == Role::Replica);
+    if let Some(t) = replica {
+        Err(replica_refusal(&t))
+    } else if database == "ledger" {
+        Ok(patch_plan(environment, server, database, outside))
+    } else {
+        Err(not_covered(environment, database))
+    }
+}
+
 /// A patch plan in `--demo`: the patches the environment hasn't
 /// recorded — all three everywhere but the local container, which has
 /// them — the last of which can't run in a transaction: left out, or
@@ -1345,6 +1376,12 @@ pub fn patch_plan(
         text: statements.join("\n"),
         statements: statements.iter().map(|s| s.to_string()).collect(),
         outside: None,
+        // As the default guards would ask, the demo having no safety.toml.
+        confirms: crate::query::apply::guard_confirms(
+            &crate::safety::SafetyConfig::default(),
+            database,
+            &statements.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        ),
     };
     let (last, rest) = PATCHES.split_last().expect("demo patches");
     let mut patches: Vec<PlannedPatch> = rest

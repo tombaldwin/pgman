@@ -48,7 +48,10 @@ and breaking changes.
   guards (block / confirm / allow) on every statement, DML left in an
   open transaction until you commit or roll it back, `EXPLAIN ANALYZE`
   always rolled back, and a
-  project's `[safety]` block can only tighten yours.
+  project's `[safety]` block can only tighten yours. A read-only
+  session also refuses the server-control functions Postgres's own
+  read-only mode lets through (`pg_promote`, `pg_wal_replay_pause`,
+  replication slots, `pg_stat_reset`…).
 - **DBA panels** — schema browser, schema-lint wizard, EXPLAIN tree,
   slow queries, sessions and locks, result diff, `\l`, `\x`, `\c`, `\i`,
   the `\d` family, `\timing`.
@@ -133,7 +136,12 @@ and breaking changes.
   order. A patch that can't run in a transaction (`VACUUM`,
   `CONCURRENTLY`, …) is refused up front; in the TUI, `o` plans it to
   run outside one, statement by statement and with no statement
-  timeout, behind a typed confirm. Esc twice cancels a running patch.
+  timeout, behind a typed confirm. Esc twice cancels a running patch,
+  between statements too: the patch rolls back. The plan names the
+  risky statements (`TRUNCATE`, a `DELETE` without `WHERE`…) its one
+  confirmation answers; the timeouts are set again before every
+  statement, so a `DO` block can't lift them for the rest of the patch;
+  a project's `[safety]` block applies here as everywhere else.
   Tab in the plan (`mode` over MCP) runs a **dry run** instead — every
   patch in one transaction, rolled back, with the same locks as the
   real run — or applies the patches to a **copy** of the database made

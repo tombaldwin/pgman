@@ -88,7 +88,7 @@ pub(super) fn draw_about(f: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "by Tom Baldwin / Polymorphism Ltd",
+        super::ABOUT_CREDIT,
         Style::default().fg(theme.muted),
     )));
     lines.push(Line::from(Span::styled(
@@ -285,11 +285,10 @@ fn pick_popup_budget(popup_height: u16, header_len: usize) -> (usize, usize) {
     (inner.saturating_sub(rows), rows)
 }
 
-/// Log-import picker: lists reconstructed queries (`hibernate` / `pglog`
-/// sources), highlights the selection.
+/// Log-import picker: lists reconstructed queries tagged by source
+/// (`Source::label`), highlights the selection.
 pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     use crate::app::LogPickView;
-    use crate::query::reconstruct::Source;
     let theme = &app.theme;
     let max_preview = 80usize;
     // One-line triage summary above the picker rows. Surfaces N+1
@@ -383,11 +382,7 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
             .skip(scroll)
             .take(visible_rows)
             .map(|(i, q)| {
-                let source = match q.source {
-                    Source::HibernateLog => "hibernate",
-                    Source::PostgresLog => "pglog",
-                    Source::JdbcPaste => "jdbc",
-                };
+                let source = q.source.label();
                 let mut preview: String = q
                     .runnable_sql
                     .chars()
@@ -410,9 +405,9 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     Style::default().fg(theme.text)
                 };
-                // Pad the source column OUTSIDE the brackets — `[pglog]
+                // Pad the source column OUTSIDE the brackets — `[jdbc]
                 // ` — so the bracket sits against its own tag instead
-                // of fencing off a run of spaces (`[    pglog]`).
+                // of fencing off a run of spaces (`[    jdbc]`).
                 let tag = format!("[{source}]");
                 Line::from(Span::styled(format!("{prefix}{tag:<11} {preview}"), style))
             })
@@ -1203,8 +1198,20 @@ pub(crate) struct ProbeCells {
 }
 
 /// The patch level as the `SCHEMA` column shows it, and whether it wants
-/// attention (patches pending, or the table unreadable). Pure.
+/// attention (patches pending, the table unreadable, or the patch files
+/// unreadable). Files that couldn't be read leave the version as read,
+/// with `(+?)` for the pending count nobody knows, and a warning: it's
+/// pgman's side that failed, not a migration. Pure.
 pub(crate) fn schema_cell(p: &crate::query::probe::Probe) -> (String, Option<ProbeAlert>) {
+    let (text, alert) = schema_cell_as_read(p);
+    if p.files_error.is_none() || p.schema_error.is_some() {
+        return (text, alert);
+    }
+    (format!("{text} (+?)"), alert.or(Some(ProbeAlert::Warn)))
+}
+
+/// [`schema_cell`] from what the database said. Pure.
+fn schema_cell_as_read(p: &crate::query::probe::Probe) -> (String, Option<ProbeAlert>) {
     // A migration tool's own version, found without configuration.
     if let Some(tool) = &p.migration_tool {
         let label = p
@@ -1578,10 +1585,18 @@ pub(crate) fn environment_detail_probed(
             };
         }
         ProbeState::Done(Err(e)) => Some(format!("✗ {}", e.replace('\n', " "))),
-        ProbeState::Done(Ok(p)) => p
-            .schema_error
-            .as_ref()
-            .map(|e| format!("version table: {}", e.replace('\n', " "))),
+        ProbeState::Done(Ok(p)) => {
+            let said: Vec<String> = [
+                p.schema_error
+                    .as_ref()
+                    .map(|e| format!("version table: {}", e.replace('\n', " "))),
+                p.files_error.as_ref().map(|e| e.replace('\n', " ")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            (!said.is_empty()).then(|| said.join(" · "))
+        }
         _ => None,
     };
     match what {
@@ -1928,6 +1943,17 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
     if !plan.patches.is_empty() {
         mode_lines(v, plan, &mut out);
     }
+    // Run from the editor each would be asked about; this one
+    // confirmation answers them all, so it says so. Informational.
+    let asked = plan.confirm_count();
+    if asked > 0 {
+        out.push((
+            format!(
+                "  {asked} statement(s) your guard rails would normally ask about · confirming answers them all"
+            ),
+            false,
+        ));
+    }
     for p in &plan.patches {
         match p.outside {
             None => out.push((format!("  {}", p.file.file), false)),
@@ -1942,6 +1968,15 @@ pub(crate) fn patch_lines(v: &crate::app::PatchView) -> Vec<(String, bool)> {
                     true,
                 ));
             }
+        }
+        if !p.confirms.is_empty() {
+            out.push((
+                format!(
+                    "    guard rails would ask about: {}",
+                    p.confirm_kinds().join(", ")
+                ),
+                false,
+            ));
         }
         // Every line that will run: a confirmation covers what it saw.
         for s in &p.statements {
@@ -2870,7 +2905,16 @@ pub(super) fn draw_save_query_prompt(f: &mut Frame, area: Rect, app: &App) {
         Line::from(Span::styled("name:", Style::default().fg(theme.muted))),
         Line::from(Span::styled(
             app.saved_ui.save_name.clone(),
-            Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            // A suggestion still untouched shows selected: the next
+            // character typed replaces it.
+            if app.saved_ui.save_name_suggested {
+                Style::default()
+                    .fg(theme.text)
+                    .bg(theme.row_selected_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+            },
         )),
     ];
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
@@ -3542,6 +3586,7 @@ mod tests {
             "  2 to apply, in order, each in its own transaction · recorded up to 318"
         );
         assert_eq!(text[2], "  mode: for real · Tab dry run or copy");
+        // An ordinary migration (INSERT + DDL) has nothing risky to name.
         assert_eq!(text[3], "  319-APP-101-invoice-dunning-stage.sql");
         assert_eq!(
             text[5],
@@ -3551,6 +3596,20 @@ mod tests {
             text[9].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
         );
         assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
+        // A risky statement the guards would ask about: the one
+        // confirmation stands in for that question, so it is said.
+        let mut risky = plan.clone();
+        risky.patches[0].confirms = vec!["TRUNCATE".into()];
+        let rv = PatchView {
+            stage: PatchStage::Plan(Ok(risky)),
+            ..v.clone()
+        };
+        let rtext: Vec<String> = patch_lines(&rv).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            rtext[3],
+            "  1 statement(s) your guard rails would normally ask about · confirming answers them all"
+        );
+        assert_eq!(rtext[5], "    guard rails would ask about: TRUNCATE");
         assert_eq!(
             patch_prompt(&v),
             Some((
@@ -4193,6 +4252,65 @@ mod tests {
         );
     }
 
+    /// Patch or migration files pgman couldn't read are pgman's problem,
+    /// not a failed migration: the version stays, the pending count is
+    /// `?`, and it's a warning. They used to land in `schema_error` and
+    /// draw a red `✗`. Found by the 2026-10-22 release panel.
+    #[test]
+    fn unreadable_files_keep_the_version_and_only_warn() {
+        use crate::query::probe::Probe;
+        let files = Some("migrations_dir: cannot list /x: denied".to_string());
+        let tool = Probe {
+            migration_tool: Some("django".into()),
+            schema_label: Some("shop.0007_orders".into()),
+            files_error: files.clone(),
+            ..Probe::default()
+        };
+        assert_eq!(
+            schema_cell(&tool),
+            (
+                "django shop.0007_orders (+?)".into(),
+                Some(ProbeAlert::Warn)
+            )
+        );
+        let table = Probe {
+            schema_version: Some(251),
+            files_error: Some("patch files: cannot list /p: denied".into()),
+            ..Probe::default()
+        };
+        assert_eq!(
+            schema_cell(&table),
+            ("v251 (+?)".into(), Some(ProbeAlert::Warn))
+        );
+        // A real failure still wins, and says so.
+        let failed = Probe {
+            schema_error: Some("django migration 0008 failed".into()),
+            ..tool.clone()
+        };
+        assert_eq!(
+            schema_cell(&failed),
+            ("django shop.0007_orders ✗".into(), Some(ProbeAlert::Bad))
+        );
+        // The detail line names what couldn't be read.
+        let t = crate::inventory::Target {
+            database: "shop".into(),
+            server: "staging".into(),
+            role: crate::mcp::connections::Role::Direct,
+            replica_of: None,
+            host: None,
+            port: None,
+            engine: None,
+            status: None,
+            class: None,
+            multi_az: None,
+            connect: Err("n/a".into()),
+        };
+        assert_eq!(
+            environment_detail_probed(&t, &crate::app::ProbeState::done(Ok(tool))),
+            "  staging/shop · migrations_dir: cannot list /x: denied"
+        );
+    }
+
     #[test]
     fn a_primary_read_through_its_replica_shows_the_replicas_schema() {
         use crate::app::ProbeState;
@@ -4340,6 +4458,7 @@ mod tests {
             source: "RDS".into(),
             targets: Vec::new(),
             error: Some("aws sts failed: token expired".into()),
+            profile: None,
             probe: None,
         }];
         let lines = environment_lines(&reports);

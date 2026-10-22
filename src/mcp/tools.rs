@@ -25,7 +25,7 @@ pub fn tool_table() -> Value {
     json!([
         {
             "name": "doctor",
-            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (none in this build), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
+            "description": "What this pgman MCP server is and what it will and won't do: the build, the client capabilities it saw, the write surface (apply_patches, the one tool that writes to a database, after the operator confirms each run; environments_save, which appends to their environments.toml; neither under --read-only), the read-only floor, row and time limits, which config files it read and any errors in them, and how many connections are usable. Call this first when a tool refuses something or a capability seems missing. CAVEATS: it reports this server process; a newer pgman installed since the server started is not reflected until the client restarts it.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         },
@@ -246,12 +246,16 @@ impl Server {
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
             ));
         }
+        // As `query` reads it: the project's `[safety]` tightens patching
+        // too. Planned and run with the same one.
+        let safety = merged_safety(crate::safety::SafetyConfig::load_personal().0, &self.cwd);
         // Never outside a transaction: that takes the TUI's typed confirm.
         let plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
             database.clone(),
             false,
+            safety.clone(),
         )
         .await?;
         if plan.patches.is_empty() {
@@ -275,6 +279,7 @@ impl Server {
             plan.clone(),
             mode,
             Default::default(),
+            safety,
         ))
         .await
         .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
@@ -503,11 +508,9 @@ impl Server {
         let (entries, _) = connections::load(&self.cwd, self.opts.project_connections);
         let entry = pick_entry(&entries, name, tool)?;
         let dsn = entry.dsn.clone().ok_or("no DSN")?;
-        let safety = read_only_safety(crate::project::merge_safety(
+        let safety = read_only_safety(merged_safety(
             crate::safety::SafetyConfig::load_personal().0,
-            crate::project::load_from(&self.cwd)
-                .and_then(|(_, cfg)| cfg.safety)
-                .as_ref(),
+            &self.cwd,
         ));
         let timeout_ms =
             capped_statement_timeout(safety.profile_for(&dsn.dbname).statement_timeout_ms);
@@ -519,6 +522,20 @@ impl Server {
             role: entry.role,
         })
     }
+}
+
+/// `personal` (safety.toml) as the `[safety]` of the project at or above
+/// `cwd` tightens it: a project can only tighten.
+pub(super) fn merged_safety(
+    personal: crate::safety::SafetyConfig,
+    cwd: &std::path::Path,
+) -> crate::safety::SafetyConfig {
+    crate::project::merge_safety(
+        personal,
+        crate::project::load_from(cwd)
+            .and_then(|(_, cfg)| cfg.safety)
+            .as_ref(),
+    )
 }
 
 /// A connection resolved and checked, not yet opened.
@@ -770,7 +787,7 @@ pub fn render_row_probe(
         return render_probe(outcome);
     }
     match plan(targets).get(ti) {
-        Some(Step::NotRunning) => json!({"not_probed": "the server isn't running"}),
+        Some(Step::NotRunning) => json!({"not_probed": "the server isn't up (see its status)"}),
         _ => {
             let t = &targets[ti];
             let replica = targets.iter().position(|r| {
@@ -841,6 +858,11 @@ pub fn confirm_request(
             .map_or("none".to_string(), |m| m.to_string()),
         files.join(", ")
     );
+    if let Some(asked) = plan.confirm_summary() {
+        message.push_str(&format!(
+            " {asked}. This one confirmation answers them all."
+        ));
+    }
     if let Some((file, why)) = &plan.stopped_at {
         message.push_str(&format!(" Not included: {file} ({why})."));
     }
@@ -948,6 +970,7 @@ pub fn render_apply(
         "planned": plan.patches.iter().map(|p| p.file.file.as_str()).collect::<Vec<_>>(),
         "not_included": plan.stopped_at.as_ref().map(|(f, why)| json!({"file": f, "reason": why})),
         "below_recorded": plan.below_recorded,
+        "guard_confirms": plan.confirm_summary(),
         "results": results,
         "error": report.and_then(|r| r.error.clone()),
         "recorded_after": report.and_then(|r| r.recorded_after),
@@ -1026,6 +1049,7 @@ pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
             "schema_version": p.schema_version,
             "pending": p.pending,
             "schema_error": p.schema_error,
+            "files_error": p.files_error,
             "sessions": p.sessions,
             "size": p.size,
             "blocked_sessions": p.blocked,
@@ -1394,6 +1418,13 @@ pub fn mcp_refusal(r: crate::batch::Refusal) -> String {
     match r {
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
+        // Not SERVER_CONTROL_REFUSAL: its safety.toml advice is a setting
+        // this server never honours.
+        Refusal::ServerControl => "refused: this calls a server-control function \
+             (replication, WAL, backup or statistics), which Postgres runs even in a \
+             read-only session, and this MCP server only reads — there is no flag or \
+             setting that lets `query` run it"
+            .to_string(),
         Refusal::Confirm { kind, db, stmt } | Refusal::Block { kind, db, stmt } => format!(
             "refused: {kind} on '{db}' is not a read, and this MCP server only reads — \
              there is no flag or setting that lets `query` run it (statement: {stmt})"
@@ -1533,6 +1564,15 @@ mod tests {
     use tokio_postgres::types::Type;
 
     #[test]
+    fn a_server_control_refusal_points_at_no_setting_mcp_ignores() {
+        let cfg = read_only_safety(SafetyConfig::default());
+        let err = single_checked_statement(&cfg, "db", "SELECT pg_wal_replay_pause()").unwrap_err();
+        assert!(err.contains("server-control function"), "{err}");
+        // MCP never honours safety.toml's read_only: don't send anyone there.
+        assert!(!err.contains("safety.toml"), "{err}");
+    }
+
+    #[test]
     fn query_results_are_cut_to_the_cell_and_result_budgets() {
         let big = "é".repeat(MAX_CELL_BYTES);
         let (rows, cut, dropped) = within_budget(json!([{"a": big, "b": 1}, {"a": "x"}]));
@@ -1619,7 +1659,10 @@ mod tests {
         let mut t = crate::demo::environments()[1].targets[0].clone();
         t.status = Some("stopped".into());
         let v = render_row_probe(&[t], &[None], 0);
-        assert_eq!(v, json!({"not_probed": "the server isn't running"}));
+        assert_eq!(
+            v,
+            json!({"not_probed": "the server isn't up (see its status)"})
+        );
     }
 
     #[test]

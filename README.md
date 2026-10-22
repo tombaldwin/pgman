@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml/badge.svg)](https://github.com/tombaldwin/pgman/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#install)
+[![status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#install)
 
 A k9s-style Postgres TUI aimed at Java / AWS shops. Where psql, pgcli, and
 DataGrip stop at the database, pgman also turns Hibernate logs, Postgres
@@ -12,13 +12,13 @@ application changes — with N+1 detection built in. Sibling project to
 
 > ### ⚠️ Not released yet
 > There is no Homebrew formula, crate or binary yet: to try pgman today, build it
-> from source (below). It is pre-1.0 — expect rough edges and breaking changes.
+> from source (below). It is beta — expect rough edges and breaking changes.
 > It defaults to **read-only** connections and routes every write through
 > per-statement safety guards, but don't point it at a production database
 > without reviewing your `safety.toml` first. Bug reports and feedback very
 > welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
 
-![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](demo.gif)
+![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](https://raw.githubusercontent.com/tombaldwin/pgman/main/demo.gif)
 
 > Captured from `pgman --demo`, the synthetic-data mode baked into the binary
 > (no database needed). Regenerate after a code change with `vhs demo.tape`.
@@ -126,7 +126,7 @@ connects until you choose it — see [Safety](#safety).
 
 pgman connects to production databases. It opens read-only by default, enforces
 a `statement_timeout`, classifies every statement, and applies **per-database
-guard rails** (`safety.rs`) — e.g. block `DROP`, confirm `TRUNCATE` /
+guard rails** — e.g. block `DROP`, confirm `TRUNCATE` /
 unqualified `DELETE`, and wrap DML in a transaction you can roll back. (This is
 a guard rail, not a replacement for least-privilege database roles — scope the
 role you connect with.)
@@ -176,8 +176,11 @@ pgman --upgrade
 ```
 
 Works in place for a checkout (`git pull` + `cargo install --path .`), a
-`cargo install` install, and a Homebrew install. A standalone binary (a
-downloaded release tarball) has no in-place upgrade — `--upgrade` prints the
+crates.io `cargo install` install, and a Homebrew install. An install made
+with `cargo install --git …` (the only way to install pgman until the first
+release) isn't one of these: re-run that `cargo install --git` command to
+upgrade it. A standalone binary (a downloaded release tarball) has no
+in-place upgrade — `--upgrade` prints the
 [releases page](https://github.com/tombaldwin/pgman/releases/latest) instead.
 
 pgman also checks crates.io for a newer release at most once every six hours
@@ -199,6 +202,8 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/keys.md`](docs/keys.md) — every keybinding, by mode.
 - [`docs/commands.md`](docs/commands.md) — command reference.
 - [`docs/configuration.md`](docs/configuration.md) — config file locations and options.
+- [`docs/environments.md`](docs/environments.md) — the environments view, `environments.toml` and `pgman env discover`.
+- [`docs/mcp.md`](docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
 - [`docs/logs-to-sql.md`](docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
 - [`docs/development.md`](docs/development.md) — build / test / clippy + distribution notes.
@@ -206,7 +211,7 @@ coverage, fuzzing, and what CI runs on every push.
 
 ## Status
 
-Pre-v1. See `BACKLOG.md` for what's shipped and what's next.
+Beta. See `BACKLOG.md` for what's next.
 
 ## License
 

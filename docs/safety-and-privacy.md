@@ -55,6 +55,15 @@
   `lo_import`, `lo_export`, `pg_read_file`, `pg_read_binary_file`,
   `pg_ls_dir`, `dblink`, `dblink_exec`. (`COPY … TO/FROM PROGRAM` was
   already `Other`, being neither a `SELECT` nor recognised DDL.)
+  Server-control functions go further: Postgres runs them inside a
+  read-only transaction — they steer replication, WAL, backups and
+  statistics rather than write data — so a read-only profile refuses
+  them outright (`pg_promote`, `pg_wal_replay_pause` / `_resume`,
+  creating, dropping, advancing or consuming a replication slot,
+  replication origins, `pg_switch_wal`, `pg_create_restore_point`, the
+  backup functions, `pg_stat_reset*`, `pg_stat_statements_reset`,
+  `pg_logical_emit_message`, `pg_rotate_logfile`); a writable profile
+  asks for confirmation, as for any other non-read.
   Keywords count only where Postgres would read them as keywords:
   the token scan skips string literals, dollar-quoted bodies, and
   comments, and it splits identifiers the way Postgres does — `$` and
@@ -216,7 +225,10 @@ IntelliJ's `.idea/dataSources.xml` and `.pgman/pgman.toml` — and a
 `${…}` left in any connection-critical field (host, database, user,
 password, tunnel target, URL parameter) is refused rather than sent.
 A project's `[safety]` block can only *tighten* your personal
-`~/.config/pgman/safety.toml`, never relax it. And a discovered
+`~/.config/pgman/safety.toml`, never relax it — in the editor, in
+MCP's `query`, and when applying patches (`P`, MCP's
+`apply_patches`), where a database the project keeps read-only gets
+no patch. And a discovered
 `ssh_tunnel` asks before pgman runs `ssh` with your keys, because that
 happens before any Postgres traffic.
 
@@ -440,12 +452,20 @@ layout doesn't move. A `REDACT` badge sits first in the footer.
 - your login name (from `HOME` and `USER`), and so your home directory
   in a path;
 - every name pgman holds for the session: the connection's host, user,
-  database and ssh bastion; the picker's data sources; the environments
+  database and ssh bastion; the picker's data sources and the
+  variables their credentials come from (`password ← $VAR`); the environments
   overview's environments, servers, hosts, databases, secrets, AWS
   profiles and password variables; an open discovery's proposals; and
   `AWS_PROFILE`. A name is matched case-insensitively as a whole word,
   and so is each distinctive part of it, so a truncated `examplecorp-pr…`
-  is still caught.
+  is still caught;
+- the project in a directory path pgman was given: a discovery's
+  version-table patch directory (and the project config it came from),
+  and an environment's patch and migration directories. Each word of the
+  path is matched except generic directory words (`git`, `src`, `db`,
+  `patches`, `migration`…), so `~/git/examplecorp-api/db/patches` shows
+  as `~/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches`. A project named after a table
+  (`orders`) blacks that word out elsewhere too.
 
 Generic parts stay, so a screenshot still says which database it is:
 `examplecorp-prod-replica` shows as `▓▓▓▓▓▓▓▓▓▓▓-prod-replica`, and an
@@ -455,15 +475,19 @@ are environment and role words (`prod`, `staging`, `replica`,
 
 **Not blocked out, by design:** schema (tables, columns, functions) and
 data (result rows, SQL in the editor). A table named after a client
-shows as it is.
+shows as it is. Nor is pgman's own fixed text, such as the About
+card's credit line, even where a word in it matches a redacted name.
 
 **Limits.** Matching is on what is drawn. A known name cut short by the
 layout is caught by its parts, but an *unknown* host or account ID cut
 short (`2109876543…`) no longer matches its pattern. Free text from the
 server (an error message naming a host pgman has never been told
 about) is caught only by the patterns above. A segment under three
-characters is blocked out inside its full name but not on its own. Look
-at a screenshot before you share it.
+characters is blocked out inside its full name but not on its own. The
+JDBC tap monitor's app column and the caller class names it shows
+(`com.examplecorp.billing.InvoiceRepository`) are not redacted: they
+come from the application, not from pgman's own state. Look at a
+screenshot before you share it.
 
 Display only: what `y` copies, the editor's text, the log file, reports
 and exports are the real values. The TUI only: `--batch`, `pgman

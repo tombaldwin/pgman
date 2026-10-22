@@ -19,9 +19,14 @@
 //! (`$1 = '42'`), so they are reconstructed as quoted literals — re-running
 //! relies on Postgres's implicit casts, which is safe.
 //!
-//! Known limitations (see BACKLOG.md): a SQL line that itself contains a log
-//! level token (`LOG:` etc.) confuses line-splitting; backends with an
-//! unparseable pid share one pairing bucket.
+//! Any `log_line_prefix` works — the record's severity marker is found
+//! after whatever the prefix printed (see [`split_record`]).
+//!
+//! Known limitations: an *unindented* continuation line that opens with
+//! a severity marker (`ERROR:  …` at column 0, e.g. the second line of a
+//! multi-line string literal in a paste that lost Postgres's tabs) reads
+//! as a record; backends with no `[%p]` in the prefix share one pairing
+//! bucket; `ERROR` + `STATEMENT` pairs are not reconstructed.
 
 use crate::query::reconstruct::{BoundParam, ParamValue, ReconstructedQuery, Source};
 use crate::query::subst::{self, PlaceholderStyle};
@@ -36,8 +41,8 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
 
     for (idx, line) in log.lines().enumerate() {
         let line_no = idx + 1;
-        match split_record(line) {
-            Some(("DETAIL", msg)) => {
+        match split_record(line).map(|r| (r.level, r.msg, r.prefix)) {
+            Some(("DETAIL", msg, _)) => {
                 if msg.contains("parameters:") {
                     if let Some(cur) = current.as_mut() {
                         let params = parse_parameters(msg);
@@ -48,12 +53,12 @@ pub fn parse(log: &str) -> Vec<ReconstructedQuery> {
                 }
                 // Non-parameter DETAIL lines belong to `current` — don't finalize.
             }
-            Some(("LOG", msg)) => match parse_log_message(msg) {
+            Some(("LOG", msg, prefix)) => match parse_log_message(msg) {
                 Some((kind, sql)) => {
                     finalize(current.take(), &mut stashed, &mut out);
                     current = Some(Pending {
                         kind,
-                        pid: extract_pid(line).unwrap_or_default(),
+                        pid: extract_pid(prefix).unwrap_or_default(),
                         sql: sql.to_string(),
                         params: Vec::new(),
                         line: line_no,
@@ -139,74 +144,99 @@ fn finalize(
     }
 }
 
-/// Split a log line into its level and the message after it. Returns `None`
-/// for continuation lines (no level token at a record-header position).
-///
-/// A "record-header position" is one of:
-///   - directly after a `[<digits>] ` pid bracket near the start of the
-///     line (Postgres's standard `log_line_prefix` shape), or
-///   - the very start of the line (logs without a pid prefix).
-///
-/// This deliberately rejects level-token-shaped substrings that sit
-/// inside SQL on a continuation line — e.g. `WHERE note = 'LOG: x'` no
-/// longer mis-splits the statement.
-fn split_record(line: &str) -> Option<(&'static str, &str)> {
-    const LEVELS: &[&str] = &[
-        "LOG",
-        "DETAIL",
-        "STATEMENT",
-        "ERROR",
-        "WARNING",
-        "FATAL",
-        "PANIC",
-        "HINT",
-        "CONTEXT",
-        "NOTICE",
-        "INFO",
-    ];
-    let header_start = find_after_pid_bracket(line).unwrap_or(0);
-    for &lvl in LEVELS {
-        let needle = format!("{lvl}:");
-        if line[header_start..].starts_with(&needle) {
-            let after = header_start + needle.len();
-            return Some((lvl, line[after..].trim_start()));
-        }
-    }
-    None
+/// Severity markers a record can carry, as Postgres prints them.
+const LEVELS: &[&str] = &[
+    "LOG",
+    "DETAIL",
+    "STATEMENT",
+    "ERROR",
+    "WARNING",
+    "FATAL",
+    "PANIC",
+    "HINT",
+    "CONTEXT",
+    "NOTICE",
+    "INFO",
+    "DEBUG1",
+    "DEBUG2",
+    "DEBUG3",
+    "DEBUG4",
+    "DEBUG5",
+    "LOCATION",
+    "QUERY",
+];
+
+/// How far into a line the severity marker may sit. The longest common
+/// `log_line_prefix` (pgBadger's, with an application name and client
+/// address) is around 120 bytes; past this it's message text.
+const MAX_PREFIX: usize = 200;
+
+/// One log record header: the `log_line_prefix` output, the severity,
+/// and the message after it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Record<'a> {
+    pub prefix: &'a str,
+    pub level: &'static str,
+    pub msg: &'a str,
 }
 
-/// Locate the byte position right after a `[<digits>] ` group near the
-/// start of `line` — the conventional pg log header terminator. Returns
-/// `None` if no such group exists, the bracket sits past a reasonable
-/// header length (so we don't match brackets buried inside SQL bodies),
-/// or anything before the bracket looks like SQL string content (a `'`
-/// is the giveaway).
-fn find_after_pid_bracket(line: &str) -> Option<usize> {
-    // Real pg log_line_prefix headers are short (timestamp + tz + pid
-    // ≈ 50 chars). Anything past 80 is almost certainly the message
-    // body — refuse to look there for `[…]`.
-    const MAX_HEADER: usize = 80;
-    let lb = line.find('[')?;
-    if lb > MAX_HEADER {
+/// Split a log line into its prefix, severity and message. `None` for a
+/// continuation line of a multi-line message.
+///
+/// The prefix is whatever `log_line_prefix` printed — `%m [%p] `,
+/// `%m [%p] %q%u@%d `, RDS's `%t:%r:%u@%d:[%p]:`, pgBadger's
+/// `%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h ` — so rather than
+/// enumerating prefixes this finds the first severity marker (`LOG:`,
+/// `ERROR:`, …) that sits on a token boundary and is followed by
+/// whitespace, and then checks that the text before it could be a
+/// prefix rather than SQL:
+///
+///   - a line that opens with whitespace is a continuation: Postgres
+///     indents every continuation line of a message with a tab;
+///   - a prefix never contains a quote or a comment opener, so a marker
+///     after `'`, `"`, `--` or `/*` is inside a SQL literal or comment
+///     (`WHERE note = 'LOG: x'`);
+///   - a prefix is short ([`MAX_PREFIX`]).
+pub(crate) fn split_record(line: &str) -> Option<Record<'_>> {
+    if line.starts_with(char::is_whitespace) {
         return None;
     }
-    // Anything resembling a SQL string literal before the bracket is
-    // a strong signal we're inside a continuation line whose content
-    // happens to include `[…]`.
-    if line[..lb].contains('\'') {
+    let bytes = line.as_bytes();
+    let limit = line.len().min(MAX_PREFIX);
+    let (at, level) = (0..=limit).find_map(|i| {
+        // A marker starts a token: line start or after a non-word byte.
+        if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+            return None;
+        }
+        let rest = line.get(i..)?;
+        LEVELS.iter().find_map(|&lvl| {
+            let after = rest.strip_prefix(lvl)?.strip_prefix(':')?;
+            (after.is_empty() || after.starts_with([' ', '\t'])).then_some((i, lvl))
+        })
+    })?;
+    let prefix = &line[..at];
+    if prefix.contains(['\'', '"']) || prefix.contains("--") || prefix.contains("/*") {
         return None;
     }
-    let rb_rel = line[lb + 1..].find(']')?;
-    let inside = &line[lb + 1..lb + 1 + rb_rel];
-    if inside.is_empty() || !inside.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let after = lb + 1 + rb_rel + 1;
-    // Standard `[pid] LEVEL:` puts exactly one space here.
-    if line.as_bytes().get(after) == Some(&b' ') {
-        Some(after + 1)
-    } else {
-        None
+    let msg = line[at + level.len() + 1..].trim_start();
+    Some(Record { prefix, level, msg })
+}
+
+/// True if `line` is a record [`parse`] builds a query from: a `LOG:`
+/// statement / execute / bind / parse, or a `DETAIL:  parameters:` line.
+/// `logdetect` keys its hint off this, so the hint and the parser can't
+/// disagree about what a Postgres log looks like.
+pub(crate) fn is_query_record(line: &str) -> bool {
+    match split_record(line) {
+        Some(Record {
+            level: "LOG", msg, ..
+        }) => parse_log_message(msg).is_some(),
+        Some(Record {
+            level: "DETAIL",
+            msg,
+            ..
+        }) => msg.starts_with("parameters:"),
+        _ => false,
     }
 }
 
@@ -248,16 +278,15 @@ fn strip_duration_prefix(msg: &str) -> &str {
     msg
 }
 
-/// Backend pid from the first all-digit `[…]` group (Postgres `[%p]`).
-fn extract_pid(line: &str) -> Option<String> {
-    let start = line.find('[')?;
-    let end = line[start + 1..].find(']')? + start + 1;
-    let inside = &line[start + 1..end];
-    if !inside.is_empty() && inside.bytes().all(|b| b.is_ascii_digit()) {
-        Some(inside.to_string())
-    } else {
-        None
-    }
+/// Backend pid from the first all-digit `[…]` group in a record's
+/// prefix (Postgres `[%p]`). A `[%l-1]` line counter isn't all digits.
+fn extract_pid(prefix: &str) -> Option<String> {
+    prefix.match_indices('[').find_map(|(open, _)| {
+        let rest = &prefix[open + 1..];
+        let inside = &rest[..rest.find(']')?];
+        (!inside.is_empty() && inside.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| inside.to_string())
+    })
 }
 
 /// Parse a `DETAIL: … parameters: $1 = '…', $2 = NULL` message.
@@ -451,8 +480,8 @@ mod tests {
     #[test]
     fn split_record_ignores_bracket_buried_in_a_long_line() {
         // A `[<digits>]` deep into a long SQL line is the message body,
-        // not a header. (Cap is 80.)
-        let prefix = "x".repeat(120);
+        // not a header: no `log_line_prefix` is that long.
+        let prefix = "x".repeat(MAX_PREFIX + 10);
         let line = format!("{prefix}[101] LOG: bad");
         assert!(split_record(&line).is_none());
     }
@@ -470,7 +499,11 @@ mod tests {
         // log header.
         assert_eq!(
             split_record("[7] LOG:  statement: select 1"),
-            Some(("LOG", "statement: select 1"))
+            Some(Record {
+                prefix: "[7] ",
+                level: "LOG",
+                msg: "statement: select 1"
+            })
         );
     }
 
@@ -499,5 +532,159 @@ mod tests {
         assert_eq!(q.len(), 1);
         assert!(q[0].params.is_empty());
         assert_eq!(q[0].runnable_sql, "select * from t where id = $1");
+    }
+
+    /// `log_line_prefix` outputs seen in the wild, each for backend 31840.
+    /// The Debian/Ubuntu default and RDS's are the two that matter most.
+    const PREFIXES: &[(&str, &str)] = &[
+        ("%m [%p] ", "2026-10-21 09:12:48.001 UTC [31840] "),
+        ("%t [%p] ", "2026-10-21 09:12:48 UTC [31840] "),
+        // Debian/Ubuntu's default.
+        (
+            "%m [%p] %q%u@%d ",
+            "2026-10-21 09:12:48.001 UTC [31840] billing@ledger ",
+        ),
+        (
+            "%t [%p] %q%u@%d ",
+            "2026-10-21 09:12:48 UTC [31840] billing@ledger ",
+        ),
+        // RDS's (fixed on RDS).
+        (
+            "%t:%r:%u@%d:[%p]:",
+            "2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:",
+        ),
+        (
+            "%m [%p] %a ",
+            "2026-10-21 09:12:48.001 UTC [31840] PostgreSQL JDBC Driver ",
+        ),
+        (
+            "%m [%p] app=%a ",
+            "2026-10-21 09:12:48.001 UTC [31840] app=examplecorp-api ",
+        ),
+        // pgBadger's recommended prefix.
+        (
+            "%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h ",
+            "2026-10-21 09:12:48 UTC [31840]: [3-1] user=billing,db=ledger,app=PostgreSQL JDBC Driver,client=10.0.1.23 ",
+        ),
+        (
+            "%m [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h ",
+            "2026-10-21 09:12:48.001 UTC [31840]: [3-1] user=billing,db=ledger,app=[unknown],client=10.0.1.23 ",
+        ),
+    ];
+
+    /// One log in a given prefix: execute + parameters, a multi-line
+    /// `statement:`, `duration:` on a bind then its execute, an
+    /// ERROR + STATEMENT pair (with a continuation), and a trailing
+    /// statement. Continuation lines are tab-indented, as Postgres
+    /// writes them.
+    fn fixture(p: &str) -> String {
+        [
+            format!("{p}LOG:  duration: 12.345 ms  execute S_1: select id, total from invoices where status = $1 and total > $2"),
+            format!("{p}DETAIL:  parameters: $1 = 'open', $2 = '100'"),
+            format!("{p}LOG:  statement: select id"),
+            "\tfrom customer".to_string(),
+            "\twhere active".to_string(),
+            format!("{p}LOG:  duration: 0.120 ms  bind <unnamed>: select * from invoices where id = $1"),
+            format!("{p}DETAIL:  parameters: $1 = '48202'"),
+            format!("{p}LOG:  execute <unnamed>: select * from invoices where id = $1"),
+            format!("{p}ERROR:  relation \"invoice_lnes\" does not exist at character 15"),
+            format!("{p}STATEMENT:  select * from invoice_lnes"),
+            "\twhere invoice_id = 1".to_string(),
+            format!("{p}LOG:  statement: select 1"),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn every_common_log_line_prefix_reconstructs() {
+        for (format, prefix) in PREFIXES {
+            let q = parse(&fixture(prefix));
+            let sql: Vec<&str> = q.iter().map(|q| q.runnable_sql.as_str()).collect();
+            assert_eq!(
+                sql,
+                [
+                    "select id, total from invoices where status = 'open' and total > '100'",
+                    "select id\n\tfrom customer\n\twhere active",
+                    "select * from invoices where id = '48202'",
+                    "select 1",
+                ],
+                "log_line_prefix = '{format}'"
+            );
+            assert_eq!(
+                q.iter().map(|q| q.src_line).collect::<Vec<_>>(),
+                [1, 3, 8, 12],
+                "log_line_prefix = '{format}'"
+            );
+        }
+    }
+
+    #[test]
+    fn every_common_log_line_prefix_yields_its_pid() {
+        for (format, prefix) in PREFIXES {
+            let line = format!("{prefix}LOG:  statement: select 1");
+            let rec = split_record(&line).unwrap_or_else(|| panic!("'{format}' not split"));
+            assert_eq!(rec.prefix, *prefix, "'{format}'");
+            assert_eq!(rec.level, "LOG", "'{format}'");
+            assert_eq!(
+                extract_pid(rec.prefix).as_deref(),
+                Some("31840"),
+                "'{format}'"
+            );
+        }
+    }
+
+    #[test]
+    fn user_at_db_prefixes_from_the_release_panel_reconstruct() {
+        // Exactly the two pastes that came back "no queries found".
+        for log in [
+            "2026-10-21 09:12:48.001 UTC [31840] billing@ledger LOG:  duration: 12.345 ms  execute S_1: select * from invoices where status = $1 and total > $2\n\
+             2026-10-21 09:12:48.001 UTC [31840] billing@ledger DETAIL:  parameters: $1 = 'open', $2 = '100'",
+            "2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:LOG:  duration: 12.345 ms  execute S_1: select * from invoices where status = $1 and total > $2\n\
+             2026-10-21 09:12:48 UTC:10.0.1.23(51234):billing@ledger:[31840]:DETAIL:  parameters: $1 = 'open', $2 = '100'",
+        ] {
+            let q = parse(log);
+            assert_eq!(q.len(), 1, "{log}");
+            assert_eq!(
+                q[0].runnable_sql,
+                "select * from invoices where status = 'open' and total > '100'"
+            );
+        }
+    }
+
+    #[test]
+    fn bind_pairs_by_pid_under_a_user_at_db_prefix() {
+        // The pid comes out of the prefix, so the bind's parameters
+        // still find their execute when backends interleave.
+        let log = "\
+2026-10-21 09:12:48 UTC [101] billing@ledger LOG:  bind <unnamed>: select * from t where id = $1
+2026-10-21 09:12:48 UTC [101] billing@ledger DETAIL:  parameters: $1 = 'one'
+2026-10-21 09:12:48 UTC [202] billing@ledger LOG:  bind <unnamed>: select * from t where id = $1
+2026-10-21 09:12:48 UTC [202] billing@ledger DETAIL:  parameters: $1 = 'two'
+2026-10-21 09:12:48 UTC [101] billing@ledger LOG:  execute <unnamed>: select * from t where id = $1
+2026-10-21 09:12:48 UTC [202] billing@ledger LOG:  execute <unnamed>: select * from t where id = $1";
+        let q = parse(log);
+        assert_eq!(q.len(), 2);
+        assert_eq!(q[0].runnable_sql, "select * from t where id = 'one'");
+        assert_eq!(q[1].runnable_sql, "select * from t where id = 'two'");
+    }
+
+    #[test]
+    fn severity_words_inside_sql_are_not_markers() {
+        // Continuation lines whose SQL mentions a severity word: in a
+        // literal, in a comment, as part of a longer word, without the
+        // colon-and-space, or indented as Postgres writes them.
+        for line in [
+            "WHERE note = 'something LOG: bad'",
+            "WHERE note = \"ERROR: col\"",
+            "and x = 1 -- ERROR: fixme",
+            "and x = 1 /* LOG: later */",
+            "and SYSLOG: 1",
+            "and ERRORS: 1",
+            "select LOG::text",
+            "\tLOG:  statement: select 1",
+            "    ERROR:  indented",
+        ] {
+            assert!(split_record(line).is_none(), "{line:?} split as a record");
+        }
     }
 }

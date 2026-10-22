@@ -48,6 +48,9 @@ pub fn blocked_by_safety_message(decision: &Decision, db: &str) -> String {
     if decision.read_only_escape {
         return read_only_escape_refusal(safety_toml_exists());
     }
+    if decision.server_control {
+        return safety::SERVER_CONTROL_REFUSAL.to_string();
+    }
     format!(
         "blocked by safety: {} on '{db}' · change the guard in safety.toml to allow it",
         decision.kind.describe()
@@ -546,6 +549,19 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
     for i in 0..n {
         if matches_self(&rows[i]) {
             keep[i] = true;
+            // A matched table (or anything under one) keeps what is
+            // under it: `/orders` showed the `orders` row with only
+            // its `orders_pkey` constraint, every column filtered
+            // away. A matched schema does not — the filter expands
+            // everything, and `/public` would be the whole database.
+            let d = depth(&rows[i]);
+            if d >= 1 {
+                let mut j = i + 1;
+                while j < n && depth(&rows[j]) > d {
+                    keep[j] = true;
+                    j += 1;
+                }
+            }
             continue;
         }
         let d = depth(&rows[i]);
@@ -563,11 +579,28 @@ pub fn filter_schema_browser_rows(rows: Vec<SchemaBrowserRow>, pat: &str) -> Vec
             j += 1;
         }
     }
-    rows.into_iter()
+    let mut out: Vec<SchemaBrowserRow> = rows
+        .into_iter()
         .zip(keep)
         .filter(|(_, k)| *k)
         .map(|(r, _)| r)
-        .collect()
+        .collect();
+    // A schema's table count is what the filter left under it: the
+    // detail pane said `7 table(s)` over the 3 on screen.
+    for i in 0..out.len() {
+        if !matches!(out[i], SchemaBrowserRow::Schema { .. }) {
+            continue;
+        }
+        let shown = out[i + 1..]
+            .iter()
+            .take_while(|r| !matches!(r, SchemaBrowserRow::Schema { .. }))
+            .filter(|r| matches!(r, SchemaBrowserRow::Table { .. }))
+            .count();
+        if let SchemaBrowserRow::Schema { table_count, .. } = &mut out[i] {
+            *table_count = shown;
+        }
+    }
+    out
 }
 
 /// Pure: walk the cache and emit visible rows in display order
@@ -1220,6 +1253,11 @@ pub struct App {
     /// `redact::env_names()`, read once at startup: redaction's names
     /// from the process environment (`AWS_PROFILE`, the login name).
     pub redact_env_names: Vec<String>,
+    /// `environments.toml` exists but didn't load (a parse error, or
+    /// unreadable). Set at startup and by each listing, so the
+    /// no-connection card can point at `E` instead of looking as if
+    /// no environments were configured.
+    pub environments_config_broken: bool,
     /// psql `\x` toggle — when on, the QueryOk handler opens the
     /// existing row-detail view (`Mode::RowDetail`) for the first
     /// row of a new result instead of leaving it in the grid.
@@ -1370,6 +1408,12 @@ pub struct App {
     /// more times in a row. Reset on any non-Tab editor keypress so a
     /// subsequent Tab starts a fresh cycle from the current cursor.
     pub completion: Option<CompletionCycle>,
+    /// Did the last frame actually draw the completion popup? Enter
+    /// accepts a candidate only from a popup the operator could see:
+    /// one the renderer skipped (no room, wrong mode) is not a
+    /// question on screen, and Enter stays a newline / run. Written by
+    /// `ui::draw` every frame.
+    pub completion_popup_drawn: bool,
     /// Active reverse-incremental history search session (Ctrl-R).
     /// When `Some`, `mode == Mode::HistorySearch` and the editor
     /// buffer reflects the current match — Enter accepts, Esc
@@ -1581,6 +1625,7 @@ impl App {
             timing_on: false,
             redact: false,
             redact_env_names: Vec::new(),
+            environments_config_broken: false,
             expanded_on: false,
             auto_closers: editor::AutoClosers::default(),
             // Read here rather than threaded in from `main` — the
@@ -1632,6 +1677,7 @@ impl App {
             schema_cache: SchemaCache::default(),
             databases: Vec::new(),
             completion: None,
+            completion_popup_drawn: false,
             history_search: None,
             watch: None,
             notices: Vec::new(),
@@ -2604,9 +2650,9 @@ impl App {
         }
     }
 
-    /// `Ctrl-S` in editor — prompt for a name (with the existing
-    /// saved entry's name pre-filled if the buffer matches one
-    /// — otherwise empty). Enter persists; Esc cancels.
+    /// `Ctrl-S` in editor — prompt for a name, a suggestion derived
+    /// from the buffer pre-filled and selected (typing replaces it).
+    /// Enter persists; Esc cancels.
     fn start_save_query_prompt(&mut self) {
         if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("editor empty — nothing to save".into());
@@ -2617,6 +2663,7 @@ impl App {
         // operator has a starting point. They can backspace and
         // type their own.
         self.saved_ui.save_name = default_query_name(&self.editor.buffer);
+        self.saved_ui.save_name_suggested = true;
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }
@@ -3321,11 +3368,7 @@ impl App {
             || ui.discovery.is_some()
             || ui.loading
             // The last round hasn't answered yet: don't pile another on.
-            || ui
-                .probes
-                .iter()
-                .flatten()
-                .any(|p| *p == ProbeState::Probing)
+            || ui.probes_in_flight > 0
         {
             return;
         }
@@ -3586,6 +3629,7 @@ impl App {
             wrap_in_tx: decisions.iter().any(|d| d.wrap_in_tx),
             blocked_by_read_only: decisions.iter().any(|d| d.blocked_by_read_only),
             read_only_escape: decisions.iter().any(|d| d.read_only_escape),
+            server_control: decisions.iter().any(|d| d.server_control),
         };
 
         match max_guard {
@@ -3594,6 +3638,8 @@ impl App {
                 // the per-kind summary would blame the wrong statement.
                 self.last_error = Some(if synthesized.read_only_escape {
                     read_only_escape_refusal(safety_toml_exists())
+                } else if synthesized.server_control {
+                    safety::SERVER_CONTROL_REFUSAL.to_string()
                 } else {
                     format!("batch blocked by safety: {summary}")
                 });
@@ -4262,8 +4308,7 @@ impl App {
             if let Some(var) = &spec.password_env {
                 origin.push_str(&format!(" · password from ${var}"));
             }
-            self.environments.opened_from = None;
-            self.connect_to_target(dsn, origin, read_only);
+            self.connect_from_environments(dsn, origin, read_only);
             return;
         };
         origin.push_str(&format!(" · creds from {}", secret.provenance()));
@@ -4283,6 +4328,16 @@ impl App {
                 "can't connect to {what}: secrets are not available in this session"
             ));
         }
+    }
+
+    /// Leave the overview for the database chosen in it. The footer's
+    /// overview text (`environments · 2 · 3 databases`, or the secret
+    /// being read) goes with it: it would sit under the start card,
+    /// describing a screen that's gone.
+    fn connect_from_environments(&mut self, dsn: Dsn, origin: String, read_only: bool) {
+        self.environments.opened_from = None;
+        self.last_status = None;
+        self.connect_to_target(dsn, origin, read_only);
     }
 
     /// `l` in the overview: recent errors from the focused server's RDS
@@ -4378,6 +4433,7 @@ impl App {
             server.clone(),
             database.clone(),
             outside,
+            self.safety_config.clone(),
         );
         if patcher.immediate {
             let result = futures::executor::block_on(fut);
@@ -4459,7 +4515,7 @@ impl App {
             plan.database
         ));
         tracing::info!(target: "pgman::patching", environment = %plan.environment, server = %plan.server, database = %plan.database, patches = plan.patches.len(), mode = mode.name(), "patches confirmed");
-        let fut = (patcher.apply)(plan.clone(), mode, cancel);
+        let fut = (patcher.apply)(plan.clone(), mode, cancel, self.safety_config.clone());
         if patcher.immediate {
             let report = futures::executor::block_on(fut);
             self.on_env_patched(plan, report);
@@ -4626,25 +4682,39 @@ impl App {
             "discovering with {}: RDS, secret names, EC2 hosts…",
             crate::inventory::discover::scope_label(&scope)
         ));
+        let token = self.environments.discovery_token.wrapping_add(1);
+        self.environments.discovery_token = token;
         self.environments.discovery = Some(DiscoveryUi {
+            token,
             loading: true,
             scope: scope.clone(),
             scopes,
             ..DiscoveryUi::default()
         });
         if discoverer.immediate {
-            self.on_env_discovered((discoverer.discover)(&scope));
+            self.on_env_discovered(token, (discoverer.discover)(&scope));
         } else {
             let tx = self.msg_tx.clone();
             tokio::task::spawn_blocking(move || {
-                let _ = tx.send(AppMsg::EnvDiscovered((discoverer.discover)(&scope)));
+                let result = (discoverer.discover)(&scope);
+                let _ = tx.send(AppMsg::EnvDiscovered { token, result });
             });
         }
     }
 
-    fn on_env_discovered(&mut self, result: Result<crate::inventory::discover::Found, String>) {
-        // Closed while it ran: nothing to show it in.
-        let Some(d) = self.environments.discovery.as_mut() else {
+    fn on_env_discovered(
+        &mut self,
+        token: u64,
+        result: Result<crate::inventory::discover::Found, String>,
+    ) {
+        // Closed while it ran (nothing to show it in), or closed and
+        // opened again (it belongs to a discovery that's gone).
+        let Some(d) = self
+            .environments
+            .discovery
+            .as_mut()
+            .filter(|d| d.token == token)
+        else {
             return;
         };
         d.loading = false;
@@ -4768,8 +4838,10 @@ impl App {
         }
         self.environments.probes = states;
         let Some(prober) = prober else {
+            self.environments.probes_in_flight = 0;
             return;
         };
+        self.environments.probes_in_flight = to_run.len();
         for i in to_run {
             let report = self.environments.reports[i].clone();
             match &prober {
@@ -4802,6 +4874,7 @@ impl App {
         if seq != self.environments.probe_seq {
             return;
         }
+        self.environments.probes_in_flight = self.environments.probes_in_flight.saturating_sub(1);
         let Some(states) = self.environments.probes.get_mut(report) else {
             return;
         };
@@ -4846,8 +4919,7 @@ impl App {
             Ok(creds) => {
                 let mut dsn = pending.dsn;
                 crate::creds::aws_secrets::apply(&mut dsn, creds);
-                self.environments.opened_from = None;
-                self.connect_to_target(dsn, pending.origin, pending.read_only);
+                self.connect_from_environments(dsn, pending.origin, pending.read_only);
             }
             Err(e) => {
                 self.last_status = None;

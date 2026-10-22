@@ -116,6 +116,8 @@ pub enum Refusal {
     Split,
     /// The statement would lift (or step out of) the read-only floor.
     ReadOnlyEscape,
+    /// A server-control function under a read-only profile.
+    ServerControl,
     /// A `Confirm` guard, with no `assume_yes` to answer it.
     Confirm {
         kind: String,
@@ -180,6 +182,7 @@ pub fn check_statements(
             // Not a category guard: the profile asked for a read-only
             // session, and `--yes` does not buy a way out of it either.
             Guard::Block if decision.read_only_escape => return Err(Refusal::ReadOnlyEscape),
+            Guard::Block if decision.server_control => return Err(Refusal::ServerControl),
             Guard::Block => {
                 return Err(Refusal::Block {
                     kind: decision.kind.describe(),
@@ -202,6 +205,7 @@ pub fn check_batch_safety(
     check_statements(config, db, sql, assume_yes).map_err(|r| match r {
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
+        Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
         Refusal::Confirm { kind, db, stmt } => format!(
             "blocked by safety: {kind} on '{db}' would need confirmation \
              — re-run with --yes to allow guarded writes in batch mode (statement: {stmt})"
@@ -217,6 +221,17 @@ pub fn check_batch_safety(
 mod read_only_batch_tests {
     use super::check_batch_safety;
     use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
+
+    #[test]
+    fn server_control_is_refused_under_a_read_only_profile_even_with_yes() {
+        let cfg = SafetyConfig::default();
+        for yes in [false, true] {
+            assert_eq!(
+                check_batch_safety(&cfg, "db", "SELECT 1; SELECT pg_wal_replay_pause()", yes),
+                Err(crate::safety::SERVER_CONTROL_REFUSAL.to_string())
+            );
+        }
+    }
 
     #[test]
     fn transaction_control_is_refused_under_a_read_only_profile_even_with_yes() {

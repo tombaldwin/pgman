@@ -20,6 +20,9 @@ categories = ["command-line-utilities", "database"]
 # crates.io users don't run the test suite, and it drags in
 # `tests/bin/` shell scripts — not just excluded from an exclude-list
 # that would need updating every time a new top-level dir appears.
+# `demo.gif` stays out too: it was about 40% of the compressed crate,
+# and the README links it by absolute GitHub URL, which crates.io
+# renders without the file in the tarball.
 include = [
     "src/**",
     "benches/hot_paths.rs",
@@ -30,7 +33,6 @@ include = [
     "CHANGELOG.md",
     "LICENSE-MIT",
     "LICENSE-APACHE",
-    "demo.gif",
 ]
 
 [dependencies]

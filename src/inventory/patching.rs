@@ -39,9 +39,9 @@ use crate::creds::aws_secrets::{SecretCreds, SecretRef};
 use crate::mcp::connections::Role;
 use crate::query::patches::{PatchFile, PatchesConfig};
 
-/// Statement timeout on the writable connection: a table rewrite takes
-/// time; waiting on a lock does not (`query::apply::LOCK_TIMEOUT`).
-const APPLY_STATEMENT_TIMEOUT_MS: u64 = 600_000;
+/// Statement timeout on the writable connection, set again before each
+/// patch statement (`query::apply::STATEMENT_TIMEOUT_MS`).
+const APPLY_STATEMENT_TIMEOUT_MS: u64 = crate::query::apply::STATEMENT_TIMEOUT_MS;
 
 /// Statement timeout on the plan's read-only connection.
 const PLAN_STATEMENT_TIMEOUT_MS: u64 = 10_000;
@@ -56,6 +56,10 @@ pub struct PlannedPatch {
     /// Set when it runs outside a transaction, naming why (`VACUUM`…):
     /// its statements commit one by one.
     pub outside: Option<&'static str>,
+    /// What its statements that safety.toml would ask about one by one
+    /// are (`query::apply::guard_confirms`): the plan's one confirmation
+    /// answers them, so the plan names them.
+    pub confirms: Vec<String>,
 }
 
 /// What [`apply`] would do, for the operator to confirm.
@@ -87,6 +91,27 @@ pub struct PatchPlan {
     pub outside_would_help: bool,
 }
 
+impl PlannedPatch {
+    /// Its [`PlannedPatch::confirms`], each kind once in first-seen order,
+    /// counted when more than one: `["INSERT ×2", "TRUNCATE"]`. Pure.
+    pub fn confirm_kinds(&self) -> Vec<String> {
+        let mut kinds: Vec<(&str, usize)> = Vec::new();
+        for k in &self.confirms {
+            match kinds.iter_mut().find(|(seen, _)| *seen == k.as_str()) {
+                Some((_, c)) => *c += 1,
+                None => kinds.push((k, 1)),
+            }
+        }
+        kinds
+            .into_iter()
+            .map(|(kind, count)| match count {
+                1 => kind.to_string(),
+                n => format!("{kind} ×{n}"),
+            })
+            .collect()
+    }
+}
+
 impl PatchPlan {
     /// The patch's id, as the version table records it.
     fn id(p: &PatchFile) -> Option<i64> {
@@ -97,6 +122,37 @@ impl PatchPlan {
     /// protected one, or any patch running outside a transaction.
     pub fn needs_typed(&self) -> bool {
         self.protected || self.patches.iter().any(|p| p.outside.is_some())
+    }
+
+    /// How many planned statements safety.toml's guards would ask about
+    /// one by one, were they run from the editor.
+    pub fn confirm_count(&self) -> usize {
+        self.patches.iter().map(|p| p.confirms.len()).sum()
+    }
+
+    /// Those statements, for the operator about to answer them all at
+    /// once: `2 statement(s) your guard rails would normally ask about:
+    /// TRUNCATE in 321-a.sql, DELETE without WHERE in 322-b.sql`, a kind
+    /// a patch holds more than once counted (`INSERT ×2 in …`). `None`
+    /// when there are none. Pure.
+    pub fn confirm_summary(&self) -> Option<String> {
+        let n = self.confirm_count();
+        if n == 0 {
+            return None;
+        }
+        let items: Vec<String> = self
+            .patches
+            .iter()
+            .flat_map(|p| {
+                p.confirm_kinds()
+                    .into_iter()
+                    .map(move |k| format!("{k} in {}", p.file.file))
+            })
+            .collect();
+        Some(format!(
+            "{n} statement(s) your guard rails would normally ask about: {}",
+            items.join(", ")
+        ))
     }
 }
 
@@ -238,8 +294,9 @@ impl ApplyReport {
 #[derive(Clone, Default)]
 pub struct CancelSlot(
     std::sync::Arc<std::sync::Mutex<Option<CancelFn>>>,
-    /// Set by [`CancelSlot::cancel`]: the run starts no further patch,
-    /// so a cancel between statements, or before connecting, still holds.
+    /// Set by [`CancelSlot::cancel`]: the run starts no further statement
+    /// or patch, and commits nothing more, so a cancel between
+    /// statements, or before connecting, still holds.
     std::sync::Arc<std::sync::atomic::AtomicBool>,
 );
 
@@ -253,8 +310,9 @@ impl CancelSlot {
         }
     }
 
-    /// Stop the run: no further patch starts, and the server is asked to
-    /// cancel the running statement. `false` when the run hasn't
+    /// Stop the run: no further statement or patch starts, the patch in
+    /// its transaction rolls back, and the server is asked to cancel the
+    /// running statement. `false` when the run hasn't
     /// connected yet (or has finished), so no request was sent.
     pub fn cancel(&self) -> bool {
         self.1.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -378,19 +436,31 @@ pub fn resolve(
     Ok((env, target))
 }
 
+/// The refusal for a replica: its primary is patched instead. Pure.
+pub fn replica_refusal(target: &Target) -> String {
+    format!(
+        "{} is a replica; patches go to its primary{}",
+        target.server,
+        target
+            .replica_of
+            .as_deref()
+            .map(|p| format!(" ({p})"))
+            .unwrap_or_default()
+    )
+}
+
+/// The refusal for a database outside its environment's
+/// `version_table` (`databases = [...]`) — a Flyway or Liquibase one,
+/// say, whose migrations its own tool applies. Pure.
+pub fn not_covered(environment: &str, database: &str) -> String {
+    format!("{environment}'s version_table doesn't cover {database}")
+}
+
 /// Why `target` of `env` can't be patched at all, before connecting.
 /// Pure.
 fn refuse(env: &Environment, target: &Target) -> Result<PatchesConfig, String> {
     if target.role == Role::Replica {
-        return Err(format!(
-            "{} is a replica; patches go to its primary{}",
-            target.server,
-            target
-                .replica_of
-                .as_deref()
-                .map(|p| format!(" ({p})"))
-                .unwrap_or_default()
-        ));
+        return Err(replica_refusal(target));
     }
     let vt = env.version_table.as_ref().ok_or_else(|| {
         format!(
@@ -399,10 +469,7 @@ fn refuse(env: &Environment, target: &Target) -> Result<PatchesConfig, String> {
         )
     })?;
     if !vt.applies_to(&target.database) {
-        return Err(format!(
-            "{}'s version_table doesn't cover {}",
-            env.name, target.database
-        ));
+        return Err(not_covered(&env.name, &target.database));
     }
     if vt.patches.is_none() {
         return Err(format!(
@@ -525,6 +592,7 @@ pub async fn plan(
                 text,
                 statements: checked.statements,
                 outside: checked.outside,
+                confirms: checked.confirms,
             }),
             Err(e) => {
                 plan.outside_would_help = !outside
@@ -598,8 +666,9 @@ pub fn still_as_planned(plan: &PatchPlan, done: usize, applied: &[i64]) -> Resul
 /// Run `plan` on `target` as `mode` says: each patch in its own
 /// transaction, in order, stopping at the first failure (on the database,
 /// or on a copy of it); or all in one transaction that is rolled back.
-/// Once connected, `cancel` can stop the running statement; that fails
-/// the patch like any other error.
+/// Once connected, `cancel` stops the running statement, or the patch
+/// before its next statement or its commit; that fails the patch like any
+/// other error.
 pub async fn apply(
     env: &Environment,
     target: &Target,
@@ -751,7 +820,18 @@ impl Run<'_> {
         if checked.statements != p.statements || checked.outside != p.outside {
             return Err("the patch's statements differ from the plan".to_string());
         }
+        // The confirmation answered the guards' questions the plan named;
+        // others now would be ones nobody saw.
+        if checked.confirms != p.confirms {
+            return Err(
+                "safety.toml's guards would ask about other statements than the plan named; plan again"
+                    .to_string(),
+            );
+        }
         let statements = checked.statements;
+        // Between statements no statement is running for the server's
+        // cancel to stop: the flag stops the patch instead.
+        let stop = || self.cancel.requested();
         let done = match (p.outside, dry) {
             (Some(what), true) => {
                 return Err(format!(
@@ -759,10 +839,11 @@ impl Run<'_> {
                 ))
             }
             (None, true) => {
-                crate::query::apply::try_patch(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::try_patch(client, self.cfg, &p.file, &statements, &stop)
+                    .await?
             }
             (None, false) => {
-                crate::query::apply::apply(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::apply(client, self.cfg, &p.file, &statements, &stop).await?
             }
             (Some(what), false) => {
                 tracing::warn!(
@@ -774,7 +855,8 @@ impl Run<'_> {
                     what,
                     "patch running outside a transaction"
                 );
-                crate::query::apply::apply_outside(client, self.cfg, &p.file, &statements).await?
+                crate::query::apply::apply_outside(client, self.cfg, &p.file, &statements, &stop)
+                    .await?
             }
         };
         if !done.recorded {
@@ -871,35 +953,39 @@ async fn open_admin(
     ))
 }
 
-/// [`plan`] for a database named in environments.toml, with the
-/// personal safety.toml and secrets from AWS: what the overview's `P` and
-/// MCP's `apply_patches` run.
+/// [`plan`] for a database named in environments.toml, with secrets from
+/// AWS: what the overview's `P` and MCP's `apply_patches` run. `safety`
+/// is the personal safety.toml as the project's `[safety]` tightened it
+/// (`project::merge_safety`), the same the editor and MCP's `query` use.
 pub async fn plan_for(
     environment: String,
     server: String,
     database: String,
     outside: bool,
+    safety: crate::safety::SafetyConfig,
 ) -> Result<PatchPlan, String> {
     let (env, target) =
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
             .map_err(|e| format!("resolve task failed: {e}"))??;
-    let safety = crate::safety::SafetyConfig::load_personal().0;
     plan(&env, &target, &safety, &aws_secrets(), outside).await
 }
 
-/// [`apply`] for a plan from [`plan_for`], resolving its database again.
-pub async fn apply_for(p: PatchPlan, mode: RunMode, cancel: CancelSlot) -> ApplyReport {
+/// [`apply`] for a plan from [`plan_for`], resolving its database again;
+/// `safety` as [`plan_for`] takes it.
+pub async fn apply_for(
+    p: PatchPlan,
+    mode: RunMode,
+    cancel: CancelSlot,
+    safety: crate::safety::SafetyConfig,
+) -> ApplyReport {
     let (e, s, d) = (p.environment.clone(), p.server.clone(), p.database.clone());
     let resolved = tokio::task::spawn_blocking(move || resolve(&e, &s, &d))
         .await
         .map_err(|e| format!("resolve task failed: {e}"))
         .and_then(|r| r);
     match resolved {
-        Ok((env, target)) => {
-            let safety = crate::safety::SafetyConfig::load_personal().0;
-            apply(&env, &target, &safety, &aws_secrets(), &p, mode, &cancel).await
-        }
+        Ok((env, target)) => apply(&env, &target, &safety, &aws_secrets(), &p, mode, &cancel).await,
         Err(e) => ApplyReport {
             error: Some(e),
             mode,
@@ -944,6 +1030,7 @@ mod tests {
                     text: String::new(),
                     statements: Vec::new(),
                     outside: None,
+                    confirms: Vec::new(),
                 })
                 .collect(),
             stopped_at: None,
@@ -974,6 +1061,24 @@ mod tests {
         let (run, below) = split_at_recorded(vec![f(1), f(2)], None);
         assert_eq!(names(run), ["1-x.sql", "2-x.sql"], "nothing recorded yet");
         assert!(below.is_empty());
+    }
+
+    #[test]
+    fn the_plan_names_what_its_one_confirmation_answers() {
+        let mut p = planned(&[321, 322, 323]);
+        assert_eq!(p.confirm_summary(), None, "nothing to ask about");
+        p.patches[0].confirms = vec!["TRUNCATE".into()];
+        p.patches[1].confirms = vec![
+            "INSERT".into(),
+            "DELETE without WHERE".into(),
+            "INSERT".into(),
+        ];
+        assert_eq!(p.confirm_count(), 4);
+        assert_eq!(
+            p.confirm_summary().unwrap(),
+            "4 statement(s) your guard rails would normally ask about: TRUNCATE in 321-x.sql, \
+             INSERT ×2 in 322-x.sql, DELETE without WHERE in 322-x.sql"
+        );
     }
 
     #[test]

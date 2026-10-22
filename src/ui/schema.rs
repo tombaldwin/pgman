@@ -165,8 +165,13 @@ pub(super) fn draw_schema_browser(f: &mut Frame, area: Rect, app: &App) {
                 theme,
             ));
             right_lines.push(Line::from(""));
+            // Under a filter the count is of the tables it left.
+            let count = match app.schema_browser.filter.as_deref() {
+                Some(pat) if !pat.is_empty() => format!("{table_count} table(s) matching /{pat}"),
+                _ => format!("{table_count} table(s)"),
+            };
             right_lines.push(clamped_line(
-                &format!("{table_count} table(s)"),
+                &count,
                 Style::default().fg(theme.text),
                 detail_width,
                 theme,
