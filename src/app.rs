@@ -1373,6 +1373,12 @@ pub struct App {
     /// more times in a row. Reset on any non-Tab editor keypress so a
     /// subsequent Tab starts a fresh cycle from the current cursor.
     pub completion: Option<CompletionCycle>,
+    /// Did the last frame actually draw the completion popup? Enter
+    /// accepts a candidate only from a popup the operator could see:
+    /// one the renderer skipped (no room, wrong mode) is not a
+    /// question on screen, and Enter stays a newline / run. Written by
+    /// `ui::draw` every frame.
+    pub completion_popup_drawn: bool,
     /// Active reverse-incremental history search session (Ctrl-R).
     /// When `Some`, `mode == Mode::HistorySearch` and the editor
     /// buffer reflects the current match — Enter accepts, Esc
@@ -1635,6 +1641,7 @@ impl App {
             schema_cache: SchemaCache::default(),
             databases: Vec::new(),
             completion: None,
+            completion_popup_drawn: false,
             history_search: None,
             watch: None,
             notices: Vec::new(),

@@ -104,11 +104,17 @@ impl App {
         // typed in front of the `;`) isn't a question the operator
         // asked, and accepting it wrote its first candidate into a
         // finished statement. Enter runs, as it would without the popup.
+        //
+        // And only a popup that is on screen: a cycle the last frame
+        // did not draw (no room for it, or not drawn yet) is not a
+        // question the operator can see, so Enter falls through to
+        // the newline / run below and the cycle closes with it.
         if matches!(key.code, KeyCode::Enter)
             && !key
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             && self.completion.is_some()
+            && self.completion_popup_drawn
         {
             let picked = self
                 .completion

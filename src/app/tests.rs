@@ -8697,6 +8697,7 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "i.customer_id = c.id");
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(
         a.editor.buffer,
@@ -8708,6 +8709,16 @@ fn tab_after_join_on_completes_the_foreign_key_predicate() {
     a.on_key(KeyEvent::from(KeyCode::Tab));
     let popup = a.completion.as_ref().expect("a popup");
     assert_eq!(popup.candidates[0].insert, "l.invoice_id = i.id");
+}
+
+/// Render one frame, as the run loop does between keys — what the
+/// operator sees, and so what Enter may act on (see
+/// `App::completion_popup_drawn`).
+fn draw_a_frame(a: &mut App) {
+    a.splash_visible = false;
+    a.splash_until = None;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    term.draw(|f| crate::ui::draw(f, a)).unwrap();
 }
 
 fn popup_with(a: &mut App, selected: Option<usize>) {
@@ -8742,6 +8753,7 @@ fn popup_with(a: &mut App, selected: Option<usize>) {
 fn enter_with_the_completion_popup_open_accepts_the_first_candidate() {
     let mut a = editor_with("");
     popup_with(&mut a, None);
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM users", "no newline, no run");
     assert_eq!(a.editor.cursor, a.editor.buffer.len());
@@ -8761,6 +8773,7 @@ fn enter_with_a_highlighted_candidate_keeps_that_one() {
     a.editor.buffer = "SELECT * FROM user_logs".into();
     a.editor.cursor = a.editor.buffer.len();
     a.completion.as_mut().unwrap().end = a.editor.cursor;
+    draw_a_frame(&mut a);
     a.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(a.editor.buffer, "SELECT * FROM user_logs");
     assert!(a.completion.is_none());
@@ -11445,6 +11458,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     press(&mut a, KeyCode::Left);
     type_str(&mut a, " where ");
     assert!(a.completion.as_ref().is_some_and(|c| c.selected.is_none()));
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.completion.is_none());
     assert_eq!(
@@ -11468,6 +11482,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
         a.last_status,
         a.completion.as_ref().map(|c| c.selected)
     );
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert_eq!(a.editor.buffer, "select * from events;");
     assert!(!reached_request_run(&a), "accepting isn't running");
@@ -11478,6 +11493,7 @@ fn enter_runs_a_terminated_statement_under_a_popup_nobody_asked_for() {
     a.mode = Mode::Editor;
     type_str(&mut a, "select * from ");
     assert!(a.completion.is_some());
+    draw_a_frame(&mut a);
     press(&mut a, KeyCode::Enter);
     assert!(a.editor.buffer.starts_with("select * from ") && a.editor.buffer.len() > 14);
     assert!(!reached_request_run(&a));
@@ -11684,4 +11700,27 @@ fn an_alias_then_enter_then_a_join_types_through_verbatim() {
         a.editor.buffer,
         "select * from panel_usr_invoices i\nleft join panel_usr_items t\non t.invoice_id = i.id"
     );
+}
+
+#[test]
+fn enter_under_a_popup_no_frame_has_drawn_is_a_newline() {
+    // Same popup the accepting test opens, but no frame has put it on
+    // screen (the renderer had no room for it, say): Enter is the
+    // operator's newline, not an answer to a question they never saw.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    assert!(!a.completion_popup_drawn);
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.editor.buffer, "SELECT * FROM us\n");
+    assert!(a.completion.is_none(), "the cycle closed with the newline");
+
+    // A frame too short for the popup draws none, and says so.
+    let mut a = editor_with("");
+    popup_with(&mut a, None);
+    a.splash_visible = false;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 6)).unwrap();
+    term.draw(|f| crate::ui::draw(f, &mut a)).unwrap();
+    assert!(!a.completion_popup_drawn, "no room, no popup");
+    draw_a_frame(&mut a);
+    assert!(a.completion_popup_drawn, "a full-size frame draws it");
 }

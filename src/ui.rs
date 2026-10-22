@@ -40,6 +40,9 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 /// infrastructure names in all of it (`redact::apply`), so no panel
 /// has to remember to.
 pub fn draw(f: &mut Frame, app: &mut App) {
+    // Every frame says afresh whether it drew the completion popup —
+    // a frame that returns early (the splash) drew none.
+    app.completion_popup_drawn = false;
     draw_frame(f, app);
     if app.redact {
         let r = crate::redact::Redactor::new(crate::redact::app_names(app));
@@ -150,7 +153,7 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
         } else {
             halves(chunks[2])
         };
-        draw_completion_popup(f, above, below, app);
+        app.completion_popup_drawn = draw_completion_popup(f, above, below, app);
     }
     if app.mode == Mode::Help {
         draw_help(f, area, app);

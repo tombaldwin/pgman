@@ -105,7 +105,7 @@ diff, all of which are also dispatched from this mode.
 | `( [ {` | Autoclose — inserts the matching close, cursor between |
 | `) ] }` | Skips over a matching close immediately ahead of the cursor |
 | `'` / `"` | Autoclose/skip, gated so it doesn't fight SQL `''` escaping or in-word apostrophes |
-| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup; `Enter` accepts the highlighted (or first) candidate |
+| `Tab` / `Ctrl-Space` | Identifier completion — opens/cycles the popup; while the popup is on screen, `Enter` accepts the highlighted (or first) candidate |
 | `.` after an identifier | Auto-triggers qualified completion (`users.|`) |
 | `Shift-Enter` | Insert a newline even after a `;` (where the terminal distinguishes it) |
 | `↑ ↓ ← →` | Move cursor (column remembered across up/down) |
@@ -133,9 +133,13 @@ a level and `Tab` there adds one.
 ### Completion popup
 
 While the popup is open (no candidate committed yet): typing, `Backspace`
-and `Delete` re-narrow the candidate list live; `Esc` restores the
-originally-typed prefix and closes the popup. Any other key commits the
-current candidate. Repeated `Tab` cycles through candidates.
+and `Delete` re-narrow the candidate list live; a space ends the word and
+closes the popup, so an alias typed after a table name is never completed.
+`Esc` restores the originally-typed prefix and closes the popup. Repeated
+`Tab` cycles through candidates. `Enter` accepts the highlighted (or first)
+candidate — but only from a popup that is on screen, and not when nothing
+is highlighted and the statement already ends in `;` (then it runs). Any
+other key closes the popup and leaves the buffer as it is.
 
 ## Result grid
 
