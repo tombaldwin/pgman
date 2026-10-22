@@ -14,7 +14,9 @@ only. Diagnostics go to the log file (`~/.cache/pgman/pgman.log.*`).
 
 ## What writes
 
-`query` never writes. Two tools do, and `--read-only` refuses both:
+`query` never writes, and refuses the server-control functions
+Postgres runs even in a read-only session (`pg_promote`,
+`pg_wal_replay_pause`, replication slots, `pg_stat_reset`…). Two tools do, and `--read-only` refuses both:
 `environments_save` appends to your `environments.toml`, and
 `apply_patches` runs an environment database's pending patches — only
 after **you** confirm through the client's elicitation prompt (a

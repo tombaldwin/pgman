@@ -55,6 +55,15 @@
   `lo_import`, `lo_export`, `pg_read_file`, `pg_read_binary_file`,
   `pg_ls_dir`, `dblink`, `dblink_exec`. (`COPY … TO/FROM PROGRAM` was
   already `Other`, being neither a `SELECT` nor recognised DDL.)
+  Server-control functions go further: Postgres runs them inside a
+  read-only transaction — they steer replication, WAL, backups and
+  statistics rather than write data — so a read-only profile refuses
+  them outright (`pg_promote`, `pg_wal_replay_pause` / `_resume`,
+  creating, dropping, advancing or consuming a replication slot,
+  replication origins, `pg_switch_wal`, `pg_create_restore_point`, the
+  backup functions, `pg_stat_reset*`, `pg_stat_statements_reset`,
+  `pg_logical_emit_message`, `pg_rotate_logfile`); a writable profile
+  asks for confirmation, as for any other non-read.
   Keywords count only where Postgres would read them as keywords:
   the token scan skips string literals, dollar-quoted bodies, and
   comments, and it splits identifiers the way Postgres does — `$` and

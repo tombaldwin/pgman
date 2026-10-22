@@ -395,6 +395,11 @@ const SERVER_CONTROL_FUNCTIONS: &[&str] = &[
     "pg_rotate_logfile",
     "pg_log_backend_memory_contexts",
     "pg_stat_statements_reset",
+    // The `get_` forms consume the slot, a CDC consumer's changes with
+    // it; the `peek_` forms are the reads.
+    "pg_logical_slot_get_changes",
+    "pg_logical_slot_get_binary_changes",
+    "pg_sync_replication_slots",
     // Not a family: `pg_replication_origin_status` is a view to read.
     "pg_replication_origin_create",
     "pg_replication_origin_drop",
@@ -421,6 +426,10 @@ const SERVER_CONTROL_FAMILIES: &[(&str, &str)] = &[
 /// function. Pure.
 pub fn calls_server_control(sql: &str) -> bool {
     code_tokens(sql).iter().any(|t| {
+        // `pg_stat_get_replication_slot()` reads statistics.
+        if t.starts_with("pg_stat_get_") {
+            return false;
+        }
         SERVER_CONTROL_FUNCTIONS.contains(&t.as_str())
             || SERVER_CONTROL_FAMILIES
                 .iter()
@@ -2359,6 +2368,9 @@ mod tests {
             "SELECT pg_stat_statements_reset()",
             "SELECT pg_replication_origin_create('o')",
             "SELECT pg_logical_emit_message(true, 'p', 'm')",
+            "SELECT * FROM pg_logical_slot_get_changes('s', NULL, NULL)",
+            "SELECT * FROM pg_logical_slot_get_binary_changes('s', NULL, NULL)",
+            "SELECT pg_sync_replication_slots()",
             "SELECT \"pg_promote\"()",
             "SELECT pg_catalog.pg_promote()",
             "WITH x AS (SELECT pg_drop_replication_slot('s')) SELECT * FROM x",
@@ -2380,6 +2392,8 @@ mod tests {
             "SELECT pg_get_wal_replay_pause_state()",
             "SELECT pg_is_wal_replay_paused()",
             "SELECT stats_reset FROM pg_stat_bgwriter",
+            "SELECT * FROM pg_logical_slot_peek_changes('s', NULL, NULL)",
+            "SELECT * FROM pg_stat_get_replication_slot('s')",
             "SELECT * FROM audit WHERE fn = 'pg_promote'",
         ] {
             assert_eq!(classify(sql), StatementKind::Select, "{sql}");

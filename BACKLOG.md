@@ -631,6 +631,12 @@ the list for the cases where it can't reach.
   anyway — pgbouncer-shaped, not pgman-shaped.
 
 ### UX
+- **The read-only hint's safety.toml path in the footer** (release
+  panel re-check, 2026-10-22). A write refused by a read-only
+  connection gives `hint: this connection is read-only by safety.toml
+  (<full path>)`; at 80x24 the path makes the footer three lines and
+  is cut anyway. Name `safety.toml` in the footer and leave the path to
+  F2.
 - **Keymap customization** — bindings are hardcoded today. A
   `~/.config/pgman/keymap.toml` letting operators rebind (or alias)
   keys would help muscle-memory transitions from k9s / Vim / Emacs

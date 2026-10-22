@@ -1418,7 +1418,13 @@ pub fn mcp_refusal(r: crate::batch::Refusal) -> String {
     match r {
         Refusal::Split => crate::safety::SPLIT_REFUSAL.to_string(),
         Refusal::ReadOnlyEscape => crate::safety::READ_ONLY_ESCAPE_REFUSAL.to_string(),
-        Refusal::ServerControl => crate::safety::SERVER_CONTROL_REFUSAL.to_string(),
+        // Not SERVER_CONTROL_REFUSAL: its safety.toml advice is a setting
+        // this server never honours.
+        Refusal::ServerControl => "refused: this calls a server-control function \
+             (replication, WAL, backup or statistics), which Postgres runs even in a \
+             read-only session, and this MCP server only reads — there is no flag or \
+             setting that lets `query` run it"
+            .to_string(),
         Refusal::Confirm { kind, db, stmt } | Refusal::Block { kind, db, stmt } => format!(
             "refused: {kind} on '{db}' is not a read, and this MCP server only reads — \
              there is no flag or setting that lets `query` run it (statement: {stmt})"
@@ -1556,6 +1562,15 @@ mod tests {
     use super::*;
     use crate::safety::{SafetyConfig, READ_ONLY_ESCAPE_REFUSAL};
     use tokio_postgres::types::Type;
+
+    #[test]
+    fn a_server_control_refusal_points_at_no_setting_mcp_ignores() {
+        let cfg = read_only_safety(SafetyConfig::default());
+        let err = single_checked_statement(&cfg, "db", "SELECT pg_wal_replay_pause()").unwrap_err();
+        assert!(err.contains("server-control function"), "{err}");
+        // MCP never honours safety.toml's read_only: don't send anyone there.
+        assert!(!err.contains("safety.toml"), "{err}");
+    }
 
     #[test]
     fn query_results_are_cut_to_the_cell_and_result_budgets() {
