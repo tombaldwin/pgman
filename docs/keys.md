@@ -302,7 +302,9 @@ Opened with `Q`, or `Ctrl-O` from the editor.
 | `Esc` / `q` | Close (drops any active filter) |
 
 From the editor, `Ctrl-S` prompts for a name and saves the current buffer.
-A saved query with `:param` placeholders prompts for each value in turn
+The prompt opens with a name suggested from the SQL, shown selected: typing
+replaces it, `Backspace` clears it, `→` / `End` keep it to edit, and `Enter`
+saves it as it is. A saved query with `:param` placeholders prompts for each value in turn
 (`Enter` accepts and moves to the next; `Esc` cancels back to the list).
 
 ## History search

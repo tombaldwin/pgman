@@ -4073,6 +4073,45 @@ fn save_query_prompt_persists_buffer_under_name() {
 }
 
 #[test]
+fn the_suggested_save_name_is_replaced_by_typing_not_appended_to() {
+    let open = || {
+        let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+        a.saved_queries_file = temp_saved_path("suggested");
+        a.mode = Mode::Editor;
+        a.editor.buffer = "select * from orders".into();
+        a.editor.cursor = a.editor.buffer.len();
+        a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert_eq!(a.mode, Mode::SaveQueryPrompt);
+        let suggestion = a.saved_ui.save_name.clone();
+        assert!(!suggestion.is_empty());
+        assert!(a.saved_ui.save_name_suggested);
+        (a, suggestion)
+    };
+    // Typing replaces the whole suggestion.
+    let (mut a, _) = open();
+    type_str(&mut a, "mine");
+    assert_eq!(a.saved_ui.save_name, "mine");
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "min", "then Backspace is one char");
+    // Backspace first clears it.
+    let (mut a, _) = open();
+    press(&mut a, KeyCode::Backspace);
+    assert_eq!(a.saved_ui.save_name, "");
+    // → keeps it to edit from its end.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Right);
+    type_str(&mut a, "_v2");
+    assert_eq!(a.saved_ui.save_name, format!("{suggestion}_v2"));
+    // Enter saves it untouched.
+    let (mut a, suggestion) = open();
+    press(&mut a, KeyCode::Enter);
+    assert!(a.saved_queries.get(&suggestion).is_some());
+    // The next prompt starts selected again.
+    a.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert!(a.saved_ui.save_name_suggested);
+}
+
+#[test]
 fn save_query_prompt_esc_cancels_without_persist() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.mode = Mode::Editor;

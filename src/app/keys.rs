@@ -202,6 +202,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.saved_ui.save_name.clear();
+                self.saved_ui.save_name_suggested = false;
                 self.last_status = Some("save cancelled".into());
                 self.mode = Mode::Editor;
             }
@@ -222,12 +223,24 @@ impl App {
                     if replaced { "replaced" } else { "new" }
                 ));
                 self.saved_ui.save_name.clear();
+                self.saved_ui.save_name_suggested = false;
                 self.mode = Mode::Editor;
             }
+            // The suggestion is selected: Backspace deletes all of it,
+            // a typed character replaces it, `→` / `End` keep it to
+            // edit from its end.
             KeyCode::Backspace => {
-                self.saved_ui.save_name.pop();
+                if std::mem::take(&mut self.saved_ui.save_name_suggested) {
+                    self.saved_ui.save_name.clear();
+                } else {
+                    self.saved_ui.save_name.pop();
+                }
             }
+            KeyCode::Right | KeyCode::End => self.saved_ui.save_name_suggested = false,
             KeyCode::Char(c) if !ctrl && !key.modifiers.contains(KeyModifiers::ALT) => {
+                if std::mem::take(&mut self.saved_ui.save_name_suggested) {
+                    self.saved_ui.save_name.clear();
+                }
                 self.saved_ui.save_name.push(c);
             }
             _ => {}

@@ -2614,9 +2614,9 @@ impl App {
         }
     }
 
-    /// `Ctrl-S` in editor — prompt for a name (with the existing
-    /// saved entry's name pre-filled if the buffer matches one
-    /// — otherwise empty). Enter persists; Esc cancels.
+    /// `Ctrl-S` in editor — prompt for a name, a suggestion derived
+    /// from the buffer pre-filled and selected (typing replaces it).
+    /// Enter persists; Esc cancels.
     fn start_save_query_prompt(&mut self) {
         if self.editor.buffer.trim().is_empty() {
             self.last_status = Some("editor empty — nothing to save".into());
@@ -2627,6 +2627,7 @@ impl App {
         // operator has a starting point. They can backspace and
         // type their own.
         self.saved_ui.save_name = default_query_name(&self.editor.buffer);
+        self.saved_ui.save_name_suggested = true;
         self.last_status = Some("save query · type a name · enter persist · esc cancel".into());
         self.mode = Mode::SaveQueryPrompt;
     }

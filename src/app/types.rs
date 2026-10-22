@@ -787,6 +787,11 @@ pub struct SavedQueriesUi {
     pub cursor: usize,
     /// Name being typed in `Mode::SaveQueryPrompt`.
     pub save_name: String,
+    /// `save_name` is still the suggestion `Ctrl-S` filled in, shown
+    /// selected: the first character typed replaces it (Backspace
+    /// clears it, `→` / `End` keep it to edit, Enter saves it as is).
+    /// Typed text used to be appended to the slug.
+    pub save_name_suggested: bool,
     /// Active `:param` collection while loading a parameterised
     /// saved query (`Mode::ParamPrompt`). `None` otherwise.
     pub param_prompt: Option<ParamPrompt>,
