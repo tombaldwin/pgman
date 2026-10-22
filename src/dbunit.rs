@@ -150,11 +150,9 @@ pub fn generate_apply_script(fixture: &Fixture, mode: CleanMode) -> String {
 /// so a round-trip back through [`parse_flat_xml`] reproduces the
 /// fixture exactly. Per-row column order is preserved.
 ///
-/// NULL caveat: a captured result grid can't distinguish SQL NULL
-/// from an empty string (both display blank), so every column is
-/// emitted with its displayed text — an empty cell becomes
-/// `col=""`, not an omitted attribute. Hand-edit if your DBUnit
-/// setup needs genuinely-NULL columns dropped.
+/// SQL NULL is an omitted attribute, flat XML's own NULL (a captured
+/// row's NULL cells are left out by [`fixture_from_rows`]); an empty
+/// string is `col=""`.
 pub fn generate_flat_xml(fixture: &Fixture) -> String {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -177,8 +175,11 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
 
 /// Build a single-table [`Fixture`] from a result grid — the
 /// "capture current state" path. `columns` align with each row's
-/// cells by position; a short row pads missing cells as empty,
-/// and any cells beyond `columns` are ignored. `table` is used
+/// cells by position, and any cells beyond `columns` are ignored. A
+/// NULL cell — and a short row's missing one — is left out of the
+/// row, flat XML's NULL; an empty string stays, as `""`. Applying the
+/// fixture with pgman then leaves an omitted column to its default:
+/// NULL, unless the table gives it a `DEFAULT`. `table` is used
 /// verbatim as the element name (DBUnit flat-XML convention —
 /// schema-qualify by hand if your setup needs it).
 pub fn fixture_from_rows(
@@ -193,9 +194,9 @@ pub fn fixture_from_rows(
             columns: columns
                 .iter()
                 .enumerate()
-                .map(|(i, name)| {
-                    let text = cells.get(i).map(crate::grid::cell_text).unwrap_or("");
-                    (name.clone(), text.to_string())
+                .filter_map(|(i, name)| {
+                    let text = cells.get(i)?.as_ref()?;
+                    Some((name.clone(), text.clone()))
                 })
                 .collect(),
         })
@@ -249,6 +250,11 @@ fn xml_escape_attr(s: &str) -> String {
 }
 
 fn insert_sql(row: &Row) -> String {
+    // Every attribute omitted (`<t/>`, or a captured row of NULLs):
+    // `INSERT INTO t () VALUES ()` is not SQL.
+    if row.columns.is_empty() {
+        return format!("INSERT INTO {} DEFAULT VALUES", row.table);
+    }
     let cols: Vec<&str> = row.columns.iter().map(|(k, _)| k.as_str()).collect();
     let vals: Vec<String> = row
         .columns
@@ -325,23 +331,44 @@ mod tests {
     }
 
     #[test]
-    fn fixture_from_rows_aligns_columns_and_pads_short_rows() {
+    fn fixture_from_rows_aligns_columns_and_leaves_out_nulls() {
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![
             vec![Some("1".to_string()), Some("alice".to_string())],
-            vec![Some("2".to_string())], // short row → name padded empty
+            vec![Some("2".to_string())], // short row → name is NULL
+            vec![Some("3".to_string()), None],
+            vec![Some("4".to_string()), Some(String::new())],
         ];
         let f = fixture_from_rows("users", &cols, &rows);
-        assert_eq!(f.rows.len(), 2);
+        assert_eq!(f.rows.len(), 4);
         assert_eq!(f.rows[0].table, "users");
         assert_eq!(
             f.rows[0].columns,
             vec![("id".into(), "1".into()), ("name".into(), "alice".into())]
         );
+        assert_eq!(f.rows[1].columns, vec![("id".into(), "2".into())]);
+        assert_eq!(f.rows[2].columns, vec![("id".into(), "3".into())]);
+        // The empty string is a value: it stays.
         assert_eq!(
-            f.rows[1].columns,
-            vec![("id".into(), "2".into()), ("name".into(), String::new())]
+            f.rows[3].columns,
+            vec![("id".into(), "4".into()), ("name".into(), String::new())]
         );
+        let xml = generate_flat_xml(&f);
+        assert!(xml.contains("<users id=\"3\"/>"), "{xml}");
+        assert!(xml.contains("<users id=\"4\" name=\"\"/>"), "{xml}");
+        assert_eq!(parse_flat_xml(&xml).unwrap(), f);
+    }
+
+    /// A row of nothing but NULLs captures as `<t/>`; applying it must
+    /// still be SQL.
+    #[test]
+    fn a_row_with_no_attributes_inserts_default_values() {
+        let f = fixture_from_rows("t", &["a".to_string()], &[vec![None]]);
+        assert_eq!(
+            generate_flat_xml(&f),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<dataset>\n  <t/>\n</dataset>\n"
+        );
+        assert_eq!(generate_inserts(&f), vec!["INSERT INTO t DEFAULT VALUES"]);
     }
 
     #[test]

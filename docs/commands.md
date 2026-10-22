@@ -64,8 +64,9 @@ behaviour without being parsed as backslash text.
   path picks a timestamped default under the cache directory.
 - `\fixture` / `\fixture <path>` — capture the current result grid as a
   DBUnit `FlatXmlDataSet` at `<path>`. Requires a non-empty, single-table
-  result (the source table becomes the XML element name). No path picks
-  a timestamped default under the cache directory.
+  result (the source table becomes the XML element name). A NULL cell is
+  left out of its row, flat XML's NULL; an empty string is `col=""`.
+  No path picks a timestamped default under the cache directory.
 
 ## Meta
 
