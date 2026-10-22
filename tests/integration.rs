@@ -3745,11 +3745,11 @@ fn a_patch_planned_outside_a_transaction_runs_vacuum_and_concurrently() {
         .await;
         let err = r.results[0].outcome.as_ref().unwrap_err();
         assert!(err.contains("differ from the plan"), "{err}");
-        // Nor with what the guards would ask about left out of it: the
-        // confirmation didn't see those.
-        assert!(!p.patches[0].confirms.is_empty(), "{:?}", p.patches[0]);
+        // Nor when what the guards would ask about disagrees with what the
+        // apply-time check finds: the confirmation answered other questions.
+        assert!(p.patches[0].confirms.is_empty(), "{:?}", p.patches[0]);
         let mut forged = p.clone();
-        forged.patches[0].confirms.clear();
+        forged.patches[0].confirms.push("TRUNCATE".into());
         let r = apply(
             &env,
             &target,

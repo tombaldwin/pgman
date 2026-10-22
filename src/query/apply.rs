@@ -87,15 +87,18 @@ pub struct Checked {
     /// the patch holds one: it then runs statement by statement, each
     /// committing as it goes ([`apply_outside`]). Only with `outside`.
     pub outside: Option<&'static str>,
-    /// What the statements a `Confirm` guard would ask about are, in
-    /// order ([`guard_confirms`]): the plan's one confirmation answers
-    /// them, so the plan names them.
+    /// The risky statements a `Confirm` guard would ask about, in order
+    /// ([`guard_confirms`]): the plan's one confirmation answers them, so
+    /// the plan names them.
     pub confirms: Vec<String>,
 }
 
 /// What each of `statements` that safety.toml's guards would ask about
 /// for `db` (a `Confirm`) is, in order: `TRUNCATE`, `DELETE without
-/// WHERE`… Pure.
+/// WHERE`… Left out: an `INSERT`, a keyed `UPDATE` / `DELETE` and DDL —
+/// the default guards ask about those too, and they are what a migration
+/// is made of, so naming them on every plan would hide the few that
+/// matter. Pure.
 pub fn guard_confirms(
     safety: &crate::safety::SafetyConfig,
     db: &str,
@@ -105,6 +108,15 @@ pub fn guard_confirms(
         .iter()
         .map(|s| crate::safety::evaluate(safety, db, s))
         .filter(|d| d.guard == crate::safety::Guard::Confirm)
+        .filter(|d| {
+            !matches!(
+                d.kind,
+                crate::safety::StatementKind::Insert
+                    | crate::safety::StatementKind::Update { has_where: true }
+                    | crate::safety::StatementKind::Delete { has_where: true }
+                    | crate::safety::StatementKind::AlterDdl
+            )
+        })
         .map(|d| d.kind.describe())
         .collect()
 }
@@ -718,14 +730,16 @@ mod tests {
     #[test]
     fn a_patch_names_what_the_guards_would_ask_about() {
         let mut safety = writable();
-        safety.default.guards.insert = crate::safety::Guard::Allow;
         safety.default.guards.delete_without_where = crate::safety::Guard::Confirm;
         let sql = "INSERT INTO t_schema_version (schema_version_id) VALUES (252);\n\
+                   ALTER TABLE audit ADD COLUMN c int;\n\
+                   UPDATE audit SET c = 0 WHERE id = 1;\n\
                    TRUNCATE audit;\n\
                    DELETE FROM sessions;\n\
                    SELECT 1;";
         let c = check_patch(&safety, "ledger", sql, false).unwrap();
-        // Allowed (INSERT here, SELECT always) isn't asked about.
+        // A migration's ordinary statements (the default guards confirm
+        // them too) and SELECT aren't named; the risky ones are.
         assert_eq!(c.confirms, ["TRUNCATE", "DELETE without WHERE"]);
         // A database whose profile asks about nothing: none.
         let mut quiet = safety.clone();

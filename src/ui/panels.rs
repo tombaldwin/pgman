@@ -3577,24 +3577,30 @@ mod tests {
             "  2 to apply, in order, each in its own transaction · recorded up to 318"
         );
         assert_eq!(text[2], "  mode: for real · Tab dry run or copy");
-        // The one confirmation stands in for the guards' questions: said.
-        assert_eq!(
-            text[3],
-            "  4 statement(s) your guard rails would normally ask about · confirming answers them all"
-        );
-        assert_eq!(text[4], "  319-APP-101-invoice-dunning-stage.sql");
+        // An ordinary migration (INSERT + DDL) has nothing risky to name.
+        assert_eq!(text[3], "  319-APP-101-invoice-dunning-stage.sql");
         assert_eq!(
             text[5],
-            "    guard rails would ask about: INSERT, ALTER / DDL"
-        );
-        assert_eq!(
-            text[7],
             "      ALTER TABLE invoices ADD COLUMN dunning_stage smallint NOT NULL DEFAULT 0"
         );
         assert!(
-            text[12].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
+            text[9].starts_with("  not included: 321-APP-104-open-invoices-by-customer-idx.sql")
         );
-        assert_eq!(text.len(), 13, "the prompt is pinned, not in the list");
+        assert_eq!(text.len(), 10, "the prompt is pinned, not in the list");
+        // A risky statement the guards would ask about: the one
+        // confirmation stands in for that question, so it is said.
+        let mut risky = plan.clone();
+        risky.patches[0].confirms = vec!["TRUNCATE".into()];
+        let rv = PatchView {
+            stage: PatchStage::Plan(Ok(risky)),
+            ..v.clone()
+        };
+        let rtext: Vec<String> = patch_lines(&rv).into_iter().map(|l| l.0).collect();
+        assert_eq!(
+            rtext[3],
+            "  1 statement(s) your guard rails would normally ask about · confirming answers them all"
+        );
+        assert_eq!(rtext[5], "    guard rails would ask about: TRUNCATE");
         assert_eq!(
             patch_prompt(&v),
             Some((
