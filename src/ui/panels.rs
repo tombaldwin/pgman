@@ -472,9 +472,9 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
     // for the marker only, and a line of its own above the rows would
     // come and go — moving every row — as the cursor did.
     if let Some(err) = app.focused_log_pick_error() {
-        let width = (popup.width as usize).saturating_sub(4);
+        let width = (popup.width as usize).saturating_sub(2);
         block = block.title_bottom(Line::from(Span::styled(
-            crate::ui::middle_ellipsis(&failed_pick_title(err), width),
+            failed_pick_title(err, width),
             Style::default().fg(theme.health_red),
         )));
     }
@@ -486,9 +486,15 @@ pub(super) fn draw_log_pick(f: &mut Frame, area: Rect, app: &App) {
 const FAILED_PICK_MARKER: &str = "✗ ";
 
 /// The picker's bottom-border line for a focused pick that failed in
-/// the log. One line: a multi-line server message is folded. Pure.
-pub(crate) fn failed_pick_title(error: &str) -> String {
-    format!(" failed in the log: {} ", crate::ui::footer_text(error))
+/// the log, at most `width` columns. One line — a multi-line server
+/// message is folded — and cut at its end: an error reads from the
+/// start, and a middle cut left its last word stranded after the
+/// ellipsis (`… at character… 15`). Pure.
+pub(crate) fn failed_pick_title(error: &str, width: usize) -> String {
+    const HEAD: &str = " failed in the log: ";
+    let room = width.saturating_sub(crate::ui::display_width(HEAD) + 1);
+    let msg = crate::ui::end_ellipsis(&crate::ui::footer_text(error), room);
+    format!("{HEAD}{msg} ")
 }
 
 /// The tag `main.rs` appends to a pick's name when its URL still holds

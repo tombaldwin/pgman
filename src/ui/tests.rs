@@ -1569,6 +1569,28 @@ fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
     );
 }
 
+/// The log picker's failed-pick line fits its border and is cut at the
+/// end, never in the middle with a stray word after the ellipsis.
+#[test]
+fn failed_pick_title_fits_and_cuts_at_the_end() {
+    use super::panels::failed_pick_title;
+    let err = "relation \"invoice_lnes\" does not exist at character 15";
+    assert_eq!(
+        failed_pick_title(err, 200),
+        format!(" failed in the log: {err} ")
+    );
+    let cut = failed_pick_title(err, 60);
+    assert!(display_width(&cut) <= 60, "{cut:?}");
+    assert!(cut.starts_with(" failed in the log: relation"), "{cut:?}");
+    assert!(cut.ends_with("… "), "{cut:?}");
+    assert!(
+        !cut.contains("15"),
+        "a middle cut kept the last word: {cut:?}"
+    );
+    // A multi-line message is one line on a border.
+    assert_eq!(failed_pick_title("a\nb", 200), " failed in the log: a · b ");
+}
+
 /// An error with no server detail says so in words, not type names.
 #[test]
 fn the_error_overlay_without_detail_speaks_plainly() {
