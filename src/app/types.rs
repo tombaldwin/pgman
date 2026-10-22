@@ -179,9 +179,10 @@ pub enum Mode {
     /// `SavedQueries`). Edits `App::saved_ui.rename_buf`; Enter
     /// commits (refused on name collision), Esc cancels.
     RenameQueryPrompt,
-    /// JDBC-tap event monitor (`F4` from anywhere). Lists
-    /// `App::tap_events` in recency order — time, duration,
-    /// app, sql preview. j/k move; enter drills into one event;
+    /// JDBC-tap event monitor (`F4` from anywhere). Its List view
+    /// shows `App::tap_events` in recency order — duration, rows,
+    /// app, sql preview — with the focused query's bound
+    /// parameters beneath. j/k move; v cycles the other views;
     /// c clears the ring; q/esc close.
     TapMonitor,
     /// Result-diff view (`D` in Normal pins A, the next `D`
