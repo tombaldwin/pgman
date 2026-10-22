@@ -28,6 +28,19 @@ pub enum Source {
     JdbcPaste,
 }
 
+impl Source {
+    /// The word the UI uses for this source: the picker's `[tag]` and
+    /// the editor's "looks like a … log" hint both say it, so the two
+    /// name the same thing the same way.
+    pub fn label(self) -> &'static str {
+        match self {
+            Source::HibernateLog => "hibernate",
+            Source::PostgresLog => "postgres",
+            Source::JdbcPaste => "jdbc",
+        }
+    }
+}
+
 /// A statement recovered from a log or paste, with its parameters substituted
 /// back in to produce `runnable_sql`.
 #[derive(Debug, Clone, PartialEq, Eq)]

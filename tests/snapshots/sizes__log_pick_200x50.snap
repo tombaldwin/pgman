@@ -21,7 +21,7 @@ expression: dump(&buf)
 │INV-004822  2102         open    EUR       5712.0│  2 queries · view: all queries (press `c` to toggle)                                             │                                                 │
 │INV-004824  2104         open    GBP       768.00│                                                                                                  │                                                 │
 │INV-004827  2107         open    GBP       22140.│▶ [hibernate] select * from users where id = 42                                                   │                                                 │
-│INV-004829  2109         open    USD       980.00│  [pglog]     select * from orders where user_id = 42                                             │                                                 │
+│INV-004829  2109         open    USD       980.00│  [postgres]  select * from orders where user_id = 42                                             │                                                 │
 │INV-004831  2111         open    GBP       298.80╰──────────────────────────────────────────────────────────────────────────────────────────────────╯                                                 │
 │                                                                                                                                                                                                      │
 │                                                                                                                                                                                                      │

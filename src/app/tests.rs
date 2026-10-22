@@ -6556,7 +6556,7 @@ fn paste_of_plain_sql_does_not_set_reconstruct_hint() {
     a.on_paste("select * from users where id = $1".to_string());
     assert_ne!(
         a.last_status.as_deref(),
-        Some("looks like a pglog log · ctrl-l / F8 to reconstruct queries")
+        Some("looks like a postgres log · ctrl-l / F8 to reconstruct queries")
     );
 }
 
@@ -9759,6 +9759,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
             broken,
         ],
         error: None,
+        profile: None,
         probe: None,
     }]
 }

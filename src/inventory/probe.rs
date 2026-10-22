@@ -504,6 +504,7 @@ mod tests {
                 t("demo-r", "ledger", Role::Replica, Some("demo")),
             ],
             error: None,
+            profile: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
                 ..Default::default()
@@ -542,6 +543,7 @@ mod tests {
             source: "test".into(),
             targets: vec![a, b],
             error: None,
+            profile: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
                 ..Default::default()
@@ -584,6 +586,7 @@ mod tests {
             source: "test".into(),
             targets: vec![row],
             error: None,
+            profile: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
                 ..Default::default()
@@ -666,6 +669,7 @@ mod tests {
             source: "test".into(),
             targets: vec![row],
             error: None,
+            profile: None,
             probe: Some(super::super::ProbeSettings {
                 version_table: None,
                 ..Default::default()

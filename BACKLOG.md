@@ -112,6 +112,10 @@ buckets were folded in once their initial passes shipped).
 ### Reconstruction
 - N+1: time-window heuristic once `ReconstructedQuery` carries
   timestamps.
+- pglog: reconstruct a failed statement from its `ERROR:` + `STATEMENT:`
+  pair (the default `log_min_error_statement` logs these with nothing
+  else enabled), without duplicating a statement `log_statement` already
+  logged. Today the pair is skipped.
 
 ### Editor — domain features
 - Saved queries — possible v3 nice-to-haves: tags / folders,

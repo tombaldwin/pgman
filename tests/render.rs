@@ -150,6 +150,19 @@ fn editor_renders_keyword_in_title_colour() {
 }
 
 #[test]
+fn editor_title_names_a_pasted_postgres_log_in_user_words() {
+    // The title once said `pglog log` — an internal module name.
+    let mut a = settle_app();
+    a.mode = Mode::Editor;
+    a.editor.buffer =
+        "2026-10-21 09:12:48.001 UTC [31840] billing@ledger LOG:  statement: select 1".into();
+    a.editor.cursor = 0;
+    let text = dump(&render(&mut a, 120, 20));
+    assert!(text.contains("editor · postgres log"), "{text}");
+    assert!(!text.contains("pglog"), "{text}");
+}
+
+#[test]
 fn editor_flags_unknown_identifier_in_syn_unknown() {
     let mut a = settle_app();
     a.mode = Mode::Editor;
@@ -1134,6 +1147,27 @@ fn about_card_carries_the_full_server_version() {
     assert!(!header.contains("Debian"), "{header}");
 }
 
+/// Redaction leaves pgman's own credit line alone even when a word in
+/// it is a redacted name — here the login name — while the same word
+/// elsewhere on screen is still blocked out.
+#[test]
+fn redacted_about_card_keeps_its_credit_line() {
+    let mut a = settle_app();
+    a.redact_env_names = vec!["tom".into()];
+    a.last_error = Some("permission denied for tom".into());
+    a.mode = Mode::About;
+    a.redact = true;
+    let rendered = dump(&render(&mut a, 120, 40));
+    assert!(
+        rendered.contains("by Tom Baldwin / Polymorphism Ltd"),
+        "credit line redacted:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("denied for tom") && rendered.contains("denied for ▓▓▓"),
+        "the name elsewhere must still go:\n{rendered}"
+    );
+}
+
 /// The footer renders the `:` bar only while the mode IS `CommandBar`.
 /// An async `TxClosed` landing mid-bar moves the mode to Editor
 /// without taking the bar; until the next key drops it, its text must
@@ -1799,6 +1833,7 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
             connect: Err("no secret".into()),
         }],
         error: None,
+        profile: None,
         probe: None,
     }];
     a.environments.probes = vec![vec![pgman::app::ProbeState::Off]];
@@ -1874,4 +1909,102 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
             "{name} shows in clear:\n{rendered}"
         );
     }
+}
+
+#[test]
+fn redacted_overview_hides_an_rds_profile_named_in_its_error() {
+    // An `rds` environment whose listing failed has no rows, so its
+    // profile is known only from the source — and the aws CLI's error
+    // on its heading names it.
+    use pgman::inventory::EnvReport;
+    let mut a = settle_app();
+    a.environments.reports = vec![EnvReport {
+        name: "staging".into(),
+        source: "RDS us-west-1".into(),
+        targets: Vec::new(),
+        error: Some("The config profile (examplecorp-sso) could not be found".into()),
+        profile: Some("examplecorp-sso".into()),
+        probe: None,
+    }];
+    a.environments.probes = vec![Vec::new()];
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 120, 30));
+    assert!(off.contains("examplecorp-sso"), "never on screen:\n{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 120, 30));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    assert!(on.contains("The config profile (▓▓▓▓▓▓▓▓▓▓▓-▓▓▓)"), "{on}");
+}
+
+#[test]
+fn redacted_discovery_hides_the_project_in_its_version_table_paths() {
+    // A proposal picks up the project's version table: its patch
+    // directory and the config file it came from both name the
+    // project's directory, which is often the client's name.
+    use pgman::inventory::discover::with_version_table;
+    let mut found = pgman::demo::discovery();
+    let root = "/home/dev/git/examplecorp-api";
+    with_version_table(
+        &mut found.proposals,
+        Some(&(
+            std::path::PathBuf::from(format!("{root}/.pgman/pgman.toml")),
+            pgman::inventory::VersionTable {
+                table: "public.db_version".into(),
+                column: "id".into(),
+                patches: Some(format!("{root}/db/patches")),
+                databases: Vec::new(),
+            },
+        )),
+    );
+    let chosen = vec![false; found.proposals.len()];
+    let mut a = settle_app();
+    a.environments.discovery = Some(pgman::app::DiscoveryUi {
+        found: Some(found),
+        chosen,
+        ..Default::default()
+    });
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 160, 45));
+    assert!(
+        off.contains("examplecorp-api/db/patches") && off.contains("examplecorp-api/.pgman"),
+        "the paths never on screen:\n{off}"
+    );
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 45));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    // The generic directories still say what the path is.
+    assert!(on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches"), "{on}");
+    assert!(
+        on.contains("/git/▓▓▓▓▓▓▓▓▓▓▓-api/.pgman/pgman.toml"),
+        "{on}"
+    );
+}
+
+#[test]
+fn redacted_picker_hides_the_credential_variable_names() {
+    // A picker row ends `password ← $VAR  user ← $VAR`; a project's
+    // variable names tend to carry its client's name.
+    let picks = vec![DataSourcePick {
+        name: "staging".into(),
+        origin: "project",
+        dsn: Some(Dsn::parse("postgres://app@staging-db/main").unwrap()),
+        unresolved: Vec::new(),
+        unresolved_host: Vec::new(),
+        creds: pgman::app::CredsProvenance::new(
+            vec!["EXAMPLECORP_DB_USER".into()],
+            vec!["EXAMPLECORP_DB_PW".into()],
+        ),
+    }];
+    let mut a = App::new(Theme::default(), None, picks, SafetyConfig::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::ConnPick;
+    let off = dump(&render(&mut a, 160, 16));
+    assert!(off.contains("password ← $EXAMPLECORP_DB_PW"), "{off}");
+    assert!(off.contains("user ← $EXAMPLECORP_DB_USER"), "{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 160, 16));
+    assert!(!on.to_lowercase().contains("examplecorp"), "leaked:\n{on}");
+    // The generic rest of the name, and the arrow, still say what it is.
+    assert!(on.contains("user ← $▓▓▓▓▓▓▓▓▓▓▓_DB_USER"), "{on}");
 }

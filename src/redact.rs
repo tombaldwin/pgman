@@ -114,6 +114,47 @@ const GENERIC: &[&str] = &[
     "public",
 ];
 
+/// Directory names that say what a directory holds, not whose project
+/// it is: a path pgman shows keeps them (`~/git/▓▓▓▓/db/patches`).
+/// Compared lowercased, alongside [`GENERIC`].
+const GENERIC_PATH: &[&str] = &[
+    "users",
+    "home",
+    "git",
+    "src",
+    "code",
+    "projects",
+    "project",
+    "repos",
+    "repo",
+    "work",
+    "workspace",
+    "clients",
+    "client",
+    "documents",
+    "desktop",
+    "volumes",
+    "tmp",
+    "var",
+    "opt",
+    "srv",
+    "sql",
+    "patches",
+    "patch",
+    "migrations",
+    "migration",
+    "resources",
+    "pgman",
+    "toml",
+    "api",
+    "service",
+    "backend",
+    "server",
+    "web",
+    "apps",
+    "scripts",
+];
+
 /// Shortest segment matched on its own, away from the rest of its name.
 /// Shorter ones (`ab`) would black out ordinary words all over the
 /// screen; they are still redacted inside a full match.
@@ -128,9 +169,20 @@ pub struct Redactor {
     names: Vec<String>,
     /// Their non-generic segments, lowercased, matched as whole words.
     segments: Vec<String>,
+    /// pgman's own fixed text, matched exactly: never redacted.
+    fixed: &'static [&'static str],
 }
 
 impl Redactor {
+    /// Leave `fixed` alone wherever it appears word for word: text pgman
+    /// itself draws, such as the About card's credit line, which names
+    /// its author rather than anyone's infrastructure and can share a
+    /// word with a redacted login or user name.
+    pub fn with_fixed(mut self, fixed: &'static [&'static str]) -> Self {
+        self.fixed = fixed;
+        self
+    }
+
     /// A redactor for these known names (hosts, environment names,
     /// secret ids…). Empty and all-generic names are dropped.
     pub fn new<I, S>(names: I) -> Self
@@ -184,7 +236,13 @@ impl Redactor {
                 out.push(at..at + seg.len());
             }
         }
-        merge(out)
+        let mut out = merge(out);
+        for text in self.fixed {
+            for (at, m) in line.match_indices(text) {
+                out = cut(out, at..at + m.len());
+            }
+        }
+        out
     }
 
     /// `line` with its redacted chars replaced by [`BLOCK`], one per
@@ -240,7 +298,7 @@ pub fn apply(buf: &mut Buffer, r: &Redactor) {
 }
 
 /// Every infrastructure name `app` knows: its connection, the picker's
-/// data sources, the environments overview (servers, hosts, databases,
+/// data sources and their credential variables, the environments overview (servers, hosts, databases,
 /// bastions, secrets, password variables) and an open discovery, plus
 /// [`env_names`]. Fed to [`Redactor::new`] on each frame.
 pub fn app_names(app: &crate::app::App) -> Vec<String> {
@@ -262,9 +320,26 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
         if let Some(d) = &p.dsn {
             dsn(d, &mut out);
         }
+        // The variables its credentials come from: the picker row and
+        // the tunnel confirmation (whose creds are the pick's) draw
+        // them as `password ← $VAR  user ← $VAR`.
+        out.extend(p.creds.password_env.iter().cloned());
+        out.extend(p.creds.user_env.iter().cloned());
     }
     for e in &app.environments.reports {
         out.push(e.name.clone());
+        out.extend(e.profile.clone());
+        // Its patch and migration directories, which a probe error
+        // ("cannot list <dir>: …") and the patch plan show.
+        if let Some(probe) = &e.probe {
+            let patches = probe
+                .version_table
+                .as_ref()
+                .and_then(|v| v.patches.as_deref());
+            for path in patches.into_iter().chain(probe.migrations_dir.as_deref()) {
+                out.extend(path_names(path));
+            }
+        }
         for t in &e.targets {
             out.push(t.server.clone());
             out.push(t.database.clone());
@@ -298,6 +373,17 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
             out.extend(p.env.secrets.values().cloned());
             if let Some(scope) = p.env.source.rds_scope() {
                 out.extend(scope.profile);
+            }
+            // The project's version table: its patch directory, under the
+            // project's own directory, shows in the proposal and in the
+            // "version_table from <project>/.pgman/pgman.toml" note.
+            if let Some(path) = p
+                .env
+                .version_table
+                .as_ref()
+                .and_then(|v| v.patches.as_deref())
+            {
+                out.extend(path_names(path));
             }
         }
     }
@@ -520,6 +606,26 @@ fn arns(s: &str, out: &mut Vec<Range<usize>>) {
     }
 }
 
+/// The parts of a directory path that could name a project or client:
+/// every word in it that isn't a generic directory or infrastructure
+/// word, as known names. `~/git/examplecorp-api/db/patches` gives
+/// `examplecorp`, so the path shows as `~/git/▓▓▓▓▓▓▓▓▓▓▓-api/db/patches`.
+fn path_names(path: &str) -> Vec<String> {
+    let lower = path.to_ascii_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    for r in alnum_runs(&lower) {
+        let word = &lower[r];
+        if word.chars().count() >= MIN_SEGMENT
+            && !is_generic(word)
+            && !GENERIC_PATH.contains(&word)
+            && !out.iter().any(|w| w == word)
+        {
+            out.push(word.to_string());
+        }
+    }
+    out
+}
+
 /// The login name, as a known name: the home directory's last part
 /// (what a path on screen shows) and `$USER`, when they differ.
 fn login_names(home: Option<std::path::PathBuf>, user: Option<String>) -> Vec<String> {
@@ -552,6 +658,24 @@ fn url_userinfo(s: &str, out: &mut Vec<Range<usize>>) {
             out.push(p..p + pass.len());
         }
     }
+}
+
+/// `ranges` with `hole` taken out of them. Order is kept.
+fn cut(ranges: Vec<Range<usize>>, hole: Range<usize>) -> Vec<Range<usize>> {
+    let mut out = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        if r.end <= hole.start || hole.end <= r.start {
+            out.push(r);
+            continue;
+        }
+        if r.start < hole.start {
+            out.push(r.start..hole.start);
+        }
+        if hole.end < r.end {
+            out.push(hole.end..r.end);
+        }
+    }
+    out
 }
 
 fn merge(mut v: Vec<Range<usize>>) -> Vec<Range<usize>> {
@@ -638,6 +762,7 @@ mod tests {
                 }),
             }],
             error: None,
+            profile: None,
             probe: None,
         }];
         a.redact_env_names = vec!["loginname".into()];
@@ -670,6 +795,67 @@ mod tests {
         ] {
             assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
         }
+    }
+
+    #[test]
+    fn fixed_text_is_never_redacted_but_the_same_word_elsewhere_is() {
+        const FIXED: &[&str] = &["by Tom Baldwin"];
+        let r = Redactor::new(["tom"]).with_fixed(FIXED);
+        assert_eq!(
+            r.redact("by Tom Baldwin, for tom"),
+            "by Tom Baldwin, for ▓▓▓"
+        );
+        // Matched word for word: another casing is not the fixed text.
+        assert_eq!(r.redact("by TOM Baldwin"), "by ▓▓▓ Baldwin");
+        assert_eq!(cut(std::iter::once(0..10).collect(), 3..5), [0..3, 5..10]);
+        assert_eq!(cut(vec![0..4, 6..9, 12..13], 2..7), [0..2, 7..9, 12..13]);
+        assert_eq!(cut(std::iter::once(3..5).collect(), 0..10), []);
+    }
+
+    #[test]
+    fn a_path_names_only_its_distinctive_directories() {
+        assert_eq!(
+            path_names("~/git/examplecorp-api/db/patches"),
+            ["examplecorp"]
+        );
+        assert_eq!(
+            path_names("/Users/dev/work/clients/Examplecorp/ledger-service/src/main/resources/db/migration"),
+            ["examplecorp", "ledger"]
+        );
+        assert!(path_names("/home/dev/git/api/db/patches").is_empty());
+    }
+
+    #[test]
+    fn app_names_includes_an_environments_probe_directories() {
+        // A probe error says "cannot list <dir>: …".
+        use crate::inventory::{EnvReport, ProbeSettings, VersionTable};
+        let mut a = crate::app::App::new(
+            crate::theme::Theme::default(),
+            None,
+            Vec::new(),
+            crate::safety::SafetyConfig::default(),
+        );
+        a.environments.reports = vec![EnvReport {
+            name: "staging".into(),
+            source: "docker".into(),
+            targets: Vec::new(),
+            error: None,
+            profile: None,
+            probe: Some(ProbeSettings {
+                version_table: Some(VersionTable {
+                    table: "public.db_version".into(),
+                    column: "id".into(),
+                    patches: Some("~/git/examplecorp-api/db/patches".into()),
+                    databases: Vec::new(),
+                }),
+                migrations_dir: Some("~/git/ledgerco-flyway/db/migration".into()),
+            }),
+        }];
+        let names = app_names(&a);
+        for want in ["examplecorp", "ledgerco", "flyway"] {
+            assert!(names.iter().any(|n| n == want), "{want} not in {names:?}");
+        }
+        assert!(!names.iter().any(|n| n == "patches" || n == "git"));
     }
 
     #[test]

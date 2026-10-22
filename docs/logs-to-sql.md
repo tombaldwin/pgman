@@ -32,7 +32,13 @@ Three input shapes are recognised:
   queries, or a `LOG:  duration: … execute <tag>: <sql>` paired with the
   following `DETAIL:  parameters: $1 = '…'` line for the extended protocol.
   This is the more reliable source: it needs `log_min_duration_statement` /
-  `log_statement` turned on server-side, no application redeploy.
+  `log_statement` turned on server-side, no application redeploy. Whatever
+  `log_line_prefix` printed before the `LOG:` is skipped, so the Debian /
+  Ubuntu default (`%m [%p] %q%u@%d `), RDS's (`%t:%r:%u@%d:[%p]:`) and
+  pgBadger's (`%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h `) all work;
+  include `%p` in it so a `bind`'s parameters pair with the right backend's
+  `execute`. A failed statement's `ERROR:` / `STATEMENT:` pair isn't
+  reconstructed.
 - **Pasted JDBC** — no log at all, just a `?`-placeholder statement plus a
   typed parameter list you already have (a debugger watch, a
   `PreparedStatement` toString, whatever). See "Three ways in" below for the

@@ -2356,6 +2356,7 @@ fn environment_probe_reads_version_patch_level_and_pending() {
             }),
         }],
         error: None,
+        profile: None,
         probe: Some(pgman::inventory::ProbeSettings {
             version_table: Some(pgman::inventory::VersionTable {
                 table: table.into(),
@@ -2806,6 +2807,7 @@ fn probes_recognise_common_migration_tools() {
                 }),
             }],
             error: None,
+            profile: None,
             probe: Some(pgman::inventory::ProbeSettings {
                 version_table: None,
                 migrations_dir: Some(migdir.display().to_string()),
