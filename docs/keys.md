@@ -142,6 +142,15 @@ current candidate. Repeated `Tab` cycles through candidates.
 Sort, filter, find, yank, FK-follow and diff are dispatched from Normal
 mode on the grid; row/cell detail and the diff view are their own modes.
 
+The grid holds at most **1000 rows** of a result. When a query returns
+more, pgman stops reading there, and both the grid's title and the
+footer say `capped at 1000`. Sort, filter, find, `Y` and the diff all
+work on those 1000 rows, not the whole result. The TUI has no way to
+fetch past the cap. To see other rows, narrow the query (`WHERE`,
+`ORDER BY … LIMIT … OFFSET …`). For every row, run it outside the TUI
+with `pgman query 'SQL' --json` (or `--batch --format json`), which
+isn't capped; see [commands](commands.md).
+
 | Key | Action |
 |---|---|
 | `s` | Cycle sort on the focused column (off → ASC → DESC) |
