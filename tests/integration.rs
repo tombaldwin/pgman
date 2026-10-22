@@ -4104,6 +4104,82 @@ fn a_cancel_before_the_commit_rolls_the_patch_back() {
     });
 }
 
+/// A `DO` block can call `set_config` where the patch check can't see it
+/// (it's in a dollar-quoted body) and lift the statement timeout for the
+/// session, past its own commit. Both timeouts are set again before every
+/// statement, so the next statement — the next patch's here — runs under
+/// pgman's limits all the same. Found by the 2026-10-22 release panel.
+#[test]
+fn a_do_block_cannot_lift_the_timeouts_for_the_statements_after_it() {
+    let home = scratch_home("apply-do-timeout", WRITABLE_PROFILE);
+    let vt = it_name("dov");
+    let seen = it_name("dos");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!(
+                "CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1); \
+                 CREATE TABLE {seen} (st text, lt text)"
+            ),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let cfg = pgman::query::patches::PatchesConfig {
+        dir: String::new(),
+        table: vt.clone(),
+        column: "id".into(),
+    };
+    let mut writable = pgman::safety::SafetyConfig::default();
+    writable.default.read_only = false;
+    let lift = format!(
+        "INSERT INTO {vt} (id) VALUES (2);\n\
+         DO $$ BEGIN \
+           PERFORM set_config('statement_timeout', '0', false); \
+           PERFORM set_config('lock_timeout', '0', false); \
+         END $$;\n"
+    );
+    let record = format!(
+        "INSERT INTO {vt} (id) VALUES (3);\n\
+         INSERT INTO {seen} SELECT current_setting('statement_timeout'), current_setting('lock_timeout');\n"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let client = raw("pgman_test").await;
+        for (name, text) in [("002-lift.sql", &lift), ("003-record.sql", &record)] {
+            let file = pgman::query::patches::patch_file(name, text, &cfg);
+            let statements = pgman::query::apply::check_patch(&writable, "pgman_test", text, false)
+                .unwrap_or_else(|e| panic!("{name}: the check lets it through: {e}"))
+                .statements;
+            let done = pgman::query::apply::apply(&client, &cfg, &file, &statements, &|| false)
+                .await
+                .unwrap();
+            assert!(done.recorded, "{name}");
+        }
+        // The lift did reach the session, past its commit…
+        let session: String = client
+            .query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(session, "0", "the DO block's change outlived its commit");
+        // …but the next statement ran under pgman's own limits.
+        let row = client
+            .query_one(&format!("SELECT st, lt FROM {seen}"), &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            (row.get::<_, String>(0), row.get::<_, String>(1)),
+            ("10min".to_string(), "5s".to_string())
+        );
+    });
+}
+
 /// The local test server as an environment's only database, `db`, with
 /// its version table `vt` and patches in `dir`.
 fn local_env(

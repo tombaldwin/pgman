@@ -16,7 +16,11 @@
 //! changes session settings (`SET`, `RESET`, `set_config`) — it could lift
 //! the lock timeout, or change how the server reads the next statement
 //! (`standard_conforming_strings`) so that it isn't the statement pgman
-//! checked. Those are run by hand. The caller confirms each patch first;
+//! checked. Those are run by hand. A `DO` block or a function the patch
+//! calls can still reach `set_config` where the check can't see it, so
+//! the lock and statement timeouts are both set again before every
+//! statement: such a change lasts no longer than the statement that made
+//! it. The caller confirms each patch first;
 //! that confirmation is what answers the guards' `Confirm`.
 //!
 //! The one way past the transaction: an operator who plans with
@@ -40,6 +44,11 @@ use crate::conn;
 
 /// How long a patch statement waits for a lock before failing.
 pub const LOCK_TIMEOUT: &str = "5s";
+
+/// How long a patch statement in a transaction may run: a table rewrite
+/// takes time; waiting on a lock does not ([`LOCK_TIMEOUT`]). The
+/// patching connection opens with it too.
+pub const STATEMENT_TIMEOUT_MS: u64 = 600_000;
 
 /// What makes `stmt` unable to run inside a transaction block, if
 /// anything: the server refuses these there, so a patch holding one
@@ -278,8 +287,9 @@ pub async fn try_patch(
     })
 }
 
-/// `statements` inside an open transaction, each with the lock timeout;
-/// the first that fails, or the one a `stop` came before.
+/// `statements` inside an open transaction, each with the lock and
+/// statement timeouts; the first that fails, or the one a `stop` came
+/// before.
 async fn run_in_transaction(
     client: &tokio_postgres::Client,
     statements: &[String],
@@ -289,10 +299,15 @@ async fn run_in_transaction(
         if stop() {
             return Err(Halt::Cancelled(i));
         }
-        // Before each statement: a function the patch calls could have
-        // changed it (`SET` and `set_config` themselves are refused).
+        // Both, before each statement: a `DO` block or a function the
+        // patch calls can change either with `set_config` where the check
+        // can't see it (`SET` and a bare `set_config` are refused), and a
+        // session-wide change outlives the statement and the commit.
         let reset = client
-            .batch_execute(&format!("SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
+            .batch_execute(&format!(
+                "SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'; \
+                 SET LOCAL statement_timeout = {STATEMENT_TIMEOUT_MS}"
+            ))
             .await;
         // `execute` prepares: one command per string, or the server refuses.
         let run = match reset {

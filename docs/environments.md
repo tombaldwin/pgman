@@ -278,7 +278,8 @@ steps:
    it by hand if it's needed.
 2. **Your confirmation, then the patches.** Each runs in its own
    transaction with `lock_timeout = 5s`, so a busy table fails fast
-   instead of queueing behind live traffic. Before each one the version
+   instead of queueing behind live traffic, and a 10-minute statement
+   timeout; both are set again before every statement. Before each one the version
    table is read again; a patch someone else applied since the plan
    stops the run. The first failure rolls that patch back and stops.
    What runs is the text you were shown, not a fresh read of the file.
@@ -310,6 +311,17 @@ before you confirm:
   copy. If the copy can't be dropped afterwards, the result names it
   for you to drop. That `DROP DATABASE` is the only one pgman runs, and
   it takes only a name pgman made.
+
+**`DO` blocks and `CALL`.** The plan checks a `DO` block or a `CALL`
+as one statement; what its body does isn't read, so its body can do
+what the plan refuses in plain SQL, such as `set_config` on a timeout.
+pgman doesn't refuse them, since migrations use them, but it sets
+`lock_timeout` and `statement_timeout` again before every statement,
+so such a change ends with the statement that made it. Within that
+statement it holds: a lock the body waits for after lifting
+`lock_timeout` waits as long as the body says (the statement timeout
+already running doesn't change). Read a `DO` block's body, or the
+procedure a `CALL` runs, before you confirm.
 
 Patches are all or nothing *each*, not as a batch: when the third of
 three fails, the first two stay applied and recorded, and the database

@@ -39,9 +39,9 @@ use crate::creds::aws_secrets::{SecretCreds, SecretRef};
 use crate::mcp::connections::Role;
 use crate::query::patches::{PatchFile, PatchesConfig};
 
-/// Statement timeout on the writable connection: a table rewrite takes
-/// time; waiting on a lock does not (`query::apply::LOCK_TIMEOUT`).
-const APPLY_STATEMENT_TIMEOUT_MS: u64 = 600_000;
+/// Statement timeout on the writable connection, set again before each
+/// patch statement (`query::apply::STATEMENT_TIMEOUT_MS`).
+const APPLY_STATEMENT_TIMEOUT_MS: u64 = crate::query::apply::STATEMENT_TIMEOUT_MS;
 
 /// Statement timeout on the plan's read-only connection.
 const PLAN_STATEMENT_TIMEOUT_MS: u64 = 10_000;
