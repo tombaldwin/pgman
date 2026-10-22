@@ -11,8 +11,10 @@
 //! since that's the path real users can't exercise without Postgres.
 //!
 //! A test names what it creates with [`it_name`] (`pgman_it_<what>_<pid>`),
-//! and the binary drops all of it when it exits, along with anything a
-//! killed run left. `PGMAN_IT_KEEP_TABLES=1` keeps them for a post-mortem.
+//! tables and databases alike, and the binary drops all of it when it
+//! exits, along with anything a killed run left; what an earlier run left
+//! is dropped when it starts, too. `PGMAN_IT_KEEP_TABLES=1` keeps them
+//! for a post-mortem.
 
 #![cfg(feature = "integration")]
 
@@ -65,10 +67,9 @@ fn test_relation_pid_reads_the_first_number_after_the_prefix() {
     assert_eq!(test_relation_pid("other_123"), None);
 }
 
-/// Drop the `pgman_it_*` relations this process made, and any left by a
-/// run that is no longer running (killed, or from before this existed).
-/// A live pid's are left alone, so a run in parallel keeps its tables.
-/// The compose database is throwaway in CI, but a developer's copy
+/// Drop the `pgman_it_*` relations [`is_stale`] picks: this process's,
+/// and any left by a run that is no longer running (killed, or from
+/// before this existed). The compose database is throwaway in CI, but a developer's copy
 /// otherwise fills with them, crowding the schema browser and
 /// completion when testing by hand. Errors are ignored: this is
 /// housekeeping, and it runs at exit where nothing can report them.
@@ -96,19 +97,10 @@ async fn drop_test_relations() {
     else {
         return;
     };
-    let me = std::process::id();
-    let alive = |pid: u32| {
-        pid != me
-            && Command::new("kill")
-                .args(["-0", &pid.to_string()])
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-    };
     let mut doomed: Vec<(String, String)> = rows
         .iter()
         .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
-        .filter(|(name, _)| test_relation_pid(name).is_some_and(|pid| !alive(pid)))
+        .filter(|(name, _)| test_relation_pid(name).is_some_and(is_stale))
         .collect();
     // Views before the tables under them; sequences last, since a
     // table's CASCADE may already have taken its own.
@@ -130,11 +122,90 @@ async fn drop_test_relations() {
     }
 }
 
-/// Runs [`drop_test_relations`] when the test binary exits, after every
-/// test. At exit parts of std are already shut down on the main thread,
-/// so the work gets a thread and a runtime of its own.
-#[ctor::dtor]
-unsafe fn drop_test_relations_at_exit() {
+/// Whether the cleanup drops what run `pid` made: this run's own, or a
+/// run's that is no longer running. A live pid's are left alone, so a
+/// run in parallel (another worktree) keeps its tables and databases.
+fn is_stale(pid: u32) -> bool {
+    pid == std::process::id()
+        || !Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+/// Which of `names` (databases on the server) the cleanup drops: a test's
+/// (`pgman_it_<what>_<pid>[_…]`, a copy pgman made of one included) whose
+/// pid is `stale`. Nothing without the `pgman_it_` prefix. Pure.
+fn doomed_databases(names: &[String], stale: impl Fn(u32) -> bool) -> Vec<String> {
+    names
+        .iter()
+        .filter(|n| test_relation_pid(n).is_some_and(&stale))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn only_a_stale_test_database_is_dropped() {
+    let names: Vec<String> = [
+        "pgman_test",
+        "pgman_noconnect",
+        "postgres",
+        "template1",
+        "pgman_test_42",
+        "app_pgman_it_x_42",
+        "pgman_it_versions",
+        "pgman_it_src_42",
+        "pgman_it_src_42_pgman_copy_1792521719",
+        "pgman_it_django_7",
+    ]
+    .map(String::from)
+    .to_vec();
+    assert_eq!(
+        doomed_databases(&names, |pid| pid == 42),
+        ["pgman_it_src_42", "pgman_it_src_42_pgman_copy_1792521719"]
+    );
+    assert!(doomed_databases(&names, |_| false).is_empty());
+}
+
+/// Drop the `pgman_it_*` databases [`doomed_databases`] picks: the
+/// migration-tool probes' and the copy test's (and the copy pgman made of
+/// it, when a failed run left one). `WITH (FORCE)`: a session a killed
+/// run left on one would otherwise keep it. Errors are ignored, as in
+/// [`drop_test_relations`].
+async fn drop_test_databases() {
+    let Ok(dsn) = pgman::conn::Dsn::parse(DSN) else {
+        return;
+    };
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let Ok((client, _task)) =
+        pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx).await
+    else {
+        return;
+    };
+    let Ok(rows) = client
+        .query(
+            "SELECT datname FROM pg_database WHERE datname LIKE 'pgman\\_it\\_%'",
+            &[],
+        )
+        .await
+    else {
+        return;
+    };
+    let names: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    for name in doomed_databases(&names, is_stale) {
+        let name = name.replace('"', "\"\"");
+        let _ = client
+            .batch_execute(&format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"))
+            .await;
+    }
+}
+
+/// [`drop_test_relations`] and [`drop_test_databases`], on a thread and
+/// a runtime of their own: at exit parts of std are already shut down on
+/// the main thread, and before `main` nothing else is running yet.
+fn clean_up_test_objects() {
     if std::env::var_os("PGMAN_IT_KEEP_TABLES").is_some() {
         return;
     }
@@ -143,10 +214,55 @@ unsafe fn drop_test_relations_at_exit() {
             .enable_all()
             .build()
         {
-            rt.block_on(drop_test_relations());
+            rt.block_on(async {
+                drop_test_relations().await;
+                drop_test_databases().await;
+            });
         }
     });
     let _ = worker.join();
+}
+
+/// Before any test: what earlier runs left (a killed run, or one whose
+/// exit cleanup didn't get to it).
+#[ctor::ctor]
+unsafe fn clean_up_test_objects_at_start() {
+    clean_up_test_objects();
+}
+
+/// When the test binary exits, after every test: this run's own, and
+/// anything a run that ended meanwhile left.
+#[ctor::dtor]
+unsafe fn clean_up_test_objects_at_exit() {
+    clean_up_test_objects();
+}
+
+/// The start-of-run cleanup ran: no test database of a run that isn't
+/// running is still there. A 2026-10-20 run left
+/// `pgman_it_src_<pid>_pgman_copy_<stamp>` on the compose server, and the
+/// migration-tool probe test never dropped its databases at all.
+#[test]
+fn no_earlier_runs_test_database_survives_the_start_of_a_run() {
+    if std::env::var_os("PGMAN_IT_KEEP_TABLES").is_some() {
+        return;
+    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let names: Vec<String> = rt.block_on(async {
+        raw("pgman_test")
+            .await
+            .query(
+                "SELECT datname FROM pg_database WHERE datname LIKE 'pgman\\_it\\_%'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect()
+    });
+    let me = std::process::id();
+    let left = doomed_databases(&names, |pid| pid != me && is_stale(pid));
+    assert!(left.is_empty(), "left by an earlier run: {left:?}");
 }
 
 /// A read-only probe connection to `dsn`.
