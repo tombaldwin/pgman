@@ -1947,6 +1947,43 @@ fn a_grid_too_wide_even_squeezed_shows_the_columns_around_the_cursor() {
     );
 }
 
+#[test]
+fn tabs_and_newlines_in_a_value_show_in_the_grid_and_row_detail() {
+    let mut a = connected_app();
+    a.grid = Grid {
+        columns: ["id", "note", "after"].map(String::from).to_vec(),
+        rows: vec![vec![
+            "1".into(),
+            "tab\there\nline two\r\nthree".into(),
+            "x".into(),
+        ]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(
+        text.contains("1   tab⇥here⏎line two⏎three  x"),
+        "one grid line, the tab and the newlines marked:\n{text}"
+    );
+    a.mode = Mode::RowDetail;
+    let text = dump(&render(&mut a, 80, 24));
+    let note = text.lines().position(|l| l.contains("tab⇥here"));
+    let note = note.unwrap_or_else(|| panic!("the tab is marked:\n{text}"));
+    let next: Vec<&str> = text.lines().skip(note + 1).take(2).collect();
+    assert!(
+        next[0].contains("│ line two ") && next[1].contains("│ three "),
+        "the lines wrap where the value breaks:\n{text}"
+    );
+    a.row_detail.field = 1;
+    a.mode = Mode::CellDetail;
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(
+        text.contains("tab⇥here") && !text.contains("tabhere"),
+        "the cell detail marks the tab too:\n{text}"
+    );
+}
+
 // ---- the footer under a long error ---------------------------------------
 
 const LONG_ERROR: &str =

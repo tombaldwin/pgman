@@ -45,7 +45,7 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
                 .rows
                 .iter()
                 .filter_map(|r| r.get(col))
-                .map(|c| UnicodeWidthStr::width(c.as_str()))
+                .map(|c| UnicodeWidthStr::width(show_controls(c, true).as_ref()))
                 .max()
                 .unwrap_or(0);
             UnicodeWidthStr::width(header.as_str())
@@ -123,6 +123,38 @@ pub fn truncate_cell_parts(s: &str, width: usize) -> (String, &'static str) {
         kept.push(c);
     }
     (kept, "…")
+}
+
+/// `s` with its control characters made visible for display: a tab as
+/// `⇥`, a newline as `⏎` when the value must stay on one line (a grid
+/// cell) or kept as a line break otherwise (row / cell detail, which
+/// wrap on it), `\r\n` as a single newline, and any other control
+/// character as its Unicode control picture (`␍`, `␀`, `␡` …).
+/// Terminals drew a tab as nothing and a grid cell as its first line
+/// only, so `tab<TAB>here<LF>line two` read `tabhere`. Display only:
+/// yanks and exports keep the value as it is. Pure / testable.
+pub fn show_controls(s: &str, single_line: bool) -> std::borrow::Cow<'_, str> {
+    if !s.chars().any(char::is_control) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            // CRLF: the `\n` stands for both.
+            '\r' if chars.peek() == Some(&'\n') => {}
+            '\n' if single_line => out.push('⏎'),
+            '\n' => out.push('\n'),
+            '\t' => out.push('⇥'),
+            '\u{7f}' => out.push('␡'),
+            c if (c as u32) < 0x20 => {
+                out.push(char::from_u32(0x2400 + c as u32).unwrap_or('�'));
+            }
+            c if c.is_control() => out.push('�'),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Is every non-NULL cell of column `col` a number as Postgres prints
@@ -306,6 +338,32 @@ mod tests {
         // Everything fits: the plain fit, all columns.
         let (widths, shown) = layout_columns(&natural, &numeric, 200, 2, 0);
         assert_eq!((widths, shown), (natural.to_vec(), 0..6));
+    }
+
+    #[test]
+    fn show_controls_makes_tabs_newlines_and_the_rest_visible() {
+        let v = "tab\there\nline two\r\nthree";
+        assert_eq!(show_controls(v, true), "tab⇥here⏎line two⏎three");
+        assert_eq!(show_controls(v, false), "tab⇥here\nline two\nthree");
+        assert_eq!(show_controls("a\rb\u{0}c\u{7f}\u{1b}", true), "a␍b␀c␡␛");
+        assert_eq!(show_controls("x\u{85}y", true), "x�y", "a C1 control");
+        // Nothing to do: borrowed, unchanged.
+        assert!(matches!(
+            show_controls("plain é 東京", true),
+            std::borrow::Cow::Borrowed("plain é 東京")
+        ));
+    }
+
+    #[test]
+    fn column_widths_measure_a_cell_as_it_is_drawn() {
+        let g = Grid {
+            columns: vec!["c".into()],
+            rows: vec![vec!["a\tb\nc".into()]],
+            truncated: false,
+        };
+        // `a⇥b⏎c`: five columns, where the raw tab and newline counted
+        // for nothing.
+        assert_eq!(column_widths(&g, 48), vec![5]);
     }
 
     #[test]

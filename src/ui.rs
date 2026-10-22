@@ -1949,7 +1949,7 @@ pub(crate) fn build_field_layout(
             let values = if is_empty {
                 vec!["(empty)".to_string()]
             } else {
-                wrap_value(raw, value_width)
+                wrap_value(&crate::grid::show_controls(raw, false), value_width)
             };
             FieldLayout {
                 label,

@@ -98,7 +98,9 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                             // its widest value, or wider than the screen.
                             (c.clone(), "")
                         } else {
-                            grid::truncate_cell_parts(c, w)
+                            // One line per cell: a tab or newline drawn
+                            // as nothing ran the value together.
+                            grid::truncate_cell_parts(&grid::show_controls(c, true), w)
                         };
                         if marker.is_empty() {
                             Cell::from(kept)
@@ -362,7 +364,7 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
                 .add_modifier(Modifier::ITALIC),
         ))]
     } else {
-        wrap_value(&value, inner_width)
+        wrap_value(&crate::grid::show_controls(&value, false), inner_width)
             .into_iter()
             .map(|l| Line::from(Span::styled(l, Style::default().fg(theme.text))))
             .collect()
