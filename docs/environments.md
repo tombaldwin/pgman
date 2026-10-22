@@ -266,7 +266,9 @@ steps:
 
 1. **A plan, read-only.** The patches the database hasn't recorded and
    that are numbered above the highest version it has, in order, each
-   checked against `safety.toml` like a `--batch` script. The plan stops
+   checked against `safety.toml` like a `--batch` script — as a
+   project's `.pgman/pgman.toml` `[safety]` block tightens it, when
+   pgman (or the MCP server) runs in that project. The plan stops
    before the first patch that can't run here: the database's profile
    is read-only (the default — set `read_only = false` for it), a guard
    blocks a statement, the patch has its own `BEGIN`/`COMMIT` or changes

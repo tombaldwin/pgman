@@ -879,35 +879,39 @@ async fn open_admin(
     ))
 }
 
-/// [`plan`] for a database named in environments.toml, with the
-/// personal safety.toml and secrets from AWS: what the overview's `P` and
-/// MCP's `apply_patches` run.
+/// [`plan`] for a database named in environments.toml, with secrets from
+/// AWS: what the overview's `P` and MCP's `apply_patches` run. `safety`
+/// is the personal safety.toml as the project's `[safety]` tightened it
+/// (`project::merge_safety`), the same the editor and MCP's `query` use.
 pub async fn plan_for(
     environment: String,
     server: String,
     database: String,
     outside: bool,
+    safety: crate::safety::SafetyConfig,
 ) -> Result<PatchPlan, String> {
     let (env, target) =
         tokio::task::spawn_blocking(move || resolve(&environment, &server, &database))
             .await
             .map_err(|e| format!("resolve task failed: {e}"))??;
-    let safety = crate::safety::SafetyConfig::load_personal().0;
     plan(&env, &target, &safety, &aws_secrets(), outside).await
 }
 
-/// [`apply`] for a plan from [`plan_for`], resolving its database again.
-pub async fn apply_for(p: PatchPlan, mode: RunMode, cancel: CancelSlot) -> ApplyReport {
+/// [`apply`] for a plan from [`plan_for`], resolving its database again;
+/// `safety` as [`plan_for`] takes it.
+pub async fn apply_for(
+    p: PatchPlan,
+    mode: RunMode,
+    cancel: CancelSlot,
+    safety: crate::safety::SafetyConfig,
+) -> ApplyReport {
     let (e, s, d) = (p.environment.clone(), p.server.clone(), p.database.clone());
     let resolved = tokio::task::spawn_blocking(move || resolve(&e, &s, &d))
         .await
         .map_err(|e| format!("resolve task failed: {e}"))
         .and_then(|r| r);
     match resolved {
-        Ok((env, target)) => {
-            let safety = crate::safety::SafetyConfig::load_personal().0;
-            apply(&env, &target, &safety, &aws_secrets(), &p, mode, &cancel).await
-        }
+        Ok((env, target)) => apply(&env, &target, &safety, &aws_secrets(), &p, mode, &cancel).await,
         Err(e) => ApplyReport {
             error: Some(e),
             mode,

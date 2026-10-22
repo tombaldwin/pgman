@@ -4593,6 +4593,91 @@ fn mcp_apply_patches_asks_the_operator_and_applies_on_the_typed_name() {
     assert!(child.wait().unwrap().success());
 }
 
+/// A project's `.pgman/pgman.toml` that keeps a database read-only stops
+/// `apply_patches` there, though the personal safety.toml lets it write:
+/// a project's `[safety]` can only tighten, and patching takes it as
+/// `query` does. Found by the 2026-10-22 release panel.
+#[test]
+fn mcp_apply_patches_takes_the_projects_safety_tightening() {
+    use std::io::{BufRead, Write};
+    let home = scratch_home("mcp-apply-project-safety", WRITABLE_PROFILE);
+    let vt = it_name("mpv");
+    let out = batch_with_home(
+        &home,
+        &[
+            "--yes",
+            "--sql",
+            &format!("CREATE TABLE {vt} (id int); INSERT INTO {vt} VALUES (1)"),
+        ],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dir = home.join("patches");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("002-x.sql"),
+        format!("INSERT INTO {vt} (id) VALUES (2);\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/connections.toml"),
+        format!("[[connections]]\nname = \"local\"\nurl = \"{DSN}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".config/pgman/environments.toml"),
+        format!(
+            "[[environments]]\nname = \"it-dev\"\nsource = {{ kind = \"static\", connections = [\"local\"] }}\n\
+             version_table = {{ table = \"{vt}\", column = \"id\", patches = \"{}\" }}\n",
+            dir.display()
+        ),
+    )
+    .unwrap();
+    // The server's working directory is the project.
+    std::fs::create_dir_all(home.join(".pgman")).unwrap();
+    std::fs::write(
+        home.join(".pgman/pgman.toml"),
+        "[safety.databases.pgman_test]\nread_only = true\n",
+    )
+    .unwrap();
+    let mut child = pgman()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .env("XDG_CACHE_HOME", home.join(".cache"))
+        .current_dir(&home)
+        .args(["mcp", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut next =
+        || -> serde_json::Value { serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap() };
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{"elicitation":{{}}}}}}}}"#).unwrap();
+    next();
+    let args =
+        serde_json::json!({"environment": "it-dev", "server": "local", "database": "pgman_test"});
+    writeln!(stdin, "{}", tool_call(2, "apply_patches", args)).unwrap();
+    let frame = next();
+    assert_eq!(frame["id"], 2, "a reply, not a question: {frame}");
+    let (text, is_error) = reply(&[frame], 2);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["planned"], serde_json::json!([]), "{text}");
+    assert_eq!(v["not_included"]["file"], "002-x.sql", "{text}");
+    let why = v["not_included"]["reason"].as_str().unwrap();
+    assert!(why.contains("read-only"), "{why}");
+    assert!(!table_has_id(&home, &vt, 2));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
 /// `apply_patches` (and the overview's `P`, which shares `plan_for` /
 /// `apply_for`) finds an `rds` environment's server through the RDS
 /// listing — with its secret — and never asks for upgrade targets,

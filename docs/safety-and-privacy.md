@@ -216,7 +216,10 @@ IntelliJ's `.idea/dataSources.xml` and `.pgman/pgman.toml` — and a
 `${…}` left in any connection-critical field (host, database, user,
 password, tunnel target, URL parameter) is refused rather than sent.
 A project's `[safety]` block can only *tighten* your personal
-`~/.config/pgman/safety.toml`, never relax it. And a discovered
+`~/.config/pgman/safety.toml`, never relax it — in the editor, in
+MCP's `query`, and when applying patches (`P`, MCP's
+`apply_patches`), where a database the project keeps read-only gets
+no patch. And a discovered
 `ssh_tunnel` asks before pgman runs `ssh` with your keys, because that
 happens before any Postgres traffic.
 

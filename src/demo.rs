@@ -58,10 +58,10 @@ pub fn app(theme: Theme) -> App {
         immediate: true,
     });
     a.env_patcher = Some(crate::app::EnvPatcher {
-        plan: std::sync::Arc::new(|e, s, d, outside| {
+        plan: std::sync::Arc::new(|e, s, d, outside, _safety| {
             Box::pin(std::future::ready(Ok(patch_plan(&e, &s, &d, outside))))
         }),
-        apply: std::sync::Arc::new(|p, mode, _cancel| {
+        apply: std::sync::Arc::new(|p, mode, _cancel, _safety| {
             use crate::inventory::patching::{CopyNote, RunMode};
             let ran = p
                 .patches

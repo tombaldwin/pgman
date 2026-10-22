@@ -246,12 +246,16 @@ impl Server {
                 "the operator declined patches for {environment} {server}/{database} earlier in this session; nothing asked, nothing applied (they can use P in pgman, or restart the MCP server)"
             ));
         }
+        // As `query` reads it: the project's `[safety]` tightens patching
+        // too. Planned and run with the same one.
+        let safety = merged_safety(crate::safety::SafetyConfig::load_personal().0, &self.cwd);
         // Never outside a transaction: that takes the TUI's typed confirm.
         let plan = crate::inventory::patching::plan_for(
             environment.clone(),
             server.clone(),
             database.clone(),
             false,
+            safety.clone(),
         )
         .await?;
         if plan.patches.is_empty() {
@@ -275,6 +279,7 @@ impl Server {
             plan.clone(),
             mode,
             Default::default(),
+            safety,
         ))
         .await
         .unwrap_or_else(|e| crate::inventory::patching::ApplyReport {
@@ -503,11 +508,9 @@ impl Server {
         let (entries, _) = connections::load(&self.cwd, self.opts.project_connections);
         let entry = pick_entry(&entries, name, tool)?;
         let dsn = entry.dsn.clone().ok_or("no DSN")?;
-        let safety = read_only_safety(crate::project::merge_safety(
+        let safety = read_only_safety(merged_safety(
             crate::safety::SafetyConfig::load_personal().0,
-            crate::project::load_from(&self.cwd)
-                .and_then(|(_, cfg)| cfg.safety)
-                .as_ref(),
+            &self.cwd,
         ));
         let timeout_ms =
             capped_statement_timeout(safety.profile_for(&dsn.dbname).statement_timeout_ms);
@@ -519,6 +522,20 @@ impl Server {
             role: entry.role,
         })
     }
+}
+
+/// `personal` (safety.toml) as the `[safety]` of the project at or above
+/// `cwd` tightens it: a project can only tighten.
+pub(super) fn merged_safety(
+    personal: crate::safety::SafetyConfig,
+    cwd: &std::path::Path,
+) -> crate::safety::SafetyConfig {
+    crate::project::merge_safety(
+        personal,
+        crate::project::load_from(cwd)
+            .and_then(|(_, cfg)| cfg.safety)
+            .as_ref(),
+    )
 }
 
 /// A connection resolved and checked, not yet opened.
