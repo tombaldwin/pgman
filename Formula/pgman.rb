@@ -19,18 +19,18 @@ class Pgman < Formula
   if OS.mac?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "dd7b475552549cab697730085425be2a57afe7bdd6073ebbc0cced9aea609576"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "774e4437c52e4865a2dbc3345c07b089243306260605a6bcb24362741f18c781"
     end
   elsif OS.linux?
     if Hardware::CPU.arm?
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "8b64717a06dbb16e7a745fee53bfa0280be6b75571c0497de8827d73961a401a"
     else
       url "https://github.com/tombaldwin/pgman/releases/download/v#{version}/pgman-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "b221858217ce4c66ba2e48491cb4afc1774df08c39614aaca78c2163d82103c0"
     end
   end
 
