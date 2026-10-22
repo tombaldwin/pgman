@@ -1049,6 +1049,7 @@ pub fn render_probe(outcome: &crate::inventory::probe::Outcome) -> Value {
             "schema_version": p.schema_version,
             "pending": p.pending,
             "schema_error": p.schema_error,
+            "files_error": p.files_error,
             "sessions": p.sessions,
             "size": p.size,
             "blocked_sessions": p.blocked,

@@ -191,7 +191,11 @@ the MCP `environments` tool when called with `probe: true`):
   in yellow; it's the same matching as the MCP `pending_patches` tool.
   A text column holding no integer ids at all (`1.2`, `1.10`) shows
   its highest as written instead of failing; applying patches still
-  refuses such a table.
+  refuses such a table. When pgman can't read the patch files (or a
+  `migrations_dir`), the version still shows, with `(+?)` in yellow
+  for the unknown pending count and the reason in the detail line: a
+  red `✗` is kept for the database's side, an unreadable version table
+  or a failed migration.
 - **`LAG`**, on replicas: `lag 0.4s`. Each refresh adds a reading, and
   the detail line under a replica shows the trend:
   `▁▂▂▃▅▇ · 2s–30s over 12 probes`. A replica that is streaming and has

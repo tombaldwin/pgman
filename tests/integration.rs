@@ -2858,10 +2858,17 @@ fn probes_recognise_common_migration_tools() {
                 .remove(0)
                 .unwrap()
                 .unwrap();
-            let e = p.schema_error.unwrap_or_default();
+            let e = p.files_error.clone().unwrap_or_default();
             assert!(
                 e.starts_with("migrations_dir: cannot list /nonexistent"),
                 "{e}"
+            );
+            // pgman's side failed, not a migration: the version stands.
+            assert_eq!(p.schema_error, None, "{p:?}");
+            assert_eq!(
+                (p.migration_tool.as_deref(), p.schema_label.as_deref()),
+                (Some("django"), Some("shop.0007_orders")),
+                "{p:?}"
             );
         }
     }

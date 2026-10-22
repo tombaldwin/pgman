@@ -55,8 +55,13 @@ pub struct Probe {
     pub schema_version: Option<i64>,
     /// Patch files whose id the database hasn't recorded.
     pub pending: Option<usize>,
-    /// Why the version table couldn't be read; the rest still stands.
+    /// Why the version table couldn't be read, or the migration tool's
+    /// record of a failed migration; the rest still stands.
     pub schema_error: Option<String>,
+    /// Why the patch or migration files couldn't be read, prefixed with
+    /// which (`patch files: …`): the version still stands, how many are
+    /// pending is unknown. pgman's side, not the database's.
+    pub files_error: Option<String>,
     /// Backends connected to this database, the probe's own included.
     pub sessions: Option<i64>,
     /// The database's size, as `pg_size_pretty` puts it.
