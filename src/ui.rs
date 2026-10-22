@@ -1954,7 +1954,7 @@ pub(crate) struct FieldLayout {
 /// Extracted from the renderer so the field-cursor maths can be unit-tested.
 pub(crate) fn build_field_layout(
     columns: &[String],
-    row: &[String],
+    row: &[crate::grid::Cell],
     label_width: usize,
     value_width: usize,
 ) -> Vec<FieldLayout> {
@@ -1964,7 +1964,7 @@ pub(crate) fn build_field_layout(
         .map(|(i, col)| {
             let truncated: String = col.chars().take(label_width).collect();
             let label = format!("{:<width$}", truncated, width = label_width);
-            let raw = row.get(i).map(|s| s.as_str()).unwrap_or("");
+            let raw = row.get(i).map(crate::grid::cell_text).unwrap_or("");
             let is_empty = raw.is_empty();
             let values = if is_empty {
                 vec!["(empty)".to_string()]

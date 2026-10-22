@@ -57,6 +57,7 @@ impl App {
             .get(self.row_detail.field)
             .cloned()
             .unwrap_or_default();
+        let value = crate::grid::cell_text(value);
         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
             Ok(()) => {
                 let chars = value.chars().count();
@@ -92,7 +93,7 @@ impl App {
             .join(", ");
         let vals = row
             .iter()
-            .map(|s| format_sql_literal(s))
+            .map(|s| format_sql_literal(crate::grid::cell_text(s)))
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});");

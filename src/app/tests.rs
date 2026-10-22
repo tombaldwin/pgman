@@ -1268,9 +1268,9 @@ fn next_sort_state_cycles_through_target_column() {
 #[test]
 fn compute_visible_rows_filters_case_insensitively_across_columns() {
     let rows = vec![
-        vec!["1".into(), "alice".into()],
-        vec!["2".into(), "BOB".into()],
-        vec!["3".into(), "carol".into()],
+        vec![Some("1".into()), Some("alice".into())],
+        vec![Some("2".into()), Some("BOB".into())],
+        vec![Some("3".into()), Some("carol".into())],
     ];
     // No filter → all rows in order.
     assert_eq!(compute_visible_rows(&rows, None), vec![0, 1, 2]);
@@ -1378,10 +1378,10 @@ fn sample_grid() -> Grid {
     Grid {
         columns: vec!["id".into(), "name".into()],
         rows: vec![
-            vec!["3".into(), "carol".into()],
-            vec!["1".into(), "alice".into()],
-            vec!["10".into(), "bob".into()],
-            vec!["2".into(), "dave".into()],
+            vec![Some("3".into()), Some("carol".into())],
+            vec![Some("1".into()), Some("alice".into())],
+            vec![Some("10".into()), Some("bob".into())],
+            vec![Some("2".into()), Some("dave".into())],
         ],
         truncated: false,
     }
@@ -1392,7 +1392,7 @@ fn grid_of(columns: &[&str], rows: &[&[&str]]) -> Grid {
         columns: columns.iter().map(|s| s.to_string()).collect(),
         rows: rows
             .iter()
-            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .map(|r| r.iter().map(|s| Some(s.to_string())).collect())
             .collect(),
         truncated: false,
     }
@@ -2040,16 +2040,16 @@ fn cycle_sort_orders_numerically_asc_then_desc_then_off() {
     let mut a = app_with_grid(sample_grid());
     // Column cursor defaults to 0 (id). ASC: 1, 2, 3, 10.
     a.cycle_sort();
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[0])).collect();
     assert_eq!(ids, vec!["1", "2", "3", "10"]);
     assert_eq!(a.grid_view.sort, Some((0, true)));
     // DESC: 10, 3, 2, 1.
     a.cycle_sort();
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[0])).collect();
     assert_eq!(ids, vec!["10", "3", "2", "1"]);
     // Off: original order restored.
     a.cycle_sort();
-    let ids: Vec<&str> = a.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let ids: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[0])).collect();
     assert_eq!(ids, vec!["3", "1", "10", "2"]);
     assert!(a.grid_view.sort.is_none());
 }
@@ -2061,7 +2061,7 @@ fn cycle_sort_on_different_column_jumps_to_asc() {
     a.move_col_cursor(1);
     a.cycle_sort(); // col 1 ASC (NOT col 0 DESC)
     assert_eq!(a.grid_view.sort, Some((1, true)));
-    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[1])).collect();
     assert_eq!(names, vec!["alice", "bob", "carol", "dave"]);
 }
 
@@ -2157,7 +2157,7 @@ fn yank_row_as_insert_no_source_surfaces_actionable_error() {
     a.grid_view.source = None;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2402,7 +2402,7 @@ fn open_cell_detail_parses_json_object_and_primes_tree() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"id":1,"name":"alice"}"#.into()]],
+        rows: vec![vec![Some(r#"{"id":1,"name":"alice"}"#.into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2420,7 +2420,7 @@ fn open_cell_detail_leaves_tree_empty_for_non_json_cells() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["note".into()],
-        rows: vec![vec!["hello world".into()]],
+        rows: vec![vec![Some("hello world".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2437,7 +2437,7 @@ fn cell_detail_json_jk_moves_cursor_within_bounds() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"a":1,"b":2}"#.into()]],
+        rows: vec![vec![Some(r#"{"a":1,"b":2}"#.into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2463,7 +2463,7 @@ fn cell_detail_json_enter_collapses_focused_container() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"a":{"x":1},"b":2}"#.into()]],
+        rows: vec![vec![Some(r#"{"a":{"x":1},"b":2}"#.into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2497,7 +2497,7 @@ fn cell_detail_json_esc_returns_to_row_detail() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"a":1}"#.into()]],
+        rows: vec![vec![Some(r#"{"a":1}"#.into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -3705,7 +3705,10 @@ fn m_then_letter_sets_grid_bookmark_at_focus() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["a".into(), "b".into()],
-        rows: vec![vec!["1".into(), "2".into()], vec!["3".into(), "4".into()]],
+        rows: vec![
+            vec![Some("1".into()), Some("2".into())],
+            vec![Some("3".into()), Some("4".into())],
+        ],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0, 1];
@@ -3727,7 +3730,10 @@ fn jump_to_bookmark_moves_selection_and_col_cursor() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["a".into(), "b".into()],
-        rows: vec![vec!["1".into(), "2".into()], vec!["3".into(), "4".into()]],
+        rows: vec![
+            vec![Some("1".into()), Some("2".into())],
+            vec![Some("3".into()), Some("4".into())],
+        ],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0, 1];
@@ -3745,7 +3751,7 @@ fn jump_to_unset_bookmark_surfaces_status_no_op() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["a".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -3775,7 +3781,7 @@ fn fk_navigate_with_no_grid_source_surfaces_actionable_error() {
     a.grid_view.source = None;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -3792,7 +3798,7 @@ fn fk_navigate_with_non_fk_column_surfaces_hint() {
     a.grid_view.source = Some(("public".into(), "orders".into()));
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -3810,7 +3816,7 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
     a.grid_view.source = Some(("public".into(), "orders".into()));
     a.grid = Grid {
         columns: vec!["id".into(), "user_id".into()],
-        rows: vec![vec!["1".into(), "42".into()]],
+        rows: vec![vec![Some("1".into()), Some("42".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -3867,7 +3873,7 @@ fn new_tab_has_empty_grid_and_shares_app_level_databases() {
     }];
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.on_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
@@ -3956,7 +3962,7 @@ fn result_diff_pin_is_per_tab_and_does_not_leak() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     // Pin A on tab 1.
@@ -3986,11 +3992,11 @@ fn tab_switch_dismisses_an_open_result_diff_overlay() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.pin_or_diff_result(); // pin A
-    a.grid.rows = vec![vec!["2".into()]];
+    a.grid.rows = vec![vec![Some("2".into())]];
     a.pin_or_diff_result(); // diff → opens the overlay
     assert_eq!(a.mode, Mode::ResultDiff);
     a.new_tab();
@@ -5087,9 +5093,9 @@ fn compute_grid_find_matches_finds_all_hits_in_row_major_order() {
     let grid = Grid {
         columns: vec!["name".into(), "city".into()],
         rows: vec![
-            vec!["alice".into(), "London".into()],
-            vec!["bob".into(), "Berlin".into()],
-            vec!["carol".into(), "London".into()],
+            vec![Some("alice".into()), Some("London".into())],
+            vec![Some("bob".into()), Some("Berlin".into())],
+            vec![Some("carol".into()), Some("London".into())],
         ],
         truncated: false,
     };
@@ -5104,9 +5110,9 @@ fn compute_grid_find_matches_honours_visible_subset() {
     let grid = Grid {
         columns: vec!["name".into()],
         rows: vec![
-            vec!["alice".into()],
-            vec!["bob".into()],
-            vec!["alex".into()],
+            vec![Some("alice".into())],
+            vec![Some("bob".into())],
+            vec![Some("alex".into())],
         ],
         truncated: false,
     };
@@ -5122,7 +5128,7 @@ fn compute_grid_find_matches_honours_visible_subset() {
 fn compute_grid_find_matches_empty_needle_returns_empty() {
     let grid = Grid {
         columns: vec!["x".into()],
-        rows: vec![vec!["any".into()]],
+        rows: vec![vec![Some("any".into())]],
         truncated: false,
     };
     assert!(compute_grid_find_matches(&grid, &[0], "").is_empty());
@@ -5135,8 +5141,8 @@ fn grid_find_f_key_opens_mode_and_jumps_on_match() {
     a.grid = Grid {
         columns: vec!["name".into(), "city".into()],
         rows: vec![
-            vec!["a".into(), "London".into()],
-            vec!["b".into(), "Berlin".into()],
+            vec![Some("a".into()), Some("London".into())],
+            vec![Some("b".into()), Some("Berlin".into())],
         ],
         truncated: false,
     };
@@ -5162,10 +5168,10 @@ fn grid_find_types_n_steps_with_arrows_and_keeps_stepping_after_enter() {
     a.grid = Grid {
         columns: vec!["c".into()],
         rows: vec![
-            vec!["linus".into()],
-            vec!["bb".into()],
-            vec!["linus".into()],
-            vec!["lius".into()],
+            vec![Some("linus".into())],
+            vec![Some("bb".into())],
+            vec![Some("linus".into())],
+            vec![Some("lius".into())],
         ],
         truncated: false,
     };
@@ -5269,8 +5275,8 @@ fn query_ok_clears_last_error_detail() {
 #[test]
 fn query_ok_status_flags_truncated_grids() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
-    let rows: Vec<Vec<String>> = (0..crate::grid::MAX_ROWS)
-        .map(|i| vec![i.to_string()])
+    let rows: Vec<Vec<Cell>> = (0..crate::grid::MAX_ROWS)
+        .map(|i| vec![Some(i.to_string())])
         .collect();
     a.on_msg(AppMsg::QueryOk {
         generation: a.generation,
@@ -5297,7 +5303,7 @@ fn query_ok_status_omits_cap_when_not_truncated() {
         generation: a.generation,
         grid: crate::grid::Grid {
             columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
+            rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
         kind_label: "SELECT".into(),
@@ -5442,8 +5448,8 @@ fn backslash_l_renders_databases_as_result_grid() {
     assert_eq!(
         a.grid.rows,
         vec![
-            vec!["app_dev".to_string(), "42 MB".to_string()],
-            vec!["postgres".to_string(), "7580 kB".to_string()],
+            vec![Some("app_dev".to_string()), Some("42 MB".to_string())],
+            vec![Some("postgres".to_string()), Some("7580 kB".to_string())],
         ]
     );
     let status = a.last_status.as_deref().unwrap_or("");
@@ -5488,7 +5494,7 @@ fn expanded_on_lands_new_query_result_in_row_detail() {
         generation: a.generation,
         grid: crate::grid::Grid {
             columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
+            rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
         kind_label: "SELECT".into(),
@@ -5506,7 +5512,7 @@ fn expanded_off_leaves_new_query_result_in_grid_mode() {
         generation: a.generation,
         grid: crate::grid::Grid {
             columns: vec!["id".into()],
-            rows: vec![vec!["1".into()]],
+            rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
         kind_label: "SELECT".into(),
@@ -6556,7 +6562,7 @@ fn bootstrap_grid(rows: &[(&str, &str)]) -> Grid {
         columns: vec!["database".into(), "size".into()],
         rows: rows
             .iter()
-            .map(|(name, size)| vec![name.to_string(), size.to_string()])
+            .map(|(name, size)| vec![Some(name.to_string()), Some(size.to_string())])
             .collect(),
         truncated: false,
     }
@@ -6585,7 +6591,10 @@ fn parse_bootstrap_databases_extracts_name_and_size_in_row_order() {
 fn parse_bootstrap_databases_skips_rows_with_fewer_than_two_columns() {
     let grid = Grid {
         columns: vec!["database".into(), "size".into()],
-        rows: vec![vec!["only_name".into()], vec!["main".into(), "1 GB".into()]],
+        rows: vec![
+            vec![Some("only_name".into())],
+            vec![Some("main".into()), Some("1 GB".into())],
+        ],
         truncated: false,
     };
     let got = parse_bootstrap_databases(&grid);
@@ -6980,7 +6989,10 @@ fn demo_unknown_statement_yields_one_row_notice() {
     pump_one_demo_msg(&mut a);
     assert_eq!(a.grid.columns, vec!["demo".to_string()]);
     assert_eq!(a.grid.rows.len(), 1);
-    assert_eq!(a.grid.rows[0][0], "this is --demo mode, no database");
+    assert_eq!(
+        cell_text(&a.grid.rows[0][0]),
+        "this is --demo mode, no database"
+    );
 }
 
 #[test]
@@ -6991,7 +7003,7 @@ fn demo_backslash_df_lists_the_demo_functions_and_honours_a_pattern() {
         a.grid.columns,
         vec!["schema", "name", "result", "arguments", "type"]
     );
-    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[1])).collect();
     assert_eq!(
         names,
         vec![
@@ -7003,7 +7015,7 @@ fn demo_backslash_df_lists_the_demo_functions_and_honours_a_pattern() {
     );
     assert_eq!(a.last_status.as_deref(), Some("\\df → 4 function(s)"));
     run_in_demo(&mut a, "\\df Invoice*");
-    let names: Vec<&str> = a.grid.rows.iter().map(|r| r[1].as_str()).collect();
+    let names: Vec<&str> = a.grid.rows.iter().map(|r| cell_text(&r[1])).collect();
     assert_eq!(names, vec!["invoice_balance"]);
     // Another schema by name.
     run_in_demo(&mut a, "\\df reporting.*");
@@ -7011,7 +7023,7 @@ fn demo_backslash_df_lists_the_demo_functions_and_honours_a_pattern() {
     // A pattern reaches the system schemas, as psql's does.
     run_in_demo(&mut a, "\\df now");
     assert_eq!(a.grid.rows.len(), 1);
-    assert_eq!(a.grid.rows[0][0], "pg_catalog");
+    assert_eq!(cell_text(&a.grid.rows[0][0]), "pg_catalog");
     run_in_demo(&mut a, "\\df nothing_like_this");
     assert!(a.grid.rows.is_empty());
     assert_eq!(a.last_status.as_deref(), Some("\\df → 0 function(s)"));
@@ -7716,7 +7728,7 @@ fn question_mark_types_a_literal_question_mark_while_a_text_input_has_focus() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.grid = Grid {
         columns: vec!["q".into()],
-        rows: vec![vec!["a?b".into()]],
+        rows: vec![vec![Some("a?b".into())]],
         truncated: false,
     };
     a.reset_grid_view();
@@ -8272,15 +8284,15 @@ fn j_and_g_stop_at_the_end_of_a_filtered_grid_not_the_whole_grid() {
     // Ten rows, one visible after `/alice`. `j` clamped to
     // `grid.row_count()`, so five presses selected row 5 of a
     // one-row view: no highlight, and Enter opened nothing.
-    let rows: Vec<Vec<String>> = (0..10)
+    let rows: Vec<Vec<Cell>> = (0..10)
         .map(|i| {
             vec![
-                i.to_string(),
-                if i == 3 {
+                Some(i.to_string()),
+                Some(if i == 3 {
                     "alice".into()
                 } else {
                     format!("user{i}")
-                },
+                }),
             ]
         })
         .collect();
@@ -10560,8 +10572,8 @@ fn databases_the_user_cannot_connect_to_stay_off_the_start_card() {
     let grid = Grid {
         columns: vec!["database".into(), "size".into()],
         rows: vec![
-            vec!["ledger".into(), "1203 MB".into()],
-            vec!["rdsadmin".into(), String::new()],
+            vec![Some("ledger".into()), Some("1203 MB".into())],
+            vec![Some("rdsadmin".into()), Some(String::new())],
         ],
         truncated: false,
     };

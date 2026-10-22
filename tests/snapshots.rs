@@ -171,9 +171,9 @@ fn grid_with_data_and_sort() {
     a.grid = Grid {
         columns: vec!["id".into(), "name".into()],
         rows: vec![
-            vec!["1".into(), "alice".into()],
-            vec!["2".into(), "bob".into()],
-            vec!["3".into(), "carol".into()],
+            vec![Some("1".into()), Some("alice".into())],
+            vec![Some("2".into()), Some("bob".into())],
+            vec![Some("3".into()), Some("carol".into())],
         ],
         truncated: false,
     };
@@ -195,8 +195,12 @@ fn grid_with_a_cjk_column_gets_its_full_width() {
     a.grid = Grid {
         columns: vec!["id".into(), "名前".into(), "city".into()],
         rows: vec![
-            vec!["1".into(), "東京都".into(), "tokyo".into()],
-            vec!["2".into(), "bob".into(), "leeds".into()],
+            vec![
+                Some("1".into()),
+                Some("東京都".into()),
+                Some("tokyo".into()),
+            ],
+            vec![Some("2".into()), Some("bob".into()), Some("leeds".into())],
         ],
         truncated: false,
     };
@@ -220,9 +224,9 @@ fn grid_with_filter_active() {
     a.grid = Grid {
         columns: vec!["name".into()],
         rows: vec![
-            vec!["alice".into()],
-            vec!["bob".into()],
-            vec!["carol".into()],
+            vec![Some("alice".into())],
+            vec![Some("bob".into())],
+            vec![Some("carol".into())],
         ],
         truncated: false,
     };
@@ -531,7 +535,9 @@ fn cell_detail_json_tree_renders_object_with_cursor_on_root() {
     let mut a = settle_app();
     a.grid = Grid {
         columns: vec!["data".into()],
-        rows: vec![vec![r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into()]],
+        rows: vec![vec![Some(
+            r#"{"id":1,"tags":["a","b"],"meta":{"k":"v"}}"#.into(),
+        )]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -835,8 +841,8 @@ fn grid_zoomed_80x24() {
     a.grid = Grid {
         columns: vec!["id".into(), "name".into()],
         rows: vec![
-            vec!["1".into(), "alice".into()],
-            vec!["2".into(), "bob".into()],
+            vec![Some("1".into()), Some("alice".into())],
+            vec![Some("2".into()), Some("bob".into())],
         ],
         truncated: false,
     };

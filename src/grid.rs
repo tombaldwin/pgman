@@ -7,7 +7,20 @@
 /// exhausting memory.
 pub const MAX_ROWS: usize = 1000;
 
-/// A result set: column headers plus string-rendered rows.
+/// One result cell: the server's text rendering of the value, `None`
+/// for SQL NULL. An empty string is `Some("")` — a different value, and
+/// every reader has to decide what a NULL means for it
+/// (docs/backlog/null-cells.md).
+pub type Cell = Option<String>;
+
+/// A cell's text with NULL as `""` — for readers to which the two mean
+/// the same (a catalog parser, a size column). Anything that shows,
+/// writes or compares a value must look at the `Option` instead.
+pub fn cell_text(cell: &Cell) -> &str {
+    cell.as_deref().unwrap_or("")
+}
+
+/// A result set: column headers plus text-rendered rows.
 ///
 /// `truncated` is set when the underlying source had more rows than
 /// `MAX_ROWS` — the renderer surfaces this so the user knows the view
@@ -15,7 +28,7 @@ pub const MAX_ROWS: usize = 1000;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Grid {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<Cell>>,
     pub truncated: bool,
 }
 
@@ -45,7 +58,7 @@ pub fn column_widths(grid: &Grid, max_width: usize) -> Vec<usize> {
                 .rows
                 .iter()
                 .filter_map(|r| r.get(col))
-                .map(|c| UnicodeWidthStr::width(show_controls(c, true).as_ref()))
+                .map(|c| UnicodeWidthStr::width(show_controls(cell_text(c), true).as_ref()))
                 .max()
                 .unwrap_or(0);
             UnicodeWidthStr::width(header.as_str())
@@ -163,7 +176,7 @@ pub fn show_controls(s: &str, single_line: bool) -> std::borrow::Cow<'_, str> {
 /// truncated number is a wrong number. Pure / testable.
 pub fn is_numeric_column(grid: &Grid, col: usize) -> bool {
     let mut any = false;
-    for cell in grid.rows.iter().filter_map(|r| r.get(col)) {
+    for cell in grid.rows.iter().filter_map(|r| r.get(col)).map(cell_text) {
         if cell.is_empty() {
             continue;
         }
@@ -358,7 +371,7 @@ mod tests {
     fn column_widths_measure_a_cell_as_it_is_drawn() {
         let g = Grid {
             columns: vec!["c".into()],
-            rows: vec![vec!["a\tb\nc".into()]],
+            rows: vec![vec![Some("a\tb\nc".into())]],
             truncated: false,
         };
         // `a⇥b⏎c`: five columns, where the raw tab and newline counted
@@ -402,9 +415,9 @@ mod tests {
         let g = Grid {
             columns: vec!["n".into(), "t".into(), "nulls".into()],
             rows: vec![
-                vec!["1".into(), "a".into(), "".into()],
-                vec!["".into(), "2".into(), "".into()],
-                vec!["-3.5".into(), "b".into(), "".into()],
+                vec![Some("1".into()), Some("a".into()), None],
+                vec![None, Some("2".into()), None],
+                vec![Some("-3.5".into()), Some("b".into()), None],
             ],
             truncated: false,
         };
@@ -463,8 +476,8 @@ mod tests {
         Grid {
             columns: vec!["id".into(), "name".into()],
             rows: vec![
-                vec!["1".into(), "alice".into()],
-                vec!["1000".into(), "bob".into()],
+                vec![Some("1".into()), Some("alice".into())],
+                vec![Some("1000".into()), Some("bob".into())],
             ],
             truncated: false,
         }
@@ -490,8 +503,8 @@ mod tests {
         let g = Grid {
             columns: vec!["id".into(), "名前".into()],
             rows: vec![
-                vec!["1".into(), "東京都".into()],
-                vec!["2".into(), "bob".into()],
+                vec![Some("1".into()), Some("東京都".into())],
+                vec![Some("2".into()), Some("bob".into())],
             ],
             truncated: false,
         };
@@ -500,7 +513,7 @@ mod tests {
         // A width-2 header alone must still get its 4 columns.
         let g = Grid {
             columns: vec!["名前".into()],
-            rows: vec![vec!["x".into()]],
+            rows: vec![vec![Some("x".into())]],
             truncated: false,
         };
         assert_eq!(column_widths(&g, 80), vec![4]);

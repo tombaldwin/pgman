@@ -96,11 +96,14 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
                         let (kept, marker) = if numeric.get(i).copied().unwrap_or(false) {
                             // Never cut a number: its column is as wide as
                             // its widest value, or wider than the screen.
-                            (c.clone(), "")
+                            (grid::cell_text(c).to_string(), "")
                         } else {
                             // One line per cell: a tab or newline drawn
                             // as nothing ran the value together.
-                            grid::truncate_cell_parts(&grid::show_controls(c, true), w)
+                            grid::truncate_cell_parts(
+                                &grid::show_controls(grid::cell_text(c), true),
+                                w,
+                            )
                         };
                         if marker.is_empty() {
                             Cell::from(kept)
@@ -344,7 +347,10 @@ pub(super) fn draw_cell_detail(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let field = app.row_detail.field;
     let column = app.grid.columns.get(field).cloned().unwrap_or_default();
-    let value = row.get(field).cloned().unwrap_or_default();
+    let value = row
+        .get(field)
+        .map(|c| grid::cell_text(c).to_string())
+        .unwrap_or_default();
 
     // Nest inside the row-detail popup so the zoom reads as drilling in,
     // not a new context. 90% of the screen so big JSON gets room.
@@ -539,8 +545,14 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
     // UPDATE against its baseline) can carry thousands of rows, and the
     // overlay only ever shows `visible_h` of them.
     let row_w = inner.width.saturating_sub(4) as usize;
-    let render_row =
-        |row: &[String]| -> String { crate::grid::truncate_cell(&row.join(" | "), row_w) };
+    let join = |cells: &[grid::Cell]| -> String {
+        cells
+            .iter()
+            .map(grid::cell_text)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let render_row = |row: &[grid::Cell]| -> String { grid::truncate_cell(&join(row), row_w) };
     let nr = diff.removed.len();
     let nc = diff.changed.len();
     let total = nr + nc + diff.added.len();
@@ -567,10 +579,20 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
                         .get(c.col)
                         .map(String::as_str)
                         .unwrap_or("?");
-                    format!("{col}: {} → {}", c.old, c.new)
+                    format!(
+                        "{col}: {} → {}",
+                        grid::cell_text(&c.old),
+                        grid::cell_text(&c.new)
+                    )
                 })
                 .collect();
-            let text = format!("~ [{}] {}", ch.key.join(", "), deltas.join("  ·  "));
+            let key = ch
+                .key
+                .iter()
+                .map(grid::cell_text)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let text = format!("~ [{key}] {}", deltas.join("  ·  "));
             (
                 Style::default().fg(theme.health_yellow),
                 crate::grid::truncate_cell(&text, row_w),

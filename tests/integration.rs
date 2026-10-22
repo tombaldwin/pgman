@@ -580,7 +580,7 @@ async fn every_connection_identifies_itself_as_pgman_in_pg_stat_activity() {
         grid.rows
             .first()
             .and_then(|r| r.first())
-            .map(String::as_str),
+            .and_then(|c| c.as_deref()),
         Some(format!("pgman/{}", env!("CARGO_PKG_VERSION")).as_str()),
         "got: {:?}",
         grid.rows
@@ -1381,13 +1381,13 @@ async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
     assert_eq!(
         grid.rows,
         vec![vec![
-            "1.50",
-            "2024-05-06",
-            "{1,2}",
-            "01:30:00",
-            "",
-            "2",
-            "t"
+            Some("1.50".to_string()),
+            Some("2024-05-06".to_string()),
+            Some("{1,2}".to_string()),
+            Some("01:30:00".to_string()),
+            None,
+            Some("2".to_string()),
+            Some("t".to_string())
         ]]
     );
     assert!(!grid.truncated);
@@ -2723,7 +2723,12 @@ fn connecting_works_when_a_database_on_the_server_refuses_connect() {
         .await
     });
     let booted = booted.unwrap_or_else(|e| panic!("connect failed: {e}"));
-    let names: Vec<&str> = booted.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let names: Vec<&str> = booted
+        .grid
+        .rows
+        .iter()
+        .map(|r| pgman::grid::cell_text(&r[0]))
+        .collect();
     assert!(names.contains(&"pgman_test"), "{names:?}");
     assert!(
         names.contains(&"pgman_noconnect"),

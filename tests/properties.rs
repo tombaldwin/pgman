@@ -8,7 +8,7 @@ use proptest::prelude::*;
 
 use pgman::app::{compute_visible_rows, history_search_next, next_sort_state};
 use pgman::conn::{redact_url, Dsn};
-use pgman::grid::{cmp_cells, Grid};
+use pgman::grid::{cell_text, cmp_cells, Grid};
 use pgman::query::highlight::{tokenize, TokenClass};
 use pgman::safety::{classify, split_statements, StatementKind};
 
@@ -272,7 +272,7 @@ proptest! {
     #[test]
     fn unfiltered_visible_rows_are_identity(
         rows in proptest::collection::vec(
-            proptest::collection::vec(".{0,8}", 0..4),
+            proptest::collection::vec(proptest::option::of(".{0,8}"), 0..4),
             0..30,
         ),
     ) {
@@ -285,7 +285,7 @@ proptest! {
     #[test]
     fn filter_preserves_relative_order(
         rows in proptest::collection::vec(
-            proptest::collection::vec("[a-z]{0,6}", 1..4),
+            proptest::collection::vec(proptest::option::of("[a-z]{0,6}"), 1..4),
             0..30,
         ),
         pattern in "[a-z]{1,3}",
@@ -470,7 +470,7 @@ proptest! {
     #[test]
     fn grid_sort_is_idempotent(
         rows in proptest::collection::vec(
-            (0i32..1000, "[a-z]{0,8}"),
+            (0i32..1000, proptest::option::of("[a-z]{0,8}")),
             0..40,
         ),
     ) {
@@ -478,13 +478,13 @@ proptest! {
             columns: vec!["id".into(), "name".into()],
             rows: rows
                 .iter()
-                .map(|(i, s)| vec![i.to_string(), s.clone()])
+                .map(|(i, s)| vec![Some(i.to_string()), s.clone()])
                 .collect(),
                     truncated: false,
         };
-        g.rows.sort_by(|a, b| cmp_cells(&a[0], &b[0]));
+        g.rows.sort_by(|a, b| cmp_cells(cell_text(&a[0]), cell_text(&b[0])));
         let after_first = g.rows.clone();
-        g.rows.sort_by(|a, b| cmp_cells(&a[0], &b[0]));
+        g.rows.sort_by(|a, b| cmp_cells(cell_text(&a[0]), cell_text(&b[0])));
         prop_assert_eq!(after_first, g.rows);
     }
 }

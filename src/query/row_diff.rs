@@ -4,8 +4,9 @@
 //! another query for B, and see what changed. The "did my
 //! migration / batch update break anything?" workflow.
 //!
-//! Everything here is pure over `Vec<Vec<String>>` (the grid's
-//! cell representation), so it's exhaustively unit-tested and
+//! Everything here is pure over `Vec<Vec<Cell>>` (the grid's
+//! cell representation, `None` for SQL NULL — so a NULL → `''`
+//! change is a change), so it's exhaustively unit-tested and
 //! carries no dependency on the live DB or the schema cache.
 //!
 //! ## Keying
@@ -31,6 +32,8 @@
 
 use std::collections::HashMap;
 
+use crate::grid::Cell;
+
 /// How to establish row identity for the diff. See the module
 /// docs for the trade-off between the two.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,8 +50,8 @@ pub enum RowKey {
 pub struct CellChange {
     /// Column index within the row.
     pub col: usize,
-    pub old: String,
-    pub new: String,
+    pub old: Cell,
+    pub new: Cell,
 }
 
 /// A row present in both A and B (same key) whose non-key cells
@@ -56,7 +59,7 @@ pub struct CellChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowChange {
     /// The key values that matched the two rows.
-    pub key: Vec<String>,
+    pub key: Vec<Cell>,
     /// Index of the row in A.
     pub a_index: usize,
     /// Index of the row in B.
@@ -90,13 +93,13 @@ impl RowDiff {
 }
 
 /// Extract the key for `row` under `key`. For [`RowKey::Columns`]
-/// a missing column index contributes an empty string so the key
-/// stays positionally stable even on a short row.
-fn key_of(row: &[String], key: &RowKey) -> Vec<String> {
+/// a missing column index contributes a NULL so the key stays
+/// positionally stable even on a short row.
+fn key_of(row: &[Cell], key: &RowKey) -> Vec<Cell> {
     match key {
         RowKey::Columns(cols) => cols
             .iter()
-            .map(|&i| row.get(i).cloned().unwrap_or_default())
+            .map(|&i| row.get(i).cloned().flatten())
             .collect(),
         RowKey::FullRow => row.to_vec(),
     }
@@ -110,10 +113,10 @@ fn key_of(row: &[String], key: &RowKey) -> Vec<String> {
 /// a real PK never produces, but a user-chosen column might) are
 /// paired in first-seen order; surplus A rows fall to `removed`
 /// and surplus B rows to `added`.
-pub fn diff_rows(rows_a: &[Vec<String>], rows_b: &[Vec<String>], key: &RowKey) -> RowDiff {
+pub fn diff_rows(rows_a: &[Vec<Cell>], rows_b: &[Vec<Cell>], key: &RowKey) -> RowDiff {
     // Bucket B's row indices by key, preserving order so dup keys
     // pair deterministically.
-    let mut b_by_key: HashMap<Vec<String>, Vec<usize>> = HashMap::new();
+    let mut b_by_key: HashMap<Vec<Cell>, Vec<usize>> = HashMap::new();
     for (i, row) in rows_b.iter().enumerate() {
         b_by_key.entry(key_of(row, key)).or_default().push(i);
     }
@@ -174,7 +177,7 @@ pub fn diff_rows(rows_a: &[Vec<String>], rows_b: &[Vec<String>], key: &RowKey) -
 
 /// Per-cell differences between two rows, ascending by column.
 /// Compares positionally up to the shorter row's length.
-fn cell_changes(a: &[String], b: &[String]) -> Vec<CellChange> {
+fn cell_changes(a: &[Cell], b: &[Cell]) -> Vec<CellChange> {
     let n = a.len().min(b.len());
     (0..n)
         .filter(|&i| a[i] != b[i])
@@ -200,21 +203,21 @@ fn cell_changes(a: &[String], b: &[String]) -> Vec<CellChange> {
 /// An empty result on either side makes every column trivially
 /// unique; the leftmost (`0`) is returned when `n_cols > 0`.
 pub fn infer_key_column(
-    rows_a: &[Vec<String>],
-    rows_b: &[Vec<String>],
+    rows_a: &[Vec<Cell>],
+    rows_b: &[Vec<Cell>],
     n_cols: usize,
 ) -> Option<usize> {
     (0..n_cols).find(|&col| col_is_unique(rows_a, col) && col_is_unique(rows_b, col))
 }
 
 /// Whether column `col` holds distinct values across every row.
-/// A row too short to have the column contributes an empty
-/// string (so a ragged column collides with another empty and
-/// reads as non-unique, which is the safe call).
-fn col_is_unique(rows: &[Vec<String>], col: usize) -> bool {
+/// A row too short to have the column contributes a NULL, and two
+/// NULLs collide (so a ragged or NULL-holding column reads as
+/// non-unique, which is the safe call).
+fn col_is_unique(rows: &[Vec<Cell>], col: usize) -> bool {
     let mut seen = std::collections::HashSet::with_capacity(rows.len());
     rows.iter().all(|row| {
-        let v = row.get(col).map(String::as_str).unwrap_or("");
+        let v = row.get(col).and_then(Option::as_deref);
         seen.insert(v)
     })
 }
@@ -223,8 +226,8 @@ fn col_is_unique(rows: &[Vec<String>], col: usize) -> bool {
 mod tests {
     use super::*;
 
-    fn r(cells: &[&str]) -> Vec<String> {
-        cells.iter().map(|s| s.to_string()).collect()
+    fn r(cells: &[&str]) -> Vec<Cell> {
+        cells.iter().map(|s| Some(s.to_string())).collect()
     }
 
     #[test]
@@ -255,15 +258,15 @@ mod tests {
         let d = diff_rows(&a, &b, &RowKey::Columns(vec![0]));
         assert_eq!(d.changed.len(), 1);
         let c = &d.changed[0];
-        assert_eq!(c.key, vec!["1".to_string()]);
+        assert_eq!(c.key, vec![Some("1".to_string())]);
         assert_eq!(c.a_index, 0);
         assert_eq!(c.b_index, 0);
         assert_eq!(
             c.cells,
             vec![CellChange {
                 col: 1,
-                old: "alice".into(),
-                new: "ALICE".into()
+                old: Some("alice".into()),
+                new: Some("ALICE".into())
             }]
         );
         assert_eq!(d.unchanged, 0);

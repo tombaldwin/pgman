@@ -11,8 +11,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pgman::app::{compute_visible_rows, App, ConnState, DataSourcePick, HistorySearchState, Mode};
 use pgman::conn::Dsn;
-use pgman::grid::cmp_cells;
 use pgman::grid::Grid;
+use pgman::grid::{cell_text, cmp_cells};
 use pgman::query::schema::TableMeta;
 use pgman::safety::SafetyConfig;
 use pgman::theme::Theme;
@@ -193,8 +193,8 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     a.grid = Grid {
         columns: vec!["id".into(), "name".into()],
         rows: vec![
-            vec!["1".into(), "alice".into()],
-            vec!["2".into(), "bob".into()],
+            vec![Some("1".into()), Some("alice".into())],
+            vec![Some("2".into()), Some("bob".into())],
         ],
         truncated: false,
     };
@@ -203,7 +203,9 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_view.col_cursor = 0;
     a.grid_view.sort = Some((0, true));
-    a.grid.rows.sort_by(|x, y| cmp_cells(&x[0], &y[0]));
+    a.grid
+        .rows
+        .sort_by(|x, y| cmp_cells(cell_text(&x[0]), cell_text(&y[0])));
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
@@ -343,12 +345,12 @@ fn result_diff_view_renders_added_removed_changed() {
     let mut a = settle_app();
     let cols = vec!["id".to_string(), "name".to_string()];
     let a_rows = vec![
-        vec!["1".to_string(), "alice".to_string()],
-        vec!["2".to_string(), "bob".to_string()],
+        vec![Some("1".to_string()), Some("alice".to_string())],
+        vec![Some("2".to_string()), Some("bob".to_string())],
     ];
     let b_rows = vec![
-        vec!["1".to_string(), "ALICE".to_string()],
-        vec!["3".to_string(), "carol".to_string()],
+        vec![Some("1".to_string()), Some("ALICE".to_string())],
+        vec![Some("3".to_string()), Some("carol".to_string())],
     ];
     let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
     let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
@@ -698,7 +700,7 @@ fn grid_render_shows_capped_hint_when_truncated() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()], vec!["2".into()]],
+        rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
         truncated: true,
     };
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
@@ -718,9 +720,9 @@ fn grid_render_shows_filtered_count_in_title() {
     a.grid = Grid {
         columns: vec!["name".into()],
         rows: vec![
-            vec!["alice".into()],
-            vec!["bob".into()],
-            vec!["carol".into()],
+            vec![Some("alice".into())],
+            vec![Some("bob".into())],
+            vec![Some("carol".into())],
         ],
         truncated: false,
     };
@@ -1454,7 +1456,7 @@ fn alt_z_twice_restores_the_exact_prior_split() {
     a.editor.cursor = a.editor.buffer.len();
     a.grid = Grid {
         columns: vec!["a".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, None);
@@ -1704,7 +1706,7 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["userId".into(), "email".into()],
-        rows: vec![vec!["1".into(), "a@b".into()]],
+        rows: vec![vec![Some("1".into()), Some("a@b".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2019,13 +2021,13 @@ fn wide_result_app() -> App {
             .map(String::from)
             .to_vec(),
         rows: vec![vec![
-            "1".into(),
-            "1b4e28ba-2fa1-11d2-883f-0016d3cca427".into(),
-            "-999999999999999999.99".into(),
-            long.into(),
-            long.into(),
-            long.into(),
-            "x".into(),
+            Some("1".into()),
+            Some("1b4e28ba-2fa1-11d2-883f-0016d3cca427".into()),
+            Some("-999999999999999999.99".into()),
+            Some(long.into()),
+            Some(long.into()),
+            Some(long.into()),
+            Some("x".into()),
         ]],
         truncated: false,
     };
@@ -2086,9 +2088,9 @@ fn tabs_and_newlines_in_a_value_show_in_the_grid_and_row_detail() {
     a.grid = Grid {
         columns: ["id", "note", "after"].map(String::from).to_vec(),
         rows: vec![vec![
-            "1".into(),
-            "tab\there\nline two\r\nthree".into(),
-            "x".into(),
+            Some("1".into()),
+            Some("tab\there\nline two\r\nthree".into()),
+            Some("x".into()),
         ]],
         truncated: false,
     };

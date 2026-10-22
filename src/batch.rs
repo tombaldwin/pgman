@@ -431,16 +431,16 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
 /// use pgman::grid::Grid;
 /// let g = Grid {
 ///     columns: vec!["id".into(), "name".into()],
-///     rows: vec![vec!["1".into(), "has, comma".into()]],
+///     rows: vec![vec![Some("1".into()), Some("has, comma".into())]],
 ///     truncated: false,
 /// };
 /// assert_eq!(format_csv(&g), "id,name\n1,\"has, comma\"\n");
 /// ```
 pub fn format_csv(grid: &Grid) -> String {
     let mut out = String::new();
-    push_delim_row(&mut out, &grid.columns, ',', true);
+    push_delim_row(&mut out, header(grid), ',', true);
     for row in &grid.rows {
-        push_delim_row(&mut out, row, ',', true);
+        push_delim_row(&mut out, cells(row), ',', true);
     }
     out
 }
@@ -449,18 +449,34 @@ pub fn format_csv(grid: &Grid) -> String {
 /// escaped (`\t`, `\n`) so each record stays a single line.
 pub fn format_tsv(grid: &Grid) -> String {
     let mut out = String::new();
-    push_delim_row(&mut out, &grid.columns, '\t', false);
+    push_delim_row(&mut out, header(grid), '\t', false);
     for row in &grid.rows {
-        push_delim_row(&mut out, row, '\t', false);
+        push_delim_row(&mut out, cells(row), '\t', false);
     }
     out
 }
 
-fn push_delim_row(buf: &mut String, fields: &[String], delim: char, csv_quote: bool) {
-    for (i, field) in fields.iter().enumerate() {
+/// A header line's fields: column names, never NULL.
+fn header(grid: &Grid) -> impl Iterator<Item = Option<&str>> {
+    grid.columns.iter().map(|c| Some(c.as_str()))
+}
+
+/// A row's fields, `None` for SQL NULL.
+fn cells(row: &[crate::grid::Cell]) -> impl Iterator<Item = Option<&str>> {
+    row.iter().map(Option::as_deref)
+}
+
+fn push_delim_row<'a>(
+    buf: &mut String,
+    fields: impl Iterator<Item = Option<&'a str>>,
+    delim: char,
+    csv_quote: bool,
+) {
+    for (i, field) in fields.enumerate() {
         if i > 0 {
             buf.push(delim);
         }
+        let field = field.unwrap_or("");
         if csv_quote {
             push_csv_field(buf, field);
         } else {
@@ -511,7 +527,7 @@ mod terminal_safe_tests {
     fn expanded_format_filters_column_names_and_values() {
         let g = Grid {
             columns: vec!["c\x1b[31m".into()],
-            rows: vec![vec!["v\x1b]0;pwned\x07".into()]],
+            rows: vec![vec![Some("v\x1b]0;pwned\x07".into())]],
             truncated: false,
         };
         let out = format_expanded(&g);
@@ -568,7 +584,7 @@ fn push_tsv_field(buf: &mut String, field: &str) {
 /// use pgman::grid::Grid;
 /// let g = Grid {
 ///     columns: vec!["id".into()],
-///     rows: vec![vec!["1".into()], vec!["2".into()]],
+///     rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
 ///     truncated: false,
 /// };
 /// assert_eq!(format_json(&g), "[{\"id\":\"1\"},{\"id\":\"2\"}]\n");
@@ -586,7 +602,7 @@ pub fn format_json(grid: &Grid) -> String {
             }
             push_json_string(&mut out, col);
             out.push(':');
-            let value = row.get(ci).map(String::as_str).unwrap_or("");
+            let value = row.get(ci).map(crate::grid::cell_text).unwrap_or("");
             push_json_string(&mut out, value);
         }
         out.push('}');
@@ -769,7 +785,7 @@ pub fn format_expanded(grid: &Grid) -> String {
                 out.push(' ');
             }
             out.push_str(" | ");
-            out.push_str(&terminal_safe(value));
+            out.push_str(&terminal_safe(crate::grid::cell_text(value)));
             out.push('\n');
         }
     }
@@ -825,7 +841,7 @@ mod tests {
             columns: columns.iter().map(|s| (*s).to_string()).collect(),
             rows: rows
                 .iter()
-                .map(|r| r.iter().map(|s| (*s).to_string()).collect())
+                .map(|r| r.iter().map(|s| Some((*s).to_string())).collect())
                 .collect(),
             truncated: false,
         }

@@ -12,7 +12,7 @@ mod types;
 mod yank;
 pub use crate::app::msg::AppMsg;
 use crate::conn::{self, Dsn};
-use crate::grid::Grid;
+use crate::grid::{cell_text, Cell, Grid};
 use crate::inventory::patching::RunMode;
 use crate::query::complete::{self as complete_q, Candidate};
 use crate::query::schema::SchemaCache;
@@ -204,8 +204,8 @@ fn parse_bootstrap_databases(grid: &Grid) -> Vec<DatabaseInfo> {
     grid.rows
         .iter()
         .filter_map(|row| {
-            let name = row.first()?.clone();
-            let size = row.get(1)?.clone();
+            let name = cell_text(row.first()?).to_string();
+            let size = cell_text(row.get(1)?).to_string();
             // No size means no CONNECT (RDS's `rdsadmin`): not one to
             // offer on the start card.
             (!size.is_empty()).then_some(DatabaseInfo { name, size })
@@ -329,13 +329,13 @@ pub fn next_sort_state(current: Option<(usize, bool)>, target_col: usize) -> Opt
 /// ```
 /// use pgman::app::compute_visible_rows;
 /// let rows = vec![
-///     vec!["1".into(), "alice".into()],
-///     vec!["2".into(), "BOB".into()],
+///     vec![Some("1".into()), Some("alice".into())],
+///     vec![Some("2".into()), Some("BOB".into())],
 /// ];
 /// assert_eq!(compute_visible_rows(&rows, None), vec![0, 1]);
 /// assert_eq!(compute_visible_rows(&rows, Some("bo")), vec![1]); // case-insens
 /// ```
-pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<usize> {
+pub fn compute_visible_rows(rows: &[Vec<Cell>], pattern: Option<&str>) -> Vec<usize> {
     match pattern {
         None => (0..rows.len()).collect(),
         Some(pat) => {
@@ -344,7 +344,7 @@ pub fn compute_visible_rows(rows: &[Vec<String>], pattern: Option<&str>) -> Vec<
                 .filter(|i| {
                     rows[*i]
                         .iter()
-                        .any(|c| c.to_ascii_lowercase().contains(&needle))
+                        .any(|c| cell_text(c).to_ascii_lowercase().contains(&needle))
                 })
                 .collect()
         }
@@ -465,7 +465,7 @@ pub fn compute_grid_find_matches(
             continue;
         };
         for (ci, cell) in row.iter().enumerate() {
-            if cell.to_ascii_lowercase().contains(&needle) {
+            if cell_text(cell).to_ascii_lowercase().contains(&needle) {
                 out.push((vi, ci));
             }
         }
@@ -2827,7 +2827,7 @@ impl App {
         self.cell_detail.json_rows.clear();
         self.cell_detail.json_cursor = 0;
         self.cell_detail.json_collapsed.clear();
-        if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(value) {
+        if let Some(parsed) = crate::query::json_cell::parse_jsonb_cell(cell_text(value)) {
             self.cell_detail.json_rows =
                 crate::query::json_cell::flatten(&parsed, &self.cell_detail.json_collapsed);
             // Stash the parsed value so collapse/expand can re-flatten.
@@ -3749,8 +3749,8 @@ impl App {
                     self.grid_view.raw_rows = Some(self.grid.rows.clone());
                 }
                 self.grid.rows.sort_by(|a, b| {
-                    let av = a.get(col).map(String::as_str).unwrap_or("");
-                    let bv = b.get(col).map(String::as_str).unwrap_or("");
+                    let av = a.get(col).map(cell_text).unwrap_or("");
+                    let bv = b.get(col).map(cell_text).unwrap_or("");
                     let ord = crate::grid::cmp_cells(av, bv);
                     if asc {
                         ord
@@ -3812,7 +3812,10 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row.get(self.grid_view.col_cursor).cloned() else {
+        let Some(value) = row
+            .get(self.grid_view.col_cursor)
+            .map(|c| cell_text(c).to_string())
+        else {
             return;
         };
         let edge = match self
@@ -3945,7 +3948,7 @@ impl App {
     fn choose_diff_key(
         a: &PinnedResult,
         b_columns: &[String],
-        b_rows: &[Vec<String>],
+        b_rows: &[Vec<Cell>],
     ) -> crate::query::row_diff::RowKey {
         use crate::query::row_diff::{infer_key_column, RowKey};
         if a.columns == b_columns {

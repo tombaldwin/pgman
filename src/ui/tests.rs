@@ -139,7 +139,7 @@ fn wrap_value_handles_multibyte_chars_by_chars_not_bytes() {
 #[test]
 fn build_field_layout_pads_label_and_marks_empty() {
     let cols = vec!["id".to_string(), "long_column_name".to_string()];
-    let row = vec!["42".to_string(), "".to_string()];
+    let row = vec![Some("42".to_string()), Some("".to_string())];
     let got = build_field_layout(&cols, &row, 16, 40);
     assert_eq!(got.len(), 2);
     // Labels padded to label_width.
@@ -155,7 +155,7 @@ fn build_field_layout_pads_label_and_marks_empty() {
 #[test]
 fn build_field_layout_truncates_oversized_labels() {
     let cols = vec!["aaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]; // 25 chars
-    let row = vec!["v".to_string()];
+    let row = vec![Some("v".to_string())];
     let got = build_field_layout(&cols, &row, 8, 10);
     assert_eq!(got[0].label.chars().count(), 8);
     assert!(got[0].label.starts_with("aaaaaaaa"));
@@ -179,7 +179,7 @@ fn scroll_offset_keeps_cursor_in_view() {
 #[test]
 fn build_field_layout_wraps_long_values() {
     let cols = vec!["bio".to_string()];
-    let row = vec!["abcdefghij".to_string()];
+    let row = vec![Some("abcdefghij".to_string())];
     let got = build_field_layout(&cols, &row, 4, 4);
     assert_eq!(got[0].values, vec!["abcd", "efgh", "ij"]);
 }

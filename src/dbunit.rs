@@ -181,7 +181,11 @@ pub fn generate_flat_xml(fixture: &Fixture) -> String {
 /// and any cells beyond `columns` are ignored. `table` is used
 /// verbatim as the element name (DBUnit flat-XML convention —
 /// schema-qualify by hand if your setup needs it).
-pub fn fixture_from_rows(table: &str, columns: &[String], rows: &[Vec<String>]) -> Fixture {
+pub fn fixture_from_rows(
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<crate::grid::Cell>],
+) -> Fixture {
     let rows = rows
         .iter()
         .map(|cells| Row {
@@ -189,7 +193,10 @@ pub fn fixture_from_rows(table: &str, columns: &[String], rows: &[Vec<String>]) 
             columns: columns
                 .iter()
                 .enumerate()
-                .map(|(i, name)| (name.clone(), cells.get(i).cloned().unwrap_or_default()))
+                .map(|(i, name)| {
+                    let text = cells.get(i).map(crate::grid::cell_text).unwrap_or("");
+                    (name.clone(), text.to_string())
+                })
                 .collect(),
         })
         .collect();
@@ -321,8 +328,8 @@ mod tests {
     fn fixture_from_rows_aligns_columns_and_pads_short_rows() {
         let cols = vec!["id".to_string(), "name".to_string()];
         let rows = vec![
-            vec!["1".to_string(), "alice".to_string()],
-            vec!["2".to_string()], // short row → name padded empty
+            vec![Some("1".to_string()), Some("alice".to_string())],
+            vec![Some("2".to_string())], // short row → name padded empty
         ];
         let f = fixture_from_rows("users", &cols, &rows);
         assert_eq!(f.rows.len(), 2);
@@ -340,7 +347,7 @@ mod tests {
     #[test]
     fn fixture_from_rows_then_generate_is_parseable() {
         let cols = vec!["id".to_string(), "name".to_string()];
-        let rows = vec![vec!["1".to_string(), "O'Brien".to_string()]];
+        let rows = vec![vec![Some("1".to_string()), Some("O'Brien".to_string())]];
         let f = fixture_from_rows("users", &cols, &rows);
         let xml = generate_flat_xml(&f);
         let parsed = parse_flat_xml(&xml).unwrap();

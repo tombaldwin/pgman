@@ -1061,7 +1061,7 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
         let affected = client.execute(&stmt, &[]).await.map_err(QueryErr::from)?;
         Ok(Grid {
             columns: vec!["status".to_string()],
-            rows: vec![vec![format!("{affected} row(s) affected")]],
+            rows: vec![vec![Some(format!("{affected} row(s) affected"))]],
             truncated: false,
         })
     } else {
@@ -1075,21 +1075,8 @@ pub async fn run_statement(client: &tokio_postgres::Client, sql: &str) -> Result
     }
 }
 
-/// One result row as the grid shows it: the text-wire cells lined up
-/// with the `n_columns` Describe promised ([`project_cells`]) and SQL
-/// NULL rendered as the empty string, which `grid::cmp_cells` sorts
-/// last. The shared row→cells step of every result-set path (TUI grid,
-/// the `T` / `L` panel loads, `--batch csv` / `tsv` / `expanded`).
-/// Pure / testable.
-pub fn display_cells(cells: Vec<Option<String>>, n_columns: usize) -> Vec<String> {
-    project_cells(cells, n_columns)
-        .into_iter()
-        .map(Option::unwrap_or_default)
-        .collect()
-}
-
 /// Stream a row-returning statement over the simple-query (text)
-/// protocol into display strings, stopping at `grid::MAX_ROWS`. Every
+/// protocol into grid cells, stopping at `grid::MAX_ROWS`. Every
 /// type arrives already rendered by the server — no client-side
 /// decoder to be missing. Returns `(rows, truncated)`, `truncated`
 /// being `true` iff at least one row existed past the cap.
@@ -1097,11 +1084,11 @@ async fn stream_text_rows(
     client: &tokio_postgres::Client,
     sql: &str,
     n_columns: usize,
-) -> Result<(Vec<Vec<String>>, bool), QueryErr> {
+) -> Result<(Vec<Vec<crate::grid::Cell>>, bool), QueryErr> {
     use futures::StreamExt;
     let stream = client.simple_query_raw(sql).await.map_err(QueryErr::from)?;
     let mut stream = Box::pin(stream);
-    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut out: Vec<Vec<crate::grid::Cell>> = Vec::new();
     let mut truncated = false;
     while let Some(msg) = stream.next().await {
         let tokio_postgres::SimpleQueryMessage::Row(row) = msg.map_err(QueryErr::from)? else {
@@ -1116,42 +1103,11 @@ async fn stream_text_rows(
         let cells: Vec<Option<String>> = (0..row.columns().len())
             .map(|i| row.try_get(i).ok().flatten().map(str::to_string))
             .collect();
-        out.push(display_cells(cells, n_columns));
+        // Lined up with the `n_columns` Describe promised; SQL NULL
+        // stays `None`, never the empty string.
+        out.push(project_cells(cells, n_columns));
     }
     Ok((out, truncated))
-}
-
-#[cfg(test)]
-mod display_cells_tests {
-    use super::display_cells;
-
-    fn cells(items: &[Option<&str>]) -> Vec<Option<String>> {
-        items.iter().map(|c| c.map(str::to_string)).collect()
-    }
-
-    #[test]
-    fn text_wire_values_pass_through_and_null_is_the_empty_string() {
-        let got = display_cells(
-            cells(&[
-                Some("2024-05-06 07:08:09+00"),
-                None,
-                Some("{1,2}"),
-                Some(""),
-            ]),
-            4,
-        );
-        assert_eq!(got, vec!["2024-05-06 07:08:09+00", "", "{1,2}", ""]);
-    }
-
-    #[test]
-    fn a_short_row_is_padded_and_a_long_row_cut_to_the_described_width() {
-        assert_eq!(display_cells(cells(&[Some("a")]), 3), vec!["a", "", ""]);
-        assert_eq!(
-            display_cells(cells(&[Some("a"), Some("b"), Some("c")]), 2),
-            vec!["a", "b"]
-        );
-        assert!(display_cells(Vec::new(), 0).is_empty());
-    }
 }
 
 /// Column names + Postgres [`Type`]s, plus the text-wire value of every
@@ -1368,7 +1324,7 @@ pub async fn run_batch_in_tx_open(
 fn status_grid(msg: &str) -> Grid {
     Grid {
         columns: vec!["status".to_string()],
-        rows: vec![vec![msg.to_string()]],
+        rows: vec![vec![Some(msg.to_string())]],
         truncated: false,
     }
 }
@@ -1898,8 +1854,9 @@ mod tests {
 
     #[test]
     fn project_cells_leaves_a_matching_row_alone() {
-        let cells = vec![Some("a".into()), None];
-        assert_eq!(project_cells(cells.clone(), 2), cells);
+        // NULL and the empty string stay two different cells.
+        let cells = vec![Some("a".into()), None, Some(String::new())];
+        assert_eq!(project_cells(cells.clone(), 3), cells);
         assert!(project_cells(Vec::new(), 0).is_empty());
     }
 
