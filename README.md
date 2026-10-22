@@ -18,7 +18,7 @@ application changes — with N+1 detection built in. Sibling project to
 > without reviewing your `safety.toml` first. Bug reports and feedback very
 > welcome — [open an issue](https://github.com/tombaldwin/pgman/issues).
 
-![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](demo.gif)
+![pgman demo — paste a Hibernate log, ctrl-l to reconstruct queries, N+1 clusters, load + run](https://raw.githubusercontent.com/tombaldwin/pgman/main/demo.gif)
 
 > Captured from `pgman --demo`, the synthetic-data mode baked into the binary
 > (no database needed). Regenerate after a code change with `vhs demo.tape`.
