@@ -205,6 +205,16 @@ Shipped fixes:
 
 ### JDBC tap
 
+- **Gaps found building pgman-tap (2026-10-22).** The List view shows
+  the focused query's bound `params`, with a `params (some redacted)`
+  marker when `params_redacted` is set (`TapEvent::params_summary`,
+  pure; the detail rows are reserved on a COMMIT row too, so the list
+  doesn't change height under the cursor). The OTLP ingest stamps a
+  span's `startTimeUnixNano` — `ts_unix_micros` is the statement's
+  start on the wire, now documented — so back-to-back spans no longer
+  inflate the Pools view's peak. The monitor's status line follows
+  events that arrive while it is open (`TapHealth::monitor_status`)
+  instead of reading "no events yet" for the session.
 - **L2 — pool-saturation gauge (live view).** Fifth
   TapMonitor view (`List → Hotspots → Callers → Transactions
   → Pools → NplusOne → Baseline`), groups the ring by

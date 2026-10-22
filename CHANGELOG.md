@@ -6,6 +6,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- The JDBC tap's List view shows the focused statement's bound
+  parameters beneath the list, labelled `params (some redacted)` when
+  the producer masked a value and `params (withheld by source)` for
+  OpenTelemetry spans, which carry none.
+
+### Fixed
+
+- The tap monitor's status line kept reading "no events yet" after
+  events had arrived; it now follows them.
+- OpenTelemetry spans were stamped with their end time rather than
+  their start, which inflated the Pools view's peak concurrency.
+
 ## [0.1.0] — 2026-10-22
 
 First public release. pgman is a terminal UI for PostgreSQL in the k9s

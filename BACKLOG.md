@@ -259,6 +259,26 @@ work that still belongs to L1:
     event at the same moment so pgman can retroactively
     close out the synthetic txn.
 
+- **Tap List detail: the rest of the focused event.** The detail
+  under the List view shows only the bound parameters. The error
+  cause chain (a failed row is only coloured red), the full `caller`
+  stack (only `caller[0]` reaches the Callers view) and the
+  `pool` / `conn` / `txn` the event ran on are stored and never shown
+  for one event. Same place, same two-line budget, or a focused-event
+  overlay.
+- **Tap monitor's empty hint ignores the listener that is running.**
+  `TapHealth::monitor_status` always says "start pgman with
+  `--tap-otlp :4318` and attach the OpenTelemetry Java agent", even
+  when pgman is already listening on `--tap-listen` (auto-enabled in a
+  Java project) and the operator is waiting on pgman-tap. It should
+  name what is bound and what to point at it. Related: a stream of only
+  `txn_boundary` events (no query, no heartbeat) still reads "no events
+  yet", since the counters it reads ignore boundaries.
+- **The tap wire format has no page in `docs/`.** It is described in
+  `src/tap/mod.rs` (module doc) and in pgman-tap's README, nowhere a
+  user of pgman looks. When pgman-tap ships, `docs/tap.md` should carry
+  the v1 fields, including that `ts_unix_micros` is a query's start.
+
 #### L2 — insights
 Once events are flowing, the panel becomes an analysis surface.
 All of these are pure-classifier work over the ring buffer,
