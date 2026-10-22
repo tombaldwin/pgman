@@ -94,9 +94,6 @@ small-UX, correctness and environments findings landed on branch
 - **Require CI checks on `main`.** Branch protection blocks force-push
   and deletion but requires no status checks, so a PR can merge red.
   Require `ci.yml`'s jobs once the release is out.
-- **Pin GitHub Actions to commit SHAs** in `ci.yml` and `release.yml`,
-  instead of tags, so a moved tag can't change what CI or the release
-  runs. Dependabot keeps the pins current.
 
 Functional sections (the original M0 / M1 / M1.5 / M2 milestone
 buckets were folded in once their initial passes shipped).

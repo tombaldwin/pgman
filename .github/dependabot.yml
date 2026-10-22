@@ -16,7 +16,8 @@ updates:
     schedule:
       interval: weekly
     ignore:
-      # Its refs name a Rust toolchain (stable, 1.94.1 = the MSRV),
-      # not a version of the action. Dependabot reads them as versions
-      # and proposes toolchains that don't exist; bump these by hand.
+      # Pinned to a master commit with the toolchain passed as
+      # `toolchain:`; its refs name Rust toolchains, not versions of the
+      # action, so Dependabot proposes toolchains that don't exist.
+      # Bump the commit by hand.
       - dependency-name: dtolnay/rust-toolchain
