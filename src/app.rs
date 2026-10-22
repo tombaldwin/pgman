@@ -817,16 +817,18 @@ pub fn infer_single_source_table(sql: &str) -> Option<(String, String)> {
     Some((schema, t.name.clone()))
 }
 
-/// Render a rendered-cell string as a SQL literal. Empty → `NULL`.
-/// Numeric strings pass through unquoted. Anything else is
-/// single-quoted with embedded quotes doubled. Best-effort — types
-/// aren't tracked through the renderer, so JSON / arrays / bytea
-/// would all hit the string branch and get quoted; the operator
-/// edits the literal in the editor afterwards if needed.
-pub fn format_sql_literal(s: &str) -> String {
-    if s.is_empty() {
+/// Render a grid cell as a SQL literal. SQL NULL → `NULL`; the empty
+/// string → `''` (they are different values, and writing `NULL` for
+/// `''` changed the row the yank was copying). Numeric strings pass
+/// through unquoted. Anything else is single-quoted with embedded
+/// quotes doubled. Best-effort — types aren't tracked through the
+/// renderer, so JSON / arrays / bytea would all hit the string branch
+/// and get quoted; the operator edits the literal in the editor
+/// afterwards if needed.
+pub fn format_sql_literal(cell: Option<&str>) -> String {
+    let Some(s) = cell else {
         return "NULL".to_string();
-    }
+    };
     // Numeric? Try parsing both integer and float forms.
     if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
         return s.to_string();
@@ -1011,6 +1013,22 @@ pub fn build_sample_rows_sql(schema: &str, table: &str) -> String {
         quote_ident(schema),
         quote_ident(table),
     )
+}
+
+/// `I`'s `INSERT INTO schema.table (cols…) VALUES (literals…);` for one
+/// grid row, each cell through [`format_sql_literal`]. Pure / testable.
+pub fn row_insert_sql(schema: &str, table: &str, columns: &[String], row: &[Cell]) -> String {
+    let cols = columns
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let vals = row
+        .iter()
+        .map(|c| format_sql_literal(c.as_deref()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});")
 }
 
 /// Build an `INSERT INTO <schema>.<table> (cols…) VALUES (NULL,
@@ -3812,10 +3830,7 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let Some(value) = row
-            .get(self.grid_view.col_cursor)
-            .map(|c| cell_text(c).to_string())
-        else {
+        let Some(cell) = row.get(self.grid_view.col_cursor).cloned() else {
             return;
         };
         let edge = match self
@@ -3831,6 +3846,11 @@ impl App {
                 return;
             }
         };
+        // `WHERE id = NULL` matches nothing: a NULL references no row.
+        let Some(value) = cell else {
+            self.last_status = Some(format!("{col_name} is NULL here — it references no row"));
+            return;
+        };
         // Build the parent SELECT. Use the same literal-quoting
         // path as row-as-INSERT for safe value rendering.
         let sql = format!(
@@ -3838,7 +3858,7 @@ impl App {
             parent_schema = quote_ident(&edge.parent_schema),
             parent_table = quote_ident(&edge.parent_table),
             parent_column = quote_ident(&edge.parent_column),
-            value_lit = format_sql_literal(&value),
+            value_lit = format_sql_literal(Some(&value)),
         );
         // Open in a new tab so the operator can close it to "go
         // back" to the originating result. Multi-tab refuses if

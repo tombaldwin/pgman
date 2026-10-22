@@ -57,7 +57,13 @@ impl App {
             .get(self.row_detail.field)
             .cloned()
             .unwrap_or_default();
-        let value = crate::grid::cell_text(value);
+        // A NULL has no text to copy; copying "" would clobber the
+        // clipboard with something that is not the value either.
+        let Some(value) = value.as_deref() else {
+            self.last_status = Some(format!("'{column}' is NULL · nothing yanked"));
+            self.last_error = None;
+            return;
+        };
         match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(value.to_string())) {
             Ok(()) => {
                 let chars = value.chars().count();
@@ -84,19 +90,7 @@ impl App {
         let Some(row) = self.grid.rows.get(idx) else {
             return;
         };
-        let cols = self
-            .grid
-            .columns
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let vals = row
-            .iter()
-            .map(|s| format_sql_literal(crate::grid::cell_text(s)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!("INSERT INTO {schema}.{table} ({cols}) VALUES ({vals});");
+        let sql = row_insert_sql(&schema, &table, &self.grid.columns, row);
         match arboard::Clipboard::new() {
             Ok(mut cb) => match cb.set_text(sql.clone()) {
                 Ok(()) => {

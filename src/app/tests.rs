@@ -2128,27 +2128,41 @@ fn infer_single_source_table_keeps_explicit_schema() {
 }
 
 #[test]
-fn format_sql_literal_nulls_empty_strings() {
-    assert_eq!(format_sql_literal(""), "NULL");
+fn format_sql_literal_writes_null_for_null_and_quotes_the_empty_string() {
+    assert_eq!(format_sql_literal(None), "NULL");
+    assert_eq!(format_sql_literal(Some("")), "''");
+    assert_eq!(format_sql_literal(Some(" ")), "' '");
+    // The text NULL is a string, not a NULL.
+    assert_eq!(format_sql_literal(Some("NULL")), "'NULL'");
+}
+
+#[test]
+fn row_insert_sql_keeps_null_and_the_empty_string_apart() {
+    let cols = ["e", "n", "s"].map(String::from);
+    let row = [Some(String::new()), None, Some(" ".into())];
+    assert_eq!(
+        row_insert_sql("public", "t", &cols, &row),
+        "INSERT INTO public.t (e, n, s) VALUES ('', NULL, ' ');"
+    );
 }
 
 #[test]
 fn format_sql_literal_passes_numerics_unquoted() {
-    assert_eq!(format_sql_literal("42"), "42");
-    assert_eq!(format_sql_literal("3.14"), "3.14");
-    assert_eq!(format_sql_literal("-1"), "-1");
+    assert_eq!(format_sql_literal(Some("42")), "42");
+    assert_eq!(format_sql_literal(Some("3.14")), "3.14");
+    assert_eq!(format_sql_literal(Some("-1")), "-1");
 }
 
 #[test]
 fn format_sql_literal_lowercases_booleans() {
-    assert_eq!(format_sql_literal("TRUE"), "true");
-    assert_eq!(format_sql_literal("False"), "false");
+    assert_eq!(format_sql_literal(Some("TRUE")), "true");
+    assert_eq!(format_sql_literal(Some("False")), "false");
 }
 
 #[test]
 fn format_sql_literal_quotes_strings_and_doubles_internal_quotes() {
-    assert_eq!(format_sql_literal("alice"), "'alice'");
-    assert_eq!(format_sql_literal("it's fine"), "'it''s fine'");
+    assert_eq!(format_sql_literal(Some("alice")), "'alice'");
+    assert_eq!(format_sql_literal(Some("it's fine")), "'it''s fine'");
 }
 
 #[test]
@@ -3844,6 +3858,57 @@ fn fk_navigate_opens_new_tab_with_parent_select() {
     );
     // We're in the editor ready to F5.
     assert_eq!(a.mode, Mode::Editor);
+}
+
+/// `F` on a NULL foreign key: `WHERE id = NULL` would match nothing, so
+/// no tab opens and the status says why.
+#[test]
+fn fk_navigate_on_a_null_says_it_references_nothing() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.grid_view.source = Some(("public".into(), "orders".into()));
+    a.grid = Grid {
+        columns: vec!["id".into(), "user_id".into()],
+        rows: vec![vec![Some("1".into()), None]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.grid_view.col_cursor = 1;
+    a.schema_cache.fk_edges.push(crate::query::schema::FkEdge {
+        child_schema: "public".into(),
+        child_table: "orders".into(),
+        child_column: "user_id".into(),
+        parent_schema: "public".into(),
+        parent_table: "users".into(),
+        parent_column: "id".into(),
+    });
+    a.navigate_fk_from_focused_cell();
+    assert_eq!(a.tabs.len(), 1, "no tab for a NULL");
+    assert_eq!(a.mode, Mode::Normal);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.contains("user_id is NULL"), "{status}");
+}
+
+/// `y` on a NULL field copies nothing (there is no text) and says so,
+/// rather than putting "" on the clipboard as if that were the value.
+#[test]
+fn yanking_a_null_field_says_so_and_copies_nothing() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.grid = Grid {
+        columns: vec!["n".into()],
+        rows: vec![vec![None]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a.row_detail.field = 0;
+    a.yank_focused_field();
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("'n' is NULL · nothing yanked")
+    );
+    assert!(a.last_error.is_none());
 }
 
 #[test]
