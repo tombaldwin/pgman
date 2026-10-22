@@ -9759,6 +9759,7 @@ fn connectable_environments() -> Vec<crate::inventory::EnvReport> {
             broken,
         ],
         error: None,
+        profile: None,
         probe: None,
     }]
 }

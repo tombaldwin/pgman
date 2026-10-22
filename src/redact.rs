@@ -270,6 +270,7 @@ pub fn app_names(app: &crate::app::App) -> Vec<String> {
     }
     for e in &app.environments.reports {
         out.push(e.name.clone());
+        out.extend(e.profile.clone());
         for t in &e.targets {
             out.push(t.server.clone());
             out.push(t.database.clone());
@@ -643,6 +644,7 @@ mod tests {
                 }),
             }],
             error: None,
+            profile: None,
             probe: None,
         }];
         a.redact_env_names = vec!["loginname".into()];

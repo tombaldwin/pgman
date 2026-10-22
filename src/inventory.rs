@@ -504,6 +504,9 @@ pub struct EnvReport {
     pub source: String,
     pub targets: Vec<Target>,
     pub error: Option<String>,
+    /// The AWS profile an `rds` source lists with. Not drawn as such, but
+    /// the aws CLI names it in its errors, so redaction needs it.
+    pub profile: Option<String>,
     /// `Some` when the environment opted into probes.
     pub probe: Option<ProbeSettings>,
 }
@@ -693,6 +696,7 @@ pub fn gather(
                 source: env.source.label(),
                 targets,
                 error,
+                profile: env.source.rds_scope().and_then(|s| s.profile),
                 probe: env.probe.then(|| ProbeSettings {
                     version_table: env.version_table.clone(),
                     migrations_dir: env.migrations_dir.clone(),
@@ -1024,6 +1028,30 @@ source = { kind = "static", connections = ["ledger-local"] }
         );
         assert_eq!(reports[0].error.as_deref(), Some("aws sts failed: expired"));
         assert!(reports[0].targets.is_empty());
+    }
+
+    #[test]
+    fn a_report_carries_its_rds_profile_even_when_listing_fails() {
+        // The aws CLI names the profile in its errors; redaction reads
+        // it off the report.
+        let envs = parse_config(
+            r#"
+[[environments]]
+name = "billing"
+source = { kind = "rds", instances = ["ledger"], region = "us-west-1", profile = "examplecorp-sso" }
+"#,
+        )
+        .unwrap();
+        let reports = gather(
+            &envs,
+            &[],
+            |_| Err("The config profile (examplecorp-sso) could not be found".into()),
+            || Ok(Vec::new()),
+        );
+        assert_eq!(reports[0].profile.as_deref(), Some("examplecorp-sso"));
+        let local = &parse_config(CONFIG).unwrap()[2..];
+        let reports = gather(local, &[], |_| Ok(Vec::new()), || Ok(Vec::new()));
+        assert_eq!(reports[0].profile, None);
     }
 
     #[test]

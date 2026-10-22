@@ -1812,6 +1812,7 @@ fn redact_blocks_out_the_infrastructure_and_leaves_the_rest() {
             connect: Err("no secret".into()),
         }],
         error: None,
+        profile: None,
         probe: None,
     }];
     a.environments.probes = vec![vec![pgman::app::ProbeState::Off]];
@@ -1887,6 +1888,31 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
             "{name} shows in clear:\n{rendered}"
         );
     }
+}
+
+#[test]
+fn redacted_overview_hides_an_rds_profile_named_in_its_error() {
+    // An `rds` environment whose listing failed has no rows, so its
+    // profile is known only from the source — and the aws CLI's error
+    // on its heading names it.
+    use pgman::inventory::EnvReport;
+    let mut a = settle_app();
+    a.environments.reports = vec![EnvReport {
+        name: "staging".into(),
+        source: "RDS us-west-1".into(),
+        targets: Vec::new(),
+        error: Some("The config profile (examplecorp-sso) could not be found".into()),
+        profile: Some("examplecorp-sso".into()),
+        probe: None,
+    }];
+    a.environments.probes = vec![Vec::new()];
+    a.mode = Mode::Environments;
+    let off = dump(&render(&mut a, 120, 30));
+    assert!(off.contains("examplecorp-sso"), "never on screen:\n{off}");
+    a.redact = true;
+    let on = dump(&render(&mut a, 120, 30));
+    assert!(!on.contains("examplecorp"), "leaked:\n{on}");
+    assert!(on.contains("The config profile (▓▓▓▓▓▓▓▓▓▓▓-▓▓▓)"), "{on}");
 }
 
 #[test]

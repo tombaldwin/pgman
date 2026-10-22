@@ -1045,6 +1045,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ),
             ],
             error: None,
+            profile: None,
             probe: probe(),
         },
         EnvReport {
@@ -1067,6 +1068,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ),
             ],
             error: None,
+            profile: None,
             probe: probe(),
         },
         EnvReport {
@@ -1077,6 +1079,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 ..rds("ledger", "ledger-dev", Role::Direct, None, STAGING_ENGINE)
             }],
             error: None,
+            profile: None,
             probe: None,
         },
         EnvReport {
@@ -1096,6 +1099,7 @@ pub fn environments() -> Vec<crate::inventory::EnvReport> {
                 connect: Err(NO_SERVER.into()),
             }],
             error: None,
+            profile: None,
             probe: probe(),
         },
     ]

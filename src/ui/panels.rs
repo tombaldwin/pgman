@@ -4335,6 +4335,7 @@ mod tests {
             source: "RDS".into(),
             targets: Vec::new(),
             error: Some("aws sts failed: token expired".into()),
+            profile: None,
             probe: None,
         }];
         let lines = environment_lines(&reports);
