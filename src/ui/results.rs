@@ -561,7 +561,7 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
     let join = |cells: &[grid::Cell]| -> String {
         cells
             .iter()
-            .map(grid::cell_text)
+            .map(crate::ui::diff_cell)
             .collect::<Vec<_>>()
             .join(" | ")
     };
@@ -594,15 +594,15 @@ pub(super) fn draw_result_diff(f: &mut Frame, area: Rect, app: &App) {
                         .unwrap_or("?");
                     format!(
                         "{col}: {} → {}",
-                        grid::cell_text(&c.old),
-                        grid::cell_text(&c.new)
+                        crate::ui::diff_cell(&c.old),
+                        crate::ui::diff_cell(&c.new)
                     )
                 })
                 .collect();
             let key = ch
                 .key
                 .iter()
-                .map(grid::cell_text)
+                .map(crate::ui::diff_cell)
                 .collect::<Vec<_>>()
                 .join(", ");
             let text = format!("~ [{key}] {}", deltas.join("  ·  "));

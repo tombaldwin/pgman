@@ -388,6 +388,36 @@ fn result_diff_view_renders_added_removed_changed() {
     );
 }
 
+/// A NULL that became an empty string is a change, and the diff says
+/// which side was which: `NULL → ''`, not `col:  → `.
+#[test]
+fn result_diff_shows_a_null_to_empty_string_change() {
+    let mut a = settle_app();
+    let cols = vec!["id".to_string(), "note".to_string()];
+    let a_rows = vec![vec![Some("1".to_string()), None]];
+    let b_rows = vec![vec![Some("1".to_string()), Some(String::new())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
+    let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
+    assert_eq!(diff.changed.len(), 1, "NULL -> '' is a change");
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: a_rows,
+        label: "A-query".into(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows,
+        b_label: "B-query".into(),
+        key,
+        diff,
+    });
+    a.result_diff.pinned = Some(pinned);
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
+}
+
 #[test]
 fn saved_queries_panel_filters_live_and_shows_count() {
     let mut a = settle_app();

@@ -162,6 +162,13 @@ fn build_field_layout_pads_label_and_marks_empty_and_null_apart() {
 }
 
 #[test]
+fn diff_cell_says_null_and_empty_string_apart() {
+    assert_eq!(diff_cell(&None), "NULL");
+    assert_eq!(diff_cell(&Some(String::new())), "''");
+    assert_eq!(diff_cell(&Some("x".into())), "x");
+}
+
+#[test]
 fn build_field_layout_truncates_oversized_labels() {
     let cols = vec!["aaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]; // 25 chars
     let row = vec![Some("v".to_string())];

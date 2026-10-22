@@ -1997,6 +1997,17 @@ pub(crate) fn build_field_layout(
         .collect()
 }
 
+/// A cell as the result diff's one-line rows show it: NULL as `NULL`
+/// and the empty string as `''`, so a NULL → `''` change reads as one
+/// (it drew as `col:  → ` before). Pure / testable.
+pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
+    match cell.as_deref() {
+        None => grid::NULL_MARKER,
+        Some("") => "''",
+        Some(text) => text,
+    }
+}
+
 /// Given the per-field line counts, where each field starts in the line
 /// stream and the desired scroll offset that keeps `focus_field` fully in
 /// view inside a `body_height`-row viewport. Pure / testable.

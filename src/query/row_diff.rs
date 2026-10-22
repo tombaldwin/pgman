@@ -272,6 +272,44 @@ mod tests {
         assert_eq!(d.unchanged, 0);
     }
 
+    /// NULL and the empty string are different values: a NULL that
+    /// became `''` is a change, and two NULL rows match each other.
+    #[test]
+    fn diff_tells_null_from_the_empty_string() {
+        let a = vec![
+            vec![Some("1".to_string()), None],
+            vec![Some("2".into()), None],
+        ];
+        let b = vec![
+            vec![Some("1".to_string()), Some(String::new())],
+            vec![Some("2".into()), None],
+        ];
+        let d = diff_rows(&a, &b, &RowKey::Columns(vec![0]));
+        assert_eq!(d.unchanged, 1);
+        assert_eq!(
+            d.changed[0].cells,
+            vec![CellChange {
+                col: 1,
+                old: None,
+                new: Some(String::new())
+            }]
+        );
+        // Full-row identity: the NULL row and the '' row are different
+        // rows.
+        let d = diff_rows(&a[..1], &b[..1], &RowKey::FullRow);
+        assert_eq!((d.removed, d.added), (vec![0], vec![0]));
+    }
+
+    /// A column with two NULLs cannot key the diff: NULLs collide.
+    #[test]
+    fn infer_key_skips_a_column_with_two_nulls() {
+        let a = vec![
+            vec![None, Some("x".to_string())],
+            vec![None, Some("y".into())],
+        ];
+        assert_eq!(infer_key_column(&a, &a, 2), Some(1));
+    }
+
     #[test]
     fn diff_changed_reports_only_differing_cells() {
         let a = vec![r(&["1", "alice", "10", "keep"])];
