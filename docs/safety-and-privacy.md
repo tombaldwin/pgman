@@ -471,8 +471,11 @@ layout is caught by its parts, but an *unknown* host or account ID cut
 short (`2109876543…`) no longer matches its pattern. Free text from the
 server (an error message naming a host pgman has never been told
 about) is caught only by the patterns above. A segment under three
-characters is blocked out inside its full name but not on its own. Look
-at a screenshot before you share it.
+characters is blocked out inside its full name but not on its own. The
+JDBC tap monitor's app column and the caller class names it shows
+(`com.examplecorp.billing.InvoiceRepository`) are not redacted: they
+come from the application, not from pgman's own state. Look at a
+screenshot before you share it.
 
 Display only: what `y` copies, the editor's text, the log file, reports
 and exports are the real values. The TUI only: `--batch`, `pgman
