@@ -11,11 +11,11 @@ expression: dump(&buf)
 │  O│ ERROR · SQLSTATE 23505                          │    │
 ╰───│                                                 │────╯
 ╭[ ◆│    message: duplicate key value violates uniqu  │────╮
-│num│             e constraint "users_email_key"      │at  │
-│INV│     detail: Key (email)=(ada@example.com) alre  │-10-│
-│INV│             ady exists.                         │-10-│
-│INV│      where: SQL statement "INSERT INTO users (  │-10-│
-│INV╰─────────────────────────────────────────────────╯-10-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+│num│             e constraint "users_email_key"      │    │
+│INV│     detail: Key (email)=(ada@example.com) alre  │    │
+│INV│             ady exists.                         │    │
+│INV│      where: SQL statement "INSERT INTO users (  │    │
+│INV╰─────────────────────────────────────────────────╯    │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   ⚠ duplicate key value viola… · ! detail

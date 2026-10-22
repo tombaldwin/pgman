@@ -1876,6 +1876,77 @@ fn redacted_demo_start_card_hides_every_database_on_the_server() {
     }
 }
 
+// ---- grid column widths --------------------------------------------------
+
+fn wide_result_app() -> App {
+    let mut a = connected_app();
+    let long = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod";
+    a.grid = Grid {
+        columns: ["id", "ref", "total", "note", "memo", "body", "tag"]
+            .map(String::from)
+            .to_vec(),
+        rows: vec![vec![
+            "1".into(),
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427".into(),
+            "-999999999999999999.99".into(),
+            long.into(),
+            long.into(),
+            long.into(),
+            "x".into(),
+        ]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a
+}
+
+#[test]
+fn the_grid_never_cuts_a_number_and_uses_the_width_it_has() {
+    for (w, h) in [(200, 50), (120, 30), (80, 24)] {
+        let mut a = wide_result_app();
+        let text = dump(&render(&mut a, w, h));
+        assert!(
+            text.contains(" -999999999999999999.99 "),
+            "{w}x{h}: the whole number:\n{text}"
+        );
+        let data_row = text
+            .lines()
+            .find(|l| l.contains("-999999999999999999.99"))
+            .unwrap();
+        assert_eq!(
+            data_row.chars().count(),
+            w as usize,
+            "{w}x{h}: the row reaches the panel's right border:\n{text}"
+        );
+    }
+    // 200 columns: room for the whole uuid beside three squeezed text
+    // columns, which say they were cut.
+    let mut a = wide_result_app();
+    let text = dump(&render(&mut a, 200, 50));
+    assert!(
+        text.contains("1b4e28ba-2fa1-11d2-883f-0016d3cca427"),
+        "{text}"
+    );
+    assert!(text.contains("consectetur a"), "{text}");
+    assert!(text.contains('…'), "{text}");
+}
+
+#[test]
+fn a_grid_too_wide_even_squeezed_shows_the_columns_around_the_cursor() {
+    let mut a = wide_result_app();
+    let text = dump(&render(&mut a, 40, 24));
+    assert!(text.contains("cols 1–"), "{text}");
+    assert!(text.contains("/7 "), "{text}");
+    a.grid_view.col_cursor = 6;
+    let text = dump(&render(&mut a, 40, 24));
+    assert!(text.contains("–7/7 "), "{text}");
+    let header = text.lines().find(|l| l.contains("tag")).unwrap_or("");
+    assert!(
+        !header.contains(" id "),
+        "the window moved right with the cursor:\n{text}"
+    );
+}
+
 // ---- the footer under a long error ---------------------------------------
 
 const LONG_ERROR: &str =

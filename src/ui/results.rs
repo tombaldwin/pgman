@@ -3,7 +3,19 @@ use super::*;
 pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     let grid = &app.grid;
     let theme = &app.theme;
-    let mut widths = grid::column_widths(grid, 48);
+    // A text column's natural width is capped, so one long value can't
+    // take the screen; a numeric column's is not — a number is never
+    // cut (see `grid::fit_column_widths`).
+    const TEXT_CAP: usize = 48;
+    const SPACING: u16 = 2;
+    let numeric: Vec<bool> = (0..grid.columns.len())
+        .map(|c| grid::is_numeric_column(grid, c))
+        .collect();
+    let mut widths: Vec<usize> = grid::column_widths(grid, usize::MAX)
+        .into_iter()
+        .zip(&numeric)
+        .map(|(w, &num)| if num { w } else { w.min(TEXT_CAP) })
+        .collect();
     // The sort marker (` ▲` / ` ▼`) is appended to the header cell
     // BEFORE width clamping, so columns hosting the sort key need
     // two extra chars of room. Without this the marker would be
@@ -11,9 +23,26 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
     // when they pressed `s`.
     if let Some((col, _)) = app.grid_view.sort {
         if let Some(w) = widths.get_mut(col) {
-            *w = (*w + 2).min(48);
+            *w = if numeric[col] {
+                *w + 2
+            } else {
+                (*w + 2).min(TEXT_CAP)
+            };
         }
     }
+    // Inside the panel's borders. Left to itself, ratatui squeezed an
+    // over-wide table's columns however its solver liked — numbers
+    // included, with no `…` on the cut. The widths are fitted here
+    // instead, and when even squeezed text columns do not fit, the
+    // columns that do (around the focused one) are drawn.
+    let available = area.width.saturating_sub(2) as usize;
+    let (widths, shown) = grid::layout_columns(
+        &widths,
+        &numeric,
+        available,
+        SPACING as usize,
+        app.grid_view.col_cursor,
+    );
 
     // Header: bold the column under the cursor; append a ▲ / ▼ to
     // whichever column is currently the sort key.
@@ -21,6 +50,8 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .columns
         .iter()
         .enumerate()
+        .skip(shown.start)
+        .take(shown.len())
         .map(|(i, c)| {
             let sort_marker = match app.grid_view.sort {
                 Some((col, true)) if col == i => " ▲",
@@ -55,32 +86,51 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         .iter()
         .filter_map(|&i| grid.rows.get(i))
         .map(|r| {
-            Row::new(r.iter().enumerate().map(|(i, c)| {
-                let w = widths.get(i).copied().unwrap_or(0);
-                let (kept, marker) = grid::truncate_cell_parts(c, w);
-                if marker.is_empty() {
-                    Cell::from(kept)
-                } else {
-                    // Style the `…` truncation marker with `accent`
-                    // so the operator sees the cell has more behind
-                    // it (RowDetail / CellDetail reveals the rest).
-                    Cell::from(Line::from(vec![
-                        Span::raw(kept),
-                        Span::styled(
-                            marker,
-                            Style::default()
-                                .fg(theme.accent)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]))
-                }
-            }))
+            Row::new(
+                r.iter()
+                    .enumerate()
+                    .skip(shown.start)
+                    .take(shown.len())
+                    .map(|(i, c)| {
+                        let w = widths.get(i).copied().unwrap_or(0);
+                        let (kept, marker) = if numeric.get(i).copied().unwrap_or(false) {
+                            // Never cut a number: its column is as wide as
+                            // its widest value, or wider than the screen.
+                            (c.clone(), "")
+                        } else {
+                            grid::truncate_cell_parts(c, w)
+                        };
+                        if marker.is_empty() {
+                            Cell::from(kept)
+                        } else {
+                            // Style the `…` truncation marker with `accent`
+                            // so the operator sees the cell has more behind
+                            // it (RowDetail / CellDetail reveals the rest).
+                            Cell::from(Line::from(vec![
+                                Span::raw(kept),
+                                Span::styled(
+                                    marker,
+                                    Style::default()
+                                        .fg(theme.accent)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                            ]))
+                        }
+                    }),
+            )
         })
         .collect();
-    let constraints: Vec<Constraint> = widths
+    let constraints: Vec<Constraint> = widths[shown.clone()]
         .iter()
         .map(|w| Constraint::Length(*w as u16))
         .collect();
+    // Columns off either edge: say which are on screen (h / l move
+    // the column cursor, and the window follows it).
+    let cols_note = if shown.len() < widths.len() {
+        format!(" · cols {}–{}/{}", shown.start + 1, shown.end, widths.len())
+    } else {
+        String::new()
+    };
     let visible = app.grid_view.visible_rows.len();
     let total = grid.row_count();
     let cap = if grid.truncated {
@@ -96,13 +146,13 @@ pub(super) fn draw_grid(f: &mut Frame, area: Rect, app: &mut App) {
         } else {
             " · / esc clears"
         };
-        format!(" result · {visible}/{total} row(s) (filtered{way_out}){cap} ")
+        format!(" result · {visible}/{total} row(s) (filtered{way_out}){cap}{cols_note} ")
     } else {
-        format!(" result · {total} row(s){cap} ")
+        format!(" result · {total} row(s){cap}{cols_note} ")
     };
     let table = Table::new(rows, constraints)
         .header(header)
-        .column_spacing(2)
+        .column_spacing(SPACING)
         .row_highlight_style(Style::default().bg(theme.row_selected_bg))
         .block(
             crate::ui::chrome::panel_block(theme)

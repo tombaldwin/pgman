@@ -10,12 +10,12 @@ expression: dump(&buf)
 │  WHERE status = 'open'                                   │
 │  ORDER BY due_at;                                        │
 ╰──────────────────────────────────────────────────────────╯
-╭[ ◆ result · 5 row(s) ◆ ]─────────────────────────────────╮
-│number     customer_  status  currency  total     due_at  │
-│INV-00482  2102       open    EUR       5712.00   2026-10-│
-│INV-00482  2104       open    GBP       768.00    2026-10-│
-│INV-00482  2107       open    GBP       22140.00  2026-10-│
-│INV-00482  2109       open    USD       980.00    2026-10-│
-│INV-00483  2111       open    GBP       298.80    2026-10-│
+╭[ ◆ result · 5 row(s) · cols 1–5/6 ◆ ]────────────────────╮
+│number      customer_id  status  currency  total          │
+│INV-004822  2102         open    EUR       5712.00        │
+│INV-004824  2104         open    GBP       768.00         │
+│INV-004827  2107         open    GBP       22140.00       │
+│INV-004829  2109         open    USD       980.00         │
+│INV-004831  2111         open    GBP       298.80         │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   q quit · ? help · e editor · ? +12 more
