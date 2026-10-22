@@ -344,7 +344,8 @@ before it.
    ISO date; the release workflow greps for it exactly). Add a new empty
    `## [Unreleased]` above it, and keep the link refs.
 2. Check the crates.io token's scope is publish-new: the crate doesn't
-   exist yet.
+   exist yet. If the token is restricted to crate names, `pgman` must
+   be one of them.
 3. Land it via PR, and wait for `ci.yml` to go green on the merge SHA on
    `main`.
 4. Run `cargo publish --dry-run --locked` and `cargo package --list` on
