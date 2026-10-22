@@ -1940,21 +1940,36 @@ pub(crate) fn wrap_value(s: &str, width: usize) -> Vec<String> {
 
 /// One column's pre-wrapped contribution to the row-detail layout. Pure
 /// data: the label (already truncated + padded to `label_width`), the
-/// list of value lines, and a flag for "this value was empty" so the
-/// renderer can dim it.
+/// list of value lines, and what kind of value it is, so the renderer
+/// can dim a NULL and an empty string — differently.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FieldLayout {
     pub label: String,
     pub values: Vec<String>,
-    pub is_empty: bool,
+    pub kind: FieldKind,
 }
+
+/// What a row-detail field holds, for its styling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FieldKind {
+    /// Text to show as it is.
+    Value,
+    /// The empty string, shown as [`EMPTY_STRING_MARKER`].
+    Empty,
+    /// SQL NULL, shown as [`grid::NULL_MARKER`].
+    Null,
+}
+
+/// What row and cell detail show for an empty string: a value, unlike a
+/// NULL, but one with nothing to draw.
+pub(crate) const EMPTY_STRING_MARKER: &str = "(empty string)";
 
 /// Pure layout: build one `FieldLayout` per column. Label is truncated to
 /// `label_width` chars and left-padded; value is wrapped via `wrap_value`.
 /// Extracted from the renderer so the field-cursor maths can be unit-tested.
 pub(crate) fn build_field_layout(
     columns: &[String],
-    row: &[String],
+    row: &[crate::grid::Cell],
     label_width: usize,
     value_width: usize,
 ) -> Vec<FieldLayout> {
@@ -1964,20 +1979,33 @@ pub(crate) fn build_field_layout(
         .map(|(i, col)| {
             let truncated: String = col.chars().take(label_width).collect();
             let label = format!("{:<width$}", truncated, width = label_width);
-            let raw = row.get(i).map(|s| s.as_str()).unwrap_or("");
-            let is_empty = raw.is_empty();
-            let values = if is_empty {
-                vec!["(empty)".to_string()]
-            } else {
-                wrap_value(&crate::grid::show_controls(raw, false), value_width)
+            // A short row's missing cell is no value at all: a NULL.
+            let (kind, values) = match row.get(i).and_then(Option::as_deref) {
+                None => (FieldKind::Null, vec![grid::NULL_MARKER.to_string()]),
+                Some("") => (FieldKind::Empty, vec![EMPTY_STRING_MARKER.to_string()]),
+                Some(raw) => (
+                    FieldKind::Value,
+                    wrap_value(&grid::show_controls(raw, false), value_width),
+                ),
             };
             FieldLayout {
                 label,
                 values,
-                is_empty,
+                kind,
             }
         })
         .collect()
+}
+
+/// A cell as the result diff's one-line rows show it: NULL as `NULL`
+/// and the empty string as `''`, so a NULL → `''` change reads as one
+/// (it drew as `col:  → ` before). Pure / testable.
+pub(crate) fn diff_cell(cell: &grid::Cell) -> &str {
+    match cell.as_deref() {
+        None => grid::NULL_MARKER,
+        Some("") => "''",
+        Some(text) => text,
+    }
 }
 
 /// Given the per-field line counts, where each field starts in the line

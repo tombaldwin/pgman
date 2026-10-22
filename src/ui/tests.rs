@@ -137,25 +137,41 @@ fn wrap_value_handles_multibyte_chars_by_chars_not_bytes() {
 }
 
 #[test]
-fn build_field_layout_pads_label_and_marks_empty() {
-    let cols = vec!["id".to_string(), "long_column_name".to_string()];
-    let row = vec!["42".to_string(), "".to_string()];
+fn build_field_layout_pads_label_and_marks_empty_and_null_apart() {
+    let cols = vec![
+        "id".to_string(),
+        "long_column_name".to_string(),
+        "n".to_string(),
+        "missing".to_string(),
+    ];
+    let row = vec![Some("42".to_string()), Some("".to_string()), None];
     let got = build_field_layout(&cols, &row, 16, 40);
-    assert_eq!(got.len(), 2);
+    assert_eq!(got.len(), 4);
     // Labels padded to label_width.
     assert_eq!(got[0].label.chars().count(), 16);
     assert!(got[0].label.starts_with("id"));
-    assert!(!got[0].is_empty);
+    assert_eq!(got[0].kind, FieldKind::Value);
     assert_eq!(got[0].values, vec!["42"]);
-    // Empty cell rendered with "(empty)" sentinel.
-    assert!(got[1].is_empty);
-    assert_eq!(got[1].values, vec!["(empty)"]);
+    // An empty string and a NULL: two different things, said two ways.
+    assert_eq!(got[1].kind, FieldKind::Empty);
+    assert_eq!(got[1].values, vec!["(empty string)"]);
+    assert_eq!(got[2].kind, FieldKind::Null);
+    assert_eq!(got[2].values, vec!["NULL"]);
+    // A cell the row is too short to have is no value: NULL.
+    assert_eq!(got[3].kind, FieldKind::Null);
+}
+
+#[test]
+fn diff_cell_says_null_and_empty_string_apart() {
+    assert_eq!(diff_cell(&None), "NULL");
+    assert_eq!(diff_cell(&Some(String::new())), "''");
+    assert_eq!(diff_cell(&Some("x".into())), "x");
 }
 
 #[test]
 fn build_field_layout_truncates_oversized_labels() {
     let cols = vec!["aaaaaaaaaaaaaaaaaaaaaaaaa".to_string()]; // 25 chars
-    let row = vec!["v".to_string()];
+    let row = vec![Some("v".to_string())];
     let got = build_field_layout(&cols, &row, 8, 10);
     assert_eq!(got[0].label.chars().count(), 8);
     assert!(got[0].label.starts_with("aaaaaaaa"));
@@ -179,7 +195,7 @@ fn scroll_offset_keeps_cursor_in_view() {
 #[test]
 fn build_field_layout_wraps_long_values() {
     let cols = vec!["bio".to_string()];
-    let row = vec!["abcdefghij".to_string()];
+    let row = vec![Some("abcdefghij".to_string())];
     let got = build_field_layout(&cols, &row, 4, 4);
     assert_eq!(got[0].values, vec!["abcd", "efgh", "ij"]);
 }

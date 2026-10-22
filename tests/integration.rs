@@ -580,7 +580,7 @@ async fn every_connection_identifies_itself_as_pgman_in_pg_stat_activity() {
         grid.rows
             .first()
             .and_then(|r| r.first())
-            .map(String::as_str),
+            .and_then(|c| c.as_deref()),
         Some(format!("pgman/{}", env!("CARGO_PKG_VERSION")).as_str()),
         "got: {:?}",
         grid.rows
@@ -1381,13 +1381,13 @@ async fn panel_loads_render_every_column_type_as_the_server_prints_it() {
     assert_eq!(
         grid.rows,
         vec![vec![
-            "1.50",
-            "2024-05-06",
-            "{1,2}",
-            "01:30:00",
-            "",
-            "2",
-            "t"
+            Some("1.50".to_string()),
+            Some("2024-05-06".to_string()),
+            Some("{1,2}".to_string()),
+            Some("01:30:00".to_string()),
+            None,
+            Some("2".to_string()),
+            Some("t".to_string())
         ]]
     );
     assert!(!grid.truncated);
@@ -2723,7 +2723,12 @@ fn connecting_works_when_a_database_on_the_server_refuses_connect() {
         .await
     });
     let booted = booted.unwrap_or_else(|e| panic!("connect failed: {e}"));
-    let names: Vec<&str> = booted.grid.rows.iter().map(|r| r[0].as_str()).collect();
+    let names: Vec<&str> = booted
+        .grid
+        .rows
+        .iter()
+        .map(|r| pgman::grid::cell_text(&r[0]))
+        .collect();
     assert!(names.contains(&"pgman_test"), "{names:?}");
     assert!(
         names.contains(&"pgman_noconnect"),
@@ -5609,4 +5614,126 @@ fn lint107_finds_sequence_columns_nothing_keeps_unique() {
             ),
         ]
     );
+}
+
+/// The NULL / empty-string / space triple the "NULL and the empty string
+/// look the same" item is about.
+const NULL_SQL: &str = "SELECT '' AS e, NULL AS n, ' ' AS s";
+
+/// From the wire to every way out of the TUI's grid: three cells that
+/// stay three different values — the yank, CSV, TSV and JSON included.
+#[tokio::test]
+async fn null_empty_string_and_space_stay_three_cells_through_the_grid() {
+    let (client, _tunnel) = lib_client().await;
+    let grid = pgman::conn::run_statement(&client, NULL_SQL)
+        .await
+        .expect("query runs");
+    assert_eq!(grid.columns, ["e", "n", "s"]);
+    assert_eq!(
+        grid.rows,
+        vec![vec![Some(String::new()), None, Some(" ".to_string())]]
+    );
+    let row = &grid.rows[0];
+    assert_eq!(
+        pgman::app::row_insert_sql("public", "t", &grid.columns, row),
+        "INSERT INTO public.t (e, n, s) VALUES ('', NULL, ' ');"
+    );
+    assert_eq!(pgman::batch::format_csv(&grid), "e,n,s\n\"\",, \n");
+    assert_eq!(pgman::batch::format_tsv(&grid), "e\tn\ts\n\t\\N\t \n");
+    let json: serde_json::Value =
+        serde_json::from_str(&pgman::batch::format_json(&grid)).expect("JSON");
+    assert_eq!(json, serde_json::json!([{"e": "", "n": null, "s": " "}]));
+}
+
+/// `pgman query --json` (the typed path) and `--format csv`, end to end.
+#[test]
+fn batch_json_and_csv_keep_null_apart_from_the_empty_string() {
+    let out = pgman()
+        .args(["query", NULL_SQL, "--json", "--dsn", DSN])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout is JSON");
+    assert_eq!(rows, serde_json::json!([{"e": "", "n": null, "s": " "}]));
+
+    let out = pgman()
+        .args([
+            "--batch", "--sql", NULL_SQL, "--format", "csv", "--dsn", DSN,
+        ])
+        .output()
+        .expect("spawn pgman");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "e,n,s\n\"\",, \n");
+}
+
+/// MCP `query`: JSON null for the NULL, "" for the empty string.
+#[test]
+fn mcp_query_keeps_null_apart_from_the_empty_string() {
+    let home = mcp_home("mcp-null");
+    let frames = mcp_session(
+        &home,
+        &home,
+        &[],
+        &[tool_call(
+            1,
+            "query",
+            serde_json::json!({"connection": "test", "sql": NULL_SQL}),
+        )],
+    );
+    let (text, is_error) = reply(&frames, 1);
+    assert!(!is_error, "{text}");
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["rows"],
+        serde_json::json!([{"e": "", "n": null, "s": " "}])
+    );
+}
+
+/// The `I` yank's INSERT, run against the table it was copied from,
+/// puts back the row it copied: a NULL, an empty string, a space, a
+/// zero-padded code in a text column, a number and a boolean — none of
+/// them turned into another value on the way.
+#[tokio::test]
+async fn the_insert_yank_puts_back_the_row_it_copied() {
+    let (notice_tx, _notices) = tokio::sync::mpsc::unbounded_channel();
+    let (notification_tx, _notifications) = tokio::sync::mpsc::unbounded_channel();
+    let dsn = pgman::conn::Dsn::parse(DSN).expect("test DSN parses");
+    let (client, _tunnel) =
+        pgman::conn::connect_only(dsn, false, 30_000, notice_tx, notification_tx)
+            .await
+            .expect("connect writable");
+    let table = it_name("yank");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {table} (id int, e text, n text, s text, code text, \
+             amount numeric, ok boolean); \
+             INSERT INTO {table} VALUES (1, '', NULL, ' ', '007', 1.50, true)"
+        ))
+        .await
+        .expect("create the table");
+    let select = format!("SELECT * FROM {table}");
+    let before = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select");
+    let insert = pgman::app::row_insert_sql("public", &table, &before.columns, &before.rows[0]);
+    client
+        .batch_execute(&format!("DELETE FROM {table}; {insert}"))
+        .await
+        .unwrap_or_else(|e| panic!("{insert}: {e}"));
+    let after = pgman::conn::run_statement(&client, &select)
+        .await
+        .expect("select again");
+    let _ = client.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert_eq!(after.rows, before.rows, "{insert}");
+    assert_eq!(after.rows[0][1], Some(String::new()));
+    assert_eq!(after.rows[0][2], None);
+    assert_eq!(after.rows[0][4].as_deref(), Some("007"));
 }

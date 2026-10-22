@@ -7,6 +7,20 @@ open items. Newest at the top within each section.
 
 Historical record. Newest at the top within each section.
 
+### 2026-10-22 NULL cells *(done, see docs/backlog/null-cells.md)*
+- NULL and the empty string look the same (release panel M1): grid
+  cells are `Option<String>`; NULL draws as a dimmed `NULL`
+  (`theme.null_cell`), an empty string as nothing in the grid and
+  `(empty string)` in row / cell detail; the `I` yank writes `NULL`
+  vs `''`; CSV writes NULL unquoted and `''` as `""`, TSV writes `\N`,
+  Grid JSON `null`; sort is NULLS LAST ascending / FIRST descending;
+  `/null` and `f null` find NULLs; the diff and the DBUnit capture
+  keep them apart.
+- Found on the way: the `I` yank wrote number- and boolean-looking
+  text bare (`007` came back `7`) and its column names unquoted;
+  `quote_ident` never quoted reserved keywords; `F` on a NULL built
+  `WHERE id = NULL`; an attribute-less fixture row was not SQL.
+
 ### 2026-10-21 backlog pass *(all done, see CHANGELOG → The backlog pass)*
 - `\df [pattern]`; schema-browser indexes, `p` sample rows, `d` DDL
   copy (covers both DDL items); LINT107; JOIN … ON foreign-key

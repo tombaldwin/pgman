@@ -26,6 +26,10 @@ pub struct Theme {
     pub muted: Color,
     pub text: Color,
     pub accent: Color,
+    /// The `NULL` marker in the result grid, row detail and cell
+    /// detail — dimmer than `text` and drawn italic, so it reads as
+    /// "no value" and never as the text `NULL`.
+    pub null_cell: Color,
 
     // SQL syntax highlighting in the editor.
     /// String literal — `'foo'`, dollar-quoted, etc.
@@ -88,6 +92,7 @@ impl Theme {
             muted: Color::Rgb(150, 155, 170),
             text: Color::Rgb(220, 222, 230),
             accent: Color::Rgb(255, 200, 120),
+            null_cell: Color::Rgb(120, 126, 145),
 
             syn_string: Color::Rgb(180, 220, 140),
             syn_unknown: Color::Rgb(240, 140, 130),
@@ -148,6 +153,7 @@ impl Theme {
             title_alt: Color::Rgb(120, 60, 170),
             muted: Color::Rgb(110, 115, 125),
             text: Color::Rgb(30, 32, 40),
+            null_cell: Color::Rgb(135, 140, 152),
             accent: Color::Rgb(180, 90, 0),
 
             syn_string: Color::Rgb(40, 120, 40),
@@ -210,6 +216,7 @@ impl Theme {
             muted: Color::Rgb(220, 220, 220),
             text: Color::Rgb(255, 255, 255),
             accent: Color::Rgb(255, 180, 0),
+            null_cell: Color::Rgb(190, 190, 190),
 
             syn_string: Color::Rgb(120, 240, 120),
             syn_unknown: Color::Rgb(255, 80, 80),

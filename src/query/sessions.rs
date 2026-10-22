@@ -70,26 +70,36 @@ pub fn parse(grid: &Grid) -> Vec<SessionRow> {
         .iter()
         .map(|r| {
             let pid = pid_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<i32>().ok())
                 .unwrap_or(0);
-            let user = user_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
-            let application = app_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
+            let user = user_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default();
+            let application = app_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default();
             let state = state_idx
-                .and_then(|i| r.get(i).cloned())
+                .and_then(|i| r.get(i).cloned().flatten())
                 .unwrap_or_default();
             // `:` from the COALESCE join — strip when both halves
             // are empty so we don't render `:` for "no wait event".
-            let wait_event_raw = wait_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
+            let wait_event_raw = wait_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default();
             let wait_event = if wait_event_raw == ":" || wait_event_raw.is_empty() {
                 None
             } else {
                 Some(wait_event_raw)
             };
-            let blocked_by = bb_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
-            let query = q_idx.and_then(|i| r.get(i).cloned()).unwrap_or_default();
+            let blocked_by = bb_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default();
+            let query = q_idx
+                .and_then(|i| r.get(i).cloned().flatten())
+                .unwrap_or_default();
             let age_secs = age_idx
-                .and_then(|i| r.get(i))
+                .and_then(|i| r.get(i)?.as_deref())
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0);
             SessionRow {
@@ -124,7 +134,7 @@ mod tests {
             ],
             rows: rows
                 .iter()
-                .map(|r| r.iter().map(|s| (*s).to_string()).collect())
+                .map(|r| r.iter().map(|s| Some((*s).to_string())).collect())
                 .collect(),
             truncated: false,
         }

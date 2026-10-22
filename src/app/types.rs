@@ -363,7 +363,7 @@ pub struct GridView {
     pub sort: Option<(usize, bool)>,
     /// The grid as it landed from the query — preserved so a "clear
     /// sort" can restore the original row order without re-running.
-    pub raw_rows: Option<Vec<Vec<String>>>,
+    pub raw_rows: Option<Vec<Vec<crate::grid::Cell>>>,
     /// Active row-filter pattern (case-insensitive substring across
     /// all columns). `None` = no filter; rendered rows are
     /// `visible_rows` indices into the (possibly sorted) `grid.rows`.
@@ -468,7 +468,7 @@ pub struct GridBookmark {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedResult {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<String>>,
+    pub rows: Vec<Vec<crate::grid::Cell>>,
     /// Short label for the header — the SQL that produced A
     /// (collapsed / truncated) or a fallback.
     pub label: String,
@@ -482,7 +482,7 @@ pub struct PinnedResult {
 pub struct ResultDiffState {
     pub a: PinnedResult,
     pub b_columns: Vec<String>,
-    pub b_rows: Vec<Vec<String>>,
+    pub b_rows: Vec<Vec<crate::grid::Cell>>,
     pub b_label: String,
     pub key: crate::query::row_diff::RowKey,
     pub diff: crate::query::row_diff::RowDiff,

@@ -193,8 +193,8 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     a.grid = Grid {
         columns: vec!["id".into(), "name".into()],
         rows: vec![
-            vec!["1".into(), "alice".into()],
-            vec!["2".into(), "bob".into()],
+            vec![Some("1".into()), Some("alice".into())],
+            vec![Some("2".into()), Some("bob".into())],
         ],
         truncated: false,
     };
@@ -203,7 +203,9 @@ fn grid_render_shows_sort_marker_on_focused_column() {
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
     a.grid_view.col_cursor = 0;
     a.grid_view.sort = Some((0, true));
-    a.grid.rows.sort_by(|x, y| cmp_cells(&x[0], &y[0]));
+    a.grid
+        .rows
+        .sort_by(|x, y| cmp_cells(x[0].as_deref(), y[0].as_deref()));
     let buf = render(&mut a, 60, 18);
     let rendered = dump(&buf);
     assert!(
@@ -343,12 +345,12 @@ fn result_diff_view_renders_added_removed_changed() {
     let mut a = settle_app();
     let cols = vec!["id".to_string(), "name".to_string()];
     let a_rows = vec![
-        vec!["1".to_string(), "alice".to_string()],
-        vec!["2".to_string(), "bob".to_string()],
+        vec![Some("1".to_string()), Some("alice".to_string())],
+        vec![Some("2".to_string()), Some("bob".to_string())],
     ];
     let b_rows = vec![
-        vec!["1".to_string(), "ALICE".to_string()],
-        vec!["3".to_string(), "carol".to_string()],
+        vec![Some("1".to_string()), Some("ALICE".to_string())],
+        vec![Some("3".to_string()), Some("carol".to_string())],
     ];
     let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
     let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
@@ -384,6 +386,36 @@ fn result_diff_view_renders_added_removed_changed() {
         rendered.contains("ALICE"),
         "changed cell missing:\n{rendered}"
     );
+}
+
+/// A NULL that became an empty string is a change, and the diff says
+/// which side was which: `NULL → ''`, not `col:  → `.
+#[test]
+fn result_diff_shows_a_null_to_empty_string_change() {
+    let mut a = settle_app();
+    let cols = vec!["id".to_string(), "note".to_string()];
+    let a_rows = vec![vec![Some("1".to_string()), None]];
+    let b_rows = vec![vec![Some("1".to_string()), Some(String::new())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![0]);
+    let diff = pgman::query::row_diff::diff_rows(&a_rows, &b_rows, &key);
+    assert_eq!(diff.changed.len(), 1, "NULL -> '' is a change");
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: a_rows,
+        label: "A-query".into(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows,
+        b_label: "B-query".into(),
+        key,
+        diff,
+    });
+    a.result_diff.pinned = Some(pinned);
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 140, 30));
+    assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
 }
 
 #[test]
@@ -698,7 +730,7 @@ fn grid_render_shows_capped_hint_when_truncated() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["id".into()],
-        rows: vec![vec!["1".into()], vec!["2".into()]],
+        rows: vec![vec![Some("1".into())], vec![Some("2".into())]],
         truncated: true,
     };
     a.grid_view.visible_rows = (0..a.grid.rows.len()).collect();
@@ -718,9 +750,9 @@ fn grid_render_shows_filtered_count_in_title() {
     a.grid = Grid {
         columns: vec!["name".into()],
         rows: vec![
-            vec!["alice".into()],
-            vec!["bob".into()],
-            vec!["carol".into()],
+            vec![Some("alice".into())],
+            vec![Some("bob".into())],
+            vec![Some("carol".into())],
         ],
         truncated: false,
     };
@@ -1494,7 +1526,7 @@ fn alt_z_twice_restores_the_exact_prior_split() {
     a.editor.cursor = a.editor.buffer.len();
     a.grid = Grid {
         columns: vec!["a".into()],
-        rows: vec![vec!["1".into()]],
+        rows: vec![vec![Some("1".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = compute_visible_rows(&a.grid.rows, None);
@@ -1745,7 +1777,7 @@ fn result_headers_are_bold_and_underlined_and_keep_their_case() {
     a.mode = Mode::Normal;
     a.grid = Grid {
         columns: vec!["userId".into(), "email".into()],
-        rows: vec![vec!["1".into(), "a@b".into()]],
+        rows: vec![vec![Some("1".into()), Some("a@b".into())]],
         truncated: false,
     };
     a.grid_view.visible_rows = vec![0];
@@ -2060,13 +2092,13 @@ fn wide_result_app() -> App {
             .map(String::from)
             .to_vec(),
         rows: vec![vec![
-            "1".into(),
-            "1b4e28ba-2fa1-11d2-883f-0016d3cca427".into(),
-            "-999999999999999999.99".into(),
-            long.into(),
-            long.into(),
-            long.into(),
-            "x".into(),
+            Some("1".into()),
+            Some("1b4e28ba-2fa1-11d2-883f-0016d3cca427".into()),
+            Some("-999999999999999999.99".into()),
+            Some(long.into()),
+            Some(long.into()),
+            Some(long.into()),
+            Some("x".into()),
         ]],
         truncated: false,
     };
@@ -2127,9 +2159,9 @@ fn tabs_and_newlines_in_a_value_show_in_the_grid_and_row_detail() {
     a.grid = Grid {
         columns: ["id", "note", "after"].map(String::from).to_vec(),
         rows: vec![vec![
-            "1".into(),
-            "tab\there\nline two\r\nthree".into(),
-            "x".into(),
+            Some("1".into()),
+            Some("tab\there\nline two\r\nthree".into()),
+            Some("x".into()),
         ]],
         truncated: false,
     };
@@ -2243,5 +2275,95 @@ fn an_overlay_leaves_a_wrapped_error_footer_whole() {
             "{mode:?}: the message starts at its start:\n{}",
             dump(&buf)
         );
+    }
+}
+
+/// The text run starting at `(x, y)`, `len` cells long.
+fn run_at(buf: &Buffer, x: u16, y: u16, len: u16) -> String {
+    (x..x + len).map(|x| buf[(x, y)].symbol()).collect()
+}
+
+/// Every place `needle` is drawn, cell-exact.
+fn find_all(buf: &Buffer, needle: &str) -> Vec<(u16, u16)> {
+    let n = needle.chars().count() as u16;
+    let mut hits = Vec::new();
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width.saturating_sub(n - 1) {
+            if run_at(buf, x, y, n) == needle {
+                hits.push((x, y));
+            }
+        }
+    }
+    hits
+}
+
+/// `SELECT '' AS e, NULL AS n, 'NULL' AS t`, as a grid.
+fn null_grid_app() -> App {
+    let mut a = settle_app();
+    a.mode = Mode::Normal;
+    a.grid = Grid {
+        columns: vec!["e".into(), "n".into(), "t".into()],
+        rows: vec![vec![Some(String::new()), None, Some("NULL".into())]],
+        truncated: false,
+    };
+    a.grid_view.visible_rows = vec![0];
+    a.grid_state.select(Some(0));
+    a
+}
+
+/// The NULL is drawn as a dimmed italic `NULL` in `theme.null_cell`, the
+/// text `'NULL'` as plain text, the empty string as nothing: three
+/// different things on screen, where the grid used to draw the first
+/// and the last the same.
+#[test]
+fn grid_draws_null_as_a_dimmed_marker_and_the_empty_string_as_nothing() {
+    let mut a = null_grid_app();
+    let theme = Theme::default();
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let (hx, hy) = find_cell(&buf, "e  n").expect("header drawn");
+    let data: Vec<(u16, u16)> = find_all(&buf, "NULL")
+        .into_iter()
+        .filter(|(_, y)| *y == hy + 1)
+        .collect();
+    assert_eq!(data.len(), 2, "the NULL and the text 'NULL':\n{rendered}");
+    let marker = &buf[data[0]];
+    assert_eq!(marker.fg, theme.null_cell, "NULL marker colour");
+    assert!(marker.modifier.contains(Modifier::ITALIC), "NULL is italic");
+    let text = &buf[data[1]];
+    assert_ne!(text.fg, theme.null_cell, "the text 'NULL' is not dimmed");
+    assert!(!text.modifier.contains(Modifier::ITALIC));
+    // The empty string's column draws nothing.
+    assert_eq!(buf[(hx, hy + 1)].symbol(), " ", "\n{rendered}");
+}
+
+#[test]
+fn row_detail_and_cell_detail_say_null_and_empty_string_apart() {
+    let theme = Theme::default();
+    let mut a = null_grid_app();
+    a.mode = Mode::RowDetail;
+    let buf = render(&mut a, 80, 24);
+    let rendered = dump(&buf);
+    let empty = find_all(&buf, "(empty string)");
+    assert_eq!(empty.len(), 1, "\n{rendered}");
+    assert_eq!(buf[empty[0]].fg, theme.muted);
+    // The `n` field is the marker, in the NULL colour; the `t` field's
+    // `NULL` is text.
+    let colours: Vec<_> = find_all(&buf, "NULL").iter().map(|p| buf[*p].fg).collect();
+    assert!(colours.contains(&theme.null_cell), "\n{rendered}");
+    assert!(colours.contains(&theme.text), "\n{rendered}");
+
+    for (field, want, colour) in [
+        (0, "(empty string)", theme.muted),
+        (1, "NULL", theme.null_cell),
+        (2, "NULL", theme.text),
+    ] {
+        a.row_detail.field = field;
+        a.mode = Mode::CellDetail;
+        let buf = render(&mut a, 80, 24);
+        let at = find_all(&buf, want);
+        let rendered = dump(&buf);
+        assert!(!at.is_empty(), "field {field}:\n{rendered}");
+        assert_eq!(buf[at[0]].fg, colour, "field {field}:\n{rendered}");
     }
 }

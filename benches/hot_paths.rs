@@ -90,13 +90,14 @@ fn bench_filter(c: &mut Criterion) {
     // 1000-row grid (the renderer's MAX_ROWS cap) with a typical
     // mix of strings and numbers. compute_visible_rows runs on every
     // filter keystroke; this is the hot path.
-    let rows: Vec<Vec<String>> = (0..1000)
+    // Every eleventh email is NULL, as a real column has some.
+    let rows: Vec<Vec<pgman::grid::Cell>> = (0..1000)
         .map(|i| {
             vec![
-                i.to_string(),
-                format!("user_{i}"),
-                format!("user_{i}@example.com"),
-                if i % 7 == 0 { "active" } else { "inactive" }.into(),
+                Some(i.to_string()),
+                Some(format!("user_{i}")),
+                (i % 11 != 0).then(|| format!("user_{i}@example.com")),
+                Some(if i % 7 == 0 { "active" } else { "inactive" }.into()),
             ]
         })
         .collect();
