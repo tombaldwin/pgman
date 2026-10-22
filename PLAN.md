@@ -47,58 +47,28 @@ guards, DBUnit fixtures, the schema-lint wizard. The risk is not the
 wedge; it is that a first-time user hits a rough edge in the first
 minute and never reaches it.
 
-## Where we actually are (measured 2026-09-02)
+## Where we are (2026-10-22)
 
-pgman has **never shipped**. `CHANGELOG.md` records "[0.1.0] — 2026-06-06,
-first public beta" and the README wears a public-beta badge, but the
-GitHub repo is **private**, has **no tags** and **no releases**, the
-crate name is **unclaimed on crates.io**, there is no release workflow,
-formula or binary, and `pgman --upgrade` only works from a local
-checkout. The 0.1.0 "release" was a version-bump commit (`9b91375`).
+pgman is **public but not released**. The GitHub repo is public, with
+its history scrubbed of client details, and PRs #1–#14 have merged since
+it was recreated. There are **no tags and no releases** yet, the crate
+name is **unclaimed on crates.io**, and no Homebrew formula has been
+published. The machinery for all three is in the repo: `release.yml`,
+`Formula/pgman.rb` with placeholder shas, `scripts/update-formula.sh`.
+Until the tag, the only install is `cargo install --git`, which
+`--upgrade` can't upgrade in place (the README says so).
 
-In good shape: 1028 unit tests + 8 integration-style suites, all green
-locally; CI green on main; 16 render snapshots; property tests, fuzz
-targets, benches; candor data-layer gate; cargo-deny; dependabot;
-SECURITY / CONTRIBUTING / CoC / issue templates.
+Branch protection on `main` blocks force-push and deletion but requires
+**no CI checks**; requiring them is a post-release item (Tom's
+decisions, below).
 
-Red or soft:
+The **v0.1.0 release panel ran on 2026-10-22**, and its fixes are in
+progress on `release-panel-fixes` (see the section below). After they
+land, the next step is Release day.
 
-| gate | state |
-|---|---|
-| cargo-deny | green since Phase 0 (was red on a yanked `chacha20`) |
-| clippy | clean, denied in CI since Phase 0 |
-| MSRV | 1.94.1 declared and gated (build + test) since Phase 0 |
-| README `demo.gif` | referenced, **not in the repo** — broken image |
-| BACKLOG.md | 2467 lines, ~1570 Done; Open carries items already marked done |
-
-### Polish defects visible in the committed snapshots alone
-
-These are in `tests/snapshots/*.snap` today — nobody has to run the
-app to see them. Several are the exact bugs ebman fixed in 0.36.0
-*after* release; here they can be fixed before.
-
-- **Help overlay wraps continuations to the overlay's left margin**
-  ("doesn't lose the session)", "matches)", "redo" on their own lines
-  with no key beside them). ebman `3784298`.
-- **Footer key strip clips mid-hint** at 80 columns: `… T slow · L se`,
-  `… Q s`. ebman `f9b87c1`. Shed whole hints, never half of one.
-- **Sessions panel misaligns** when the state is `idle in transaction`
-  — the value is wider than its column and the row shears.
-- **Slow-queries panel divider** is drawn with `│` at both ends instead
-  of `├ ┤`, so it does not join the border.
-- **Schema wizard truncates mid-word with no ellipsis**
-  (`table without PRIMARY KEY or UN`).
-- **Completion popup's border collides with the result panel's** —
-  `┌ 2 matches · Tab to┐──────` sits on top of the panel's top edge.
-- **Landing screen is two empty boxes** — `(empty — press e to focus)`
-  over `(no rows)`. k9s lands you in a populated view. Land in the
-  schema browser, or a summary (db, size, top tables, connections),
-  and make the editor one keypress away.
-- **Connection picker says "no connection — start pgman with --dsn"**
-  directly above a picker offering two connections.
-- **Splash has a 3-second minimum** (`app.rs:1022`). The ebman survey
-  in the backlog said adopt the rendering but *not* the minimum;
-  keypress dismisses, but the demo tape still waits 4.5 s for it.
+The September state this section used to describe (a private repo, no
+release workflow, a broken README image, nine snapshot-visible polish
+defects) was fixed by Phases 0–4 below; the detail is in git history.
 
 ---
 
@@ -351,20 +321,61 @@ that each want a design note: cell editing, paging past `MAX_ROWS`,
 per-tab connections, keymap customisation, the help overlay's
 sections, the JDBC tap layers, v2.
 
+## v0.1.0 release panel — 2026-10-22 · review · **fixes in progress**
+
+A release panel ran on 2026-10-22 against the public repo. Its findings
+are being fixed one per commit on `release-panel-fixes`, in parallel
+worktrees: code fixes in some (the first to land blocks server-control
+functions on a read-only profile), text in another (the unbuilt pgman-tap library no longer presented as
+installable, the MCP write surface described as it is, the `--git`
+install's upgrade caveat, `beta` used throughout for maturity, the
+1000-row grid cap documented, `demo.gif` out of the crate). Anything
+deferred goes to BACKLOG.md with a reason.
+
 ## Release day
 
-```
-git tag v0.1.0 && git push --tags       # after CI is green on the SHA
-gh release edit v0.1.0 --draft=false    # after checking the 4 tarballs
-scripts/update-formula.sh v0.1.0        # commit + push both repos
-brew tap tombaldwin/tap && brew install pgman
-```
+From the release-risk reviewer. In order; each step waits on the one
+before it.
+
+0. README banner, badge, Install and Upgrade sections; docs/development.md
+   "Not published yet" (the Distribution list); the `Formula/pgman.rb`
+   header comment: all flipped to released, in one commit.
+1. CHANGELOG `## [Unreleased]` → `## [0.1.0] — 2026-10-DD` (em dash,
+   ISO date; the release workflow greps for it exactly). Add a new empty
+   `## [Unreleased]` above it, and keep the link refs.
+2. Check the crates.io token's scope is publish-new: the crate doesn't
+   exist yet.
+3. Land it via PR, and wait for `ci.yml` to go green on the merge SHA on
+   `main`.
+4. Run `cargo publish --dry-run --locked` and `cargo package --list` on
+   that SHA.
+5. `git tag v0.1.0 <sha> && git push origin v0.1.0` — not `--tags`.
+6. Watch `release.yml`: a draft release with 4 tarballs, `.sha256` files
+   and attestations.
+7. `gh attestation verify` on one tarball; run `--version` and check the
+   About date.
+8. `gh release edit v0.1.0 --draft=false` publishes to crates.io. If that
+   fails: `gh workflow run release.yml -f tag=v0.1.0`.
+9. `cargo install pgman --locked` in a clean dir; check the crates.io
+   page renders.
+10. `scripts/update-formula.sh v0.1.0`, push the tap, PR the in-repo
+    formula, and run `brew install` / `brew test`.
+11. The product page.
+
+## Tom's decisions — 2026-10-22
+
+Post-release, each an item in BACKLOG.md → "After v0.1.0":
+
+- Require CI checks on `main`. Branch protection has none today.
+- Pin GitHub Actions to commit SHAs.
+- The two TLS backends in the build (aws-lc-rs and ring): settle on one.
 
 ## Explicitly deferred past the release
 
-- `pgman-tap` JVM library (separate repo, 1–2 weeks). The tap panel's
-  "Route 2" hint stays flagged in-development; OTLP is the documented
-  route.
+- `pgman-tap` JVM library (separate repo, 1–2 weeks). It is planned,
+  not built: the tap panel's "Route 2" says not yet released, and
+  OTLP (`--tap-otlp` with the OpenTelemetry Java agent) is the
+  documented route.
 - Mutation testing (`mutants.yml` / `scripts/sweep.sh`).
 - `unwrap_used` / `expect_used` deny lints.
 - `cargo-semver-checks` — meaningful once 0.1.0 is on crates.io.
