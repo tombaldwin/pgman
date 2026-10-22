@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 868
+assertion_line: 869
 expression: text
 ---
-╭ pgman X.X.X ────────────────────────────────────╮╭───────────────────────────╮
+╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
 │ Server: localhost:5432  •  Database: test       ││      PostgreSQL   results │
 │ Status: connected · pg 16.0                     ││     <?> help  <:> command │
 │ Via: —                                          ││    <E> envs  <ctrl-t> tab │

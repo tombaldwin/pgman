@@ -6,13 +6,10 @@
 #   brew tap tombaldwin/tap
 #   brew install pgman
 #
-# pgman has not had a first release yet, so every sha256 below is the
-# placeholder `0000…0000`. Cutting v0.1.0 (the first release — 0.1.0 was
-# never tagged or published, so it's the version, not 0.2.0): run
-# `scripts/update-formula.sh v0.1.0` — it computes SHA-256s from the
-# GitHub Release tarballs and writes both this file and the tap's
-# Formula/pgman.rb in one go, creating the tap entry if it doesn't
-# exist yet.
+# After each release: run `scripts/update-formula.sh v<X.Y.Z>` — it
+# computes SHA-256s from the GitHub Release tarballs and writes both this
+# file and the tap's Formula/pgman.rb in one go, creating the tap entry if
+# it doesn't exist yet.
 class Pgman < Formula
   desc "k9s-style Postgres TUI for Java/AWS shops"
   homepage "https://github.com/tombaldwin/pgman"

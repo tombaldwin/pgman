@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-10-22
+
 First public release. pgman is a terminal UI for PostgreSQL in the k9s
 mould, built for teams running Java services on AWS. Point it at a
 database — or let it find the connection in your Spring

@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 753
+assertion_line: 754
 expression: dumped
 ---
- pgman X.X.X │ test  connected · pg 16.0
+ pgman X.X.X · YYYY-MM-DD │ test  connected · pg 16.0
 ╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
 │> (empty — press e to focus)                              │
 ╰──────────────────────────────────────────────────────────╯
