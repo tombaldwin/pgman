@@ -210,7 +210,7 @@ pub fn render_markdown(snapshot: &ReportSnapshot) -> String {
         n = snapshot.hotspots.len()
     ));
     if snapshot.hotspots.is_empty() {
-        out.push_str("_no tap events yet — start with `--tap-otlp :4318` or wait for the pgman-tap JAR._\n\n");
+        out.push_str("_no tap events yet — start pgman with `--tap-otlp :4318` and attach the OpenTelemetry Java agent._\n\n");
     } else {
         out.push_str("| Calls | Errors | p50 (µs) | p95 (µs) | p99 (µs) | Fingerprint |\n");
         out.push_str("|---:|---:|---:|---:|---:|---|\n");

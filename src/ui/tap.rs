@@ -73,7 +73,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "pgman-tap is connected (heartbeats received) but the JVM hasn't fired any queries yet.",
+                    "A tap client is connected (heartbeats received) but the JVM hasn't fired any queries yet.",
                     Style::default().fg(theme.muted),
                 )),
             ]

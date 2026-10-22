@@ -121,7 +121,8 @@ per behaviour.
 `tap::TapEvent` is the wire shape; `tap::parse` turns one frame (UDP
 datagram or TCP length-prefixed message) into an event. Async listeners live
 in `tap/listener.rs` (TCP + UDP) and `tap/otlp.rs` (OpenTelemetry HTTP
-ingest — an alternative to the pgman-tap JAR for any OTel-instrumented JVM).
+ingest — the route that works today for any OTel-instrumented JVM; the TCP
+listener waits on the planned pgman-tap library).
 `tap/replay.rs` feeds a captured JSONL file through the same pipeline for
 demos and offline analysis. `tap/insights.rs` is L2: pure aggregation over
 the in-memory event ring (hotspots, N+1 groupings, baselines). `tap/mod.rs`

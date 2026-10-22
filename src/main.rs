@@ -83,12 +83,12 @@ struct Cli {
     #[arg(long, help_heading = "Batch mode")]
     discovered: bool,
 
-    /// Bind a TCP listener for the pgman-tap JAR (length-prefixed JSON events).
+    /// Bind a TCP listener for the planned pgman-tap library (length-prefixed JSON events).
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_listen: Option<String>,
 
     /// Bind an OTLP/HTTP listener so any OpenTelemetry JVM can stream
-    /// Postgres spans in, no pgman-tap JAR needed.
+    /// Postgres spans in; works today, without the planned pgman-tap library.
     #[arg(long, value_name = "ADDR", help_heading = "JDBC tap")]
     tap_otlp: Option<String>,
 
