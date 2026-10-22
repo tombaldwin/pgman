@@ -425,6 +425,9 @@ fn draw_body(f: &mut Frame, area: Rect, app: &mut App) {
                         Line::from(
                             "pgman also auto-discovers application*.yml, .idea/dataSources.xml and .pgman/pgman.toml when run inside a project",
                         ),
+                        Line::from(
+                            "or :connect postgres://… here · E environments · pgman --demo to try it with no database",
+                        ),
                     ]))
                     .style(Style::default().fg(app.theme.muted))
                     .block(bordered(&app.theme, "pgman")),
