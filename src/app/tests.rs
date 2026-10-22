@@ -2957,6 +2957,26 @@ fn quote_ident_passes_simple_snake_case_unquoted() {
     assert_eq!(quote_ident("a1"), "a1");
 }
 
+/// The doc said reserved words were quoted; they were not, so a column
+/// named `order` went into a yanked INSERT bare — a syntax error.
+#[test]
+fn quote_ident_quotes_reserved_keywords() {
+    for kw in ["order", "user", "select", "group", "table", "end", "left"] {
+        assert_eq!(quote_ident(kw), format!("\"{kw}\""));
+    }
+    // Non-reserved keywords are fine bare.
+    assert_eq!(quote_ident("name"), "name");
+    assert_eq!(quote_ident("status"), "status");
+}
+
+#[test]
+fn reserved_keywords_are_sorted_for_binary_search() {
+    assert!(
+        RESERVED_KEYWORDS.windows(2).all(|w| w[0] < w[1]),
+        "keep the list sorted (and free of duplicates)"
+    );
+}
+
 #[test]
 fn quote_ident_wraps_anything_unusual() {
     assert_eq!(quote_ident("User"), "\"User\"");
