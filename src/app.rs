@@ -324,7 +324,9 @@ pub fn next_sort_state(current: Option<(usize, bool)>, target_col: usize) -> Opt
 
 /// Pure: filter `rows` by `pattern` (case-insensitive substring
 /// across every column). Returns the row indices that match, in
-/// original order. `None` pattern means "everything".
+/// original order. `None` pattern, or an empty one, means
+/// "everything". A NULL cell matches only the whole word `null`
+/// ([`cell_matches`]).
 ///
 /// ```
 /// use pgman::app::compute_visible_rows;
@@ -337,17 +339,26 @@ pub fn next_sort_state(current: Option<(usize, bool)>, target_col: usize) -> Opt
 /// ```
 pub fn compute_visible_rows(rows: &[Vec<Cell>], pattern: Option<&str>) -> Vec<usize> {
     match pattern {
-        None => (0..rows.len()).collect(),
+        None | Some("") => (0..rows.len()).collect(),
         Some(pat) => {
             let needle = pat.to_ascii_lowercase();
             (0..rows.len())
-                .filter(|i| {
-                    rows[*i]
-                        .iter()
-                        .any(|c| cell_text(c).to_ascii_lowercase().contains(&needle))
-                })
+                .filter(|i| rows[*i].iter().any(|c| cell_matches(c, &needle)))
                 .collect()
         }
+    }
+}
+
+/// Does `cell` match the filter / find `needle` (already lowercased)?
+/// A value matches when it contains the needle, case-insensitively. A
+/// NULL has no text to contain anything, but the grid draws it as
+/// `NULL`, so it matches the whole word `null` (any case) — and only
+/// that: `/nu`, looking for `number`, must not light up every row
+/// with a NULL in it. Pure / testable.
+pub fn cell_matches(cell: &Cell, needle: &str) -> bool {
+    match cell {
+        Some(text) => text.to_ascii_lowercase().contains(needle),
+        None => needle == "null",
     }
 }
 
@@ -465,7 +476,7 @@ pub fn compute_grid_find_matches(
             continue;
         };
         for (ci, cell) in row.iter().enumerate() {
-            if cell_text(cell).to_ascii_lowercase().contains(&needle) {
+            if cell_matches(cell, &needle) {
                 out.push((vi, ci));
             }
         }

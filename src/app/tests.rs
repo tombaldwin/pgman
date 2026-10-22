@@ -1265,6 +1265,36 @@ fn next_sort_state_cycles_through_target_column() {
     assert_eq!(next_sort_state(Some((3, false)), 5), Some((5, true)));
 }
 
+/// `/null` finds the NULLs (drawn as `NULL`) as well as text holding
+/// `null`; a partial word finds only text; an empty pattern hides
+/// nothing, an all-NULL row included.
+#[test]
+fn filter_and_find_match_a_null_on_the_whole_word_null_only() {
+    let rows = vec![
+        vec![Some("1".into()), None],
+        vec![Some("2".into()), Some("nullable".into())],
+        vec![Some("3".into()), Some(String::new())],
+        vec![None, None],
+    ];
+    assert_eq!(compute_visible_rows(&rows, Some("NULL")), vec![0, 1, 3]);
+    assert_eq!(compute_visible_rows(&rows, Some("null")), vec![0, 1, 3]);
+    assert_eq!(compute_visible_rows(&rows, Some("nul")), vec![1]);
+    assert_eq!(compute_visible_rows(&rows, Some("")), vec![0, 1, 2, 3]);
+    let grid = Grid {
+        columns: vec!["id".into(), "v".into()],
+        rows,
+        truncated: false,
+    };
+    assert_eq!(
+        compute_grid_find_matches(&grid, &[0, 1, 2, 3], "Null"),
+        vec![(0, 1), (1, 1), (3, 0), (3, 1)]
+    );
+    assert_eq!(
+        compute_grid_find_matches(&grid, &[0, 1, 2, 3], "nu"),
+        vec![(1, 1)]
+    );
+}
+
 #[test]
 fn compute_visible_rows_filters_case_insensitively_across_columns() {
     let rows = vec![
