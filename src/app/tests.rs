@@ -2959,6 +2959,7 @@ fn log_picks_with_an_n_plus_one_cluster() -> Vec<crate::query::reconstruct::Reco
         runnable_sql: sql.into(),
         source: Source::HibernateLog,
         src_line: 0,
+        error: None,
     };
     vec![
         make("select * from item where order_id = 1"),
@@ -3010,6 +3011,7 @@ fn log_picks_with_a_cluster_of(
             runnable_sql: (*r).into(),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect()
 }

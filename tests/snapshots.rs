@@ -743,6 +743,7 @@ fn log_pick_at_a_short_terminal_still_shows_a_pick() {
             runnable_sql: format!("select * from users where id = {i}"),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect();
     a.log_pick.index = 17;

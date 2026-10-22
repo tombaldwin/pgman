@@ -975,6 +975,7 @@ fn log_picker_scrolls_to_keep_the_focused_row_visible() {
             params: Vec::new(),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect();
     a.log_pick.index = 50;
@@ -1019,6 +1020,7 @@ fn log_picker_summary_comes_from_the_cluster_cache() {
             params: Vec::new(),
             source: Source::HibernateLog,
             src_line: i,
+            error: None,
         })
         .collect();
     // The cache says otherwise. Rendering from it is the whole point.

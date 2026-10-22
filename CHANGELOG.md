@@ -6,6 +6,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- A Postgres log's `ERROR:` + `STATEMENT:` pair is reconstructed as a
+  query marked failed with the error message — what the default
+  `log_min_error_statement` logs with nothing else on. A statement
+  `log_statement` already logged is marked failed rather than listed
+  twice.
+
 ### Fixed
 
 - A write refused by a read-only connection no longer puts the full
