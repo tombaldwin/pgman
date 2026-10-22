@@ -113,7 +113,7 @@ bootstrap size) the old `""`.
 | path | NULL | empty string |
 |---|---|---|
 | grid, row detail, cell detail | `NULL`, dimmed italic in `theme.null_cell` | blank; cell detail says `(empty string)` |
-| `I` INSERT yank | `NULL` | `''` |
+| `I` INSERT yank | `NULL` | `''` (every value is quoted, see below) |
 | `F` follow foreign key | refused: a NULL references nothing | `= ''` |
 | `y` field yank | copies nothing, says `NULL` | copies `""` |
 | `Y` / `--format csv` | empty unquoted field | `""` (quoted) — `COPY … CSV`'s rule, RFC 4180-valid |
@@ -122,7 +122,7 @@ bootstrap size) the old `""`.
 | `--format json`, `pgman query --json`, MCP `query` | `null` | `""` |
 | sort | NULLS LAST ascending, NULLS FIRST descending: Postgres's defaults | sorts as the smallest string |
 | filter `/`, find `f` | matches only the whole word `null` (any case) | matches nothing but an empty needle |
-| result diff `D` | shown as `NULL`; NULL ↔ `''` is a change | |
+| result diff `D` | shown as `NULL`; NULL ↔ `''` is a change | shown as `''` |
 | DBUnit capture | attribute omitted (flat XML's NULL) | `col=""` |
 
 The filter rule: the grid shows NULL as the word `NULL`, so `/null`
@@ -134,3 +134,8 @@ word matches. A text cell containing `null` still matches as before.
 `--format expanded` stays as it was: it is for reading in a terminal,
 it follows psql's default, and inventing a marker there would make the
 text `NULL` ambiguous instead.
+
+Found while doing it: `format_sql_literal` wrote number- and
+boolean-looking text bare, which changed a text column's `007` to `7`.
+With the grid holding text and no types, the yank now quotes every
+value — an untyped literal, which Postgres reads as the column's type.
