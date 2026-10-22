@@ -361,8 +361,8 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                 print!("{text}");
                 0
             }
-            Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {}", terminal_safe(&msg));
+            Err(e) => {
+                eprintln!("{}", terminal_safe(&error_text(&e)));
                 1
             }
         }
@@ -401,8 +401,8 @@ pub async fn run(opts: Opts) -> Result<i32, String> {
                     0
                 }
             }
-            Err(QueryErr { msg, .. }) => {
-                eprintln!("error: {}", terminal_safe(&msg));
+            Err(e) => {
+                eprintln!("{}", terminal_safe(&error_text(&e)));
                 1
             }
         }
@@ -490,6 +490,22 @@ fn is_renderable(c: char) -> bool {
 /// statement summary in a refusal. A `RAISE NOTICE` carrying
 /// `\x1b]0;pwned\x07` reached the terminal raw; it now goes through the
 /// same filter CSV / TSV cells do ([`is_renderable`]).
+/// What stderr says for a failed statement: `error: ` and the message
+/// (pgman's own `hint:` line, when it added one, included), then the
+/// detail's hint — the server's, as psql shows it, and pgman's longer
+/// half of a read-only refusal, which names `safety.toml`'s full path.
+/// The TUI shows the same hint in its F2 overlay. Pure.
+pub fn error_text(e: &QueryErr) -> String {
+    let mut out = format!("error: {}", e.msg);
+    if let Some(hint) = e.detail.as_ref().and_then(|d| d.hint.as_deref()) {
+        for line in hint.lines() {
+            out.push_str("\nhint: ");
+            out.push_str(line);
+        }
+    }
+    out
+}
+
 pub fn terminal_safe(s: &str) -> String {
     s.chars().filter(|c| is_renderable(*c)).collect()
 }
@@ -497,6 +513,25 @@ pub fn terminal_safe(s: &str) -> String {
 #[cfg(test)]
 mod terminal_safe_tests {
     use super::*;
+
+    #[test]
+    fn error_text_adds_the_details_hint_one_line_each() {
+        let bare = QueryErr::msg("syntax error at or near \"FROM\"");
+        assert_eq!(error_text(&bare), "error: syntax error at or near \"FROM\"");
+        let refused = QueryErr {
+            msg: "cannot execute DELETE in a read-only transaction\nhint: short".into(),
+            position: None,
+            detail: Some(conn::QueryErrDetail {
+                hint: Some("server's\nread_only = true in /x/safety.toml".into()),
+                ..Default::default()
+            }),
+        };
+        assert_eq!(
+            error_text(&refused),
+            "error: cannot execute DELETE in a read-only transaction\nhint: short\n\
+             hint: server's\nhint: read_only = true in /x/safety.toml"
+        );
+    }
 
     #[test]
     fn control_characters_are_dropped_and_line_structure_kept() {

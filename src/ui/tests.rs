@@ -1483,6 +1483,92 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
     assert!(footer.contains("y run · n / esc cancel"), "{footer}");
 }
 
+/// A write refused by a read-only connection at 80x24: the footer
+/// names `safety.toml` in at most two rows and never its path — a full
+/// path made it three and was cut anyway — and the F2 overlay carries
+/// the path whole.
+#[test]
+fn a_read_only_refusal_names_the_file_in_the_footer_and_its_path_in_f2() {
+    let path = std::path::Path::new("/home/op/.config/pgman/safety.toml");
+    let (msg, detail) = crate::conn::explain_read_only_refusal(
+        "cannot execute DELETE in a read-only transaction".into(),
+        Some(crate::conn::QueryErrDetail {
+            code: Some("25006".into()),
+            severity: Some("ERROR".into()),
+            ..Default::default()
+        }),
+        Some(path),
+    );
+    let mut app = App::new(
+        Theme::default(),
+        None,
+        Vec::new(),
+        crate::safety::SafetyConfig::default(),
+    );
+    app.splash_visible = false;
+    app.last_error = Some(msg);
+    app.last_error_detail = detail;
+    app.mode = crate::app::Mode::Editor;
+    let screen = |app: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let rows = screen(&mut app);
+    let footer: Vec<&String> = rows.iter().skip_while(|r| !r.contains('⚠')).collect();
+    // The rendered footer's height also depends on the tap's
+    // process-wide drop counter (a `DROP ×n` badge other tests can
+    // raise), so the row budget is checked with the badges pinned —
+    // the same `error_footer_rows` `draw` sizes the footer from.
+    let badges: usize = footer_badges_with(&app, &app.theme, 0)
+        .iter()
+        .map(|s| display_width(&s.content))
+        .sum();
+    let budgeted = error_footer_rows(
+        &footer_text(app.last_error.as_deref().unwrap()),
+        " · F2 detail",
+        80 - badges - display_width(ERROR_ICON),
+        ERROR_FOOTER_MAX_ROWS as usize,
+    );
+    assert!(
+        budgeted.len() <= 2,
+        "footer is {} rows: {budgeted:?}",
+        budgeted.len()
+    );
+    assert!(!footer.is_empty(), "no error footer:\n{}", rows.join("\n"));
+    let footer = footer
+        .iter()
+        .map(|r| r.trim_end())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(footer.contains("safety.toml"), "{footer}");
+    assert!(footer.contains("F2 detail"), "{footer}");
+    assert!(!footer.contains("/home/op"), "path in the footer: {footer}");
+    assert!(!footer.contains('…'), "the footer was cut: {footer}");
+
+    app.mode = crate::app::Mode::ErrorDetail;
+    let rows = screen(&mut app);
+    // The overlay wraps a long value mid-word: read it with the wraps
+    // (and the panes' borders around it) taken out.
+    let joined: String = rows
+        .concat()
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '│')
+        .collect();
+    assert!(
+        joined.contains("read_only=truein/home/op/.config/pgman/safety.toml"),
+        "F2 lost the path:\n{}",
+        rows.join("\n")
+    );
+}
+
 /// An error with no server detail says so in words, not type names.
 #[test]
 fn the_error_overlay_without_detail_speaks_plainly() {
