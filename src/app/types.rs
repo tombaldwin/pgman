@@ -1007,6 +1007,10 @@ pub struct EnvironmentsUi {
     pub probes: Vec<Vec<ProbeState>>,
     /// Numbers each listing, so probes of an older one are dropped.
     pub probe_seq: u64,
+    /// Environments of round `probe_seq` whose answers haven't landed.
+    /// Rows can't say this: they keep their last answer while the next
+    /// probe runs, so none reads `Probing` after the first round.
+    pub probes_in_flight: usize,
     /// `R`: probe again every `ENV_AUTO_PROBE_INTERVAL` while the
     /// overview is open. Off by default, and apart from the sessions
     /// panel's auto-refresh, so turning that on never starts

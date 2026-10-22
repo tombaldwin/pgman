@@ -3324,11 +3324,7 @@ impl App {
             || ui.discovery.is_some()
             || ui.loading
             // The last round hasn't answered yet: don't pile another on.
-            || ui
-                .probes
-                .iter()
-                .flatten()
-                .any(|p| *p == ProbeState::Probing)
+            || ui.probes_in_flight > 0
         {
             return;
         }
@@ -4774,8 +4770,10 @@ impl App {
         }
         self.environments.probes = states;
         let Some(prober) = prober else {
+            self.environments.probes_in_flight = 0;
             return;
         };
+        self.environments.probes_in_flight = to_run.len();
         for i in to_run {
             let report = self.environments.reports[i].clone();
             match &prober {
@@ -4808,6 +4806,7 @@ impl App {
         if seq != self.environments.probe_seq {
             return;
         }
+        self.environments.probes_in_flight = self.environments.probes_in_flight.saturating_sub(1);
         let Some(states) = self.environments.probes.get_mut(report) else {
             return;
         };

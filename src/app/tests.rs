@@ -10230,21 +10230,31 @@ fn without_a_prober_an_opted_in_environment_says_so_and_connects_nowhere() {
     assert_eq!(a.environments.probes[2], [ProbeState::Off]);
 }
 
-#[test]
-fn auto_probe_is_opt_in_paced_and_never_piles_up() {
+#[tokio::test]
+async fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = rounds.clone();
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
     a.environments_loader = Some(EnvironmentsLoader::Immediate(crate::demo::environments()));
-    a.env_prober = Some(EnvProber::Immediate(std::sync::Arc::new(move |r| {
+    // The real path: answers arrive as messages, and a round that
+    // hasn't answered is one whose messages haven't been handled.
+    a.env_prober = Some(EnvProber::Async(std::sync::Arc::new(move |r| {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        crate::demo::environment_probes(r)
+        let outcomes = crate::demo::environment_probes(&r);
+        Box::pin(async move { outcomes })
     })));
     let rounds_now = || rounds.load(std::sync::atomic::Ordering::SeqCst);
     // One call per environment that probes: production, staging, local.
     let per_round = 3;
+    async fn answer(a: &mut App, n: usize) {
+        for _ in 0..n {
+            let msg = a.msg_rx.as_mut().unwrap().recv().await.unwrap();
+            a.on_msg(msg);
+        }
+    }
     press(&mut a, KeyCode::Char('E'));
     assert_eq!(rounds_now(), per_round, "the listing probes once");
+    answer(&mut a, per_round).await;
 
     // Off by default: time passing probes nothing.
     a.environments.auto_probe_last = None;
@@ -10261,17 +10271,35 @@ fn auto_probe_is_opt_in_paced_and_never_piles_up() {
     a.tick_auto_refresh();
     assert_eq!(rounds_now(), 2 * per_round, "due: probes again");
 
-    // A round still unanswered holds the next one back.
-    a.environments.probes[0][1] = ProbeState::Probing;
+    // Round 2 hasn't answered (its messages are unread). Every row
+    // still shows round 1's answer, none reads Probing, and yet the
+    // next round is held back.
+    assert!(!a
+        .environments
+        .probes
+        .iter()
+        .flatten()
+        .any(|p| *p == ProbeState::Probing));
     a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(
+        rounds_now(),
+        2 * per_round,
+        "round 2 unanswered: no round 3"
+    );
+
+    // Once it answers, the next round is due again.
+    answer(&mut a, per_round).await;
+    a.environments.auto_probe_last = Some(past);
+    a.tick_auto_refresh();
+    assert_eq!(rounds_now(), 3 * per_round, "answered: round 3");
+    answer(&mut a, per_round).await;
 
     // Only while the overview is open.
-    a.environments.probes[0][1] = ProbeState::Off;
     a.mode = Mode::Normal;
+    a.environments.auto_probe_last = Some(past);
     a.tick_auto_refresh();
-    assert_eq!(rounds_now(), 2 * per_round);
+    assert_eq!(rounds_now(), 3 * per_round);
 }
 
 #[test]
