@@ -104,6 +104,10 @@ criterion = { version = "0.8", features = ["html_reports"] }
 ctor = "0.8"
 insta = "1"
 proptest = "1"
+# Certificates for the TLS handshake tests (`conn::tests::handshake`),
+# made at test time so no private key is ever committed. ring only, the
+# provider the rest of the tree uses: `aws_lc_rs` must stay off.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 
 [[bench]]
 name = "hot_paths"
