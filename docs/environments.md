@@ -247,8 +247,11 @@ How a probe connects:
   the same), and the detail line says so. `SESSIONS` and `SIZE` stay
   blank, because they're per server. A primary is probed only when
   there's no replica to read instead.
-- **A server that isn't running** (stopped, starting, or a container
-  that exited) isn't probed. Its status says why.
+- **A server that isn't up** isn't probed. On RDS that is any status
+  but `available`, `backing-up`, `modifying`, `configuring-…`,
+  `resetting-master-credentials` and `storage-optimization` (so
+  `stopped`, `rebooting`, `failed`, `storage-full`, `upgrading`, …); for
+  a container, any state but `running`. Its status says why.
 - **One ssh per bastion.** Every database behind the same bastion rides
   one `ssh` carrying a forward each, closed when the probe ends.
 - **Read-only, bounded.** Every connection is read-only, with a 5 s
