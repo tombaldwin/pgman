@@ -79,21 +79,26 @@ fn server_budget(width: usize, label: usize, rest: usize) -> usize {
 
 /// `host:port` cut to `budget` columns: whole leading DNS labels, then
 /// `…` and the port (`ledger-prod.c9abc1…:5432`), so what's kept still
-/// names the server. With no label short enough, an end cut. Pure.
-fn fit_server(server: &str, budget: usize) -> String {
+/// names the server. Without room for the port, the labels alone
+/// (`ledger-prod…`); with no label short enough, an end cut. Pure.
+pub(crate) fn fit_server(server: &str, budget: usize) -> String {
     if display_width(server) <= budget {
         return server.to_string();
     }
     let (host, port) = server.rsplit_once(':').unwrap_or((server, ""));
-    let tail = if port.is_empty() {
-        "…".to_string()
-    } else {
-        format!("…:{port}")
-    };
     let labels: Vec<&str> = host.split('.').collect();
-    (1..labels.len())
-        .rev()
-        .map(|k| format!("{}{tail}", labels[..k].join(".")))
+    let mut tails = vec!["…".to_string()];
+    if !port.is_empty() {
+        tails.insert(0, format!("…:{port}"));
+    }
+    tails
+        .iter()
+        .flat_map(|tail| {
+            let labels = &labels;
+            (1..labels.len())
+                .rev()
+                .map(move |k| format!("{}{tail}", labels[..k].join(".")))
+        })
         .find(|s| display_width(s) <= budget)
         .unwrap_or_else(|| crate::grid::truncate_cell(server, budget))
 }
@@ -258,6 +263,9 @@ mod tests {
         assert_eq!(fit_server("localhost:5433", 20), "localhost:5433");
         assert_eq!(fit_server(rds, 30), "ledger-prod.c9abc1def2gh…:5432");
         assert_eq!(fit_server(rds, 20), "ledger-prod…:5432");
+        // No room for the port: the name alone, not `ledger-prod.c9…`.
+        assert_eq!(fit_server(rds, 16), "ledger-prod…");
+        assert_eq!(fit_server("db.example.com", 8), "db…");
         let cut = fit_server(rds, 10);
         assert_eq!(display_width(&cut), 10, "{cut}");
         assert!(cut.starts_with("ledger-pr"), "{cut}");
