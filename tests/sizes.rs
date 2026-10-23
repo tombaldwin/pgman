@@ -670,6 +670,18 @@ fn scr_schema_lint() -> App {
     a
 }
 
+/// The wizard focused on a config-advisor finding: its detail strip
+/// grows for the evidence, the setting and the RDS line.
+fn scr_schema_lint_advisor() -> App {
+    let mut a = scr_schema_lint();
+    while a.schema_lint.findings[a.schema_lint.cursor].code != "ADV002" {
+        let before = a.schema_lint.cursor;
+        a.on_key(key('j'));
+        assert_ne!(a.schema_lint.cursor, before, "the demo has an ADV002");
+    }
+    a
+}
+
 fn scr_confirm_terminate() -> App {
     let mut a = scr_sessions();
     a.on_key(key('K'));
@@ -1029,6 +1041,11 @@ fn env_discovery() {
 #[test]
 fn schema_lint() {
     run_sizes("schema_lint", scr_schema_lint);
+}
+
+#[test]
+fn schema_lint_advisor() {
+    run_sizes("schema_lint_advisor", scr_schema_lint_advisor);
 }
 
 #[test]

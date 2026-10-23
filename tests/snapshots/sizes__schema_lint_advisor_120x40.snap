@@ -1,0 +1,45 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ─────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: ledger-staging…:5432  •  Database: ledger  •  User: billing       ││                PostgreSQL   schema lint │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
+ 1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WH╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ──────────────────────────────────────────────╮    │
+│  OR│  SEV    CODE     object                                            title                                   │    │
+│    │  HIGH   LINT101  public.invoices.invoices_subscription_id_fkey     FK column not the leading column of any…│    │
+╰────│  HIGH   LINT101  public.refunds.refunds_payment_id_fkey            FK column not the leading column of any…│────╯
+╭[ ◆ │  HIGH   LINT101  public.subscription_items.subscription_items_pl…  FK column not the leading column of any…│────╮
+│numb│  HIGH   LINT101  public.subscription_items.subscription_items_su…  FK column not the leading column of any…│    │
+│INV-│  HIGH   LINT101  public.subscriptions.subscriptions_coupon_id_fk…  FK column not the leading column of any…│    │
+│INV-│  HIGH   LINT101  public.subscriptions.subscriptions_plan_id_fkey   FK column not the leading column of any…│    │
+│INV-│  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK column not the leading column of any…│    │
+│INV-│  MED    ADV002   ledger                                            queries spill to temp files (187 GB so …│    │
+│INV-│  ADV002 · queries spill to temp files (187 GB so far)                                                      │    │
+│    │  setting:  work_mem 4MB → 8MB (no restart)                                                                 │    │
+│    │  suggest:  ALTER ROLE billing SET work_mem = '8MB';                                                        │    │
+│    │  evidence: counters since 2026-10-16 00:00:05+00 (7d 9h)                                                   │    │
+│    │    temp_files 2318 · temp_bytes 200789721088 (187 GB written, 1.1 GB an hour)                              │    │
+│    │    18 MB a call × 1412 calls: SELECT customer_id, sum(total) FROM invoices WHERE issued_at >= $1 GROUP BY  │    │
+│    │    customer_id ORDER BY 2 DESC                                                                             │    │
+│    │    41 MB a call × 96 calls: SELECT * FROM webhook_deliveries WHERE status = $1 ORDER BY created_at         │    │
+│    │  because:  the worst statement spills 41 MB a call, more than 4× work_mem: twice helps the smaller         │    │
+│    │            spills, but no safe work_mem covers that one — look at the statement (an index, or less data    │    │
+│    │            per sort)                                                                                       │    │
+│    │  RDS:      per role: ALTER ROLE works the same on RDS and Aurora · server-wide: parameter group key        │    │
+│    │            work_mem (dynamic: no reboot, in kB) · same on Aurora                                           │    │
+│    │  why:      sorts and hashes bigger than work_mem (4MB) write temp files. work_mem is per sort node per     │    │
+│    │            connection, so raise it for the role that spills rather than server-wide                        │    │
+│    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   tip · severity-sorted (HIGH first) · y yanks SQL suggestion · e evidence query · ? full keys
