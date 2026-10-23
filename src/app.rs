@@ -3865,6 +3865,17 @@ impl App {
         }
     }
 
+    /// The grid was replaced by something that is not a run's result
+    /// (`\l`, the bootstrap after a connect, the demo's `\df`): drop
+    /// the old result's paging record, and its cursor, which now feeds
+    /// nothing.
+    pub(crate) fn forget_result_paging(&mut self) {
+        if self.result_more() == crate::grid::More::CursorOpen {
+            self.close_cursor();
+        }
+        self.result_paging = None;
+    }
+
     /// How the active result can continue past the rows it holds.
     pub fn result_more(&self) -> crate::grid::More {
         result_more(

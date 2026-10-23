@@ -496,6 +496,7 @@ impl App {
     pub(super) fn apply_bootstrap_grid(&mut self, grid: Grid) {
         self.databases = parse_bootstrap_databases(&grid);
         self.grid = Grid::default();
+        self.forget_result_paging();
         self.grid_state.select(None);
         self.reset_grid_view();
     }

@@ -493,6 +493,7 @@ impl App {
             let grid = crate::demo::functions_grid(pattern.as_deref());
             let n = grid.rows.len();
             self.grid = grid;
+            self.forget_result_paging();
             self.grid_state.select((n > 0).then_some(0));
             self.reset_grid_view();
             self.last_status = Some(format!("\\df → {n} function(s)"));
@@ -577,6 +578,7 @@ impl App {
                 .collect(),
             truncated: false,
         };
+        self.forget_result_paging();
         self.grid_state
             .select(if self.grid.is_empty() { None } else { Some(0) });
         self.reset_grid_view();

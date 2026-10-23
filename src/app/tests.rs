@@ -13817,6 +13817,21 @@ async fn a_reconnect_closes_the_cursor_on_the_session_it_leaves() {
 }
 
 #[test]
+fn a_grid_that_is_not_a_run_result_drops_the_paging_and_its_cursor() {
+    // `\l` puts the database list where the paged result was.
+    let mut a = app_with_open_cursor();
+    a.databases = vec![DatabaseInfo {
+        name: "ledger".into(),
+        size: "8 MB".into(),
+    }];
+    a.editor.buffer = "\\l".into();
+    a.request_run(RunKind::Run);
+    assert_eq!(a.grid.columns, vec!["database", "size"]);
+    assert!(a.result_paging.is_none());
+    assert!(a.cursor.is_none());
+}
+
+#[test]
 fn ctrl_c_from_the_results_cancels_a_running_fetch() {
     let mut a = app_with_open_cursor();
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
