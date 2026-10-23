@@ -26,12 +26,10 @@ static OTLP_ACCEPT_WARN: WarnThrottle = WarnThrottle::new();
 static DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
 static OTLP_CONN_ENDED_WARN: WarnThrottle = WarnThrottle::new();
 
-/// Sanity cap on OTLP-derived `duration_micros`: 1 hour.
-/// Anything beyond this is broken telemetry (clock skew /
-/// hostile span / bug). Capping prevents one such span
-/// from hijacking the `TotalTime` sort via saturating
-/// arithmetic in [`super::group_hotspots`].
-pub const OTLP_DURATION_CAP_MICROS: u64 = 3_600_000_000;
+/// Sanity cap on OTLP-derived `duration_micros`: the wire path's
+/// [`super::TAP_DURATION_CAP_MICROS`] (1 hour), so a span and a
+/// pgman-tap frame are clamped alike.
+pub const OTLP_DURATION_CAP_MICROS: u64 = super::TAP_DURATION_CAP_MICROS;
 
 /// Attribute key the OTel semantic conventions use to mark a
 /// span as a database call (always `"db.system"`, value

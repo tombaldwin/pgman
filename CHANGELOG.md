@@ -47,6 +47,10 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   `400 not utf-8`. The inflated body has the same 4 MiB cap as the raw
   one. Any other `Content-Encoding` gets a 415 saying to send gzip or
   none.
+- A pgman-tap event claiming an absurd duration is clamped to one hour,
+  as OpenTelemetry spans already were; `u64::MAX` showed as
+  `18446744073709.55s`, broke the column alignment and topped every
+  sort by time.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

@@ -580,7 +580,37 @@ pub fn parse(bytes: &[u8]) -> Result<TapEvent, String> {
     }
     validate_required(&event)?;
     enforce_field_caps(&mut event);
+    if let Some(raw) = clamp_duration(&mut event) {
+        WIRE_DURATION_CLAMP_WARN.warn(|suppressed| {
+            let suffix = if suppressed > 0 {
+                format!(" ({suppressed} more suppressed in the last second)")
+            } else {
+                String::new()
+            };
+            format!("tap: clamped duration {raw}µs to cap {TAP_DURATION_CAP_MICROS}µs{suffix}")
+        });
+    }
     Ok(event)
+}
+
+/// Sanity cap on an event's `duration_micros`: 1 hour. Anything past
+/// it is broken telemetry (clock skew, a hostile frame, a bug): one
+/// `u64::MAX` rendered as `18446744073709.55s`, pushed the duration
+/// column out of line, and took over every sort by time through the
+/// saturating sums in [`group_hotspots`]. Applied by [`parse`] (TCP,
+/// UDP, replay) and by the OTLP path as `otlp::OTLP_DURATION_CAP_MICROS`.
+pub const TAP_DURATION_CAP_MICROS: u64 = 3_600_000_000;
+
+static WIRE_DURATION_CLAMP_WARN: WarnThrottle = WarnThrottle::new();
+
+/// Clamp `event.duration_micros` to [`TAP_DURATION_CAP_MICROS`];
+/// the raw value when it had to be. Pure.
+fn clamp_duration(event: &mut TapEvent) -> Option<u64> {
+    let raw = event.duration_micros?;
+    (raw > TAP_DURATION_CAP_MICROS).then(|| {
+        event.duration_micros = Some(TAP_DURATION_CAP_MICROS);
+        raw
+    })
 }
 
 /// Truncate `s` in place to at most `max_bytes` UTF-8 bytes,
@@ -1213,6 +1243,27 @@ mod tests {
         assert_eq!(params[1], "short");
         assert!(e.caller.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
         assert!(e.error.as_ref().unwrap()[0].len() <= TAP_MAX_FIELD_BYTES);
+    }
+
+    #[test]
+    fn parse_clamps_an_absurd_duration_like_the_otlp_path() {
+        let frame = |dur: u64| {
+            format!(
+                r#"{{"v":1,"kind":"query","ts_unix_micros":1,"sql":"select 1","duration_micros":{dur}}}"#
+            )
+        };
+        let e = parse(frame(u64::MAX).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(TAP_DURATION_CAP_MICROS));
+        assert_eq!(TAP_DURATION_CAP_MICROS, OTLP_DURATION_CAP_MICROS);
+        // At the cap, and below it, the value is the sender's.
+        let e = parse(frame(TAP_DURATION_CAP_MICROS).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(TAP_DURATION_CAP_MICROS));
+        let just_under = TAP_DURATION_CAP_MICROS - 1;
+        let e = parse(frame(just_under).as_bytes()).unwrap();
+        assert_eq!(e.duration_micros, Some(just_under));
+        // No duration (a heartbeat) stays none.
+        let e = parse(br#"{"v":1,"kind":"heartbeat","ts_unix_micros":1}"#).unwrap();
+        assert_eq!(e.duration_micros, None);
     }
 
     #[test]
