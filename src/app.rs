@@ -842,7 +842,7 @@ pub fn choose_diff_key(
         };
         if let (Ok(ka), Ok(kb)) = (key(a), key(b)) {
             if ka == kb {
-                let cols = ka.pk.iter().map(|(idx, _)| *idx).collect();
+                let cols = ka.pk.iter().map(|(idx, ..)| *idx).collect();
                 return (RowKey::Columns(cols), true);
             }
         }

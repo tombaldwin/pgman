@@ -6889,7 +6889,7 @@ async fn edit_cell(
         pgman::safety::StatementKind::Update { has_where: true },
         "{sql}"
     );
-    pgman::conn::run_single_row_update(client, &sql, keep_open)
+    pgman::conn::run_single_row_update(client, &sql, &edit, keep_open)
         .await
         .map_err(|e| e.msg)
 }
@@ -7141,6 +7141,7 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     let none = pgman::conn::run_single_row_update(
         &client,
         &pgman::query::cell_edit::build_update_sql(&edit, Some("x")),
+        &edit,
         false,
     )
     .await
@@ -7175,6 +7176,155 @@ async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
     assert_eq!(open_tx.as_deref(), Some("t"));
     assert!(nested.is_err(), "{nested:?}");
     assert_eq!(mine.as_deref(), Some("mine"));
+}
+
+/// Plan the edit of cell (`row`, `col`) of `select` against `cache` —
+/// a schema cache read before the table changed, as pgman's is when a
+/// rename happens after connect — and run it under the one-row guard.
+async fn edit_cell_with_cache(
+    client: &tokio_postgres::Client,
+    cache: &pgman::query::schema::SchemaCache,
+    select: &str,
+    (row, col): (usize, usize),
+    new: &str,
+) -> Result<(String, pgman::conn::SingleRowUpdate), String> {
+    let (grid, origins) = pgman::conn::run_statement_with_origins(client, select)
+        .await
+        .map_err(|e| e.msg)?;
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        cache,
+        pgman::app::infer_single_source_table(select).as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[row],
+        row,
+        col,
+    )
+    .map_err(|r| r.to_string())?;
+    let sql = pgman::query::cell_edit::build_update_sql(&edit, Some(new));
+    pgman::conn::run_single_row_update(client, &sql, &edit, false)
+        .await
+        .map(|done| (sql, done))
+        .map_err(|e| e.msg)
+}
+
+/// A column renamed after pgman read the schema, and a new one added
+/// under its old name: the cache still calls the edited column (attnum
+/// 3) `b`, so the UPDATE says `SET b` — which the server now reads as
+/// the new column. The write checks the attnum's name inside its own
+/// transaction and rolls back instead; neither column changes. Inside
+/// the operator's REPEATABLE READ transaction too, whose snapshot
+/// predates the rename.
+#[tokio::test]
+async fn a_cell_edit_after_its_column_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let (ddl, _t2) = writable_client().await;
+    let t = it_name("ce_ren_col");
+    let setup = format!(
+        "DROP TABLE IF EXISTS {t}; CREATE TABLE {t} (id int PRIMARY KEY, a text, b text); \
+         INSERT INTO {t} VALUES (1, 'a1', 'b1')"
+    );
+    let rename = format!(
+        "ALTER TABLE {t} RENAME COLUMN b TO c; ALTER TABLE {t} ADD COLUMN b text DEFAULT 'new-b'"
+    );
+    let select = format!("SELECT id, c FROM {t}");
+    let both = format!("SELECT c || '/' || b FROM {t}");
+
+    client.batch_execute(&setup).await.expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let plain = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    let plain_after = scalar(&client, &both).await;
+    let open_tx = scalar(&client, "SELECT now() = statement_timestamp()").await;
+
+    client.batch_execute(&setup).await.expect("recreate");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+        .await
+        .expect("begin");
+    // Take the snapshot without touching the table (a lock on it would
+    // hold the ALTER back until the transaction ends).
+    let _ = scalar(&client, "SELECT 'snapshot'").await;
+    ddl.batch_execute(&rename).await.expect("rename");
+    let in_rr = edit_cell_with_cache(&client, &stale, &select, (0, 1), "X").await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let rr_after = scalar(&client, &both).await;
+
+    // A fresh cache names the column right, and the edit goes through.
+    let fresh = pgman::query::schema::fetch(&client).await;
+    let ok = edit_cell_with_cache(&client, &fresh, &select, (0, 1), "X").await;
+    let ok_after = scalar(&client, &both).await;
+
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let refused = |r: Result<(String, pgman::conn::SingleRowUpdate), String>| {
+        let msg = r.expect_err("stale column");
+        assert!(
+            msg.starts_with("the table changed since pgman read it ('b' is now 'c')"),
+            "{msg}"
+        );
+        assert!(msg.contains("rolled back, nothing changed"), "{msg}");
+    };
+    refused(plain);
+    assert_eq!(plain_after.as_deref(), Some("b1/new-b"));
+    assert_eq!(
+        open_tx.as_deref(),
+        Some("t"),
+        "the edit's transaction ended"
+    );
+    refused(in_rr);
+    assert_eq!(rr_after.as_deref(), Some("b1/new-b"));
+    let (sql, done) = ok.expect("fresh cache");
+    assert!(sql.contains("SET c = 'X'"), "{sql}");
+    assert_eq!(done.value.as_deref(), Some("X"));
+    assert_eq!(ok_after.as_deref(), Some("X/new-b"));
+}
+
+/// The key column renamed and a new one added under its name, holding
+/// the other row's key: the stale cache's `WHERE id = '2'` would match
+/// exactly one row — the wrong one — and pass the one-row guard. The
+/// key's attnum is checked like the edited column's, and nothing
+/// changes.
+#[tokio::test]
+async fn a_cell_edit_after_its_key_was_renamed_and_re_added_writes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_ren_key");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); \
+             INSERT INTO {t} VALUES (1, 'ann'), (2, 'bo')"
+        ))
+        .await
+        .expect("create");
+    let stale = pgman::query::schema::fetch(&client).await;
+    client
+        .batch_execute(&format!(
+            "ALTER TABLE {t} RENAME COLUMN id TO old_id; ALTER TABLE {t} ADD COLUMN id int; \
+             UPDATE {t} SET id = 3 - old_id"
+        ))
+        .await
+        .expect("rename");
+    // Row 1 is old_id 2 (`bo`), whose new `id` is 1; `ann` has id 2.
+    let refused = edit_cell_with_cache(
+        &client,
+        &stale,
+        &format!("SELECT old_id, name FROM {t} ORDER BY old_id"),
+        (1, 1),
+        "X",
+    )
+    .await;
+    let after = scalar(
+        &client,
+        &format!("SELECT string_agg(name, ',' ORDER BY old_id) FROM {t}"),
+    )
+    .await;
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    let msg = refused.expect_err("stale key");
+    assert!(
+        msg.starts_with("the table changed since pgman read it ('id' is now 'old_id')"),
+        "{msg}"
+    );
+    assert_eq!(after.as_deref(), Some("ann,bo"));
 }
 
 /// Inside the operator's open transaction a good edit stays theirs to

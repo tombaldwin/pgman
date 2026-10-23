@@ -297,7 +297,8 @@ impl App {
         self.last_status = Some("saving the edit…".into());
         tokio::spawn(async move {
             let client = db.ready().await;
-            let msg = match conn::run_single_row_update(&client, &sql, keep_open).await {
+            let result = conn::run_single_row_update(&client, &sql, &pending.edit, keep_open).await;
+            let msg = match result {
                 Ok(done) => AppMsg::CellUpdated {
                     generation,
                     pending,
@@ -422,6 +423,9 @@ mod tests {
             old: old.map(str::to_string),
             row: 1,
             col: 1,
+            table_oid: 100,
+            attnum: 2,
+            key_attnums: vec![1],
         };
         a.cell_edit = Some(CellEditUi {
             input: TextInput::with_text(old.unwrap_or_default()),

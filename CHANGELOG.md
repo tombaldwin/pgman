@@ -38,7 +38,12 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   key in the result, and otherwise says why not (a join, a view, no
   primary key, the key not selected, a computed column, read-only). The
   UPDATE changes exactly one row or is rolled back, and the cell then
-  shows the value as the server stored it.
+  shows the value as the server stored it. Before it commits, pgman
+  checks the server still calls the table, the column and the key what
+  pgman's schema cache does; a column renamed since pgman read the
+  schema (and another added under its old name) is rolled back with
+  `the table changed since pgman read it`, never written to the wrong
+  column.
 
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to

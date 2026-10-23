@@ -1509,9 +1509,15 @@ const EDIT_SAVEPOINT: &str = "pgman_cell_edit";
 /// is released and the operator's transaction stays open; with
 /// `keep_open` (`auto_tx`) pgman's transaction is left for the commit /
 /// rollback prompt; otherwise it commits.
+///
+/// Before any of that, the table and columns `sql` names must still be
+/// the ones `edit`'s result was read from
+/// (`query::cell_edit::check_identity`); a schema cache older than a
+/// rename is rolled back, not written to the wrong column.
 pub async fn run_single_row_update(
     client: &tokio_postgres::Client,
     sql: &str,
+    edit: &crate::query::cell_edit::CellEdit,
     keep_open: bool,
 ) -> Result<SingleRowUpdate, QueryErr> {
     let nested = match client
@@ -1541,6 +1547,28 @@ pub async fn run_single_row_update(
             }
         }
         crate::query::cell_edit::check_one_row(rows).map_err(QueryErr::msg)?;
+        // The UPDATE named its table and columns from the schema cache,
+        // which may predate a rename. Now that it holds its lock (no
+        // ALTER TABLE can commit until this transaction ends), ask the
+        // server what the attnums the result was read from are called.
+        // `pg_identify_object_as_address` reads the catalog as of now,
+        // not as of the transaction's snapshot, so it sees what the
+        // UPDATE itself resolved even inside a REPEATABLE READ block.
+        let expected = crate::query::cell_edit::expected_identity(edit);
+        let attnums: Vec<i32> = expected.iter().map(|(n, _)| i32::from(*n)).collect();
+        let server = client
+            .query(
+                "SELECT n::int2, (pg_identify_object_as_address('pg_class'::regclass, $1::oid, n)).object_names \
+                 FROM unnest($2::int4[]) AS n",
+                &[&edit.table_oid, &attnums],
+            )
+            .await
+            .map_err(QueryErr::from)?
+            .iter()
+            .map(|r| Ok((r.try_get(0)?, r.try_get(1)?)))
+            .collect::<Result<Vec<crate::query::cell_edit::ServerName>, tokio_postgres::Error>>()
+            .map_err(QueryErr::from)?;
+        crate::query::cell_edit::check_identity(edit, &server).map_err(QueryErr::msg)?;
         Ok(value)
     }
     .await;
