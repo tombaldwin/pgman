@@ -56,10 +56,12 @@ impl App {
     }
 
     /// The live connection closed under the App
-    /// (`AppMsg::ConnectionLost`): drop the dead client and its pager,
+    /// (`AppMsg::ConnectionLost`): drop its pager and cancel dispatcher,
     /// clear what belonged to the session as a reconnect does, and show
     /// the connection-failed card with the reason — whose `r` reconnects
-    /// and `p` picks another connection, as after a failed connect.
+    /// and `p` picks another connection, as after a failed connect. The
+    /// dead client itself stays until a reconnect replaces it; `App::db`
+    /// and `spawn_run` send nothing to it while the card is up.
     pub(super) fn on_connection_lost(&mut self, reason: String) {
         if !matches!(self.conn_state, ConnState::Connected { .. }) {
             // A connect that failed says so itself (`BootFailed`); one

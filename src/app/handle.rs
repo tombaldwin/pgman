@@ -43,7 +43,11 @@ impl App {
                 if client.is_closed() {
                     // Closed between the bootstrap and now: its
                     // `ConnectionLost` landed while this was still
-                    // connecting, and went unheeded.
+                    // connecting, and went unheeded. Its tunnel goes
+                    // off-thread, like the one a Booted replaces below.
+                    if let Some(dead) = tunnel {
+                        tokio::task::spawn_blocking(move || drop(dead));
+                    }
                     self.conn_state = ConnState::Failed(super::msg::connection_lost_reason(None));
                     return;
                 }

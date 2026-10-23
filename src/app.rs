@@ -4046,9 +4046,13 @@ impl App {
     /// Send a `M` request to the pager; the answer lands as
     /// `AppMsg::PageLoaded` for the active result.
     fn spawn_page_request(&mut self, req: PageRequest) {
-        let (Some(pager), Some(result_id)) = (
+        // Behind the connection-failed card the pager, if any, is the
+        // session a failed reconnect left: nothing to page on (as `db`).
+        let failed = matches!(self.conn_state, ConnState::Failed(_));
+        let (Some(pager), Some(result_id), false) = (
             self.pager.clone(),
             self.result_paging.as_ref().map(|p| p.id),
+            failed,
         ) else {
             self.last_error = Some(self.not_connected_message());
             return;
