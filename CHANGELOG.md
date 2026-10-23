@@ -51,6 +51,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   as OpenTelemetry spans already were; `u64::MAX` showed as
   `18446744073709.55s`, broke the column alignment and topped every
   sort by time.
+- The tap List view's app column is cut by display width, so a CJK app
+  name no longer pushes its row's SQL out of line. A name too long for
+  the column ends in `…`.
 - A write refused by a read-only connection no longer puts the full
   `safety.toml` path in the footer, where at 80 columns it took three
   rows and was cut anyway. The footer names `safety.toml`; the F2

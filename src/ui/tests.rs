@@ -593,6 +593,57 @@ fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
         .collect()
 }
 
+#[test]
+fn tap_app_cell_is_exactly_the_column_wide_in_display_columns() {
+    use crate::ui::tap::tap_app_cell;
+    for app in [
+        "",
+        "svc",
+        "billing-service-primary-eu",
+        "注文",
+        "注文サービス注文サービス",
+    ] {
+        let cell = tap_app_cell(app);
+        assert_eq!(display_width(&cell), 20, "{app:?} → {cell:?}");
+    }
+    assert_eq!(tap_app_cell("svc").trim_end(), "svc");
+    assert!(tap_app_cell("注文サービス注文サービス").contains('…'));
+}
+
+/// A CJK app name paints two columns a char; cut by char count it
+/// pushed its row's SQL right of every other row's.
+#[test]
+fn tap_list_keeps_the_sql_column_aligned_past_a_wide_app_name() {
+    let mut a = settled_app(false, false);
+    let mut narrow = tap_query_with_params("select narrow", &[], false);
+    narrow.app = Some("svc".into());
+    let mut wide = tap_query_with_params("select wide", &[], false);
+    wide.app = Some("注文サービス注文サービス".into());
+    a.on_tap_event(narrow);
+    a.on_tap_event(wide);
+    a.splash_visible = false;
+    a.mode = crate::app::Mode::TapMonitor;
+    a.tap_nav.view = crate::app::TapView::List;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+    term.draw(|f| draw(f, &mut a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    // The buffer column where `needle` starts, on whichever row has it.
+    let column_of = |needle: &str| {
+        let chars: Vec<String> = needle.chars().map(|c| c.to_string()).collect();
+        (0..buf.area.height)
+            .find_map(|y| {
+                (0..buf.area.width - chars.len() as u16).find(|&x| {
+                    chars
+                        .iter()
+                        .enumerate()
+                        .all(|(i, c)| buf[(x + i as u16, y)].symbol() == c)
+                })
+            })
+            .unwrap_or_else(|| panic!("{needle:?} not drawn"))
+    };
+    assert_eq!(column_of("select narrow"), column_of("select wide"));
+}
+
 /// The List view shows the focused query's bound parameters — before,
 /// they were only stored and written to `--tap-record`.
 #[test]

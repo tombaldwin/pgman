@@ -112,7 +112,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
-            "  {:>10}  {:>9}  {:<20}  {}",
+            "  {:>10}  {:>9}  {:<TAP_APP_COL$}  {}",
             "duration", "rows", "app", "sql / kind"
         )
         .to_uppercase(),
@@ -121,7 +121,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             .add_modifier(Modifier::BOLD),
     )));
     let inner_w = inner.width as usize;
-    let sql_col = inner_w.saturating_sub(2 + 10 + 2 + 9 + 2 + 20 + 2);
+    let sql_col = inner_w.saturating_sub(2 + 10 + 2 + 9 + 2 + TAP_APP_COL + 2);
     for (i, e) in app
         .tap_events
         .iter()
@@ -142,11 +142,7 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
         };
         let dur = e.duration_micros.map(format_duration).unwrap_or_default();
         let rows = e.rows.map(|r| r.to_string()).unwrap_or_default();
-        let app_name = e
-            .app
-            .as_deref()
-            .map(|s| s.chars().take(20).collect::<String>())
-            .unwrap_or_default();
+        let app_name = tap_app_cell(e.app.as_deref().unwrap_or(""));
         let body = match e.kind {
             crate::tap::TapKind::Query => e.sql_preview(sql_col),
             crate::tap::TapKind::TxnBoundary => match e.txn_outcome {
@@ -161,10 +157,24 @@ fn draw_tap_monitor_list(f: &mut Frame, inner: Rect, app: &App) {
             // Heartbeats never land here (filtered upstream).
             crate::tap::TapKind::Heartbeat => "[heartbeat]".into(),
         };
-        let line = format!("  {dur:>10}  {rows:>9}  {app_name:<20}  {body}");
+        let line = format!("  {dur:>10}  {rows:>9}  {app_name}  {body}");
         lines.push(Line::from(Span::styled(line, style)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Display columns of the List view's app column.
+const TAP_APP_COL: usize = 20;
+
+/// The List view's app cell: `app` cut and padded to exactly
+/// [`TAP_APP_COL`] display columns. Counting chars instead let a CJK
+/// app name paint twice as wide and shove its row's SQL right of every
+/// other row's. Pure / testable.
+pub(crate) fn tap_app_cell(app: &str) -> String {
+    let mut cell = crate::grid::truncate_cell(app, TAP_APP_COL);
+    let pad = TAP_APP_COL.saturating_sub(display_width(&cell));
+    cell.extend(std::iter::repeat_n(' ', pad));
+    cell
 }
 
 /// Rows the List view's params detail takes: a rule, then the values
