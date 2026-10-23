@@ -15,8 +15,10 @@
 //! skips persisting draft / history / saved-queries to disk — a
 //! demo run can't clobber the operator's real session.
 
+mod advisor;
 mod schema;
 
+pub use advisor::advisor;
 pub use schema::{live_lint, table_ddl};
 
 use crate::app::{App, ConnState, DatabaseInfo};

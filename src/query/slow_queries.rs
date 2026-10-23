@@ -23,6 +23,14 @@ pub struct SlowQueryRow {
     pub rows: i64,
 }
 
+/// What to tell the operator when `pg_stat_statements` isn't there.
+/// The slow-queries panel and the config advisor say the same.
+pub const PGSS_MISSING: &str =
+    "pg_stat_statements isn't installed in this database. Install it once, \
+     on the primary: CREATE EXTENSION pg_stat_statements; (the module must be in \
+     shared_preload_libraries — the default on RDS). A replica gets it through \
+     replication.";
+
 /// The SQL we issue to populate the panel. The leading comment
 /// tags the query so it can be filtered out of its own result on
 /// the next refresh.

@@ -135,6 +135,12 @@ pub enum AppMsg {
         generation: u64,
         result: Result<Vec<crate::query::lint::Finding>, String>,
     },
+    /// The config advisor's checks (ADV…) finished. Merged into the
+    /// wizard's findings the same way as [`AppMsg::LiveLintLoaded`].
+    AdvisorLoaded {
+        generation: u64,
+        result: Result<crate::query::advisor::Report, String>,
+    },
     /// Pre-flight `EXPLAIN (FORMAT JSON)` finished. The handler
     /// decides between proceeding directly (estimate under
     /// threshold) and opening a Confirm prompt (over threshold).
@@ -200,6 +206,7 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::AdvisorLoaded { generation, .. }
             | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::UpdateCheck(_)

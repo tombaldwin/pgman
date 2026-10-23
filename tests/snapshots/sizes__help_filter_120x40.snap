@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)                                            │
-│   grid                    │   8 rows in 6 sections match 'yank'                                                      │
+│   grid                    │   9 rows in 6 sections match 'yank'                                                      │
 │   editor                  │                                                                                          │
 │   confirm                 │   grid                                                                                   │
 │   tx open                 │     I             yank focused row as INSERT (single-table SELECTs)                      │
@@ -32,7 +32,7 @@ expression: dump(&buf)
 │   jdbc tap                │                                                                                          │
 │   result diff             │   schema wizard                                                                          │
 │   schema wizard           │     y             yank the focused finding's SQL suggestion (if any)                     │
-│   help                    │                                                                                          │
+│   help                    │     e             yank an ADV finding's evidence query, to run in the editor             │
 │                           │                                                                                          │
 │                           │                                                                                          │
 │                           │                                                                                          │

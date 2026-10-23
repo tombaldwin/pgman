@@ -696,6 +696,32 @@ fn demo_live_lint_flags_exactly_the_unindexed_foreign_keys() {
     assert!(findings.iter().any(|f| f.code == "LINT104"));
 }
 
+/// The demo's advisor answers every check through the real classifiers,
+/// so a threshold that moves past the fixture's numbers shows here, and
+/// its lock chain is the one the sessions panel shows.
+#[test]
+fn demo_advisor_fires_every_check_with_its_evidence() {
+    let report = advisor();
+    assert!(report.errors.is_empty());
+    let codes: Vec<&str> = report.findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["ADV001", "ADV002", "ADV003", "ADV004", "ADV005"]);
+    for f in &report.findings {
+        let advice = f.advice.as_deref().expect("advice");
+        assert!(!advice.evidence.is_empty(), "{}", f.code);
+        assert!(advice.evidence_sql.starts_with("/* pgman:advisor */"));
+        let change = advice.change.as_ref().expect("a setting");
+        assert!(!change.rds.is_empty(), "{}", f.code);
+    }
+    let lock = &report.findings[3];
+    assert_eq!(lock.object, "pid 31877");
+    let blocked: Vec<i32> = sessions()
+        .iter()
+        .filter(|s| s.is_blocked())
+        .map(|s| s.pid)
+        .collect();
+    assert_eq!(blocked, [31_840]);
+}
+
 /// `P` in the demo answers as a real run would: a replica is refused, a
 /// database whose SCHEMA is Flyway's gets the version table's "doesn't
 /// cover", and only `ledger` gets the schema_version plan.

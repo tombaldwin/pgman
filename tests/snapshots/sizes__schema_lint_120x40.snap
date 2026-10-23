@@ -26,10 +26,10 @@ expression: dump(&buf)
 │    │  HIGH   LINT101  public.subscriptions.subscriptions_coupon_id_fk…  FK column not the leading column of any…│    │
 │    │  HIGH   LINT101  public.subscriptions.subscriptions_plan_id_fkey   FK column not the leading column of any…│    │
 │    │  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK column not the leading column of any…│    │
+│    │  MED    ADV002   ledger                                            queries spill to temp files (187 GB so …│    │
+│    │  MED    ADV004   pid 31877                                         1 session(s) waiting on locks, longest …│    │
+│    │  MED    ADV005   server                                            32% of checkpoints forced by WAL volume │    │
 │    │  MED    LINT102  public.audit_log.audit_log_entity_idx             index never scanned since last stats re…│    │
-│    │  MED    LINT104  public.webhook_deliveries                         high dead-tuple ratio (table bloat)     │    │
-│    │                                                                                                            │    │
-│    │                                                                                                            │    │
 │    │  LINT101 · FK column not the leading column of any index                                                   │    │
 │    │  object: public.accounts.accounts_customer_id_fkey                                                         │    │
 │    │  constraint `accounts_customer_id_fkey` on `public.accounts` references column(s) (customer_id) — no inde  │    │
@@ -42,4 +42,4 @@ expression: dump(&buf)
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   tip · severity-sorted (HIGH first) · y yanks SQL suggestion · ? full keys
+ RO   TAP   N+1 ×1   tip · severity-sorted (HIGH first) · y yanks SQL suggestion · e evidence query · ? full keys

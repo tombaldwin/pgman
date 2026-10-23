@@ -1674,6 +1674,7 @@ mod tests {
             object: "public.events".into(),
             detail: "rows can't be told apart".into(),
             suggestion: Some("ALTER TABLE …".into()),
+            advice: None,
         };
         let v: Value =
             serde_json::from_str(&render_schema_lint("r", &[f], Some(true), None)).unwrap();

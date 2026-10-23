@@ -1890,7 +1890,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "j/k navigate · space choose · s save · p scope · d again · q / esc back"
                 }
                 Mode::Environments => "j/k navigate · enter connect · d discover · r refresh · q / esc close",
-                Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
+                Mode::SchemaLint => "j/k navigate · y yank suggestion · e yank evidence query · r refresh · q / esc close",
                 Mode::ErrorDetail => "esc / q / ! close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
@@ -2352,10 +2352,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
         "your app's statements, live from the JDBC tap (F4)",
     ),
     ("result diff", "compare two results, A against B (D)"),
-    (
-        "schema wizard",
-        "schema lint: missing keys, unused indexes (W)",
-    ),
+    ("schema wizard", "schema lint and config advisor (W)"),
     ("help", "this overlay's own keys"),
 ];
 
@@ -3129,6 +3126,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    e             yank an ADV finding's evidence query, to run in the editor"),
+        &mut lines,
+    );
+    push(
         row("    r             refresh (re-runs every check)"),
         &mut lines,
     );
@@ -3144,6 +3145,18 @@ pub(crate) fn help_body(
     );
     push(
         row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz · 107 serial not unique"),
+        &mut lines,
+    );
+    push(
+        row("    config advisor (read-only, from the server's statistics): ADV001 cache hit ratio"),
+        &mut lines,
+    );
+    push(
+        row("                  · 002 temp spills · 003 autovacuum behind · 004 lock waits · 005 checkpoints"),
+        &mut lines,
+    );
+    push(
+        row("                  each with its evidence, a setting, and the RDS / Aurora parameter"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);

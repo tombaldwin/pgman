@@ -1,0 +1,29 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ───────────────────────╮╭───────────────────────────╮
+│ Server: ledger-staging…  •  Database: ledger    ││  PostgreSQL   schema lint │
+│ Status: connected · pg 16.4                     ││     <?> help  <:> command │
+│ Via: --demo, synthetic data · environment stag… ││    <E> envs  <ctrl-t> tab │
+╰─────────────────────────────────────────────────╯╰───────────────────────────╯
+ 1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────╮
+│> SELECT number, customer_id, status, currency, total, due_at                 │
+│  ╭[ ◆ schema wizard ◆ ] y yank suggestion · r refresh · q close ─────────╮   │
+│  │  SEV    CODE     object                                            tit│   │
+│  │  HIGH   LINT101  public.subscriptions.subscriptions_coupon_id_fk…  FK…│   │
+╰──│  HIGH   LINT101  public.subscriptions.subscriptions_plan_id_fkey   FK…│───╯
+╭[ │  HIGH   LINT101  public.webhooks.webhooks_customer_id_fkey         FK…│───╮
+│nu│  MED    ADV002   ledger                                            qu…│   │
+│IN│  ADV002 · queries spill to temp files (187 GB so far)                 │   │
+│IN│  setting:  work_mem 4MB (this session) → 8MB (no restart)             │   │
+│IN│  suggest:  ALTER ROLE billing SET work_mem = '8MB';                   │   │
+│IN│  evidence: counters since 2026-10-16 00:00:05+00 (7d 9h)              │   │
+│IN│    temp_files 2318 · temp_bytes 200789721088 (187 GB written, 1.1 GB  │   │
+│  │    an hour)                                                           │   │
+│  ╰───────────────────────────────────────────────────────────────────────╯   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   N+1 ×1   tip · y yanks SQL suggestion · ? full keys

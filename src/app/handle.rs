@@ -321,6 +321,7 @@ impl App {
             } => self.on_env_probed(seq, report, outcomes),
             AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
             AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
+            AppMsg::AdvisorLoaded { result, .. } => self.on_advisor_loaded(result),
             AppMsg::ReadOnlyApplied { want, result, .. } => {
                 let state = if want { "on" } else { "off" };
                 match result {
@@ -479,14 +480,11 @@ impl App {
 }
 
 /// What to do about a slow-queries failure, when pgman knows. Pure.
-pub(crate) fn slow_queries_hint(msg: &str) -> &'static str {
+pub(crate) fn slow_queries_hint(msg: &str) -> String {
     if msg.contains("pg_stat_statements") {
-        "\n\npg_stat_statements isn't installed in this database. Install it once, \
-         on the primary: CREATE EXTENSION pg_stat_statements; (the module must be in \
-         shared_preload_libraries — the default on RDS). A replica gets it through \
-         replication."
+        format!("\n\n{}", crate::query::slow_queries::PGSS_MISSING)
     } else {
-        ""
+        String::new()
     }
 }
 
@@ -594,32 +592,9 @@ impl App {
             Ok(live) => {
                 self.last_error = None;
                 self.last_error_detail = None;
-                let added = live.len();
-                self.schema_lint.findings.extend(live);
-                // Re-sort to keep severity ordering after
-                // merge. Same sort as `lint::run_all`.
-                self.schema_lint.findings.sort_by(|a, b| {
-                    a.severity
-                        .cmp(&b.severity)
-                        .then_with(|| a.code.cmp(b.code))
-                        .then_with(|| a.object.cmp(&b.object))
-                });
-                // Clamp the cursor — re-sort may have moved
-                // the focused row's index.
-                let last = self.schema_lint.findings.len().saturating_sub(1);
-                if self.schema_lint.cursor > last {
-                    self.schema_lint.cursor = last;
-                }
-                let total = self.schema_lint.findings.len();
-                let high = self
-                    .schema_lint
-                    .findings
-                    .iter()
-                    .filter(|f| f.severity == crate::query::lint::Severity::High)
-                    .count();
-                self.last_status = Some(format!(
-                    "schema lint · {total} finding(s) · {high} high · live: +{added}"
-                ));
+                self.schema_lint.live_note = Some(format!("live: +{}", live.len()));
+                // Re-sorts (severity first) and clamps the cursor.
+                self.schema_lint.merge(live);
             }
             Err(e) => {
                 // Live check failed — leave the pure
@@ -627,10 +602,44 @@ impl App {
                 // so the operator knows the FK-index
                 // check didn't run.
                 tracing::warn!("schema lint live check failed: {e}");
-                self.last_status = Some(format!(
-                    "schema lint · live check failed: {e} (showing cached-only)"
-                ));
+                self.schema_lint.live_note =
+                    Some(format!("live check failed: {e} (showing cached-only)"));
             }
         }
+        self.last_status = Some(self.schema_lint.status());
+    }
+
+    /// The config advisor's findings landed: merged like the live lint,
+    /// and dropped the same way once the wizard is closed. A check that
+    /// couldn't run is named in the status line; the rest still show.
+    pub(super) fn on_advisor_loaded(
+        &mut self,
+        result: Result<crate::query::advisor::Report, String>,
+    ) {
+        if self.mode != Mode::SchemaLint {
+            return;
+        }
+        match result {
+            Ok(report) => {
+                for e in &report.errors {
+                    tracing::warn!("config advisor partial: {e}");
+                }
+                let mut note = format!("advisor: +{}", report.findings.len());
+                if !report.errors.is_empty() {
+                    note.push_str(&format!(
+                        " ({} couldn't run: {})",
+                        report.errors.len(),
+                        report.errors.join("; ")
+                    ));
+                }
+                self.schema_lint.advisor_note = Some(note);
+                self.schema_lint.merge(report.findings);
+            }
+            Err(e) => {
+                tracing::warn!("config advisor failed: {e}");
+                self.schema_lint.advisor_note = Some(format!("advisor failed: {e}"));
+            }
+        }
+        self.last_status = Some(self.schema_lint.status());
     }
 }

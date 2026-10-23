@@ -6063,3 +6063,281 @@ fn batch_json_script_with_a_select_explains_where_the_rows_went() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// --- config advisor -------------------------------------------------------
+
+/// A writable raw connection to the compose database, for making the
+/// evidence the advisor then reads.
+async fn raw_client() -> tokio_postgres::Client {
+    let (c, conn) = tokio_postgres::connect(DSN, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    c
+}
+
+/// pgman's own read-only session, which the advisor runs on.
+async fn advisor_client() -> std::sync::Arc<tokio_postgres::Client> {
+    pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+        .await
+        .unwrap()
+}
+
+/// Run the advisor until `pick` finds what it waits for (statistics
+/// reach the views shortly after the writing session goes idle).
+async fn advisor_until(
+    client: &tokio_postgres::Client,
+    th: &pgman::query::advisor::Thresholds,
+    mut pick: impl FnMut(&pgman::query::lint::Finding) -> bool,
+) -> pgman::query::lint::Finding {
+    let mut last = None;
+    for _ in 0..60 {
+        let report = pgman::query::advisor::fetch(client, th).await.unwrap();
+        if let Some(f) = report.findings.iter().find(|f| pick(f)) {
+            return f.clone();
+        }
+        last = Some(report);
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    panic!("the advisor never found it: {last:#?}");
+}
+
+/// No window floor: the compose cluster may be minutes old.
+fn advisor_thresholds() -> pgman::query::advisor::Thresholds {
+    pgman::query::advisor::Thresholds {
+        min_window_secs: 0.0,
+        ..Default::default()
+    }
+}
+
+/// A sort under a tiny work_mem spills; the advisor sees the spill in
+/// pg_stat_database and, with no pg_stat_statements on the compose
+/// server, says how to name the statements.
+#[test]
+fn advisor_reports_a_temp_spill_from_a_tiny_work_mem() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let reader = advisor_client().await;
+        let before: i64 = reader
+            .query_one(pgman::query::advisor::DB_STATS_SQL, &[])
+            .await
+            .unwrap()
+            .get(3);
+        let spiller = raw_client().await;
+        spiller
+            .batch_execute(
+                "SET work_mem = '64kB'; \
+                 SELECT count(*) FROM (SELECT g FROM generate_series(1, 200000) g ORDER BY g DESC) s",
+            )
+            .await
+            .unwrap();
+        let th = pgman::query::advisor::Thresholds {
+            min_temp_bytes: before + 1,
+            ..advisor_thresholds()
+        };
+        let f = advisor_until(&reader, &th, |f| f.code == "ADV002").await;
+        let advice = f.advice.as_deref().unwrap();
+        assert!(advice.evidence[0].starts_with("temp_files "), "{advice:?}");
+        assert!(
+            advice
+                .evidence
+                .iter()
+                .any(|e| e.contains("CREATE EXTENSION pg_stat_statements")),
+            "{advice:?}"
+        );
+        assert_eq!(advice.change.as_ref().unwrap().name, "work_mem");
+        assert!(f.suggestion.unwrap().contains("SET work_mem = '8MB'"));
+    });
+}
+
+/// Update churn on a table with autovacuum off leaves dead tuples the
+/// advisor blames on the switch; on one whose scale factor is 0.5 it
+/// blames the scale factor.
+#[test]
+fn advisor_reports_dead_tuples_from_update_churn() {
+    let off = it_name("adv_dead_off");
+    let lax = it_name("adv_dead_lax");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let w = raw_client().await;
+        w.batch_execute(&format!(
+            "DROP TABLE IF EXISTS {off}, {lax}; \
+             CREATE TABLE {off} (id int PRIMARY KEY, n int) WITH (autovacuum_enabled = false); \
+             CREATE TABLE {lax} (id int PRIMARY KEY, n int) WITH (autovacuum_vacuum_scale_factor = 0.5); \
+             INSERT INTO {off} SELECT g, 0 FROM generate_series(1, 20000) g; \
+             INSERT INTO {lax} SELECT g, 0 FROM generate_series(1, 20000) g; \
+             UPDATE {off} SET n = 1; \
+             UPDATE {lax} SET n = 1 WHERE id <= 5000"
+        ))
+        .await
+        .unwrap();
+        let reader = advisor_client().await;
+        let th = advisor_thresholds();
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV003" && f.object == format!("public.{off}")
+        })
+        .await;
+        assert!(f.title.contains("autovacuum off for the table"), "{}", f.title);
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some(format!("ALTER TABLE public.{off} RESET (autovacuum_enabled);").as_str())
+        );
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV003" && f.object == format!("public.{lax}")
+        })
+        .await;
+        assert!(f.title.contains("its scale factor allows it"), "{}", f.title);
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some(
+                format!("ALTER TABLE public.{lax} SET (autovacuum_vacuum_scale_factor = 0.05);")
+                    .as_str()
+            )
+        );
+        let advice = f.advice.as_deref().unwrap();
+        assert!(
+            advice.evidence[1].contains("table options: autovacuum_vacuum_scale_factor=0.5"),
+            "{advice:?}"
+        );
+        w.batch_execute(&format!("DROP TABLE {off}, {lax}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// One session holds a lock idle in a transaction, another waits: the
+/// advisor names the holder as the head of the chain. Seen through a
+/// role without pg_read_all_stats, the chain is still there and the
+/// finding says what is hidden.
+#[test]
+fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
+    let table = it_name("adv_lock");
+    let role = it_name("adv_role");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let holder = raw_client().await;
+        holder
+            .batch_execute(&format!(
+                "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (x int); \
+                 DROP ROLE IF EXISTS {role}; CREATE ROLE {role} NOLOGIN"
+            ))
+            .await
+            .unwrap();
+        let holder_pid: i32 = holder
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        holder
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+            ))
+            .await
+            .unwrap();
+        let waiter = raw_client().await;
+        let waiter_pid: i32 = waiter
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let q = format!("SELECT count(*) FROM {table}");
+        let waiting = tokio::spawn(async move { waiter.simple_query(&q).await });
+
+        let reader = advisor_client().await;
+        let th = pgman::query::advisor::Thresholds {
+            min_lock_wait_secs: 0.5,
+            ..advisor_thresholds()
+        };
+        let head = format!("pid {holder_pid} (pgman_test, idle in transaction");
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV004"
+                && f.advice
+                    .as_deref()
+                    .is_some_and(|a| a.evidence.iter().any(|e| e.starts_with(&head)))
+        })
+        .await;
+        let advice = f.advice.as_deref().unwrap();
+        let line = advice
+            .evidence
+            .iter()
+            .find(|e| e.starts_with(&head))
+            .unwrap();
+        assert!(line.contains(&format!("{waiter_pid} (")), "{line}");
+        assert!(
+            advice.evidence_sql.contains("l.waitstart"),
+            "PG16 reads waitstart"
+        );
+
+        // The same chain through a role that can't read other sessions.
+        let unprivileged = raw_client().await;
+        unprivileged
+            .batch_execute(&format!("SET ROLE {role}"))
+            .await
+            .unwrap();
+        let mine = format!("pid {holder_pid} ");
+        let f = advisor_until(&unprivileged, &th, |f| {
+            f.code == "ADV004"
+                && f.advice
+                    .as_deref()
+                    .is_some_and(|a| a.evidence.iter().any(|e| e.starts_with(&mine)))
+        })
+        .await;
+        let advice = f.advice.as_deref().unwrap();
+        assert!(
+            advice
+                .evidence
+                .iter()
+                .any(|e| e.contains("GRANT pg_monitor")),
+            "{advice:?}"
+        );
+        let line = advice
+            .evidence
+            .iter()
+            .find(|e| e.starts_with(&mine))
+            .unwrap();
+        assert!(line.contains("state hidden"), "{line}");
+
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        waiting.await.unwrap().unwrap();
+        unprivileged.batch_execute("RESET ROLE").await.unwrap();
+        holder
+            .batch_execute(&format!("DROP TABLE {table}; DROP ROLE {role}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// Every check runs against a real server, and the checkpoint counters
+/// come from the view its version has (pg_stat_bgwriter on the compose
+/// PG16).
+#[test]
+fn advisor_runs_every_check_against_a_real_server() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let reader = advisor_client().await;
+        let report = pgman::query::advisor::fetch(&reader, &advisor_thresholds())
+            .await
+            .unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let version: i32 = reader
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let row = reader
+            .query_one(&pgman::query::advisor::checkpoints_sql(version), &[])
+            .await
+            .unwrap();
+        let timed: i64 = row.get(0);
+        let requested: i64 = row.get(1);
+        assert!(timed >= 0 && requested >= 0);
+        if let Some(f) = report.findings.iter().find(|f| f.code == "ADV005") {
+            let view = if version >= 170_000 {
+                "pg_stat_checkpointer"
+            } else {
+                "pg_stat_bgwriter"
+            };
+            assert!(f.advice.as_deref().unwrap().evidence[0].starts_with(view));
+        }
+    });
+}

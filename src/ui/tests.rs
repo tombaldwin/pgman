@@ -2337,3 +2337,140 @@ fn the_no_connection_card_points_at_a_broken_environments_toml() {
         assert!(!screen(false, picks).contains("environments.toml"));
     }
 }
+
+/// An advisor finding's detail strip puts the setting and the
+/// suggestion right under its title, so an 80×24 terminal shows them;
+/// a lint finding's keeps its object line.
+#[test]
+fn the_advisor_detail_strip_leads_with_what_to_do() {
+    let theme = crate::theme::Theme::default();
+    let text = |lines: Vec<Line<'static>>| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+    let adv = crate::demo::advisor()
+        .findings
+        .into_iter()
+        .find(|f| f.code == "ADV004")
+        .unwrap();
+    let rows = text(super::schema::lint_detail_lines(&adv, 70, &theme));
+    assert!(rows[0].starts_with("  ADV004 · "), "{rows:?}");
+    assert!(
+        rows[1].starts_with("  setting:  idle_in_transaction_session_timeout 0ms (this session)"),
+        "{rows:?}"
+    );
+    // The setting wraps with a hanging indent; the suggestion follows it.
+    assert_eq!(rows[2], "            5min (no restart)", "{rows:?}");
+    assert!(
+        rows[3].starts_with("  suggest:  ALTER ROLE finance_ro"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("  evidence: a snapshot, now")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.starts_with("  RDS:      ")),
+        "{rows:?}"
+    );
+    assert!(rows.iter().all(|r| display_width(r) <= 72), "{rows:?}");
+    let lint = crate::query::lint::fk_without_index_finding("public", "t", "fk", "c");
+    let rows = text(super::schema::lint_detail_lines(&lint, 70, &theme));
+    assert_eq!(rows[1], "  object: public.t.fk");
+}
+
+/// The whole screen at `w`×`h` as one string.
+fn screen_text(a: &mut App, w: u16, h: u16) -> String {
+    a.splash_visible = false;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| draw(f, a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The list panels draw a header row above their rows; the scroll has
+/// to keep the cursor's row in the rows left under it. Counting the
+/// header as a row left the last row, under the cursor, one past the
+/// bottom.
+#[test]
+fn list_panels_keep_the_cursor_row_on_screen_under_their_header() {
+    use crate::app::Mode;
+    let n = 40;
+    let mut a = settled_app(false, false);
+    a.schema_lint.findings = (0..n)
+        .map(|i| crate::query::lint::Finding {
+            severity: crate::query::lint::Severity::Low,
+            code: "LINT105",
+            title: "t".into(),
+            object: format!("public.tbl_{i:02}"),
+            detail: "d".into(),
+            suggestion: None,
+            advice: None,
+        })
+        .collect();
+    a.schema_lint.cursor = n - 1;
+    a.mode = Mode::SchemaLint;
+    let s = screen_text(&mut a, 100, 30);
+    // The list row, not the detail strip's `object:` line.
+    assert!(s.contains("LINT105  public.tbl_39"), "wizard:\n{s}");
+
+    let mut a = settled_app(false, false);
+    a.sessions.rows = (0..n as i32)
+        .map(|i| crate::query::sessions::SessionRow {
+            pid: 7000 + i,
+            user: "u".into(),
+            application: "a".into(),
+            state: "active".into(),
+            wait_event: None,
+            blocked_by: String::new(),
+            query: format!("SELECT {i}"),
+            age_secs: 1.0,
+        })
+        .collect();
+    a.sessions.cursor = n - 1;
+    a.mode = Mode::Sessions;
+    let s = screen_text(&mut a, 100, 30);
+    assert!(s.contains("7039"), "sessions:\n{s}");
+
+    let mut a = settled_app(false, false);
+    a.slow_queries.rows = (0..n)
+        .map(|i| crate::query::slow_queries::SlowQueryRow {
+            query: format!("SELECT slow_{i:02}"),
+            calls: 1,
+            total_ms: 1.0,
+            mean_ms: 1.0,
+            rows: 1,
+        })
+        .collect();
+    a.slow_queries.cursor = n - 1;
+    a.mode = Mode::SlowQueries;
+    let s = screen_text(&mut a, 100, 30);
+    // The detail strip shows the focused query too: count the list's.
+    assert!(
+        s.matches("SELECT slow_39").count() >= 2,
+        "slow queries:\n{s}"
+    );
+
+    let mut a = settled_app(false, false);
+    a.notifications.items = (0..n as i32)
+        .map(|i| crate::conn::NotificationMsg {
+            channel: format!("chan_{i:02}"),
+            pid: 1,
+            payload: "p".into(),
+        })
+        .collect();
+    a.notifications.cursor = n - 1;
+    a.mode = Mode::Notifications;
+    let s = screen_text(&mut a, 100, 30);
+    assert!(s.contains("chan_39"), "notifications:\n{s}");
+}

@@ -55,7 +55,7 @@ once a query has run share one key map.
 | `e` / `i` / `Tab` | Focus editor |
 | `c` | Change connection (opens the picker mid-session) |
 | `S` | Schema browser |
-| `W` | Schema wizard / lint |
+| `W` | Schema wizard: lint and config advisor |
 | `Q` | Saved queries |
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
@@ -255,12 +255,36 @@ word, mixed naming) run over the cached schema; live checks (LINT101–107: FK
 without index, unused index, duplicate indexes, bloat, no comment, mixed
 timestamp/timestamptz, a serial or identity column nothing keeps unique) query the database.
 
+The **config advisor** findings (ADV…) join the same list. They come from the
+server's statistics, read-only, and each carries the numbers that triggered it
+and how long they have accumulated (since `stats_reset`, or "at least since the
+server started"), the query that produced them, a conservative setting to change
+and why, and what that setting is called in an RDS / Aurora parameter group —
+static (applies at reboot) or dynamic, and how Aurora differs. On RDS and Aurora
+the suggestion is the `aws rds modify-db-(cluster-)parameter-group` command;
+self-hosted, `ALTER SYSTEM`. pgman never runs it.
+
+| Code | Finding | Read from |
+|---|---|---|
+| ADV000 | The advisor itself is limited: statistics under an hour old (the ratio checks wait), or a standby | — |
+| ADV001 | Buffer cache hit ratio under 0.99 (MED under 0.95), with ≥ 100 000 block requests → `shared_buffers` | `pg_stat_database` |
+| ADV002 | ≥ 64 MiB spilled to temp files (MED from 256 MiB an hour) → `work_mem` for the spilling role, with the statements when `pg_stat_statements` is installed | `pg_stat_database`, `pg_stat_statements` |
+| ADV003 | Dead tuples ≥ 10 % of live on a table of ≥ 10 000 rows, blamed on autovacuum being off, behind, or its scale factor → `autovacuum_vacuum_scale_factor` on the table | `pg_stat_user_tables` |
+| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora) → `max_wal_size` | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17 |
+
+Thresholds and their reasoning: `docs/backlog/config-advisor.md`. Without
+`pg_read_all_stats` (in `pg_monitor`) other sessions' state and queries are
+hidden, and ADV004 says so; without `pg_stat_statements`, ADV002 says how to
+install it.
+
 | Key | Action |
 |---|---|
 | `j` / `k` / `↓` / `↑` | Navigate findings (sorted HIGH → MED → LOW) |
 | `g` / `G` | First / last |
 | `PageUp` / `PageDown` | Jump 10 rows |
 | `y` | Yank the focused finding's SQL suggestion (if any) |
+| `e` | Yank an ADV finding's evidence query, to run in the editor |
 | `r` | Refresh (re-runs every check) |
 | `Esc` / `q` | Close |
 

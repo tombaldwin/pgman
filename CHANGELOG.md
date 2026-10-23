@@ -11,6 +11,14 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - `docs/tap.md`: the JDBC tap for pgman users — the OpenTelemetry, TCP
   and UDP ways in, the v1 event fields, the limits and drop counts,
   `--tap-record` / `--tap-replay`, redaction and security.
+- Config advisor in the schema wizard (`W`): read-only findings from the
+  server's statistics — buffer cache hit ratio, temp-file spills (with the
+  spilling statements from `pg_stat_statements`), dead tuples and the
+  autovacuum setting behind them, lock-wait chains, and checkpoints forced
+  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
+  evidence, how long the counters have accumulated, a conservative
+  setting, and its RDS / Aurora parameter-group name, static or dynamic.
+  `e` yanks a finding's evidence query.
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and
@@ -80,6 +88,9 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 - The JDBC tap monitor read "no events yet", and the footer showed no
   `TAP` badge, while only commits / rollbacks had arrived; the status
   now counts them (`2 commits/rollbacks`).
+- The schema wizard, slow queries, sessions and notifications panels
+  scrolled as if their header row were a list row, so moving the cursor
+  past the bottom left the focused row one below the panel's edge.
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).

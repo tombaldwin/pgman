@@ -992,7 +992,7 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
     let detail_area = split[1];
 
     // Top: rows as `total_ms  mean_ms  calls  rows  query`.
-    let visible_h = list_area.height as usize;
+    let visible_h = (list_area.height as usize).saturating_sub(1); // under the header
     let scroll = scroll_offset(app.slow_queries.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     // Header row.
@@ -1012,7 +1012,7 @@ pub(super) fn draw_slow_queries(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(visible_h.saturating_sub(1))
+        .take(visible_h)
     {
         let is_focus = i == app.slow_queries.cursor;
         let style = if is_focus {
@@ -2559,7 +2559,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let visible_h = inner.height as usize;
+    let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let scroll = scroll_offset(app.sessions.cursor, visible_h);
     // Size the state column from the (abbreviated) states actually shown
     // in this viewport, so a row with a long state value (e.g. "idle in
@@ -2570,7 +2570,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
             .rows
             .iter()
             .skip(scroll)
-            .take(visible_h.saturating_sub(1))
+            .take(visible_h)
             .map(|r| r.state.as_str()),
     );
     let mut lines: Vec<Line> = Vec::new();
@@ -2596,7 +2596,7 @@ pub(super) fn draw_sessions(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(visible_h.saturating_sub(1))
+        .take(visible_h)
     {
         let is_focus = i == app.sessions.cursor;
         let is_blocked = row.is_blocked();
@@ -2953,7 +2953,7 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    let visible_h = inner.height as usize;
+    let visible_h = (inner.height as usize).saturating_sub(1); // under the header
     let scroll = scroll_offset(app.notifications.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -2968,7 +2968,7 @@ pub(super) fn draw_notifications(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(visible_h.saturating_sub(1))
+        .take(visible_h)
     {
         let is_focus = i == app.notifications.cursor;
         let style = if is_focus {
