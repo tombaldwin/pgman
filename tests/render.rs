@@ -356,13 +356,18 @@ fn result_diff_view_renders_added_removed_changed() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
@@ -401,19 +406,55 @@ fn result_diff_shows_a_null_to_empty_string_change() {
         columns: cols.clone(),
         rows: a_rows,
         label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
     };
     a.result_diff.active = Some(pgman::app::ResultDiffState {
         a: pinned.clone(),
         b_columns: cols,
         b_rows,
         b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
         key,
+        key_is_pk: false,
         diff,
     });
     a.result_diff.pinned = Some(pinned);
     a.mode = Mode::ResultDiff;
     let rendered = dump(&render(&mut a, 140, 30));
     assert!(rendered.contains("note: NULL → ''"), "\n{rendered}");
+}
+
+/// A diff keyed on the source table's primary key says so in its title.
+#[test]
+fn result_diff_title_names_a_primary_key() {
+    let mut a = settle_app();
+    let cols = vec!["name".to_string(), "id".to_string()];
+    let rows = vec![vec![Some("ann".to_string()), Some("1".to_string())]];
+    let key = pgman::query::row_diff::RowKey::Columns(vec![1]);
+    let diff = pgman::query::row_diff::diff_rows(&rows, &rows, &key);
+    let pinned = pgman::app::PinnedResult {
+        columns: cols.clone(),
+        rows: rows.clone(),
+        label: "A-query".into(),
+        source: None,
+        origins: Vec::new(),
+    };
+    a.result_diff.active = Some(pgman::app::ResultDiffState {
+        a: pinned.clone(),
+        b_columns: cols,
+        b_rows: rows,
+        b_label: "B-query".into(),
+        b_source: None,
+        b_origins: Vec::new(),
+        key,
+        key_is_pk: true,
+        diff,
+    });
+    a.mode = Mode::ResultDiff;
+    let rendered = dump(&render(&mut a, 160, 30));
+    assert!(rendered.contains("key: id (primary key)"), "\n{rendered}");
 }
 
 #[test]
@@ -1327,6 +1368,7 @@ fn confirm_modal_with_a_wide_literal_keeps_its_y_n_line() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Confirm;
     let buf = render(&mut a, 80, 24);
@@ -2489,20 +2531,20 @@ fn narrow_help_lists_every_section_with_its_teaser_then_opens_one() {
     a.on_key(KeyEvent::from(KeyCode::Char('?')));
     let buf = render(&mut a, 80, 24);
     let text = dump(&buf);
-    assert!(text.contains("help · 22 sections"), "{text}");
+    assert!(text.contains("help · 23 sections"), "{text}");
     assert!(
         text.contains("▸ grid                     the results: move, sort, filter, find, yank"),
         "the selected section, marked, with its teaser:\n{text}"
     );
     assert!(
-        text.contains("↓ 9 more"),
+        text.contains("↓ 10 more"),
         "the list says there is more:\n{text}"
     );
     // Walk to the bottom: the list follows the selection.
     a.on_key(KeyEvent::from(KeyCode::Char('G')));
     let text = dump(&render(&mut a, 80, 24));
     assert!(text.contains("▸ help"), "{text}");
-    assert!(text.contains("↑ 9 more"), "{text}");
+    assert!(text.contains("↑ 10 more"), "{text}");
     // Enter opens the selected section full width, heading on row 0.
     a.on_key(KeyEvent::from(KeyCode::Char('g')));
     a.on_key(KeyEvent::from(KeyCode::Char('j')));
@@ -2679,4 +2721,307 @@ fn row_detail_more_below_counts_the_fields_out_of_sight() {
         assert!(screen.contains(&want), "{w}x{h} want {want}:\n{screen}");
         assert!(screen.contains("field 1 of 30"), "{w}x{h}:\n{screen}");
     }
+}
+
+/// Render and return the buffer with where the terminal cursor was put.
+fn render_with_cursor(app: &mut App, w: u16, h: u16) -> (Buffer, (u16, u16)) {
+    let backend = TestBackend::new(w, h);
+    let mut term = Terminal::new(backend).expect("terminal");
+    term.draw(|f| pgman::ui::draw(f, app)).expect("draw");
+    let pos = term.get_cursor_position().expect("cursor position");
+    (term.backend().buffer().clone(), (pos.x, pos.y))
+}
+
+/// The demo app, settled, with `keys` pressed from Normal mode.
+fn demo_after(keys: &[KeyCode]) -> App {
+    let mut a = pgman::demo::app(Theme::default());
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.mode = Mode::Normal;
+    for k in keys {
+        a.on_key(KeyEvent::from(*k));
+    }
+    a
+}
+
+/// A long pattern typed into a footer filter lost its `filter: /`
+/// prompt: `fit_status` shrank the leading segment and then dropped
+/// it, and the cursor — placed by counting from the prompt — landed
+/// past the end of the line. The prompt keeps its head, the pattern
+/// shows its tail, and the cursor sits just after it, at 60 and 80
+/// columns, in each mode that types into the footer.
+#[test]
+fn a_long_footer_filter_keeps_its_prompt_and_cursor() {
+    const PATTERN: &str = "customer_invoice_line_items_archive";
+    let screens: [(&str, &[KeyCode], Mode, &str); 4] = [
+        (
+            "schema browser",
+            &[KeyCode::Char('S'), KeyCode::Char('/')],
+            Mode::SchemaBrowserFilter,
+            "filter: /",
+        ),
+        (
+            "help",
+            &[KeyCode::F(1), KeyCode::Char('/')],
+            Mode::HelpFilter,
+            "filter: /",
+        ),
+        (
+            "grid filter",
+            &[KeyCode::Char('/')],
+            Mode::GridFilter,
+            "filter: /",
+        ),
+        ("grid find", &[KeyCode::Char('f')], Mode::GridFind, "find: "),
+    ];
+    for (name, keys, mode, head) in screens {
+        for (w, h) in [(60u16, 16u16), (80, 24)] {
+            let mut a = demo_after(keys);
+            assert_eq!(a.mode, mode, "{name}");
+            for c in PATTERN.chars() {
+                a.on_key(KeyEvent::from(KeyCode::Char(c)));
+            }
+            let (buf, (cx, cy)) = render_with_cursor(&mut a, w, h);
+            let footer = row_text(&buf, h - 1);
+            assert_eq!(cy, h - 1, "{name} {w}x{h}: cursor off the footer");
+            assert!(
+                footer.contains(head),
+                "{name} {w}x{h}: prompt lost: {footer:?}"
+            );
+            assert!(
+                footer.contains("_archive"),
+                "{name} {w}x{h}: the pattern's tail is missing: {footer:?}"
+            );
+            // The cell left of the cursor is the pattern's last char.
+            assert!(cx > 0 && cx < w, "{name} {w}x{h}: cursor x={cx}");
+            assert_eq!(
+                buf[(cx - 1, cy)].symbol(),
+                "e",
+                "{name} {w}x{h}: cursor not after the pattern: {footer:?} cursor x={cx}"
+            );
+        }
+    }
+}
+
+/// A failed statement with a three-deep cause chain and a caller stack.
+fn failed_tap_event() -> pgman::tap::TapEvent {
+    pgman::tap::TapEvent {
+        v: 1,
+        kind: pgman::tap::TapKind::Query,
+        ts_unix_micros: 1_790_000_042_118_204,
+        received_at_unix_micros: 1,
+        app: Some("billing-service".into()),
+        pool: Some("primary".into()),
+        conn: Some("primary-3".into()),
+        txn: Some("primary-3#118".into()),
+        sql: Some("INSERT INTO invoice_lines (invoice_id, sku) VALUES (?, ?)".into()),
+        params: Some(vec!["4833".into(), "SKU-2201".into()]),
+        params_redacted: false,
+        duration_micros: Some(2_318),
+        rows: None,
+        error: Some(vec![
+            "DataIntegrityViolationException: could not execute statement".into(),
+            "ConstraintViolationException: could not execute statement".into(),
+            "PSQLException: duplicate key value violates unique constraint".into(),
+        ]),
+        caller: Some(vec![
+            "com.example.billing.InvoiceLineRepository.save:41".into(),
+            "com.example.billing.InvoiceService.addLine:112".into(),
+            "com.example.billing.InvoiceController.addLine:57".into(),
+        ]),
+        dropped_events_total: None,
+        txn_outcome: None,
+    }
+}
+
+/// `Enter` on a failed List row shows what the row could only colour
+/// red: the cause chain to its root, the whole caller stack, and the
+/// pool / conn / txn. At 120x40 it all fits; at 80x24 the title says
+/// how far down the overlay is, and `G` reaches the last frame.
+#[test]
+fn tap_event_detail_shows_the_cause_chain_and_caller_stack() {
+    let mut a = settle_app();
+    a.on_tap_event(failed_tap_event());
+    a.mode = Mode::TapMonitor;
+    let list = dump(&render(&mut a, 80, 24));
+    assert!(list.contains("enter detail"), "footer hint:\n{list}");
+    // The monitor's status takes the footer while it is open, so the
+    // strip's rule names the key too.
+    assert!(list.contains("── enter: the whole event ──"), "{list}");
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+
+    let big = dump(&render(&mut a, 120, 40));
+    for want in [
+        "query · failed",
+        "pool        primary",
+        "conn        primary-3",
+        "txn         primary-3#118",
+        "error       DataIntegrityViolationException",
+        "caused by   ConstraintViolationException",
+        "root cause  PSQLException: duplicate key",
+        "caller      com.example.billing.InvoiceLineRepository.save:41",
+        "com.example.billing.InvoiceController.addLine:57",
+        "esc / enter back",
+    ] {
+        assert!(big.contains(want), "120x40 missing {want:?}:\n{big}");
+    }
+    assert!(!big.contains(" of "), "nothing to scroll at 120x40:\n{big}");
+
+    let small = dump(&render(&mut a, 80, 24));
+    assert!(small.contains("rows 1–"), "80x24 position:\n{small}");
+    assert!(!small.contains("InvoiceController"), "80x24:\n{small}");
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    let bottom = dump(&render(&mut a, 80, 24));
+    assert!(
+        bottom.contains("com.example.billing.InvoiceController.addLine:57"),
+        "80x24 after G:\n{bottom}"
+    );
+    // Back to the list, still in the monitor.
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    let back = dump(&render(&mut a, 80, 24));
+    assert!(back.contains("enter detail"), "{back}");
+    assert_eq!(a.mode, Mode::TapMonitor);
+}
+
+/// In the overlay, as in the params strip, a label saying some values
+/// are the producer's `[redacted]` marker is in the warning colour, and
+/// the root cause is in the error colour.
+#[test]
+fn tap_event_detail_colours_the_redaction_label_and_the_causes() {
+    let mut a = settle_app();
+    let mut e = failed_tap_event();
+    e.params = Some(vec!["4833".into(), "[redacted]".into()]);
+    e.params_redacted = true;
+    a.on_tap_event(e);
+    a.mode = Mode::TapMonitor;
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    let buf = render(&mut a, 120, 40);
+    let theme = Theme::default();
+    // By column, not byte offset: the borders before it are multi-byte.
+    let at = |needle: &str| {
+        (0..buf.area.height)
+            .find_map(|y| {
+                let line = row_text(&buf, y);
+                line.find(needle)
+                    .map(|b| (line[..b].chars().count() as u16, y))
+            })
+            .unwrap_or_else(|| panic!("{needle} not drawn"))
+    };
+    let (x, y) = at("params (some redacted)");
+    assert_eq!(buf[(x, y)].fg, theme.health_yellow);
+    let (x, y) = at("PSQLException");
+    assert_eq!(buf[(x, y)].fg, theme.health_red);
+}
+
+// ---------------------------------------------------------------
+// Cell edit (docs/backlog/cell-editing.md)
+// ---------------------------------------------------------------
+
+/// `u`'s editor open on `public.users.name where id = 2`, with `value`
+/// (`None`: NULL).
+fn cell_edit_app(value: Option<&str>) -> App {
+    let mut a = settle_app();
+    a.grid = Grid {
+        columns: vec!["id".into(), "name".into()],
+        rows: vec![vec![Some("2".into()), value.map(str::to_string)]],
+        truncated: false,
+    };
+    let edit = pgman::query::cell_edit::CellEdit {
+        schema: "public".into(),
+        table: "users".into(),
+        column: "name".into(),
+        key: vec![("id".into(), "2".into())],
+        old: value.map(str::to_string),
+        row: 0,
+        col: 1,
+    };
+    a.cell_edit = Some(pgman::app::CellEditUi {
+        input: tui_common::TextInput::with_text(value.unwrap_or_default()),
+        null: value.is_none(),
+        row_cells: a.grid.rows[0].clone(),
+        edit,
+        return_to: Mode::Normal,
+    });
+    a.mode = Mode::CellEdit;
+    a
+}
+
+/// The editor names the cell and the row, shows a NULL as the grid's
+/// dimmed `NULL`, and says its keys — at 80 columns, and in the footer.
+#[test]
+fn the_cell_editor_names_the_cell_and_shows_null_as_the_grid_does() {
+    for (w, h) in [(80, 24), (120, 40)] {
+        let mut a = cell_edit_app(None);
+        let buf = render(&mut a, w, h);
+        let text = dump(&buf);
+        assert!(text.contains(" edit cell "), "{w}x{h}:\n{text}");
+        assert!(text.contains("public.users.name"), "{w}x{h}:\n{text}");
+        assert!(text.contains("where id = 2"), "{w}x{h}:\n{text}");
+        assert!(
+            text.contains("enter save · ctrl-n NULL · esc cancel"),
+            "{w}x{h}:\n{text}"
+        );
+        // The value row reads `NULL`, dimmed italic like the grid's
+        // marker — not the text "NULL".
+        let (y, line) = text
+            .lines()
+            .enumerate()
+            .find(|(_, l)| l.contains("│NULL "))
+            .unwrap_or_else(|| panic!("{w}x{h}: no NULL value row:\n{text}"));
+        let x: Vec<char> = line.chars().collect();
+        let col = x
+            .windows(5)
+            .position(|win| win.iter().collect::<String>() == "│NULL")
+            .expect("the marker")
+            + 1;
+        let cell = &buf[(col as u16, y as u16)];
+        assert_eq!(cell.symbol(), "N");
+        assert!(
+            cell.modifier.contains(Modifier::ITALIC),
+            "{w}x{h}: the NULL marker is italic"
+        );
+        let footer: String = (0..buf.area.width)
+            .map(|x| buf[(x, buf.area.height - 1)].symbol().to_string())
+            .collect();
+        assert!(footer.contains("enter save"), "{w}x{h}: {footer}");
+    }
+}
+
+/// An empty string reads as one, not as nothing, and not as NULL.
+#[test]
+fn the_cell_editor_shows_an_empty_string_as_one() {
+    let mut a = cell_edit_app(Some(""));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("│(empty string)"), "{text}");
+    assert!(!text.contains("│NULL"), "{text}");
+}
+
+/// A value wider than the box scrolls to keep the cursor (at its end)
+/// in view: the tail shows, not the head.
+#[test]
+fn a_long_value_scrolls_to_the_cursor() {
+    let long = format!("{}TAIL", "x".repeat(200));
+    let mut a = cell_edit_app(Some(&long));
+    let text = dump(&render(&mut a, 80, 24));
+    assert!(text.contains("xxxTAIL"), "{text}");
+}
+
+/// The confirm for an edit names the cell, says it is one row or
+/// nothing, and shows the statement it will send.
+#[test]
+fn the_confirm_for_a_cell_edit_shows_the_update_and_the_one_row_rule() {
+    let mut a = cell_edit_app(Some("bo"));
+    a.on_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+    a.on_key(KeyEvent::from(KeyCode::Enter));
+    assert_eq!(a.mode, Mode::Confirm);
+    let text = dump(&render(&mut a, 120, 40));
+    assert!(
+        text.contains("edit public.users.name where id = 2"),
+        "{text}"
+    );
+    assert!(text.contains("one row, or rolled back"), "{text}");
+    assert!(
+        text.contains("UPDATE public.users SET name = NULL WHERE id = '2' RETURNING name"),
+        "{text}"
+    );
 }

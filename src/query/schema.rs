@@ -56,6 +56,10 @@ pub struct ColumnMeta {
     pub name: String,
     pub type_name: String,
     pub not_null: bool,
+    /// `pg_attribute.attnum`: what a result column's origin
+    /// (`grid::ColumnOrigin`) names the column by. Gaps where columns
+    /// were dropped, so not the position in the list.
+    pub attnum: i16,
 }
 
 /// A unique / primary-key constraint — what `ON CONFLICT ON
@@ -130,6 +134,14 @@ pub struct SchemaCache {
     /// foreign tables, keyed `(schema, name)`: relations that can carry
     /// no primary key, so the schema wizard doesn't ask them for one.
     pub views: std::collections::HashSet<(String, String)>,
+    /// Each table's primary-key columns in key order, keyed `(schema,
+    /// table)`. No entry: the table has no primary key (or the fetch
+    /// failed). Cell editing and the result diff key rows on these.
+    pub primary_keys: HashMap<(String, String), Vec<String>>,
+    /// Every relation in `tables` by its `pg_class.oid`: a result
+    /// column's origin names its table by OID, and this is how that
+    /// becomes a name.
+    pub relations_by_oid: HashMap<u32, (String, String)>,
 }
 
 /// pgman's one size formatter — database sizes on the start card and in
@@ -233,6 +245,23 @@ impl SchemaCache {
         })
     }
 
+    /// The primary key's columns of `(schema, table)` in key order —
+    /// the server's own names, matched exactly (`"Users"` and `users`
+    /// are different tables). `None`: no primary key.
+    pub fn primary_key(&self, schema: &str, table: &str) -> Option<&[String]> {
+        self.primary_keys
+            .get(&(schema.to_string(), table.to_string()))
+            .map(Vec::as_slice)
+    }
+
+    /// The column of `(schema, table)` whose `attnum` is `attnum`.
+    pub fn column_by_attnum(&self, schema: &str, table: &str, attnum: i16) -> Option<&ColumnMeta> {
+        self.columns_meta_by_table
+            .get(&(schema.to_string(), table.to_string()))?
+            .iter()
+            .find(|c| c.attnum == attnum)
+    }
+
     /// All distinct column names across every table, sorted.
     /// Useful for the unqualified-no-FROM fallback ("offer everything").
     pub fn all_column_names(&self) -> Vec<String> {
@@ -287,7 +316,7 @@ impl SchemaCache {
 pub const SCHEMA_SQL: &str = "\
 SELECT n.nspname, c.relname, c.relkind, a.attname, \
        format_type(a.atttypid, a.atttypmod), \
-       a.attnotnull \
+       a.attnotnull, c.oid, a.attnum \
 FROM pg_catalog.pg_class c \
 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
 LEFT JOIN pg_catalog.pg_attribute a \
@@ -355,6 +384,21 @@ JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
 WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
 ORDER BY 1, 2, 3";
 
+/// Every primary key's columns, one row per column in key order
+/// (`indkey` unnested with its ordinality). `pg_index.indisprimary`
+/// rather than `pg_constraint`, so a partitioned table's key (an index
+/// on the parent) counts too.
+pub const PRIMARY_KEYS_SQL: &str = "\
+SELECT n.nspname, t.relname, a.attname \
+FROM pg_catalog.pg_index x \
+JOIN pg_catalog.pg_class t ON t.oid = x.indrelid \
+JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+JOIN LATERAL unnest(x.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord) ON true \
+JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum \
+WHERE x.indisprimary \
+  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast') \
+ORDER BY 1, 2, k.ord";
+
 /// Query that fetches unique + primary-key constraint names, scoped
 /// by their owning table. Run separately from `SCHEMA_SQL` so a
 /// permission gap on `pg_constraint` (rare) doesn't take down the
@@ -376,13 +420,14 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
     // pipelines them on the single connection, collapsing four serial round
     // trips into roughly one. Each stays best-effort: a permission gap on one
     // (e.g. pg_constraint) degrades that feature without killing the cache.
-    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res) = tokio::join!(
+    let (schema_res, constraint_res, size_res, fk_res, part_res, index_res, pk_res) = tokio::join!(
         client.query(SCHEMA_SQL, &[]),
         client.query(CONSTRAINTS_SQL, &[]),
         client.query(TABLE_SIZES_SQL, &[]),
         client.query(FK_EDGES_SQL, &[]),
         client.query(PARTITIONS_SQL, &[]),
         client.query(TABLE_INDEXES_SQL, &[]),
+        client.query(PRIMARY_KEYS_SQL, &[]),
     );
     let rows = match schema_res {
         Ok(rows) => rows,
@@ -409,6 +454,8 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         let col: Option<String> = row.try_get(3).ok();
         let coltype: Option<String> = row.try_get(4).ok();
         let not_null: bool = row.try_get(5).unwrap_or(false);
+        let oid: Option<u32> = row.try_get(6).ok();
+        let attnum: Option<i16> = row.try_get(7).ok().flatten();
         seen_schemas.insert(schema.clone());
         let key = (schema.clone(), name.clone());
         if last_relation.as_ref() != Some(&key) {
@@ -425,6 +472,9 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
                 kind => {
                     if matches!(kind, b'v' | b'm' | b'f') {
                         cache.views.insert(key.clone());
+                    }
+                    if let Some(oid) = oid {
+                        cache.relations_by_oid.insert(oid, key.clone());
                     }
                     cache.tables.push(meta);
                     cache.columns_by_table.entry(key.clone()).or_default();
@@ -451,6 +501,7 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
                         name: c,
                         type_name: coltype.unwrap_or_default(),
                         not_null,
+                        attnum: attnum.unwrap_or(0),
                     });
             }
         }
@@ -540,6 +591,19 @@ pub async fn fetch(client: &Arc<tokio_postgres::Client>) -> SchemaCache {
         }
         Err(e) => tracing::warn!("index fetch failed: {e}; the schema browser lists no indexes"),
     }
+    match pk_res {
+        Ok(rows) => {
+            for row in &rows {
+                let get = |i: usize| row.try_get::<usize, String>(i).ok();
+                if let (Some(s), Some(t), Some(col)) = (get(0), get(1), get(2)) {
+                    cache.primary_keys.entry((s, t)).or_default().push(col);
+                }
+            }
+        }
+        Err(e) => tracing::warn!(
+            "primary-key fetch failed: {e}; no cell editing, the result diff keys by inference"
+        ),
+    }
     match fk_res {
         Ok(rows) => {
             for row in &rows {
@@ -592,11 +656,13 @@ mod tests {
                     name: "id".into(),
                     type_name: "integer".into(),
                     not_null: true,
+                    attnum: 1,
                 },
                 ColumnMeta {
                     name: "email".into(),
                     type_name: "character varying(120)".into(),
                     not_null: false,
+                    attnum: 2,
                 },
             ],
         );

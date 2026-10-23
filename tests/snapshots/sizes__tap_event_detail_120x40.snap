@@ -1,0 +1,45 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+╭ pgman X.X.X · YYYY-MM-DD ─────────────────────────────────────────────────╮╭─────────────────────────────────────────╮
+│ Server: ledger-staging…:5432  •  Database: ledger  •  User: billing       ││                   PostgreSQL   JDBC tap │
+│ Status: connected · pg 16.4  •  Session:  read-only   •  Tabs: 1          ││                   <?> help  <:> command │
+│ Via: --demo, synthetic data · environment staging ledger-staging/ledger … ││                  <E> envs  <ctrl-t> tab │
+╰───────────────────────────────────────────────────────────────────────────╯╰─────────────────────────────────────────╯
+ 1 SELECT number, cu…                                                     [ ] prev/next tab · ctrl-t new · ctrl-w close
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────────────────────────────────────────────────────────────────╮
+│> SELECT number, customer_id, status, currency, total, due_at                                                         │
+│  FROM invoices                                                                                                       │
+│  WH╭[ ◆ JDBC tap ◆ ] 12 queries · 0 heartbeats · view: list · v cycle · Shift-B baseline · s sort · c clear · … ╮    │
+│  OR│╭[ ◆ event ◆ ] j/k scroll · esc back ──────────────────────────────────────────────────────────────────────╮│    │
+│    ││  kind        query · failed                                                                              ││    │
+╰────││  started     2026-09-21T14:14:02.118204Z                                                                 ││────╯
+╭[ ◆ ││  duration    2.3ms                                                                                       ││────╮
+│numb││  rows        —                                                                                           ││    │
+│INV-││  app         billing-service                                                                             ││    │
+│INV-││  pool        primary                                                                                     ││    │
+│INV-││  conn        primary-3                                                                                   ││    │
+│INV-││  txn         primary-3#118                                                                               ││    │
+│INV-││  sql         INSERT INTO invoice_lines (invoice_id, sku, quantity, unit_price)                           ││    │
+│    ││              VALUES (?, ?, ?, ?)                                                                         ││    │
+│    ││  params (some redacted)                                                                                  ││    │
+│    ││              1: 4833                                                                                     ││    │
+│    ││              2: SKU-2201                                                                                 ││    │
+│    ││              3: 3                                                                                        ││    │
+│    ││              4: [redacted]                                                                               ││    │
+│    ││  error       org.springframework.dao.DataIntegrityViolationException: could not execute statement        ││    │
+│    ││  caused by   org.hibernate.exception.ConstraintViolationException: could not execute statement           ││    │
+│    ││  root cause  org.postgresql.util.PSQLException: ERROR: duplicate key value violates unique constraint    ││    │
+│    ││              "invoice_lines_invoice_id_sku_key"                                                          ││    │
+│    ││  caller      com.example.billing.InvoiceLineRepository.save:41                                           ││    │
+│    ││              com.example.billing.InvoiceService.addLine:112                                              ││    │
+│    ││              com.example.billing.InvoiceController.addLine:57                                            ││    │
+│    │╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯│    │
+│    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ RO   TAP   j/k scroll · g/G top/bottom · esc / enter back · ? help

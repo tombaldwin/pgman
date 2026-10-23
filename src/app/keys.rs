@@ -2,6 +2,12 @@ use super::*;
 
 impl App {
     pub(super) fn on_tap_monitor_key(&mut self, key: KeyEvent) {
+        // The focused-event overlay holds every key while it is open:
+        // `v` / `c` / `s` / Shift-B act on a list it hides.
+        if self.tap_nav.event_detail.is_some() {
+            self.on_tap_event_detail_key(key);
+            return;
+        }
         // `B` is universal across all TapMonitor views —
         // captures the current hotspots as a baseline so the
         // operator can then cycle to the Baseline view to see
@@ -119,6 +125,10 @@ impl App {
         if self.tap_monitor_common_key(&key) {
             return;
         }
+        if key.code == KeyCode::Enter {
+            self.open_tap_event_detail();
+            return;
+        }
         let len = self.tap_events.len();
         apply_list_nav_key(
             &mut CursorAt {
@@ -127,6 +137,43 @@ impl App {
             },
             key.code,
         );
+    }
+
+    /// `Enter` on a List row: open the overlay over a snapshot of the
+    /// focused event. A status, not an empty box, on an empty ring.
+    fn open_tap_event_detail(&mut self) {
+        let cursor = self
+            .tap_nav
+            .events_cursor
+            .min(self.tap_events.len().saturating_sub(1));
+        match self.tap_events.get(cursor) {
+            Some(event) => {
+                self.tap_nav.event_detail = Some(TapEventDetail::new(event.clone()));
+            }
+            None => self.last_status = Some("no tap event to show".into()),
+        }
+    }
+
+    /// The focused-event overlay: `Esc` / `q` / `Enter` back to the
+    /// list, `j/k` `↑↓` `PgUp/PgDn` `g/G` scroll.
+    fn on_tap_event_detail_key(&mut self, key: KeyEvent) {
+        let Some(detail) = self.tap_nav.event_detail.as_mut() else {
+            return;
+        };
+        const PAGE: usize = 10;
+        let max = detail.max_scroll;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                self.tap_nav.event_detail = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => detail.scroll = (detail.scroll + 1).min(max),
+            KeyCode::Char('k') | KeyCode::Up => detail.scroll = detail.scroll.saturating_sub(1),
+            KeyCode::PageDown => detail.scroll = (detail.scroll + PAGE).min(max),
+            KeyCode::PageUp => detail.scroll = detail.scroll.saturating_sub(PAGE),
+            KeyCode::Char('g') | KeyCode::Home => detail.scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => detail.scroll = max,
+            _ => {}
+        }
     }
 
     pub(super) fn on_tap_monitor_hotspots_key(&mut self, key: KeyEvent) {
@@ -611,6 +658,10 @@ impl App {
                 self.yank_focused_field();
                 return;
             }
+            KeyCode::Char('u') => {
+                self.start_cell_edit(Mode::RowDetail);
+                return;
+            }
             _ => {}
         }
         let len = self.row_detail.field_count;
@@ -1047,6 +1098,8 @@ impl App {
             KeyCode::Char('Q') => self.open_saved_queries(),
             KeyCode::Char('D') => self.pin_or_diff_result(),
             KeyCode::Char('I') => self.yank_row_as_insert(),
+            KeyCode::Char('M') => self.fetch_more(),
+            KeyCode::Char('u') => self.start_cell_edit(Mode::Normal),
             KeyCode::Char('m') => {
                 self.pending_mark_set = true;
                 self.last_status = Some("set mark · press a-z".into());
@@ -1181,6 +1234,11 @@ impl App {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 if let Some(pending) = self.pending_run.take() {
+                    if let Some(edit) = pending.cell_edit {
+                        self.mode = edit.return_to;
+                        self.spawn_cell_update(edit, pending.sql, pending.decision);
+                        return;
+                    }
                     // --demo has no client; a confirmed write is answered
                     // synthetically, the same as an allowed one.
                     if self.demo && self.client.is_none() {
@@ -1197,8 +1255,11 @@ impl App {
                 self.mode = Mode::Editor;
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.pending_run = None;
-                self.mode = Mode::Editor;
+                let pending = self.pending_run.take();
+                self.mode = match pending.and_then(|p| p.cell_edit) {
+                    Some(edit) => edit.return_to,
+                    None => Mode::Editor,
+                };
                 self.last_status = Some("cancelled".to_string());
             }
             _ => {}
@@ -1271,6 +1332,8 @@ impl App {
                         columns: d.b_columns.clone(),
                         rows: d.b_rows.clone(),
                         label: d.b_label.clone(),
+                        source: d.b_source.clone(),
+                        origins: d.b_origins.clone(),
                     });
                     self.mode = Mode::Normal;
                     self.result_diff.active = None;
@@ -1316,6 +1379,7 @@ impl App {
             KeyCode::PageDown => self.schema_lint.page_down(),
             KeyCode::PageUp => self.schema_lint.page_up(),
             KeyCode::Char('y') => self.yank_schema_lint_suggestion(),
+            KeyCode::Char('e') => self.yank_schema_lint_evidence(),
             KeyCode::Char('r') => self.start_schema_lint(),
             _ => {}
         }

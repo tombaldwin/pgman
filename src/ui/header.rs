@@ -32,6 +32,7 @@ pub(crate) fn view_label(mode: Mode) -> &'static str {
         Mode::LogPick => "logs → SQL",
         Mode::ConnPick => "connections",
         Mode::RowDetail | Mode::CellDetail => "row",
+        Mode::CellEdit => "edit",
         Mode::About => "about",
         Mode::ExplainTree => "explain",
         Mode::SchemaBrowser | Mode::SchemaBrowserFilter => "schema",

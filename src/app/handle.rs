@@ -48,6 +48,9 @@ impl App {
                 // backend PID.
                 self.cancel_dispatcher =
                     Some(Box::new(PgCancelDispatcher::new(client.cancel_token())));
+                // A new pager for the new session; the old one (and any
+                // cursor it held on the old session) ends as it drops.
+                self.pager = Some(crate::query::paging::Pager::spawn(client.clone()));
                 self.client = Some(client);
                 // Hold the new tunnel (if any) so its Drop fires when
                 // the App loses the client at quit / next reconnect.
@@ -73,8 +76,10 @@ impl App {
             }
             AppMsg::QueryOk {
                 grid,
+                origins,
                 kind_label,
                 tx_open_after,
+                paging,
                 ..
             } => {
                 self.grid = grid;
@@ -90,6 +95,27 @@ impl App {
                     self.schema_dirty_after_run = false;
                     self.spawn_schema_refresh();
                 }
+                // A new result: a paging record if it ran through the
+                // pager, and the cursor if that stayed open. Any older
+                // cursor is already closed — this run went through the
+                // pager or `App::db`, and both close it first.
+                let id = self.next_result_id();
+                let now = Instant::now();
+                self.cursor = paging
+                    .as_ref()
+                    .and_then(|p| p.cursor)
+                    .map(|limits| CursorMirror {
+                        result_id: id,
+                        opened: now,
+                        last_fetch: now,
+                        limits,
+                    });
+                self.result_paging = paging.map(|p| ResultPaging {
+                    id,
+                    sql: p.sql,
+                    ceiling: false,
+                    in_transaction: p.in_transaction,
+                });
                 // Infer the source table for the new grid — used by
                 // row-as-INSERT yank (and, eventually, cell-edit-to-
                 // UPDATE / FK nav). Single-table SELECT only; anything
@@ -99,6 +125,7 @@ impl App {
                     .last_run_sql
                     .as_deref()
                     .and_then(infer_single_source_table);
+                self.grid_view.origins = origins;
                 // psql `\x` — expanded output. Land the new result in
                 // the row-detail view for its first row instead of
                 // the grid. No-op when the result is empty (nothing
@@ -122,7 +149,10 @@ impl App {
                 // The cap note goes last: its CLI pointer is the way out,
                 // and the footer's fitting keeps the last segment.
                 let cap_suffix = if self.grid.truncated {
-                    format!(" · {}", crate::grid::cap_status_note())
+                    format!(
+                        " · {}",
+                        crate::grid::partial_status_note(self.result_more())
+                    )
                 } else {
                     String::new()
                 };
@@ -163,6 +193,9 @@ impl App {
                     self.mode = Mode::TxDecision;
                 }
             }
+            AppMsg::PageLoaded {
+                result_id, outcome, ..
+            } => self.on_page_loaded(result_id, outcome),
             AppMsg::QueryFailed {
                 error,
                 position,
@@ -222,12 +255,27 @@ impl App {
                     }
                 }
             }
+            AppMsg::CellUpdated {
+                pending, value, tx, ..
+            } => self.on_cell_updated(pending, value, tx),
             AppMsg::TxClosed {
                 committed, error, ..
             } => {
                 self.tx_open = false;
                 self.query_running = false;
-                self.mode = Mode::Editor;
+                // A cell edit's transaction lands back where the edit
+                // began; a rollback (or a failed commit, which ends the
+                // transaction too) puts the old value back.
+                self.mode = match self.edit_awaiting_tx.take() {
+                    Some(edit) => {
+                        let landed = committed && error.is_none();
+                        if !landed {
+                            self.revert_cell_edit(&edit);
+                        }
+                        edit.return_to
+                    }
+                    None => Mode::Editor,
+                };
                 // A DDL run wrapped in this transaction is only durable once
                 // committed — refresh the schema cache then. On rollback (or a
                 // failed close) just drop the pending flag without refetching.
@@ -321,6 +369,7 @@ impl App {
             } => self.on_env_probed(seq, report, outcomes),
             AppMsg::SessionsLoaded { result, .. } => self.on_sessions_loaded(result),
             AppMsg::LiveLintLoaded { result, .. } => self.on_live_lint_loaded(result),
+            AppMsg::AdvisorLoaded { result, .. } => self.on_advisor_loaded(result),
             AppMsg::ReadOnlyApplied { want, result, .. } => {
                 let state = if want { "on" } else { "off" };
                 match result {
@@ -379,6 +428,7 @@ impl App {
                             decision,
                             is_batch: false,
                             summary: Some(summary),
+                            cell_edit: None,
                         });
                         self.mode = Mode::Confirm;
                     }
@@ -465,6 +515,7 @@ impl App {
     pub(super) fn apply_bootstrap_grid(&mut self, grid: Grid) {
         self.databases = parse_bootstrap_databases(&grid);
         self.grid = Grid::default();
+        self.forget_result_paging();
         self.grid_state.select(None);
         self.reset_grid_view();
     }
@@ -479,14 +530,11 @@ impl App {
 }
 
 /// What to do about a slow-queries failure, when pgman knows. Pure.
-pub(crate) fn slow_queries_hint(msg: &str) -> &'static str {
+pub(crate) fn slow_queries_hint(msg: &str) -> String {
     if msg.contains("pg_stat_statements") {
-        "\n\npg_stat_statements isn't installed in this database. Install it once, \
-         on the primary: CREATE EXTENSION pg_stat_statements; (the module must be in \
-         shared_preload_libraries — the default on RDS). A replica gets it through \
-         replication."
+        format!("\n\n{}", crate::query::slow_queries::PGSS_MISSING)
     } else {
-        ""
+        String::new()
     }
 }
 
@@ -594,32 +642,9 @@ impl App {
             Ok(live) => {
                 self.last_error = None;
                 self.last_error_detail = None;
-                let added = live.len();
-                self.schema_lint.findings.extend(live);
-                // Re-sort to keep severity ordering after
-                // merge. Same sort as `lint::run_all`.
-                self.schema_lint.findings.sort_by(|a, b| {
-                    a.severity
-                        .cmp(&b.severity)
-                        .then_with(|| a.code.cmp(b.code))
-                        .then_with(|| a.object.cmp(&b.object))
-                });
-                // Clamp the cursor — re-sort may have moved
-                // the focused row's index.
-                let last = self.schema_lint.findings.len().saturating_sub(1);
-                if self.schema_lint.cursor > last {
-                    self.schema_lint.cursor = last;
-                }
-                let total = self.schema_lint.findings.len();
-                let high = self
-                    .schema_lint
-                    .findings
-                    .iter()
-                    .filter(|f| f.severity == crate::query::lint::Severity::High)
-                    .count();
-                self.last_status = Some(format!(
-                    "schema lint · {total} finding(s) · {high} high · live: +{added}"
-                ));
+                self.schema_lint.live_note = Some(format!("live: +{}", live.len()));
+                // Re-sorts (severity first) and clamps the cursor.
+                self.schema_lint.merge(live);
             }
             Err(e) => {
                 // Live check failed — leave the pure
@@ -627,10 +652,44 @@ impl App {
                 // so the operator knows the FK-index
                 // check didn't run.
                 tracing::warn!("schema lint live check failed: {e}");
-                self.last_status = Some(format!(
-                    "schema lint · live check failed: {e} (showing cached-only)"
-                ));
+                self.schema_lint.live_note =
+                    Some(format!("live check failed: {e} (showing cached-only)"));
             }
         }
+        self.last_status = Some(self.schema_lint.status());
+    }
+
+    /// The config advisor's findings landed: merged like the live lint,
+    /// and dropped the same way once the wizard is closed. A check that
+    /// couldn't run is named in the status line; the rest still show.
+    pub(super) fn on_advisor_loaded(
+        &mut self,
+        result: Result<crate::query::advisor::Report, String>,
+    ) {
+        if self.mode != Mode::SchemaLint {
+            return;
+        }
+        match result {
+            Ok(report) => {
+                for e in &report.errors {
+                    tracing::warn!("config advisor partial: {e}");
+                }
+                let mut note = format!("advisor: +{}", report.findings.len());
+                if !report.errors.is_empty() {
+                    note.push_str(&format!(
+                        " ({} couldn't run: {})",
+                        report.errors.len(),
+                        report.errors.join("; ")
+                    ));
+                }
+                self.schema_lint.advisor_note = Some(note);
+                self.schema_lint.merge(report.findings);
+            }
+            Err(e) => {
+                tracing::warn!("config advisor failed: {e}");
+                self.schema_lint.advisor_note = Some(format!("advisor failed: {e}"));
+            }
+        }
+        self.last_status = Some(self.schema_lint.status());
     }
 }

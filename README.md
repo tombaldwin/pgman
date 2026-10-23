@@ -55,7 +55,8 @@ At a glance:
 - **Editor** — syntax highlighting, completion, formatting, history, saved
   queries (`:param` prompts, rename, search), DBUnit fixture apply + capture.
 - **DBA panels** — schema browser, EXPLAIN tree, slow queries, active
-  sessions/locks, schema-lint wizard, result diff.
+  sessions/locks, schema-lint wizard with a config advisor (RDS / Aurora
+  parameter names), result diff.
 - **JDBC tap** — live app-side queries from any JVM over OpenTelemetry, with
   hotspots and live N+1 detection. A dedicated Java library adding
   per-caller, per-pool and per-transaction views is planned.
@@ -147,7 +148,7 @@ Three things worth knowing:
   as libpq does.
 - **JDBC tap:** the `--tap-listen` / `--tap-otlp` / `--tap-udp` listeners are
   unauthenticated and bind to `127.0.0.1` by default. Only bind a non-loopback
-  address on a trusted/firewalled network.
+  address on a trusted/firewalled network. See [docs/tap.md](docs/tap.md).
 
 ## Install
 
@@ -217,6 +218,7 @@ coverage, fuzzing, and what CI runs on every push.
 - [`docs/mcp.md`](docs/mcp.md) — `pgman mcp serve`, the MCP server for coding agents.
 - [`docs/safety-and-privacy.md`](docs/safety-and-privacy.md) — safety guard rails, what's stored locally.
 - [`docs/logs-to-sql.md`](docs/logs-to-sql.md) — the logs → runnable SQL walkthrough.
+- [`docs/tap.md`](docs/tap.md) — the JDBC tap: OpenTelemetry, TCP and UDP ingest, the event format, limits, record and replay.
 - [`docs/development.md`](docs/development.md) — build / test / clippy + distribution notes.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — module map and the invariants the compiler doesn't enforce.
 

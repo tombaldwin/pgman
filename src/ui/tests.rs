@@ -429,6 +429,89 @@ fn fit_status_drops_short_middle_segments_whole_instead_of_mangling_a_key_hint()
     );
 }
 
+const PROMPT_REST: &str = "  · 63 row(s) · enter accept · esc clear";
+
+/// A pattern that fits leaves the line to `fit_status`, which already
+/// keeps the prompt: the same text, and the cursor just after it.
+#[test]
+fn fit_prompt_matches_fit_status_while_that_keeps_the_prompt() {
+    for width in [30, 40, 60, 80] {
+        let (text, cursor) = fit_prompt("filter: /", "us", PROMPT_REST, width);
+        assert_eq!(
+            text,
+            fit_status(&format!("filter: /us{PROMPT_REST}"), width),
+            "{width}"
+        );
+        assert_eq!(cursor, Some(11), "{width}");
+    }
+}
+
+/// The bug: `fit_status` shrank and then dropped the `filter: /`
+/// segment, so a long pattern showed as `…` and key hints, with the
+/// cursor past the end of the line.
+#[test]
+fn fit_prompt_keeps_the_head_and_the_patterns_tail() {
+    let pattern = "customer_invoice_line_items_archive_2026";
+    let (text, cursor) = fit_prompt("filter: /", pattern, PROMPT_REST, 30);
+    assert_eq!(text, "filter: /…_items_archive_2026");
+    assert_eq!(display_width(&text), 29, "one cell left for the cursor");
+    assert_eq!(cursor, Some(29));
+    // Wide enough for the pattern, not for the hints: the keys that
+    // leave the prompt stay while they fit whole, and go otherwise.
+    let (text, cursor) = fit_prompt("filter: /", pattern, PROMPT_REST, 64);
+    assert_eq!(
+        text,
+        "filter: /customer_invoice_line_items_archive_2026  · esc clear"
+    );
+    assert_eq!(cursor, Some(49));
+    let (text, _) = fit_prompt("filter: /", pattern, PROMPT_REST, 55);
+    assert_eq!(text, "filter: /customer_invoice_line_items_archive_2026");
+}
+
+#[test]
+fn fit_prompt_measures_a_wide_tail_by_display_width() {
+    let (text, cursor) = fit_prompt("find: ", "東京都の顧客一覧", "  · esc cancel", 14);
+    // 14 − head 6 − `…` − the cursor's cell = 6 columns: three glyphs.
+    assert_eq!(text, "find: …客一覧");
+    assert_eq!(cursor, Some(13));
+    assert!(display_width(&text) < 14);
+}
+
+/// Too narrow for the head and two cells: the whole line is fitted
+/// as any status is, and no cursor is placed in it.
+#[test]
+fn fit_prompt_falls_back_to_fit_status_when_the_head_cannot_fit() {
+    let (text, cursor) = fit_prompt("filter: /", "users", PROMPT_REST, 10);
+    assert_eq!(
+        text,
+        fit_status(&format!("filter: /users{PROMPT_REST}"), 10)
+    );
+    assert_eq!(cursor, None);
+}
+
+#[test]
+fn fit_prompt_never_exceeds_width_and_its_cursor_stays_on_the_line() {
+    let heads = ["filter: /", "find: ", "(failed reverse-i-search) '"];
+    let patterns = ["", "a", "customer_invoice_line_items", "東京都の顧客一覧"];
+    for head in heads {
+        for pattern in patterns {
+            for width in 0..90 {
+                let (text, cursor) = fit_prompt(head, pattern, PROMPT_REST, width);
+                assert!(
+                    display_width(&text) <= width,
+                    "{head}{pattern} @{width}: {text}"
+                );
+                if let Some(c) = cursor {
+                    assert!(c < width, "{head}{pattern} @{width}: cursor {c}");
+                    assert!(text.starts_with(head), "{head}{pattern} @{width}: {text}");
+                } else {
+                    assert!(display_width(head) + 2 > width, "{head}{pattern} @{width}");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn fit_status_never_exceeds_width_or_ends_in_a_partial_word() {
     // Real footer status strings (confirm prompt, tip) plus a couple of
@@ -684,6 +767,37 @@ fn footer_badges_surface_tap_and_nplus1_when_findings_exist() {
     );
 }
 
+/// The TAP badge means "the tap has heard from the app": a commit or
+/// rollback is hearing from it, even with no query or heartbeat yet.
+#[test]
+fn footer_badges_show_tap_for_a_stream_of_only_txn_boundaries() {
+    let mut a = settled_app(false, false);
+    a.on_tap_event(crate::tap::TapEvent {
+        v: 1,
+        kind: crate::tap::TapKind::TxnBoundary,
+        ts_unix_micros: 1,
+        received_at_unix_micros: 1,
+        app: None,
+        pool: None,
+        conn: Some("c-1".into()),
+        txn: Some("c-1#1".into()),
+        sql: None,
+        params: None,
+        params_redacted: false,
+        duration_micros: None,
+        rows: None,
+        error: None,
+        caller: None,
+        dropped_events_total: None,
+        txn_outcome: Some(crate::tap::TxnOutcome::Commit),
+    });
+    let spans = footer_badges_with(&a, &a.theme, 0);
+    assert!(
+        spans.iter().any(|s| s.content.trim() == "TAP"),
+        "expected TAP badge: {spans:?}"
+    );
+}
+
 /// A query event bound to `params`, for the tap List view's detail.
 fn tap_query_with_params(sql: &str, params: &[&str], redacted: bool) -> crate::tap::TapEvent {
     crate::tap::TapEvent {
@@ -722,6 +836,66 @@ fn tap_monitor_rows(a: &mut App, w: u16, h: u16) -> Vec<String> {
                 .collect::<String>()
         })
         .collect()
+}
+
+/// A result behind an open cursor says it is partial and names `M`;
+/// once the cursor has closed, it says so and that `M` re-runs — at
+/// 80 columns, whole.
+#[test]
+fn a_paged_result_title_names_m() {
+    let mut a = settled_app(false, false);
+    a.splash_visible = false;
+    a.splash_until = None;
+    a.conn_state = crate::app::ConnState::Connected {
+        server_version: "16.0".into(),
+    };
+    a.mode = crate::app::Mode::Normal;
+    a.grid = crate::grid::Grid {
+        columns: vec!["id".into()],
+        rows: (0..1000).map(|i| vec![Some(i.to_string())]).collect(),
+        truncated: true,
+    };
+    a.grid_view.visible_rows = (0..1000).collect();
+    a.result_paging = Some(crate::app::ResultPaging {
+        id: 3,
+        sql: "SELECT id FROM t".into(),
+        ceiling: false,
+        in_transaction: false,
+    });
+    let now = std::time::Instant::now();
+    a.cursor = Some(crate::app::CursorMirror {
+        result_id: 3,
+        opened: now,
+        last_fetch: now,
+        limits: crate::query::paging::Limits {
+            idle: std::time::Duration::from_secs(60),
+            lifetime: std::time::Duration::from_secs(600),
+        },
+    });
+    let screen = |a: &mut App| {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| draw(f, a)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let shown = screen(&mut a);
+    assert!(
+        shown.contains("result · 1000 row(s) · partial · M fetches more"),
+        "{shown}"
+    );
+    a.cursor = None;
+    let shown = screen(&mut a);
+    assert!(
+        shown.contains("result · 1000 row(s) · partial · cursor closed · M re-runs"),
+        "{shown}"
+    );
 }
 
 /// The tap monitor's title is fitted into its border whole segments at
@@ -923,7 +1097,7 @@ fn tap_list_params_detail_keeps_its_rows_on_a_commit() {
     let on_commit = tap_monitor_rows(&mut a, 120, 40);
     // The detail's rule starts at the panel's left border; the popup's
     // own top and bottom borders start at a corner.
-    let rule = format!("│{}", "─".repeat(40));
+    let rule = "│── enter: the whole event ──".to_string();
     let rule_at = |rows: &[String]| rows.iter().position(|r| r.contains(&rule));
     assert!(rule_at(&on_query).is_some(), "{}", on_query.join("\n"));
     assert_eq!(rule_at(&on_query), rule_at(&on_commit));
@@ -1956,6 +2130,7 @@ fn the_confirm_modal_footer_keeps_its_y_n_keys() {
         },
         is_batch: false,
         summary: Some("delete without a where".into()),
+        cell_edit: None,
     });
     app.mode = crate::app::Mode::Confirm;
     app.last_status = Some("completed `users`".into());
@@ -1989,6 +2164,7 @@ fn the_confirm_card_calls_a_typo_unrecognised_not_a_refused_write() {
         decision,
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     app.mode = crate::app::Mode::Confirm;
     for (w, h) in [(80, 24), (120, 40)] {
@@ -2222,4 +2398,141 @@ fn the_no_connection_card_points_at_a_broken_environments_toml() {
         assert!(text.contains("no connection"), "{text}");
         assert!(!screen(false, picks).contains("environments.toml"));
     }
+}
+
+/// An advisor finding's detail strip puts the setting and the
+/// suggestion right under its title, so an 80×24 terminal shows them;
+/// a lint finding's keeps its object line.
+#[test]
+fn the_advisor_detail_strip_leads_with_what_to_do() {
+    let theme = crate::theme::Theme::default();
+    let text = |lines: Vec<Line<'static>>| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+    let adv = crate::demo::advisor()
+        .findings
+        .into_iter()
+        .find(|f| f.code == "ADV004")
+        .unwrap();
+    let rows = text(super::schema::lint_detail_lines(&adv, 70, &theme));
+    assert!(rows[0].starts_with("  ADV004 · "), "{rows:?}");
+    assert!(
+        rows[1].starts_with("  setting:  idle_in_transaction_session_timeout 0ms (this session)"),
+        "{rows:?}"
+    );
+    // The setting wraps with a hanging indent; the suggestion follows it.
+    assert_eq!(rows[2], "            5min (no restart)", "{rows:?}");
+    assert!(
+        rows[3].starts_with("  suggest:  ALTER ROLE finance_ro"),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("  evidence: a snapshot, now")),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.starts_with("  RDS:      ")),
+        "{rows:?}"
+    );
+    assert!(rows.iter().all(|r| display_width(r) <= 72), "{rows:?}");
+    let lint = crate::query::lint::fk_without_index_finding("public", "t", "fk", "c");
+    let rows = text(super::schema::lint_detail_lines(&lint, 70, &theme));
+    assert_eq!(rows[1], "  object: public.t.fk");
+}
+
+/// The whole screen at `w`×`h` as one string.
+fn screen_text(a: &mut App, w: u16, h: u16) -> String {
+    a.splash_visible = false;
+    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+    term.draw(|f| draw(f, a)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The list panels draw a header row above their rows; the scroll has
+/// to keep the cursor's row in the rows left under it. Counting the
+/// header as a row left the last row, under the cursor, one past the
+/// bottom.
+#[test]
+fn list_panels_keep_the_cursor_row_on_screen_under_their_header() {
+    use crate::app::Mode;
+    let n = 40;
+    let mut a = settled_app(false, false);
+    a.schema_lint.findings = (0..n)
+        .map(|i| crate::query::lint::Finding {
+            severity: crate::query::lint::Severity::Low,
+            code: "LINT105",
+            title: "t".into(),
+            object: format!("public.tbl_{i:02}"),
+            detail: "d".into(),
+            suggestion: None,
+            advice: None,
+        })
+        .collect();
+    a.schema_lint.cursor = n - 1;
+    a.mode = Mode::SchemaLint;
+    let s = screen_text(&mut a, 100, 30);
+    // The list row, not the detail strip's `object:` line.
+    assert!(s.contains("LINT105  public.tbl_39"), "wizard:\n{s}");
+
+    let mut a = settled_app(false, false);
+    a.sessions.rows = (0..n as i32)
+        .map(|i| crate::query::sessions::SessionRow {
+            pid: 7000 + i,
+            user: "u".into(),
+            application: "a".into(),
+            state: "active".into(),
+            wait_event: None,
+            blocked_by: String::new(),
+            query: format!("SELECT {i}"),
+            age_secs: 1.0,
+        })
+        .collect();
+    a.sessions.cursor = n - 1;
+    a.mode = Mode::Sessions;
+    let s = screen_text(&mut a, 100, 30);
+    assert!(s.contains("7039"), "sessions:\n{s}");
+
+    let mut a = settled_app(false, false);
+    a.slow_queries.rows = (0..n)
+        .map(|i| crate::query::slow_queries::SlowQueryRow {
+            query: format!("SELECT slow_{i:02}"),
+            calls: 1,
+            total_ms: 1.0,
+            mean_ms: 1.0,
+            rows: 1,
+        })
+        .collect();
+    a.slow_queries.cursor = n - 1;
+    a.mode = Mode::SlowQueries;
+    let s = screen_text(&mut a, 100, 30);
+    // The detail strip shows the focused query too: count the list's.
+    assert!(
+        s.matches("SELECT slow_39").count() >= 2,
+        "slow queries:\n{s}"
+    );
+
+    let mut a = settled_app(false, false);
+    a.notifications.items = (0..n as i32)
+        .map(|i| crate::conn::NotificationMsg {
+            channel: format!("chan_{i:02}"),
+            pid: 1,
+            payload: "p".into(),
+        })
+        .collect();
+    a.notifications.cursor = n - 1;
+    a.mode = Mode::Notifications;
+    let s = screen_text(&mut a, 100, 30);
+    assert!(s.contains("chan_39"), "notifications:\n{s}");
 }

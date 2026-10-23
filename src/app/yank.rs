@@ -127,6 +127,28 @@ impl App {
         }
     }
 
+    /// `e` in the schema wizard: yank the statement an advisor finding's
+    /// numbers came from, to run in the editor.
+    pub(super) fn yank_schema_lint_evidence(&mut self) {
+        let Some(finding) = self.schema_lint.findings.get(self.schema_lint.cursor) else {
+            return;
+        };
+        let Some(advice) = finding.advice.as_deref() else {
+            self.last_status = Some(format!(
+                "{}: no evidence query — e is for the advisor's ADV findings",
+                finding.code
+            ));
+            return;
+        };
+        match write_clipboard(&advice.evidence_sql) {
+            Ok(()) => {
+                self.last_status = Some(format!("yanked {} evidence query", finding.code));
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("yank failed: {e}")),
+        }
+    }
+
     /// Resolve the focused schema-browser row to its owning
     /// (schema, table) — returns None when focused on a Schema row
     /// (no table context) or when the cursor is out-of-bounds.
@@ -212,7 +234,7 @@ impl App {
             self.on_ddl_loaded(&label, result);
             return;
         }
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -220,6 +242,7 @@ impl App {
         let generation = self.generation;
         self.last_status = Some(format!("reading the DDL of {label}…"));
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = crate::query::ddl::fetch(&client, &schema, &table).await;
             let _ = tx.send(AppMsg::DdlLoaded {
                 generation,

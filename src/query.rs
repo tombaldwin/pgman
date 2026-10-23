@@ -11,8 +11,10 @@
 //! [`subst`] does the type-aware placeholder substitution they share.
 //! [`nplus1`] clusters reconstructed queries to surface N+1 selects.
 
+pub mod advisor;
 pub mod apply;
 pub mod backslash;
+pub mod cell_edit;
 pub mod clause;
 pub mod complete;
 pub mod ddl;
@@ -27,6 +29,7 @@ pub mod lint;
 pub mod logdetect;
 pub mod migrations;
 pub mod nplus1;
+pub mod paging;
 pub mod params;
 pub mod patches;
 pub mod pglog;

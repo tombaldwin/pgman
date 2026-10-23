@@ -201,6 +201,11 @@ pub enum Mode {
     /// returns to the mode the bar was opened from. State lives
     /// in `App::command_bar`.
     CommandBar,
+    /// `u`'s one-line editor for the focused cell (from the grid or row
+    /// detail). Enter saves through the safety guard as a one-row
+    /// `UPDATE`, `Ctrl-N` toggles NULL, Esc cancels. State lives in
+    /// `App::cell_edit`.
+    CellEdit,
 }
 
 impl Mode {
@@ -224,6 +229,7 @@ impl Mode {
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
                 | Mode::CommandBar
+                | Mode::CellEdit
         )
     }
 }
@@ -382,6 +388,10 @@ pub struct GridView {
     /// row-as-INSERT yank — and, eventually, cell-edit-to-UPDATE +
     /// FK navigation.
     pub source: Option<(String, String)>,
+    /// Where each column of the grid was read from — see
+    /// `grid::ColumnOrigin`. Empty unless the grid is a plain editor
+    /// run's result; a column no table backs is `None`.
+    pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
 }
 
 /// Grid find ("/" search) state. Lives on `App` only — find is a
@@ -404,6 +414,61 @@ pub struct GridFind {
     pub accepted: Option<String>,
 }
 
+/// A result that ran through the result cursor (`query::paging`,
+/// docs/backlog/paging.md), so `M` can fetch more of it. Per tab: it
+/// travels in the tab's snapshot with the grid it describes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultPaging {
+    /// Matches [`CursorMirror::result_id`] while this result's cursor
+    /// is open.
+    pub id: u64,
+    /// The statement, for `M` to re-run once the cursor has closed.
+    pub sql: String,
+    /// Stopped at `paging::MAX_HELD_ROWS`.
+    pub ceiling: bool,
+    /// The session was inside a transaction when it ran, so it ran
+    /// unpaged.
+    pub in_transaction: bool,
+}
+
+/// The open result cursor, as the UI sees it — at most one per
+/// session; the pager holds the real one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorMirror {
+    /// The [`ResultPaging::id`] it was opened for.
+    pub result_id: u64,
+    pub opened: Instant,
+    pub last_fetch: Instant,
+    pub limits: crate::query::paging::Limits,
+}
+
+/// Why pgman closed a cursor on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorExpiry {
+    /// Unfetched for `limits.idle`.
+    Idle,
+    /// Open for `limits.lifetime`.
+    Lifetime,
+}
+
+impl CursorMirror {
+    /// When pgman closes it unless something else does first. Pure.
+    pub fn deadline(&self) -> Instant {
+        (self.last_fetch + self.limits.idle).min(self.opened + self.limits.lifetime)
+    }
+
+    /// Whether it has outlived a limit by `now`, and which. Pure.
+    pub fn expired(&self, now: Instant) -> Option<CursorExpiry> {
+        if now >= self.opened + self.limits.lifetime {
+            Some(CursorExpiry::Lifetime)
+        } else if now >= self.last_fetch + self.limits.idle {
+            Some(CursorExpiry::Idle)
+        } else {
+            None
+        }
+    }
+}
+
 /// Per-tab snapshot of the editor + result-grid state. The
 /// connection, schema cache, history, saved queries, theme,
 /// notifications, and safety profile are SHARED across tabs and
@@ -422,6 +487,8 @@ pub struct TabSnapshot {
     pub grid_selected: Option<usize>,
     pub grid_view: GridView,
     pub last_run_sql: Option<String>,
+    /// How this tab's result can continue past its held rows.
+    pub result_paging: Option<ResultPaging>,
     /// Diff baseline ("A") pinned with `D`. Per-tab so pinning in one
     /// tab can't leak into another (a fresh tab starts unpinned). The
     /// transient `Mode::ResultDiff` overlay is NOT snapshotted — it is
@@ -477,6 +544,11 @@ pub struct PinnedResult {
     /// Short label for the header — the SQL that produced A
     /// (collapsed / truncated) or a fallback.
     pub label: String,
+    /// The grid's FROM table and column origins when it was pinned
+    /// (`GridView::source` / `origins`): what lets the diff key on the
+    /// table's real primary key.
+    pub source: Option<(String, String)>,
+    pub origins: Vec<Option<crate::grid::ColumnOrigin>>,
 }
 
 /// Frozen state behind `Mode::ResultDiff`: the baseline (A), a
@@ -489,7 +561,12 @@ pub struct ResultDiffState {
     pub b_columns: Vec<String>,
     pub b_rows: Vec<Vec<crate::grid::Cell>>,
     pub b_label: String,
+    pub b_source: Option<(String, String)>,
+    pub b_origins: Vec<Option<crate::grid::ColumnOrigin>>,
     pub key: crate::query::row_diff::RowKey,
+    /// `key` is the source table's primary key, not an inferred unique
+    /// column.
+    pub key_is_pk: bool,
     pub diff: crate::query::row_diff::RowDiff,
 }
 /// In-progress `:param` collection while loading a saved query
@@ -759,6 +836,45 @@ pub struct PendingRun {
     /// For multi-statement runs, a human summary shown in the confirm modal
     /// in place of the (less useful for batches) classification.
     pub summary: Option<String>,
+    /// Set when `sql` is a cell edit's UPDATE: confirming runs it under
+    /// the one-row guard (`conn::run_single_row_update`) and puts the
+    /// new value in the grid.
+    pub cell_edit: Option<PendingCellEdit>,
+}
+
+/// `u`'s inline editor (`Mode::CellEdit`): the planned edit, the value
+/// being typed, and whether it is SQL NULL.
+#[derive(Debug, Clone)]
+pub struct CellEditUi {
+    pub edit: crate::query::cell_edit::CellEdit,
+    pub input: TextInput,
+    /// The value is SQL NULL (`Ctrl-N`); `input` is empty while it is.
+    pub null: bool,
+    /// The row as the grid held it when the editor opened.
+    pub row_cells: Vec<crate::grid::Cell>,
+    /// The grid or row detail: where Esc and a save land.
+    pub return_to: Mode,
+}
+
+impl CellEditUi {
+    /// The value as it would be written: `None` for NULL.
+    pub fn value(&self) -> crate::grid::Cell {
+        (!self.null).then(|| self.input.text().to_string())
+    }
+}
+
+/// A cell edit on its way to the database — confirming, running, or
+/// (under `auto_tx`) waiting on commit or rollback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCellEdit {
+    pub edit: crate::query::cell_edit::CellEdit,
+    /// The value being written.
+    pub new: crate::grid::Cell,
+    /// The row as the grid held it when the edit was planned: how the
+    /// result finds it again after a sort or a tab switch.
+    pub row_cells: Vec<crate::grid::Cell>,
+    /// Where the operator lands when it's done.
+    pub return_to: Mode,
 }
 
 /// Tap-monitor navigation state — the active sub-view, sort, and the
@@ -775,7 +891,35 @@ pub struct TapNavUi {
     pub pools_cursor: usize,
     pub baseline_cursor: usize,
     pub nplus1_cursor: usize,
+    /// The List view's focused-event overlay (`Enter`), while open.
+    pub event_detail: Option<TapEventDetail>,
 }
+
+/// The tap List view's focused-event overlay: the whole of one event —
+/// its cause chain, caller stack, pool / conn / txn — which a row has
+/// no room for. A snapshot taken when it opened: on a full ring every
+/// arrival evicts one event and the cursor follows, so reading
+/// `tap_events[cursor]` would swap the event under the reader.
+#[derive(Debug, Clone)]
+pub struct TapEventDetail {
+    pub event: crate::tap::TapEvent,
+    /// First content row shown.
+    pub scroll: usize,
+    /// Furthest `scroll` can go, written by the renderer — it alone
+    /// knows the width the fields wrap to. 0 until the first draw.
+    pub max_scroll: usize,
+}
+
+impl TapEventDetail {
+    pub fn new(event: crate::tap::TapEvent) -> Self {
+        Self {
+            event,
+            scroll: 0,
+            max_scroll: 0,
+        }
+    }
+}
+
 impl TapNavUi {
     /// Reset every per-view cursor to the top (the ring backs all views).
     pub fn reset_cursors(&mut self) {
@@ -1412,6 +1556,43 @@ pub struct SchemaLintUi {
     pub findings: Vec<crate::query::lint::Finding>,
     /// Cursor into `findings`.
     pub cursor: usize,
+    /// How the live lint checks went (`live: +3`), once they land.
+    pub live_note: Option<String>,
+    /// How the config advisor went (`advisor: +2`), once it lands.
+    pub advisor_note: Option<String>,
+}
+
+impl SchemaLintUi {
+    /// Merge findings from an async check, keeping the sort
+    /// `lint::run_all` uses and the cursor in range.
+    pub fn merge(&mut self, more: Vec<crate::query::lint::Finding>) {
+        self.findings.extend(more);
+        self.findings.sort_by(|a, b| {
+            a.severity
+                .cmp(&b.severity)
+                .then_with(|| a.code.cmp(b.code))
+                .then_with(|| a.object.cmp(&b.object))
+        });
+        self.cursor = self.cursor.min(self.findings.len().saturating_sub(1));
+    }
+
+    /// The status line: counts, then each async check's note.
+    pub fn status(&self) -> String {
+        let high = self
+            .findings
+            .iter()
+            .filter(|f| f.severity == crate::query::lint::Severity::High)
+            .count();
+        let mut s = format!(
+            "schema lint · {} finding(s) · {high} high",
+            self.findings.len()
+        );
+        for note in [&self.live_note, &self.advisor_note].into_iter().flatten() {
+            s.push_str(" · ");
+            s.push_str(note);
+        }
+        s
+    }
 }
 
 impl ListCursorNav for SchemaLintUi {
@@ -1735,6 +1916,10 @@ pub struct TapHealth {
     pub query_count: u64,
     /// Count of heartbeat events seen — for diagnostics.
     pub heartbeat_count: u64,
+    /// Count of `txn_boundary` events (commit / rollback) seen. A
+    /// stream of only these is still a stream: without the count the
+    /// monitor read "no events yet" over a ring of `[COMMIT]` rows.
+    pub boundary_count: u64,
 }
 
 impl TapHealth {
@@ -1748,7 +1933,7 @@ impl TapHealth {
     pub fn monitor_status(&self, listeners: &[crate::tap::TapListener]) -> String {
         let queries = self.query_count;
         let beats = self.heartbeat_count;
-        if queries == 0 && beats == 0 {
+        if !self.any_event_seen() {
             return match crate::tap::listening_summary(listeners) {
                 Some(listening) => format!("JDBC tap · no events yet · {listening}"),
                 None => "JDBC tap · no events yet · start pgman with --tap-otlp :4318 and attach the OpenTelemetry Java agent to the JVM".into(),
@@ -1762,10 +1947,28 @@ impl TapHealth {
         } else {
             String::new()
         };
+        // Only when there are any: the line is narrow, and a stream of
+        // queries without boundaries (autocommit) is the common case.
+        let boundary_suffix = if self.boundary_count > 0 {
+            format!(
+                " · {}",
+                crate::ui::count_label(self.boundary_count, "commit/rollback", "commits/rollbacks")
+            )
+        } else {
+            String::new()
+        };
         format!(
-            "JDBC tap · {} · {}{dropped_suffix}",
+            "JDBC tap · {} · {}{boundary_suffix}{dropped_suffix}",
             crate::ui::count_label(queries, "query", "queries"),
             crate::ui::count_label(beats, "heartbeat", "heartbeats"),
         )
+    }
+
+    /// Has the tap heard anything this session — a query, a heartbeat
+    /// or a commit / rollback? What the monitor's "no events yet" and
+    /// the footer's `TAP` badge both turn on.
+    #[must_use]
+    pub fn any_event_seen(&self) -> bool {
+        self.query_count > 0 || self.heartbeat_count > 0 || self.boundary_count > 0
     }
 }

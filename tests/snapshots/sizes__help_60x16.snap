@@ -5,7 +5,7 @@ expression: dump(&buf)
 ---
  pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
-╭[ ◆ help · 22 sections ◆ ]────────────────────────────────╮
+╭[ ◆ help · 23 sections ◆ ]────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error d… │
 │ ▸ grid                     the results: move, sort, fil… │
 │   editor                   write and run SQL · EXPLAIN … │
@@ -15,7 +15,7 @@ expression: dump(&buf)
 │   conn pick                the connection picker         │
 │   row detail               one row, field by field (ent… │
 │   cell detail              one value, as text or as a J… │
-│   schema browser           schemas, tables, columns, co… │
-│   ↓ 13 more                                              │
+│   cell edit                change one value of a table … │
+│   ↓ 14 more                                              │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   esc / ? close help · +3 more

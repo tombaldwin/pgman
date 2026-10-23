@@ -403,6 +403,14 @@ fn take_table_ref(tokens: &[Tok], i: usize) -> Option<(TableName, usize)> {
     if !is_name_token(head) {
         return None;
     }
+    // `FROM ONLY t` (no inheritance children): `ONLY` is a keyword, not
+    // the table — unless it is quoted, or a schema (`only.t`).
+    if !head.quoted
+        && head.text.eq_ignore_ascii_case("ONLY")
+        && tokens.get(i + 1).is_some_and(is_name_token)
+    {
+        return take_table_ref(tokens, i + 1);
+    }
     // Schema.name?
     if let (Some(dot), Some(tail)) = (tokens.get(i + 1), tokens.get(i + 2)) {
         if !dot.quoted && dot.text == "." && is_name_token(tail) {
@@ -678,6 +686,28 @@ mod tests {
         // paren-depth scanner.
         let got = refs("SELECT * FROM (SELECT COUNT(*) FROM (SELECT 1) x) sub");
         assert!(got.iter().any(|t| t.name == "sub"));
+    }
+
+    /// `ONLY` is the inheritance keyword, not a table called `only` — but
+    /// a quoted `"only"` or a schema `only.t` is a name.
+    #[test]
+    fn from_only_names_the_table_after_it() {
+        let names = |sql: &str| -> Vec<(Option<String>, String)> {
+            parse_from_tables(sql)
+                .into_iter()
+                .map(|t| (t.schema, t.name))
+                .collect()
+        };
+        assert_eq!(names("SELECT * FROM ONLY t"), vec![(None, "t".into())]);
+        assert_eq!(
+            names("select * from only s.\"T\" x where 1 = 1"),
+            vec![(Some("s".into()), "T".into())]
+        );
+        assert_eq!(names("SELECT * FROM \"only\""), vec![(None, "only".into())]);
+        assert_eq!(
+            names("SELECT * FROM only.t"),
+            vec![(Some("only".into()), "t".into())]
+        );
     }
 
     #[test]

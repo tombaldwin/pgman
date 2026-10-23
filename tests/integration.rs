@@ -6063,3 +6063,1177 @@ fn batch_json_script_with_a_select_explains_where_the_rows_went() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+// --- config advisor -------------------------------------------------------
+
+/// A writable raw connection to the compose database, for making the
+/// evidence the advisor then reads.
+async fn raw_client() -> tokio_postgres::Client {
+    let (c, conn) = tokio_postgres::connect(DSN, tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    c
+}
+
+/// pgman's own read-only session, which the advisor runs on.
+async fn advisor_client() -> std::sync::Arc<tokio_postgres::Client> {
+    pgman::conn::connect_via(pgman::conn::Dsn::parse(DSN).unwrap(), None, 5_000)
+        .await
+        .unwrap()
+}
+
+/// Run the advisor until `pick` finds what it waits for (statistics
+/// reach the views shortly after the writing session goes idle).
+async fn advisor_until(
+    client: &tokio_postgres::Client,
+    th: &pgman::query::advisor::Thresholds,
+    mut pick: impl FnMut(&pgman::query::lint::Finding) -> bool,
+) -> pgman::query::lint::Finding {
+    let mut last = None;
+    for _ in 0..60 {
+        let report = pgman::query::advisor::fetch(client, th).await.unwrap();
+        if let Some(f) = report.findings.iter().find(|f| pick(f)) {
+            return f.clone();
+        }
+        last = Some(report);
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    panic!("the advisor never found it: {last:#?}");
+}
+
+/// No window floor: the compose cluster may be minutes old.
+fn advisor_thresholds() -> pgman::query::advisor::Thresholds {
+    pgman::query::advisor::Thresholds {
+        min_window_secs: 0.0,
+        ..Default::default()
+    }
+}
+
+/// A sort under a tiny work_mem spills; the advisor sees the spill in
+/// pg_stat_database and, with no pg_stat_statements on the compose
+/// server, says how to name the statements.
+#[test]
+fn advisor_reports_a_temp_spill_from_a_tiny_work_mem() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let reader = advisor_client().await;
+        let before: i64 = reader
+            .query_one(pgman::query::advisor::DB_STATS_SQL, &[])
+            .await
+            .unwrap()
+            .get(3);
+        let spiller = raw_client().await;
+        spiller
+            .batch_execute(
+                "SET work_mem = '64kB'; \
+                 SELECT count(*) FROM (SELECT g FROM generate_series(1, 200000) g ORDER BY g DESC) s",
+            )
+            .await
+            .unwrap();
+        let th = pgman::query::advisor::Thresholds {
+            min_temp_bytes: before + 1,
+            ..advisor_thresholds()
+        };
+        let f = advisor_until(&reader, &th, |f| f.code == "ADV002").await;
+        let advice = f.advice.as_deref().unwrap();
+        assert!(advice.evidence[0].starts_with("temp_files "), "{advice:?}");
+        assert!(
+            advice
+                .evidence
+                .iter()
+                .any(|e| e.contains("CREATE EXTENSION pg_stat_statements")),
+            "{advice:?}"
+        );
+        assert_eq!(advice.change.as_ref().unwrap().name, "work_mem");
+        assert!(f.suggestion.unwrap().contains("SET work_mem = '8MB'"));
+    });
+}
+
+/// Update churn on a table with autovacuum off leaves dead tuples the
+/// advisor blames on the switch; on one whose scale factor is 0.5 it
+/// blames the scale factor.
+#[test]
+fn advisor_reports_dead_tuples_from_update_churn() {
+    let off = it_name("adv_dead_off");
+    let lax = it_name("adv_dead_lax");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let w = raw_client().await;
+        w.batch_execute(&format!(
+            "DROP TABLE IF EXISTS {off}, {lax}; \
+             CREATE TABLE {off} (id int PRIMARY KEY, n int) WITH (autovacuum_enabled = false); \
+             CREATE TABLE {lax} (id int PRIMARY KEY, n int) WITH (autovacuum_vacuum_scale_factor = 0.5); \
+             INSERT INTO {off} SELECT g, 0 FROM generate_series(1, 20000) g; \
+             INSERT INTO {lax} SELECT g, 0 FROM generate_series(1, 20000) g; \
+             UPDATE {off} SET n = 1; \
+             UPDATE {lax} SET n = 1 WHERE id <= 5000"
+        ))
+        .await
+        .unwrap();
+        let reader = advisor_client().await;
+        let th = advisor_thresholds();
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV003" && f.object == format!("public.{off}")
+        })
+        .await;
+        assert!(f.title.contains("autovacuum off for the table"), "{}", f.title);
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some(format!("ALTER TABLE public.{off} RESET (autovacuum_enabled);").as_str())
+        );
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV003" && f.object == format!("public.{lax}")
+        })
+        .await;
+        assert!(f.title.contains("its scale factor allows it"), "{}", f.title);
+        assert_eq!(
+            f.suggestion.as_deref(),
+            Some(
+                format!("ALTER TABLE public.{lax} SET (autovacuum_vacuum_scale_factor = 0.05);")
+                    .as_str()
+            )
+        );
+        let advice = f.advice.as_deref().unwrap();
+        assert!(
+            advice.evidence[1].contains("table options: autovacuum_vacuum_scale_factor=0.5"),
+            "{advice:?}"
+        );
+        w.batch_execute(&format!("DROP TABLE {off}, {lax}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// One session holds a lock idle in a transaction, another waits: the
+/// advisor names the holder as the head of the chain. Seen through a
+/// role without pg_read_all_stats, the chain is still there and the
+/// finding says what is hidden.
+#[test]
+fn advisor_reports_a_lock_wait_and_its_blocking_chain() {
+    let table = it_name("adv_lock");
+    let role = it_name("adv_role");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let holder = raw_client().await;
+        holder
+            .batch_execute(&format!(
+                "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (x int); \
+                 DROP ROLE IF EXISTS {role}; CREATE ROLE {role} NOLOGIN"
+            ))
+            .await
+            .unwrap();
+        let holder_pid: i32 = holder
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        holder
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"
+            ))
+            .await
+            .unwrap();
+        let waiter = raw_client().await;
+        let waiter_pid: i32 = waiter
+            .query_one("SELECT pg_backend_pid()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let q = format!("SELECT count(*) FROM {table}");
+        let waiting = tokio::spawn(async move { waiter.simple_query(&q).await });
+
+        let reader = advisor_client().await;
+        let th = pgman::query::advisor::Thresholds {
+            min_lock_wait_secs: 0.5,
+            ..advisor_thresholds()
+        };
+        let head = format!("pid {holder_pid} (pgman_test, idle in transaction");
+        let f = advisor_until(&reader, &th, |f| {
+            f.code == "ADV004"
+                && f.advice
+                    .as_deref()
+                    .is_some_and(|a| a.evidence.iter().any(|e| e.starts_with(&head)))
+        })
+        .await;
+        let advice = f.advice.as_deref().unwrap();
+        let line = advice
+            .evidence
+            .iter()
+            .find(|e| e.starts_with(&head))
+            .unwrap();
+        assert!(line.contains(&format!("{waiter_pid} (")), "{line}");
+        assert!(
+            advice.evidence_sql.contains("l.waitstart"),
+            "PG16 reads waitstart"
+        );
+
+        // The same chain through a role that can't read other sessions.
+        let unprivileged = raw_client().await;
+        unprivileged
+            .batch_execute(&format!("SET ROLE {role}"))
+            .await
+            .unwrap();
+        let mine = format!("pid {holder_pid} ");
+        let f = advisor_until(&unprivileged, &th, |f| {
+            f.code == "ADV004"
+                && f.advice
+                    .as_deref()
+                    .is_some_and(|a| a.evidence.iter().any(|e| e.starts_with(&mine)))
+        })
+        .await;
+        let advice = f.advice.as_deref().unwrap();
+        assert!(
+            advice
+                .evidence
+                .iter()
+                .any(|e| e.contains("GRANT pg_monitor")),
+            "{advice:?}"
+        );
+        let line = advice
+            .evidence
+            .iter()
+            .find(|e| e.starts_with(&mine))
+            .unwrap();
+        assert!(line.contains("state hidden"), "{line}");
+
+        holder.batch_execute("ROLLBACK").await.unwrap();
+        waiting.await.unwrap().unwrap();
+        unprivileged.batch_execute("RESET ROLE").await.unwrap();
+        holder
+            .batch_execute(&format!("DROP TABLE {table}; DROP ROLE {role}"))
+            .await
+            .unwrap();
+    });
+}
+
+/// Every check runs against a real server, and the checkpoint counters
+/// come from the view its version has (pg_stat_bgwriter on the compose
+/// PG16).
+#[test]
+fn advisor_runs_every_check_against_a_real_server() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let reader = advisor_client().await;
+        let report = pgman::query::advisor::fetch(&reader, &advisor_thresholds())
+            .await
+            .unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let version: i32 = reader
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .await
+            .unwrap()
+            .get(0);
+        let row = reader
+            .query_one(&pgman::query::advisor::checkpoints_sql(version), &[])
+            .await
+            .unwrap();
+        let timed: i64 = row.get(0);
+        let requested: i64 = row.get(1);
+        assert!(timed >= 0 && requested >= 0);
+        if let Some(f) = report.findings.iter().find(|f| f.code == "ADV005") {
+            let view = if version >= 170_000 {
+                "pg_stat_checkpointer"
+            } else {
+                "pg_stat_bgwriter"
+            };
+            assert!(f.advice.as_deref().unwrap().evidence[0].starts_with(view));
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Paging past MAX_ROWS (query::paging, docs/backlog/paging.md)
+// ---------------------------------------------------------------------------
+
+/// The backend pid of `client`'s session.
+async fn backend_pid(client: &tokio_postgres::Client) -> i32 {
+    client
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .expect("read the backend pid")
+        .get(0)
+}
+
+/// `pg_stat_activity.state` of `pid`, read from another session, once it
+/// equals `want` or two seconds have passed: the view lags the backend's
+/// own state change by a moment. `pg_cursors` lists only the asking
+/// session's cursors, so the outside view is the state.
+async fn session_state(observer: &tokio_postgres::Client, pid: i32, want: &str) -> String {
+    let mut state = String::new();
+    for _ in 0..40 {
+        state = observer
+            .query_one(
+                "SELECT coalesce(state, '') FROM pg_stat_activity WHERE pid = $1",
+                &[&pid],
+            )
+            .await
+            .expect("read pg_stat_activity")
+            .get(0);
+        if state == want {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    state
+}
+
+/// Whether a simple-query probe ran as the first command of its own
+/// transaction — i.e. the session was not inside one. (Over the extended
+/// protocol each of Parse / Bind / Execute moves `statement_timestamp`,
+/// so this has to be a simple query, as the pager's own probe is.)
+async fn first_command_of_its_transaction(client: &tokio_postgres::Client) -> bool {
+    client
+        .simple_query("SELECT statement_timestamp() = transaction_timestamp()")
+        .await
+        .expect("probe runs")
+        .iter()
+        .any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(r) if r.get(0) == Some("t")))
+}
+
+/// 10 000 rows, inserted out of order, read back `ORDER BY id` a page at
+/// a time: every row exactly once, in order, the last page says there
+/// is no more, and the session is left idle — not idle in transaction.
+#[tokio::test]
+async fn paging_reads_ten_thousand_rows_in_order_without_gaps() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (writer, _w) = writable_client().await;
+    let table = it_name("paging_10k");
+    writer
+        .batch_execute(&format!(
+            "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (id int PRIMARY KEY, v text); \
+             INSERT INTO {table} SELECT g, 'v' || g FROM generate_series(1, 10000) g ORDER BY random()"
+        ))
+        .await
+        .expect("create the table");
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(format!("SELECT id, v FROM {table} ORDER BY id"), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    assert_eq!(opened.grid.columns, vec!["id", "v"]);
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    assert!(opened.grid.truncated, "more than a page exists");
+    assert!(opened.cursor.is_some(), "the cursor stays open");
+    assert!(!opened.in_transaction);
+    assert_eq!(
+        session_state(&writer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    let mut ids: Vec<i64> = opened
+        .grid
+        .rows
+        .iter()
+        .map(|r| r[0].as_deref().unwrap().parse().unwrap())
+        .collect();
+    let mut pages = 1;
+    loop {
+        let page = pager
+            .fetch(PAGE_ROWS)
+            .await
+            .expect("pager alive")
+            .expect("fetch runs");
+        pages += 1;
+        ids.extend(
+            page.rows
+                .iter()
+                .map(|r| r[0].as_deref().unwrap().parse::<i64>().unwrap()),
+        );
+        if !page.more {
+            break;
+        }
+        assert_eq!(page.rows.len(), PAGE_ROWS, "a full page while more exist");
+    }
+    let _ = writer.batch_execute(&format!("DROP TABLE {table}")).await;
+    assert_eq!(pages, 10, "10 000 rows are ten pages of 1000");
+    assert_eq!(ids, (1..=10_000).collect::<Vec<i64>>());
+    assert_eq!(session_state(&writer, pid, "idle").await, "idle");
+}
+
+/// A result that fits in a page never holds a transaction open.
+#[tokio::test]
+async fn a_small_result_commits_at_once() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    for n in [0, 1, PAGE_ROWS] {
+        let opened = pager
+            .open(
+                format!("SELECT g FROM generate_series(1, {n}) g"),
+                PAGE_ROWS,
+            )
+            .await
+            .expect("pager alive")
+            .expect("open runs");
+        assert_eq!(opened.grid.rows.len(), n);
+        assert!(!opened.grid.truncated, "{n} rows: complete");
+        assert!(opened.cursor.is_none(), "{n} rows: no cursor left open");
+        assert_eq!(session_state(&observer, pid, "idle").await, "idle", "{n}");
+    }
+}
+
+/// Any other database work waits at the pager's barrier, which closes
+/// the open cursor first: the session goes from idle in transaction to
+/// idle before the work's statement runs, and that statement is not in
+/// the cursor's transaction.
+#[tokio::test]
+async fn a_new_statement_closes_the_cursor_first() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(
+        session_state(&observer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    // Queued before the work is spawned, as `App::db` does.
+    let db = Db::new(client.clone(), Some(&pager));
+    let work = tokio::spawn(async move {
+        let client = db.ready().await;
+        // First command of its own transaction: the cursor's is gone.
+        first_command_of_its_transaction(&client).await
+    });
+    assert!(
+        work.await.unwrap(),
+        "the work ran inside the cursor's transaction"
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+    // The cursor is gone: a fetch says so rather than reading anything.
+    let err = pager.fetch(PAGE_ROWS).await.unwrap().unwrap_err();
+    assert!(err.msg.contains("closed"), "{}", err.msg);
+    // And a plain `close` (the idle timer's) of a cursor that is open
+    // ends its transaction too.
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    pager.close();
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+}
+
+/// Ctrl-C during a fetch: the FETCH is cancelled, the pager rolls the
+/// transaction back, and the session is usable again.
+#[tokio::test]
+async fn cancelling_a_fetch_rolls_back_and_leaves_the_session_usable() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    use std::time::{Duration, Instant};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    // The first page (and its look-ahead row) is quick; the row after
+    // that sleeps far longer than the test waits.
+    let opened = pager
+        .open(
+            "SELECT g, CASE WHEN g > 1001 THEN pg_sleep(30)::text END \
+             FROM generate_series(1, 3000) g"
+                .to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    let cancel = client.cancel_token();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = cancel.cancel_query(tokio_postgres::NoTls).await;
+    });
+    let started = Instant::now();
+    let err = pager.fetch(PAGE_ROWS).await.unwrap().unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(10), "cancelled");
+    assert_eq!(
+        err.detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("57014"),
+        "{}",
+        err.msg
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+    let client = Db::new(client.clone(), Some(&pager)).ready().await;
+    let one: i32 = client.query_one("SELECT 1", &[]).await.unwrap().get(0);
+    assert_eq!(one, 1);
+}
+
+/// The cursor's transaction inherits a read-only session's
+/// `default_transaction_read_only`, and a writable session's cursor
+/// works the same.
+#[tokio::test]
+async fn the_cursor_transaction_keeps_the_sessions_read_only_setting() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let sql = "SELECT current_setting('transaction_read_only'), g \
+               FROM generate_series(1, 2000) g";
+    let (ro, _t) = lib_client().await;
+    let opened = Pager::spawn(ro)
+        .open(sql.to_string(), PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(opened.grid.rows[0][0].as_deref(), Some("on"));
+    let (rw, _w) = writable_client().await;
+    let opened = Pager::spawn(rw)
+        .open(sql.to_string(), PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.cursor.is_some());
+    assert_eq!(opened.grid.rows[0][0].as_deref(), Some("off"));
+}
+
+/// The opening round trip reads the server's
+/// `idle_in_transaction_session_timeout` and closes well before it:
+/// pgman's own idle limit comes back at half the server's.
+#[tokio::test]
+async fn the_idle_limit_undercuts_the_servers_idle_in_transaction_timeout() {
+    use pgman::query::paging::{Pager, IDLE_CLOSE, PAGE_ROWS};
+    use std::time::Duration;
+    let (client, _t) = lib_client().await;
+    client
+        .batch_execute("SET idle_in_transaction_session_timeout = '8s'")
+        .await
+        .unwrap();
+    let opened = Pager::spawn(client.clone())
+        .open(
+            "SELECT g FROM generate_series(1, 2000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    let limits = opened.cursor.expect("the cursor stays open");
+    assert_eq!(limits.idle, Duration::from_secs(4));
+    assert!(limits.idle < IDLE_CLOSE);
+}
+
+/// A session already inside a transaction — a `BEGIN` the operator typed
+/// — gets no cursor: the statement runs the old way, capped, and the
+/// operator's transaction is left exactly as it was, still open.
+#[tokio::test]
+async fn a_session_already_in_a_transaction_runs_unpaged_and_untouched() {
+    use pgman::query::paging::{Db, Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    client.batch_execute("BEGIN").await.unwrap();
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(
+            "SELECT g FROM generate_series(1, 5000) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.in_transaction);
+    assert!(opened.cursor.is_none());
+    assert!(opened.grid.truncated);
+    assert_eq!(opened.grid.rows.len(), PAGE_ROWS);
+    // The barrier has no cursor to close, so it must not COMMIT theirs.
+    let client = Db::new(client.clone(), Some(&pager)).ready().await;
+    assert_eq!(
+        session_state(&observer, pid, "idle in transaction").await,
+        "idle in transaction"
+    );
+    assert!(
+        !first_command_of_its_transaction(&client).await,
+        "the operator's transaction was ended"
+    );
+    client.batch_execute("ROLLBACK").await.unwrap();
+}
+
+/// A paged result keeps where each column came from, so `u` can edit
+/// a cell of it: behind the cursor, and on the unpaged path a session
+/// already in a transaction takes. A computed column has no origin.
+#[tokio::test]
+async fn a_paged_result_keeps_its_column_origins() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (writer, _w) = writable_client().await;
+    let table = it_name("paging_origins");
+    writer
+        .batch_execute(&format!(
+            "DROP TABLE IF EXISTS {table}; CREATE TABLE {table} (id int PRIMARY KEY, v text); \
+             INSERT INTO {table} SELECT g, 'v' || g FROM generate_series(1, 1500) g"
+        ))
+        .await
+        .expect("create the table");
+    let oid: u32 = writer
+        .query_one(&format!("SELECT '{table}'::regclass::oid"), &[])
+        .await
+        .unwrap()
+        .get(0);
+    let want = vec![
+        Some(pgman::grid::ColumnOrigin {
+            table_oid: oid,
+            attnum: 2,
+        }),
+        Some(pgman::grid::ColumnOrigin {
+            table_oid: oid,
+            attnum: 1,
+        }),
+        None,
+    ];
+    let sql = format!("SELECT v, id, id + 1 AS next FROM {table} ORDER BY id");
+    let (client, _t) = lib_client().await;
+    let pager = Pager::spawn(client.clone());
+    let opened = pager
+        .open(sql.clone(), PAGE_ROWS)
+        .await
+        .expect("pager alive")
+        .expect("open runs");
+    assert!(opened.cursor.is_some(), "behind the cursor");
+    assert_eq!(opened.origins, want, "behind the cursor");
+    // Close the cursor's transaction, or the DROP below waits on it.
+    pager.barrier().await.unwrap();
+
+    let (client, _t2) = lib_client().await;
+    client.batch_execute("BEGIN").await.unwrap();
+    let opened = Pager::spawn(client.clone())
+        .open(sql, PAGE_ROWS)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(opened.in_transaction, "the unpaged path");
+    assert_eq!(opened.origins, want, "the unpaged path");
+    client.batch_execute("ROLLBACK").await.unwrap();
+    let _ = writer.batch_execute(&format!("DROP TABLE {table}")).await;
+}
+
+/// A statement that fails while the cursor opens leaves no transaction
+/// behind, and the error is the server's.
+#[tokio::test]
+async fn a_failing_open_rolls_back() {
+    use pgman::query::paging::{Pager, PAGE_ROWS};
+    let (observer, _o) = lib_client().await;
+    let (client, _t) = lib_client().await;
+    let pid = backend_pid(&client).await;
+    let pager = Pager::spawn(client.clone());
+    let err = pager
+        .open(
+            "SELECT 1 / (g - 5) FROM generate_series(1, 10) g".to_string(),
+            PAGE_ROWS,
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(
+        err.detail.as_ref().and_then(|d| d.code.as_deref()),
+        Some("22012"),
+        "{}",
+        err.msg
+    );
+    assert_eq!(session_state(&observer, pid, "idle").await, "idle");
+}
+
+/// The schema cache carries each table's real primary key, in key order
+/// (`a, "Cee", b`: neither column order nor sorted), under the server's own names;
+/// a table with only a unique key has no entry; and every relation is reachable by
+/// its OID, with each column's `attnum`.
+#[tokio::test]
+async fn the_schema_cache_knows_each_tables_primary_key_in_key_order() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let composite = format!("pgman_it_PkOrder_{pid}");
+    let keyless = it_name("pk_none");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE \"{composite}\" (b int, \"Cee\" int, m text, a int, \
+               PRIMARY KEY (a, \"Cee\", b)); \
+             ALTER TABLE \"{composite}\" DROP COLUMN m; \
+             ALTER TABLE \"{composite}\" ADD COLUMN later text; \
+             CREATE TABLE {keyless} (v text UNIQUE)"
+        ))
+        .await
+        .expect("create the tables");
+    let cache = pgman::query::schema::fetch(&client).await;
+    let oid: u32 = client
+        .query_one(&format!("SELECT '\"{composite}\"'::regclass::oid"), &[])
+        .await
+        .expect("oid")
+        .get(0);
+    let _ = client
+        .batch_execute(&format!("DROP TABLE \"{composite}\"; DROP TABLE {keyless}"))
+        .await;
+    assert_eq!(
+        cache.primary_key("public", &composite),
+        Some(&["a".to_string(), "Cee".to_string(), "b".to_string()][..])
+    );
+    assert_eq!(cache.primary_key("public", &composite.to_lowercase()), None);
+    assert_eq!(cache.primary_key("public", &keyless), None);
+    assert_eq!(
+        cache.relations_by_oid.get(&oid),
+        Some(&("public".to_string(), composite.clone()))
+    );
+    // attnum survives a dropped column: `later` is 5, not 4.
+    assert_eq!(
+        cache
+            .column_by_attnum("public", &composite, 5)
+            .map(|c| c.name.as_str()),
+        Some("later")
+    );
+    assert!(cache.column_by_attnum("public", &composite, 3).is_none());
+}
+
+/// Each result column carries the table OID and attnum it was read from,
+/// and nothing for an expression or a system column — whatever the
+/// column is called. A view's columns name the view, not the table
+/// under it, and a join's name each side's own table.
+#[tokio::test]
+async fn result_columns_carry_the_table_and_attnum_they_were_read_from() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("origins");
+    let v = it_name("origins_v");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, gone int, name text); \
+             ALTER TABLE {t} DROP COLUMN gone; \
+             INSERT INTO {t} VALUES (1, 'a'); \
+             CREATE VIEW {v} AS SELECT id, name FROM {t}"
+        ))
+        .await
+        .expect("create");
+    let oid = |rel: String| {
+        let client = client.clone();
+        async move {
+            client
+                .query_one(&format!("SELECT '{rel}'::regclass::oid"), &[])
+                .await
+                .expect("oid")
+                .get::<_, u32>(0)
+        }
+    };
+    let (t_oid, v_oid) = (oid(t.clone()).await, oid(v.clone()).await);
+    let origins = |sql: String| {
+        let client = client.clone();
+        async move {
+            pgman::conn::run_statement_with_origins(&client, &sql)
+                .await
+                .expect("run")
+                .1
+        }
+    };
+    let plain = origins(format!(
+        "SELECT name AS id, id + 1 AS id2, id, ctid, 'x' AS lit FROM {t}"
+    ))
+    .await;
+    let view = origins(format!("SELECT * FROM {v}")).await;
+    let join = origins(format!(
+        "SELECT a.id, b.id FROM {t} a JOIN {v} b USING (id)"
+    ))
+    .await;
+    let _ = client
+        .batch_execute(&format!("DROP VIEW {v}; DROP TABLE {t}"))
+        .await;
+    let at = |table_oid, attnum| Some(pgman::grid::ColumnOrigin { table_oid, attnum });
+    // `name` is attnum 3: the dropped column kept its number.
+    assert_eq!(plain, vec![at(t_oid, 3), None, at(t_oid, 1), None, None]);
+    assert_eq!(view, vec![at(v_oid, 1), at(v_oid, 2)]);
+    assert_eq!(join, vec![at(t_oid, 1), at(v_oid, 1)]);
+}
+
+/// The library half of a cell edit, as `u` drives it: run the SELECT as
+/// the editor does (keeping column origins), plan the edit of cell
+/// (`row`, `col`) against a fresh schema cache, write the UPDATE, check
+/// it is the one statement the safety classifier sees as a keyed
+/// UPDATE, and run it under the one-row guard. A refusal or an error
+/// comes back as the line the footer would show.
+async fn edit_cell(
+    client: &std::sync::Arc<tokio_postgres::Client>,
+    select: &str,
+    (row, col): (usize, usize),
+    new: Option<&str>,
+    keep_open: bool,
+) -> Result<pgman::conn::SingleRowUpdate, String> {
+    let (grid, origins) = pgman::conn::run_statement_with_origins(client, select)
+        .await
+        .map_err(|e| e.msg)?;
+    let cache = pgman::query::schema::fetch(client).await;
+    let source = pgman::app::infer_single_source_table(select);
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        &cache,
+        source.as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[row],
+        row,
+        col,
+    )
+    .map_err(|r| r.to_string())?;
+    let sql = pgman::query::cell_edit::build_update_sql(&edit, new);
+    assert_eq!(
+        pgman::safety::split_verified(&sql).map(|s| s.len()),
+        Ok(1),
+        "{sql}"
+    );
+    assert_eq!(
+        pgman::safety::classify(&sql),
+        pgman::safety::StatementKind::Update { has_where: true },
+        "{sql}"
+    );
+    pgman::conn::run_single_row_update(client, &sql, keep_open)
+        .await
+        .map_err(|e| e.msg)
+}
+
+/// One value from the compose database, `None` for NULL.
+async fn scalar(client: &tokio_postgres::Client, sql: &str) -> Option<String> {
+    client
+        .simple_query(sql)
+        .await
+        .expect(sql)
+        .into_iter()
+        .find_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some(r.get(0).map(str::to_string)),
+            _ => None,
+        })
+        .expect("one row")
+}
+
+/// A text cell, then NULL → `''` → NULL, a value with quotes and
+/// backslashes (under `standard_conforming_strings = off` too), and a
+/// numeric typed loosely: each lands as itself, and the edit hands back
+/// the value as the server stored it.
+#[tokio::test]
+async fn a_cell_edit_writes_exactly_the_value_typed() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_values");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text, note text, price numeric(10,2)); \
+             INSERT INTO {t} VALUES (1, 'ann', NULL, 1), (2, 'bo', 'x', 2)"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT id, name, note, price FROM {t} ORDER BY id");
+    let at = |id: i32, col: &str| format!("SELECT {col} FROM {t} WHERE id = {id}");
+    let committed = |value: &str| pgman::conn::SingleRowUpdate {
+        value: Some(value.to_string()),
+        tx: pgman::conn::EditTx::Committed,
+    };
+
+    let text = edit_cell(&client, &select, (0, 1), Some("anna"), false).await;
+    let text_after = scalar(&client, &at(1, "name")).await;
+    let other_row = scalar(&client, &at(2, "name")).await;
+
+    let to_empty = edit_cell(&client, &select, (0, 2), Some(""), false).await;
+    let empty_after = scalar(&client, &at(1, "note IS NULL")).await;
+    let to_null = edit_cell(&client, &select, (0, 2), None, false).await;
+    let null_after = scalar(&client, &at(1, "note IS NULL")).await;
+
+    let tricky = r"it's C:\new\x01 ''";
+    let quoted = edit_cell(&client, &select, (1, 2), Some(tricky), false).await;
+    let quoted_after = scalar(&client, &at(2, "note")).await;
+    client
+        .batch_execute("SET standard_conforming_strings = off")
+        .await
+        .expect("scs off");
+    let quoted_off = edit_cell(&client, &select, (1, 1), Some(tricky), false).await;
+    client
+        .batch_execute("SET standard_conforming_strings = on")
+        .await
+        .expect("scs on");
+    let quoted_off_after = scalar(&client, &at(2, "name")).await;
+
+    let numeric = edit_cell(&client, &select, (0, 3), Some("1.5"), false).await;
+
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    assert_eq!(text, Ok(committed("anna")));
+    assert_eq!(text_after.as_deref(), Some("anna"));
+    assert_eq!(other_row.as_deref(), Some("bo"));
+    assert_eq!(to_empty, Ok(committed("")));
+    assert_eq!(empty_after.as_deref(), Some("f"), "'' is not NULL");
+    assert_eq!(
+        to_null,
+        Ok(pgman::conn::SingleRowUpdate {
+            value: None,
+            tx: pgman::conn::EditTx::Committed
+        })
+    );
+    assert_eq!(null_after.as_deref(), Some("t"));
+    assert_eq!(quoted, Ok(committed(tricky)));
+    assert_eq!(quoted_after.as_deref(), Some(tricky));
+    assert_eq!(quoted_off, Ok(committed(tricky)));
+    assert_eq!(quoted_off_after.as_deref(), Some(tricky));
+    // `RETURNING` hands back the server's rendering, not what was typed.
+    assert_eq!(numeric, Ok(committed("1.50")));
+}
+
+/// A composite key names one row, compared in key order; a mixed-case
+/// table is edited, never its lowercase twin.
+#[tokio::test]
+async fn a_cell_edit_keys_on_a_composite_key_and_keeps_a_quoted_tables_case() {
+    let (client, _tunnel) = writable_client().await;
+    let pid = std::process::id();
+    let lines = it_name("ce_lines");
+    let mixed = format!("pgman_it_CeMixed_{pid}");
+    let twin = mixed.to_ascii_lowercase();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {lines} (order_id int, line_no int, sku text, \
+               PRIMARY KEY (order_id, line_no)); \
+             INSERT INTO {lines} VALUES (10, 1, 'a'), (10, 2, 'b'), (11, 1, 'c'); \
+             CREATE TABLE \"{mixed}\" (\"Id\" int PRIMARY KEY, \"Label\" text); \
+             CREATE TABLE {twin} (id int PRIMARY KEY, label text); \
+             INSERT INTO \"{mixed}\" VALUES (1, 'mixed'); \
+             INSERT INTO {twin} VALUES (1, 'twin')"
+        ))
+        .await
+        .expect("create");
+    // The key's columns in neither key nor table order.
+    let composite = edit_cell(
+        &client,
+        &format!("SELECT sku, line_no, order_id FROM {lines} ORDER BY order_id, line_no"),
+        (1, 0),
+        Some("B!"),
+        false,
+    )
+    .await;
+    let skus = scalar(
+        &client,
+        &format!("SELECT string_agg(sku, ',' ORDER BY order_id, line_no) FROM {lines}"),
+    )
+    .await;
+    let quoted = edit_cell(
+        &client,
+        &format!("SELECT * FROM \"{mixed}\""),
+        (0, 1),
+        Some("edited"),
+        false,
+    )
+    .await;
+    let mixed_after = scalar(&client, &format!("SELECT \"Label\" FROM \"{mixed}\"")).await;
+    let twin_after = scalar(&client, &format!("SELECT label FROM {twin}")).await;
+    let _ = client
+        .batch_execute(&format!(
+            "DROP TABLE {lines}; DROP TABLE \"{mixed}\"; DROP TABLE {twin}"
+        ))
+        .await;
+    assert!(composite.is_ok(), "{composite:?}");
+    assert_eq!(skus.as_deref(), Some("a,B!,c"));
+    assert!(quoted.is_ok(), "{quoted:?}");
+    assert_eq!(mixed_after.as_deref(), Some("edited"));
+    assert_eq!(twin_after.as_deref(), Some("twin"));
+}
+
+/// No primary key, a join, a view, a computed column and a result
+/// without the key are each refused, with the reason, before anything
+/// is sent.
+#[tokio::test]
+async fn a_cell_edit_refuses_what_it_cannot_name_a_row_in() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_refuse");
+    let keyless = it_name("ce_keyless");
+    let v = it_name("ce_refuse_v");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); \
+             INSERT INTO {t} VALUES (1, 'ann'); \
+             CREATE TABLE {keyless} (name text UNIQUE); \
+             INSERT INTO {keyless} VALUES ('ann'); \
+             CREATE VIEW {v} AS SELECT * FROM {t}"
+        ))
+        .await
+        .expect("create");
+    let refused = |sql: String, col: usize| {
+        let client = client.clone();
+        async move { edit_cell(&client, &sql, (0, col), Some("x"), false).await }
+    };
+    let no_pk = refused(format!("SELECT name FROM {keyless}"), 0).await;
+    let join = refused(
+        format!("SELECT a.id, a.name FROM {t} a JOIN {t} b ON a.id = b.id"),
+        1,
+    )
+    .await;
+    let view = refused(format!("SELECT * FROM {v}"), 1).await;
+    let computed = refused(format!("SELECT id, upper(name) AS name FROM {t}"), 1).await;
+    let no_key = refused(format!("SELECT name FROM {t}"), 0).await;
+    let spoofed_key = refused(format!("SELECT id + 1 AS id, name FROM {t}"), 1).await;
+    let unchanged = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let _ = client
+        .batch_execute(&format!(
+            "DROP VIEW {v}; DROP TABLE {t}; DROP TABLE {keyless}"
+        ))
+        .await;
+    let err = |r: Result<pgman::conn::SingleRowUpdate, String>| r.expect_err("refused");
+    assert_eq!(
+        err(no_pk),
+        format!("can't edit: public.{keyless} has no primary key to find the row by")
+    );
+    assert_eq!(
+        err(join),
+        "can't edit: not a SELECT from one table (a join, subquery or no FROM)"
+    );
+    assert_eq!(
+        err(view),
+        format!("can't edit: public.{v} is a view · edit the table under it")
+    );
+    assert_eq!(
+        err(computed),
+        "can't edit: 'name' is computed, not a table column"
+    );
+    let lacks = "can't edit: the result lacks the primary key · select id too";
+    assert_eq!(err(no_key), lacks);
+    assert_eq!(err(spoofed_key), lacks);
+    assert_eq!(unchanged.as_deref(), Some("ann"));
+}
+
+/// The one-row guard: an UPDATE that matches two rows (an inheritance
+/// child holds the same key) or none (the row went away) is rolled back
+/// and says so — and inside the operator's own transaction only the
+/// edit is undone, not what they did before it.
+#[tokio::test]
+async fn a_cell_edit_that_is_not_one_row_changes_nothing() {
+    let (client, _tunnel) = writable_client().await;
+    let parent = it_name("ce_parent");
+    let child = it_name("ce_child");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {parent} (id int PRIMARY KEY, name text); \
+             CREATE TABLE {child} () INHERITS ({parent}); \
+             INSERT INTO {parent} VALUES (1, 'p'), (2, 'gone'); \
+             INSERT INTO {child} VALUES (1, 'c')"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT * FROM ONLY {parent} ORDER BY id");
+    let two = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    let names = format!("SELECT string_agg(name, ',' ORDER BY name) FROM {parent}");
+    let after_two = scalar(&client, &names).await;
+
+    // The row is deleted between the query and the save.
+    let (grid, origins) = pgman::conn::run_statement_with_origins(&client, &select)
+        .await
+        .expect("select");
+    let cache = pgman::query::schema::fetch(&client).await;
+    let edit = pgman::query::cell_edit::plan_cell_edit(
+        &cache,
+        pgman::app::infer_single_source_table(&select).as_ref(),
+        &grid.columns,
+        &origins,
+        &grid.rows[1],
+        1,
+        1,
+    )
+    .expect("plan");
+    client
+        .batch_execute(&format!("DELETE FROM {parent} WHERE id = 2"))
+        .await
+        .expect("delete");
+    let none = pgman::conn::run_single_row_update(
+        &client,
+        &pgman::query::cell_edit::build_update_sql(&edit, Some("x")),
+        false,
+    )
+    .await
+    .map_err(|e| e.msg);
+    let open_tx = scalar(&client, "SELECT now() = statement_timestamp()").await;
+
+    // Inside the operator's transaction: their insert survives the
+    // edit's rollback, and the session is not left aborted.
+    client.batch_execute("BEGIN").await.expect("begin");
+    client
+        .batch_execute(&format!("INSERT INTO {parent} VALUES (3, 'mine')"))
+        .await
+        .expect("insert");
+    let nested = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    let mine = scalar(&client, &format!("SELECT name FROM {parent} WHERE id = 3")).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+
+    let _ = client
+        .batch_execute(&format!("DROP TABLE {parent} CASCADE"))
+        .await;
+    assert_eq!(
+        two,
+        Err("the UPDATE matched 2 rows, not 1 · rolled back, nothing changed".into())
+    );
+    assert_eq!(after_two.as_deref(), Some("c,gone,p"));
+    assert_eq!(
+        none,
+        Err("the UPDATE matched no row (deleted, or its key changed, since the query ran) · rolled back, nothing changed".into())
+    );
+    // The rollback ended the edit's own transaction: a new statement is
+    // its own transaction again.
+    assert_eq!(open_tx.as_deref(), Some("t"));
+    assert!(nested.is_err(), "{nested:?}");
+    assert_eq!(mine.as_deref(), Some("mine"));
+}
+
+/// Inside the operator's open transaction a good edit stays theirs to
+/// commit or roll back; under `auto_tx` pgman's own transaction is left
+/// open for the prompt. Rolled back, neither changed anything.
+#[tokio::test]
+async fn a_cell_edit_inside_an_open_transaction_is_not_committed() {
+    let (client, _tunnel) = writable_client().await;
+    let t = it_name("ce_tx");
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); INSERT INTO {t} VALUES (1, 'ann')"
+        ))
+        .await
+        .expect("create");
+    let select = format!("SELECT * FROM {t}");
+    client.batch_execute("BEGIN").await.expect("begin");
+    let nested = edit_cell(&client, &select, (0, 1), Some("x"), false).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let after_nested = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let open = edit_cell(&client, &select, (0, 1), Some("y"), true).await;
+    let inside = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    client.batch_execute("ROLLBACK").await.expect("rollback");
+    let after_open = scalar(&client, &format!("SELECT name FROM {t}")).await;
+    let _ = client.batch_execute(&format!("DROP TABLE {t}")).await;
+    assert_eq!(nested.map(|u| u.tx), Ok(pgman::conn::EditTx::InOperatorTx));
+    assert_eq!(after_nested.as_deref(), Some("ann"));
+    assert_eq!(open.map(|u| u.tx), Ok(pgman::conn::EditTx::LeftOpen));
+    assert_eq!(inside.as_deref(), Some("y"));
+    assert_eq!(after_open.as_deref(), Some("ann"));
+}
+
+/// A read-only session's edit is refused by the server, with the hint
+/// every read-only refusal carries, and leaves no transaction behind.
+#[tokio::test]
+async fn a_cell_edit_on_a_read_only_session_is_refused_with_the_hint() {
+    let (writer, _w) = writable_client().await;
+    let t = it_name("ce_ro");
+    writer
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (id int PRIMARY KEY, name text); INSERT INTO {t} VALUES (1, 'ann')"
+        ))
+        .await
+        .expect("create");
+    let (reader, _r) = lib_client().await;
+    let refused = edit_cell(
+        &reader,
+        &format!("SELECT * FROM {t}"),
+        (0, 1),
+        Some("x"),
+        false,
+    )
+    .await;
+    let open_tx = scalar(&reader, "SELECT now() = statement_timestamp()").await;
+    let after = scalar(&writer, &format!("SELECT name FROM {t}")).await;
+    let _ = writer.batch_execute(&format!("DROP TABLE {t}")).await;
+    let msg = refused.expect_err("read-only");
+    assert!(msg.contains("read-only transaction"), "{msg}");
+    assert!(msg.contains("hint: read-only"), "{msg}");
+    assert_eq!(open_tx.as_deref(), Some("t"));
+    assert_eq!(after.as_deref(), Some("ann"));
+}

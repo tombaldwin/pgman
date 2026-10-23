@@ -7,6 +7,27 @@ use crate::grid::Grid;
 use crate::query::schema::SchemaCache;
 use std::sync::Arc;
 
+/// What a run through the pager (`AppMsg::QueryOk`'s `paging`) says
+/// about the result's cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPaging {
+    /// The statement, for `M` to re-run once the cursor closes.
+    pub sql: String,
+    /// `Some` while the cursor stays open for `M`.
+    pub cursor: Option<crate::query::paging::Limits>,
+    /// The session was inside a transaction, so it ran unpaged.
+    pub in_transaction: bool,
+}
+
+/// `M`'s answer (`AppMsg::PageLoaded`).
+#[derive(Debug)]
+pub enum PageOutcome {
+    /// The next page of the open cursor.
+    More(crate::query::paging::Page),
+    /// A re-run behind a fresh cursor, replacing the held rows.
+    Rerun(crate::query::paging::Opened),
+}
+
 #[derive(Debug)]
 pub enum AppMsg {
     /// Connection succeeded and the bootstrap query returned. The client is
@@ -32,10 +53,23 @@ pub enum AppMsg {
     QueryOk {
         generation: u64,
         grid: Grid,
+        /// Where each column came from (`conn::run_statement_with_origins`);
+        /// empty for any result but a plain editor run's.
+        origins: Vec<Option<crate::grid::ColumnOrigin>>,
         kind_label: String,
         /// True if the run wrapped the statement in a transaction that's still
         /// open — the app should prompt for commit/rollback.
         tx_open_after: bool,
+        /// `Some` when the run went to the pager (a plain `SELECT`,
+        /// docs/backlog/paging.md): whether its cursor stayed open.
+        paging: Option<RunPaging>,
+    },
+    /// `M`'s answer for the result `result_id`: the next page, or the
+    /// re-run that replaces the rows once the cursor had closed.
+    PageLoaded {
+        generation: u64,
+        result_id: u64,
+        outcome: Result<PageOutcome, crate::conn::QueryErr>,
     },
     /// A user-initiated query failed.
     QueryFailed {
@@ -51,6 +85,14 @@ pub enum AppMsg {
         /// for non-Postgres failures (TLS, IO, our own validation).
         /// Stashed on App so the rich-error overlay can render it.
         detail: Option<crate::conn::QueryErrDetail>,
+    },
+    /// A cell edit's UPDATE changed its one row. `value` is the column
+    /// as `RETURNING` rendered it; `tx` says whether it is committed.
+    CellUpdated {
+        generation: u64,
+        pending: crate::app::PendingCellEdit,
+        value: crate::grid::Cell,
+        tx: crate::conn::EditTx,
     },
     /// A `COMMIT` or `ROLLBACK` of the open transaction finished.
     TxClosed {
@@ -135,6 +177,12 @@ pub enum AppMsg {
         generation: u64,
         result: Result<Vec<crate::query::lint::Finding>, String>,
     },
+    /// The config advisor's checks (ADV…) finished. Merged into the
+    /// wizard's findings the same way as [`AppMsg::LiveLintLoaded`].
+    AdvisorLoaded {
+        generation: u64,
+        result: Result<crate::query::advisor::Report, String>,
+    },
     /// Pre-flight `EXPLAIN (FORMAT JSON)` finished. The handler
     /// decides between proceeding directly (estimate under
     /// threshold) and opening a Confirm prompt (over threshold).
@@ -191,8 +239,10 @@ impl AppMsg {
             AppMsg::Booted { generation, .. }
             | AppMsg::BootFailed { generation, .. }
             | AppMsg::QueryOk { generation, .. }
+            | AppMsg::PageLoaded { generation, .. }
             | AppMsg::QueryFailed { generation, .. }
             | AppMsg::TxClosed { generation, .. }
+            | AppMsg::CellUpdated { generation, .. }
             | AppMsg::Notice { generation, .. }
             | AppMsg::Notification { generation, .. }
             | AppMsg::SlowQueriesLoaded { generation, .. }
@@ -200,6 +250,7 @@ impl AppMsg {
             | AppMsg::CostPreviewLoaded { generation, .. }
             | AppMsg::SchemaRefreshed { generation, .. }
             | AppMsg::LiveLintLoaded { generation, .. }
+            | AppMsg::AdvisorLoaded { generation, .. }
             | AppMsg::DdlLoaded { generation, .. }
             | AppMsg::ReadOnlyApplied { generation, .. } => *generation,
             AppMsg::UpdateCheck(_)

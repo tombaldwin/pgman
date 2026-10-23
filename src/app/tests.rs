@@ -5039,6 +5039,44 @@ fn tap_events_do_not_overwrite_another_status() {
     assert_eq!(a.last_status, None);
 }
 
+fn tap_boundary(outcome: crate::tap::TxnOutcome, received_at: u64) -> crate::tap::TapEvent {
+    crate::tap::TapEvent {
+        kind: crate::tap::TapKind::TxnBoundary,
+        sql: None,
+        duration_micros: None,
+        rows: None,
+        txn: Some("primary-7#1".into()),
+        txn_outcome: Some(outcome),
+        ..tap_query("", received_at)
+    }
+}
+
+/// A stream of only commits / rollbacks — no query, no heartbeat — is
+/// a stream: the List view shows its `[COMMIT]` rows, so the status
+/// (and the footer's TAP badge) must not still say "no events yet".
+#[test]
+fn tap_monitor_status_counts_a_stream_of_only_txn_boundaries() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.tap_listeners.push(crate::tap::TapListener {
+        transport: crate::tap::TapTransport::Tcp,
+        addr: "127.0.0.1:7432".parse().unwrap(),
+    });
+    a.start_tap_monitor();
+    a.on_tap_event(tap_boundary(crate::tap::TxnOutcome::Commit, 1));
+    a.on_tap_event(tap_boundary(crate::tap::TxnOutcome::Rollback, 2));
+    assert_eq!(a.tap_events.len(), 2);
+    assert!(a.tap_health.any_event_seen());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("JDBC tap · 0 queries · 0 heartbeats · 2 commits/rollbacks")
+    );
+    a.on_tap_event(tap_query("SELECT 1", 3));
+    assert_eq!(
+        a.tap_health.monitor_status(&[]),
+        "JDBC tap · 1 query · 0 heartbeats · 2 commits/rollbacks"
+    );
+}
+
 #[test]
 fn tap_monitor_status_shortens_a_huge_drop_count() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -5093,6 +5131,121 @@ fn tap_monitor_q_closes_to_normal_and_clears_status() {
     a.on_key(KeyEvent::from(KeyCode::Char('q')));
     assert_eq!(a.mode, Mode::Normal);
     assert!(a.last_status.is_none());
+}
+
+fn enter() -> KeyEvent {
+    KeyEvent::from(KeyCode::Enter)
+}
+
+/// `Enter` on a List row opens the focused event; `Esc` goes back to
+/// the list — not out of the monitor — with the cursor where it was.
+#[test]
+fn tap_list_enter_opens_the_focused_event_and_esc_returns_to_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.on_tap_event(tap_query("SELECT 2", 2));
+    a.start_tap_monitor();
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    a.on_key(enter());
+    let detail = a.tap_nav.event_detail.as_ref().expect("overlay open");
+    assert_eq!(detail.event.sql.as_deref(), Some("SELECT 2"));
+    a.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(a.tap_nav.event_detail.is_none());
+    assert_eq!(a.mode, Mode::TapMonitor, "esc closes the overlay only");
+    assert_eq!(a.tap_nav.events_cursor, 1);
+    // `q` and `Enter` close it too.
+    for close in [KeyCode::Char('q'), KeyCode::Enter] {
+        a.on_key(enter());
+        assert!(a.tap_nav.event_detail.is_some());
+        a.on_key(KeyEvent::from(close));
+        assert!(a.tap_nav.event_detail.is_none(), "{close:?}");
+        assert_eq!(a.mode, Mode::TapMonitor);
+    }
+}
+
+/// On a full ring every arrival evicts the oldest event and the cursor
+/// follows it: an overlay reading the ring would swap events under the
+/// reader. It holds the event it opened on.
+#[test]
+fn tap_event_detail_is_a_snapshot_new_arrivals_do_not_change() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    for i in 0..TAP_CAP {
+        a.on_tap_event(tap_query(&format!("q{i}"), i as u64));
+    }
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.on_tap_event(tap_query("newcomer", u64::MAX));
+    assert_eq!(
+        a.tap_events.front().and_then(|e| e.sql.as_deref()),
+        Some("q1")
+    );
+    let detail = a.tap_nav.event_detail.as_ref().expect("overlay open");
+    assert_eq!(detail.event.sql.as_deref(), Some("q0"));
+}
+
+/// While the overlay is up the list's keys are held: `v` doesn't
+/// cycle the view under it, `c` doesn't clear the ring.
+#[test]
+fn tap_event_detail_holds_the_list_keys() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.on_key(KeyEvent::from(KeyCode::Char('v')));
+    a.on_key(KeyEvent::from(KeyCode::Char('c')));
+    assert_eq!(a.tap_nav.view, TapView::List);
+    assert_eq!(a.tap_events.len(), 1);
+    assert!(a.tap_nav.event_detail.is_some());
+}
+
+#[test]
+fn tap_event_detail_scrolls_within_what_the_renderer_allows() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    // Not drawn yet: nothing to scroll.
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    assert_eq!(a.tap_nav.event_detail.as_ref().unwrap().scroll, 0);
+    a.tap_nav.event_detail.as_mut().unwrap().max_scroll = 12;
+    let scroll = |a: &App| a.tap_nav.event_detail.as_ref().unwrap().scroll;
+    a.on_key(KeyEvent::from(KeyCode::Char('j')));
+    assert_eq!(scroll(&a), 1);
+    a.on_key(KeyEvent::from(KeyCode::PageDown));
+    assert_eq!(scroll(&a), 11);
+    a.on_key(KeyEvent::from(KeyCode::PageDown));
+    assert_eq!(scroll(&a), 12, "clamped to max_scroll");
+    a.on_key(KeyEvent::from(KeyCode::Char('k')));
+    assert_eq!(scroll(&a), 11);
+    a.on_key(KeyEvent::from(KeyCode::Char('g')));
+    assert_eq!(scroll(&a), 0);
+    a.on_key(KeyEvent::from(KeyCode::Char('G')));
+    assert_eq!(scroll(&a), 12);
+    a.on_key(KeyEvent::from(KeyCode::PageUp));
+    assert_eq!(scroll(&a), 2);
+}
+
+#[test]
+fn tap_list_enter_on_an_empty_ring_says_so() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.start_tap_monitor();
+    a.on_key(enter());
+    assert!(a.tap_nav.event_detail.is_none());
+    assert_eq!(a.last_status.as_deref(), Some("no tap event to show"));
+}
+
+/// The overlay belongs to one visit: closed with `Esc` it went, and a
+/// monitor reopened (F4 after leaving another way) starts on its list.
+#[test]
+fn reopening_the_tap_monitor_starts_on_the_list() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_tap_event(tap_query("SELECT 1", 1));
+    a.start_tap_monitor();
+    a.on_key(enter());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::from(KeyCode::F(4)));
+    assert_eq!(a.mode, Mode::TapMonitor);
+    assert!(a.tap_nav.event_detail.is_none());
 }
 
 #[test]
@@ -5777,8 +5930,10 @@ fn query_ok_clears_last_error_detail() {
             rows: vec![],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert!(a.last_error_detail.is_none());
 }
@@ -5796,8 +5951,10 @@ fn query_ok_status_flags_truncated_grids() {
             rows,
             truncated: true,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(
@@ -5822,8 +5979,10 @@ fn query_ok_status_omits_cap_when_not_truncated() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     let status = a.last_status.as_deref().unwrap_or("");
     assert!(!status.contains("capped"), "unexpected cap hint: {status}");
@@ -6016,8 +6175,10 @@ fn expanded_on_lands_new_query_result_in_row_detail() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::RowDetail);
 }
@@ -6034,8 +6195,10 @@ fn expanded_off_leaves_new_query_result_in_grid_mode() {
             rows: vec![vec![Some("1".into())]],
             truncated: false,
         },
+        origins: Vec::new(),
         kind_label: "SELECT".into(),
         tx_open_after: false,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::Editor);
 }
@@ -6528,6 +6691,7 @@ fn live_lint_loaded_merges_into_findings_and_resorts() {
         object: "public.Foo".into(),
         detail: "…".into(),
         suggestion: None,
+        advice: None,
     }];
     a.on_msg(AppMsg::LiveLintLoaded {
         generation: a.generation,
@@ -6578,6 +6742,7 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
         object: "public.events".into(),
         detail: "…".into(),
         suggestion: None,
+        advice: None,
     };
     a.schema_lint.findings = vec![pure.clone()];
     a.on_msg(AppMsg::LiveLintLoaded {
@@ -6592,6 +6757,133 @@ fn live_lint_failure_surfaces_status_keeps_pure_findings() {
     assert!(
         status.contains("live check failed"),
         "expected failure status; got: {status}"
+    );
+}
+
+/// An advisor finding as the demo would make one: ADV004, MED.
+fn advisor_lock_finding() -> crate::query::lint::Finding {
+    crate::demo::advisor()
+        .findings
+        .into_iter()
+        .find(|f| f.code == "ADV004")
+        .expect("the demo has a lock finding")
+}
+
+#[test]
+fn advisor_loaded_merges_after_the_live_lint_and_both_show_in_the_status() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::LiveLintLoaded {
+        generation: a.generation,
+        result: Ok(vec![crate::query::lint::fk_without_index_finding(
+            "public",
+            "orders",
+            "orders_user_id_fkey",
+            "user_id",
+        )]),
+    });
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    let codes: Vec<&str> = a.schema_lint.findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["LINT101", "ADV004"], "HIGH first, then MED");
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert_eq!(
+        status,
+        "schema lint · 2 finding(s) · 1 high · live: +1 · advisor: +1"
+    );
+}
+
+#[test]
+fn advisor_loaded_after_the_wizard_closed_is_dropped() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    assert!(a.schema_lint.findings.is_empty());
+    assert!(a.schema_lint.advisor_note.is_none());
+}
+
+#[test]
+fn advisor_names_the_checks_that_could_not_run_and_a_failure_keeps_the_rest() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: vec!["ADV005: permission denied for view pg_stat_bgwriter".into()],
+        }),
+    });
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(
+        status.ends_with(
+            "advisor: +1 (1 couldn't run: ADV005: permission denied for view pg_stat_bgwriter)"
+        ),
+        "{status}"
+    );
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation,
+        result: Err("permission denied for function pg_postmaster_start_time".into()),
+    });
+    assert_eq!(a.schema_lint.findings.len(), 1, "the earlier findings stay");
+    let status = a.last_status.clone().unwrap_or_default();
+    assert!(
+        status.ends_with("advisor failed: permission denied for function pg_postmaster_start_time"),
+        "{status}"
+    );
+}
+
+#[test]
+fn a_stale_generation_advisor_result_is_ignored() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.on_msg(AppMsg::AdvisorLoaded {
+        generation: a.generation.wrapping_add(1),
+        result: Ok(crate::query::advisor::Report {
+            findings: vec![advisor_lock_finding()],
+            errors: Vec::new(),
+        }),
+    });
+    assert!(a.schema_lint.findings.is_empty());
+}
+
+#[test]
+fn e_in_the_wizard_yanks_an_advisor_finding_s_evidence_query() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::SchemaLint;
+    a.schema_lint.findings = vec![
+        crate::query::lint::fk_without_index_finding("public", "orders", "fk", "user_id"),
+        advisor_lock_finding(),
+    ];
+    crate::app::yank::take_test_clipboard();
+    press(&mut a, KeyCode::Char('e'));
+    assert!(crate::app::yank::take_test_clipboard().is_none());
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("LINT101: no evidence query"),
+        "{:?}",
+        a.last_status
+    );
+    press(&mut a, KeyCode::Char('j'));
+    press(&mut a, KeyCode::Char('e'));
+    let sql = crate::app::yank::take_test_clipboard().expect("copied");
+    assert!(sql.starts_with("/* pgman:advisor */ WITH s AS"), "{sql}");
+    assert!(sql.contains("pg_blocking_pids"), "{sql}");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("yanked ADV004 evidence query")
     );
 }
 
@@ -8702,6 +8994,7 @@ fn confirm_modal_app() -> App {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.last_error = Some("relation \"orders\" does not exist".into());
     a.mode = Mode::Confirm;
@@ -8865,6 +9158,7 @@ async fn reconnect_drops_everything_a_decision_modal_was_holding() {
         },
         is_batch: false,
         summary: None,
+        cell_edit: None,
     });
     a.mode = Mode::Editor;
     a.editor.buffer = "\\c other_db".into();
@@ -8929,8 +9223,10 @@ fn a_query_ok_landing_mid_command_bar_leaves_no_stale_bar_behind() {
     a.on_msg(AppMsg::QueryOk {
         generation: a.generation,
         grid: Grid::default(),
+        origins: Vec::new(),
         kind_label: "run".into(),
         tx_open_after: true,
+        paging: None,
     });
     assert_eq!(a.mode, Mode::TxDecision);
     assert!(a.tx_open);
@@ -13372,6 +13668,522 @@ fn a_log_preloaded_at_startup_reopens_with_the_reopened_status() {
     );
 }
 
+// --- Paging past MAX_ROWS (docs/backlog/paging.md) -----------------------
+
+fn id_rows(range: std::ops::Range<usize>) -> Vec<Vec<Cell>> {
+    range.map(|i| vec![Some(i.to_string())]).collect()
+}
+
+fn cursor_limits() -> crate::query::paging::Limits {
+    crate::query::paging::Limits {
+        idle: Duration::from_secs(60),
+        lifetime: Duration::from_secs(600),
+    }
+}
+
+/// An app showing the first page of a paged result whose cursor is open.
+fn app_with_open_cursor() -> App {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..1000),
+            truncated: true,
+        },
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: Some(RunPaging {
+            sql: "SELECT id FROM t ORDER BY id".into(),
+            cursor: Some(cursor_limits()),
+            in_transaction: false,
+        }),
+    });
+    a.mode = Mode::Normal;
+    a
+}
+
+fn page(rows: Vec<Vec<Cell>>, more: bool) -> PageOutcome {
+    PageOutcome::More(crate::query::paging::Page { rows, more })
+}
+
+#[test]
+fn only_a_plain_editor_select_runs_behind_the_cursor() {
+    use super::spawn::runs_behind_cursor;
+    let sql = "SELECT * FROM t";
+    assert!(runs_behind_cursor(RunKind::Run, false, false, false, sql));
+    assert!(!runs_behind_cursor(
+        RunKind::Explain,
+        false,
+        false,
+        false,
+        sql
+    ));
+    assert!(!runs_behind_cursor(
+        RunKind::ExplainAnalyze,
+        false,
+        false,
+        false,
+        sql
+    ));
+    assert!(
+        !runs_behind_cursor(RunKind::Run, true, false, false, sql),
+        "batch"
+    );
+    assert!(
+        !runs_behind_cursor(RunKind::Run, false, true, false, sql),
+        "auto-tx"
+    );
+    assert!(
+        !runs_behind_cursor(RunKind::Run, false, false, true, sql),
+        "\\watch"
+    );
+    assert!(!runs_behind_cursor(
+        RunKind::Run,
+        false,
+        false,
+        false,
+        "SELECT * FROM t FOR UPDATE"
+    ));
+}
+
+#[test]
+fn a_paged_result_names_m_and_how_it_continues() {
+    use crate::grid::More;
+    let p = ResultPaging {
+        id: 7,
+        sql: "SELECT 1".into(),
+        ceiling: false,
+        in_transaction: false,
+    };
+    assert_eq!(super::result_more(None, Some(7)), More::Unpaged);
+    assert_eq!(super::result_more(Some(&p), Some(7)), More::CursorOpen);
+    assert_eq!(super::result_more(Some(&p), Some(8)), More::CursorClosed);
+    assert_eq!(super::result_more(Some(&p), None), More::CursorClosed);
+    let ceiling = ResultPaging {
+        ceiling: true,
+        ..p.clone()
+    };
+    assert_eq!(super::result_more(Some(&ceiling), Some(7)), More::Ceiling);
+    let in_tx = ResultPaging {
+        in_transaction: true,
+        ..p
+    };
+    assert_eq!(super::result_more(Some(&in_tx), None), More::InTransaction);
+
+    let a = app_with_open_cursor();
+    assert_eq!(a.result_more(), More::CursorOpen);
+    let status = a.last_status.as_deref().unwrap_or("");
+    assert!(status.ends_with("partial · M fetches more"), "{status}");
+}
+
+#[test]
+fn a_cursor_closes_at_its_idle_or_lifetime_limit() {
+    let t0 = Instant::now();
+    let c = CursorMirror {
+        result_id: 1,
+        opened: t0,
+        last_fetch: t0 + Duration::from_secs(590),
+        limits: cursor_limits(),
+    };
+    // The lifetime (600 s from the open) comes before the idle limit
+    // (60 s after the last fetch).
+    assert_eq!(c.deadline(), t0 + Duration::from_secs(600));
+    assert_eq!(c.expired(t0 + Duration::from_secs(599)), None);
+    assert_eq!(
+        c.expired(t0 + Duration::from_secs(600)),
+        Some(CursorExpiry::Lifetime)
+    );
+    let c = CursorMirror {
+        last_fetch: t0 + Duration::from_secs(10),
+        ..c
+    };
+    assert_eq!(c.deadline(), t0 + Duration::from_secs(70));
+    assert_eq!(c.expired(t0 + Duration::from_secs(69)), None);
+    assert_eq!(
+        c.expired(t0 + Duration::from_secs(70)),
+        Some(CursorExpiry::Idle)
+    );
+}
+
+#[test]
+fn the_idle_timer_closes_the_cursor_and_m_then_re_runs() {
+    let mut a = app_with_open_cursor();
+    let opened = a.cursor.expect("open").opened;
+    // Not while a fetch runs: the limits restart when it lands.
+    a.query_running = true;
+    assert_eq!(a.cursor_deadline(), None);
+    a.tick_cursor_timeout(opened + Duration::from_secs(61));
+    assert!(a.cursor.is_some());
+    a.query_running = false;
+    assert_eq!(a.cursor_deadline(), Some(opened + Duration::from_secs(60)));
+    a.tick_cursor_timeout(opened + Duration::from_secs(59));
+    assert!(a.cursor.is_some(), "closed early");
+    a.tick_cursor_timeout(opened + Duration::from_secs(60));
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("result cursor closed after 60s idle · M re-runs the query for more rows")
+    );
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+    assert_eq!(a.cursor_deadline(), None);
+}
+
+#[test]
+fn m_explains_itself_where_it_cannot_fetch() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    a.mode = Mode::Normal;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(a.last_status.as_deref(), Some("no result to fetch more of"));
+    a.grid = crate::grid::Grid {
+        columns: vec!["id".into()],
+        rows: id_rows(0..3),
+        truncated: false,
+    };
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("all rows are already fetched")
+    );
+    a.grid.truncated = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("only a plain SELECT run from the editor pages"),
+        "{:?}",
+        a.last_status
+    );
+    a.result_paging = Some(ResultPaging {
+        id: 1,
+        sql: "SELECT 1".into(),
+        ceiling: false,
+        in_transaction: true,
+    });
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("a transaction was open when this ran"),
+        "{:?}",
+        a.last_status
+    );
+    a.result_paging.as_mut().unwrap().in_transaction = false;
+    a.result_paging.as_mut().unwrap().ceiling = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("pgman holds at most 100000 rows"),
+        "{:?}",
+        a.last_status
+    );
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('M'), KeyModifiers::SHIFT));
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("a query is already running · ctrl-c cancels it")
+    );
+}
+
+#[test]
+fn a_fetched_page_is_appended_and_the_selection_moves_to_it() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.query_running = true;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    assert!(!a.query_running);
+    assert_eq!(a.grid.rows, id_rows(0..2000));
+    assert!(a.grid.truncated);
+    assert_eq!(a.grid_view.visible_rows.len(), 2000);
+    assert_eq!(a.grid_state.selected(), Some(1000), "on the first new row");
+    assert!(a.cursor.is_some(), "more rows: still open");
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("+1000 row(s) · 2000 held · partial · M fetches more")
+    );
+    // The last page: complete, cursor gone, no partial note.
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(2000..2500), false)),
+    });
+    assert_eq!(a.grid.rows, id_rows(0..2500));
+    assert!(!a.grid.truncated);
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("+500 row(s) · 2500 held · that is every row")
+    );
+}
+
+#[test]
+fn a_page_landing_under_a_sort_and_filter_is_sorted_and_filtered_in() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.cycle_sort(); // ASC
+    a.cycle_sort(); // DESC
+    a.grid_view.filter = Some("99".into());
+    a.rebuild_visible_rows();
+    a.bookmarks.insert('a', GridBookmark { row: 0, col: 0 });
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    // Sorted descending as text over all 2000 rows; the original order
+    // kept for clearing the sort.
+    let mut want = id_rows(0..2000);
+    crate::grid::sort_rows(&mut want, 0, false);
+    assert_eq!(a.grid.rows, want);
+    assert_eq!(a.grid_view.raw_rows.as_ref(), Some(&id_rows(0..2000)));
+    // The filter sees the new rows (`1099`, `1990`… contain "99").
+    let shown: Vec<&str> = a
+        .grid_view
+        .visible_rows
+        .iter()
+        .map(|&i| a.grid.rows[i][0].as_deref().unwrap())
+        .collect();
+    assert!(shown.contains(&"1990"), "{shown:?}");
+    assert!(shown.iter().all(|s| s.contains("99")), "{shown:?}");
+    // A re-sort moves rows under the bookmarks.
+    assert!(a.bookmarks.is_empty());
+    // Clearing the sort restores fetch order.
+    a.cycle_sort();
+    assert_eq!(a.grid.rows, id_rows(0..2000));
+}
+
+#[test]
+fn reaching_the_ceiling_closes_the_cursor_and_says_why() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.grid.rows = id_rows(0..99_000);
+    a.rebuild_visible_rows();
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(page(id_rows(99_000..100_000), true)),
+    });
+    assert_eq!(a.grid.row_count(), crate::query::paging::MAX_HELD_ROWS);
+    assert!(a.grid.truncated);
+    assert!(a.cursor.is_none(), "closed at the ceiling");
+    assert_eq!(a.result_more(), crate::grid::More::Ceiling);
+    assert!(
+        a.last_status
+            .as_deref()
+            .unwrap_or("")
+            .ends_with("partial · stopped at pgman's 100000-row limit · pgman query '…' --json returns every row"),
+        "{:?}",
+        a.last_status
+    );
+}
+
+#[test]
+fn a_failed_or_cancelled_fetch_keeps_the_rows_and_closes_the_cursor() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.query_running = true;
+    a.cancel_requested = true;
+    let cancelled = conn::QueryErr {
+        msg: "canceling statement due to user request".into(),
+        position: None,
+        detail: Some(conn::QueryErrDetail {
+            code: Some("57014".into()),
+            ..Default::default()
+        }),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Err(cancelled),
+    });
+    assert_eq!(a.grid.row_count(), 1000, "the held rows stay");
+    assert!(a.cursor.is_none());
+    assert!(a.last_error.is_none());
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("fetch cancelled · the cursor is closed · M re-runs the query")
+    );
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Err(conn::QueryErr::msg("server closed the connection")),
+    });
+    assert!(a.cursor.is_none());
+    assert_eq!(
+        a.last_error.as_deref(),
+        Some("fetching more rows failed: server closed the connection · M re-runs the query")
+    );
+}
+
+#[test]
+fn a_page_for_another_result_is_dropped() {
+    let mut a = app_with_open_cursor();
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: 999,
+        outcome: Ok(page(id_rows(1000..2000), true)),
+    });
+    assert_eq!(a.grid.row_count(), 1000);
+}
+
+#[test]
+fn a_re_run_replaces_the_rows_and_keeps_the_sort() {
+    let mut a = app_with_open_cursor();
+    let id = a.result_paging.as_ref().unwrap().id;
+    a.close_cursor();
+    a.cycle_sort(); // ASC
+    let opened = crate::query::paging::Opened {
+        grid: crate::grid::Grid {
+            columns: vec!["id".into()],
+            rows: id_rows(0..2000),
+            truncated: true,
+        },
+        cursor: Some(cursor_limits()),
+        in_transaction: false,
+        origins: Vec::new(),
+    };
+    a.on_msg(AppMsg::PageLoaded {
+        generation: a.generation,
+        result_id: id,
+        outcome: Ok(PageOutcome::Rerun(opened)),
+    });
+    let mut want = id_rows(0..2000);
+    crate::grid::sort_rows(&mut want, 0, true);
+    assert_eq!(a.grid.rows, want);
+    assert_eq!(a.grid_view.sort, Some((0, true)));
+    assert_eq!(a.result_more(), crate::grid::More::CursorOpen);
+    assert_eq!(
+        a.last_status.as_deref(),
+        Some("re-ran the query · 2000 row(s) · partial · M fetches more")
+    );
+}
+
+#[test]
+fn closing_the_tab_closes_its_cursor_and_switching_keeps_it() {
+    let mut a = app_with_open_cursor();
+    a.new_tab();
+    assert!(a.cursor.is_some(), "another tab leaves it open");
+    assert_eq!(a.result_more(), crate::grid::More::Unpaged);
+    a.switch_to_tab(0);
+    assert_eq!(a.result_more(), crate::grid::More::CursorOpen);
+    // Close the other tab: this tab's cursor stays.
+    a.switch_to_tab(1);
+    a.close_active_tab();
+    assert!(a.cursor.is_some());
+    // Close the tab that owns it: it goes.
+    a.new_tab();
+    a.switch_to_tab(0);
+    a.close_active_tab();
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn other_database_work_closes_the_cursor() {
+    // `L` (sessions) is database work: it goes through `App::db`, whose
+    // barrier closes the cursor, and the title follows at once.
+    let mut a = app_with_open_cursor();
+    a.on_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+    assert!(a.cursor.is_none());
+    assert_eq!(a.result_more(), crate::grid::More::CursorClosed);
+}
+
+#[tokio::test]
+async fn a_reconnect_closes_the_cursor_on_the_session_it_leaves() {
+    let mut a = app_with_open_cursor();
+    a.dsn = Some(crate::conn::Dsn::parse("postgres://127.0.0.1:1/ledger").unwrap());
+    a.start_connect();
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn a_grid_that_is_not_a_run_result_drops_the_paging_and_its_cursor() {
+    // `\l` puts the database list where the paged result was.
+    let mut a = app_with_open_cursor();
+    a.databases = vec![DatabaseInfo {
+        name: "ledger".into(),
+        size: "8 MB".into(),
+    }];
+    a.editor.buffer = "\\l".into();
+    a.request_run(RunKind::Run);
+    assert_eq!(a.grid.columns, vec!["database", "size"]);
+    assert!(a.result_paging.is_none());
+    assert!(a.cursor.is_none());
+}
+
+#[test]
+fn ctrl_c_from_the_results_cancels_a_running_fetch() {
+    let mut a = app_with_open_cursor();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    a.cancel_dispatcher = Some(Box::new(RecordingDispatcher {
+        calls: calls.clone(),
+    }));
+    a.query_running = true;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(a.last_status.as_deref(), Some("cancelling query…"));
+    assert!(!a.should_quit);
+    // Nothing running: the quit chord as before.
+    a.query_running = false;
+    a.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(a.last_status.as_deref(), Some("ctrl-c again to quit"));
+}
+
+/// Every piece of database work reaches the client through `App::db`,
+/// which queues it behind the pager so that it never runs inside the
+/// result cursor's transaction (docs/backlog/paging.md). A new
+/// `self.client.clone()` elsewhere would skip the queue: its statement
+/// could land inside the cursor's transaction, or race the `COMMIT`
+/// that closes it. Asking whether there *is* a client is fine.
+#[test]
+fn the_client_is_reached_only_through_db() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![dir.join("app.rs")];
+    for entry in std::fs::read_dir(dir.join("app")).expect("src/app") {
+        let path = entry.expect("dir entry").path();
+        if path.file_name().is_some_and(|n| n != "tests.rs") {
+            files.push(path);
+        }
+    }
+    let mut readers = Vec::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("read source");
+        for (n, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(at) = rest.find("self.client") {
+                let after = &rest[at + "self.client".len()..];
+                let is_field = !after.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+                let harmless = [".is_none()", ".is_some()", " = Some("]
+                    .iter()
+                    .any(|ok| after.starts_with(ok));
+                if is_field && !harmless {
+                    readers.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                }
+                rest = after;
+            }
+        }
+    }
+    assert!(
+        readers.len() == 1 && readers[0].ends_with(": let client = self.client.clone()?;"),
+        "only App::db may read the client: {readers:#?}"
+    );
+}
+
 #[test]
 fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
     let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
@@ -13384,4 +14196,151 @@ fn ctrl_l_with_no_log_and_none_before_still_says_no_queries_found() {
         .as_deref()
         .unwrap_or("")
         .starts_with("no queries found"));
+}
+
+/// A plain run's column origins land on the grid view, and the next grid
+/// — one without them — clears them rather than inheriting the old ones.
+#[test]
+fn query_ok_keeps_the_column_origins_and_the_next_grid_replaces_them() {
+    let mut a = App::new(Theme::default(), None, Vec::new(), SafetyConfig::default());
+    let origin = crate::grid::ColumnOrigin {
+        table_oid: 42,
+        attnum: 1,
+    };
+    let grid = crate::grid::Grid {
+        columns: vec!["id".into(), "n".into()],
+        rows: vec![vec![Some("1".into()), Some("2".into())]],
+        truncated: false,
+    };
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid: grid.clone(),
+        origins: vec![Some(origin), None],
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: None,
+    });
+    assert_eq!(a.grid_view.origins, vec![Some(origin), None]);
+    a.on_msg(AppMsg::QueryOk {
+        generation: a.generation,
+        grid,
+        origins: Vec::new(),
+        kind_label: "run".into(),
+        tx_open_after: false,
+        paging: None,
+    });
+    assert!(a.grid_view.origins.is_empty());
+    a.grid_view.origins = vec![Some(origin)];
+    a.reset_grid_view();
+    assert!(a.grid_view.origins.is_empty());
+}
+
+/// A cache knowing `public.users (name, id)` keyed on `id` (OID 100) and
+/// `public.lines (order_id, line_no, sku)` keyed on both (OID 200).
+fn diff_key_cache() -> SchemaCache {
+    use crate::query::schema::ColumnMeta;
+    let mut c = SchemaCache::default();
+    let meta = |cols: &[(&str, i16)]| -> Vec<ColumnMeta> {
+        cols.iter()
+            .map(|(name, attnum)| ColumnMeta {
+                name: name.to_string(),
+                type_name: "text".into(),
+                not_null: false,
+                attnum: *attnum,
+            })
+            .collect()
+    };
+    let users = ("public".to_string(), "users".to_string());
+    let lines = ("public".to_string(), "lines".to_string());
+    c.relations_by_oid.insert(100, users.clone());
+    c.relations_by_oid.insert(200, lines.clone());
+    c.columns_meta_by_table
+        .insert(users.clone(), meta(&[("name", 1), ("id", 2)]));
+    c.columns_meta_by_table.insert(
+        lines.clone(),
+        meta(&[("order_id", 1), ("line_no", 2), ("sku", 3)]),
+    );
+    c.primary_keys.insert(users, vec!["id".into()]);
+    c.primary_keys
+        .insert(lines, vec!["order_id".into(), "line_no".into()]);
+    c
+}
+
+fn pin(
+    table: &str,
+    columns: &[&str],
+    origins: &[Option<(u32, i16)>],
+    rows: &[&[&str]],
+) -> PinnedResult {
+    PinnedResult {
+        columns: columns.iter().map(|s| s.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|r| r.iter().map(|c| Some(c.to_string())).collect())
+            .collect(),
+        label: "q".into(),
+        source: Some(("public".into(), table.into())),
+        origins: origins
+            .iter()
+            .map(|o| o.map(|(table_oid, attnum)| crate::grid::ColumnOrigin { table_oid, attnum }))
+            .collect(),
+    }
+}
+
+/// The leftmost column is unique on both sides too, but it isn't the
+/// key: a renamed user keyed on `name` read as one removed and one
+/// added; keyed on the real `id` it is one change.
+#[test]
+fn the_result_diff_keys_on_the_real_primary_key() {
+    use crate::query::row_diff::{diff_rows, RowKey};
+    let cache = diff_key_cache();
+    let o = [Some((100, 1)), Some((100, 2))];
+    let a = pin("users", &["name", "id"], &o, &[&["ann", "1"], &["bo", "2"]]);
+    let b = pin(
+        "users",
+        &["name", "id"],
+        &o,
+        &[&["anna", "1"], &["bo", "2"]],
+    );
+    let (key, is_pk) = choose_diff_key(&cache, &a, &b);
+    assert_eq!((key.clone(), is_pk), (RowKey::Columns(vec![1]), true));
+    let d = diff_rows(&a.rows, &b.rows, &key);
+    assert_eq!((d.changed.len(), d.added.len(), d.removed.len()), (1, 0, 0));
+    // Without origins (a panel, the demo) it is today's inference.
+    let mut a2 = a.clone();
+    let mut b2 = b.clone();
+    a2.origins.clear();
+    b2.origins.clear();
+    assert_eq!(
+        choose_diff_key(&cache, &a2, &b2),
+        (RowKey::Columns(vec![0]), false)
+    );
+}
+
+/// A composite key, in key order; and two results whose columns come
+/// from different places (the same names, a different table) fall back
+/// to inference.
+#[test]
+fn the_result_diff_keys_on_a_composite_key_and_only_when_both_sides_agree() {
+    use crate::query::row_diff::RowKey;
+    let cache = diff_key_cache();
+    let o = [Some((200, 3)), Some((200, 2)), Some((200, 1))];
+    let rows: &[&[&str]] = &[&["a", "1", "10"], &["b", "2", "10"]];
+    let a = pin("lines", &["sku", "line_no", "order_id"], &o, rows);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![2, 1]), true)
+    );
+    let mut b = a.clone();
+    b.origins[0] = None;
+    assert_eq!(
+        choose_diff_key(&cache, &a, &b),
+        (RowKey::Columns(vec![0]), false)
+    );
+    // The key not in the result: inference.
+    let a = pin("lines", &["sku"], &[Some((200, 3))], &[&["a"], &["b"]]);
+    assert_eq!(
+        choose_diff_key(&cache, &a, &a.clone()),
+        (RowKey::Columns(vec![0]), false)
+    );
 }

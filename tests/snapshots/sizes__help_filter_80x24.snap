@@ -11,7 +11,7 @@ expression: dump(&buf)
  1 SELECT number, cu…             [ ] prev/next tab · ctrl-t new · ctrl-w close
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error detail · F3 notify)    │
-│   8 rows in 6 sections match 'yank'                                          │
+│   9 rows in 6 sections match 'yank'                                          │
 │                                                                              │
 │   grid                                                                       │
 │     I             yank focused row as INSERT (single-table SELECTs)          │
@@ -24,6 +24,6 @@ expression: dump(&buf)
 │     y             yank the jq-style path (.foo[0].bar)                       │
 │                                                                              │
 │   schema browser                                                             │
-│ ↓ 7 more below                                                               │
+│ ↓ 8 more below                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   filter: /yank  · enter keep · esc clear

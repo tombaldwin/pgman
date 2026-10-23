@@ -28,7 +28,7 @@ use help::draw_help;
 pub(crate) use help::help_heading_jump;
 use landing::draw_landing;
 use panels::{
-    draw_about, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
+    draw_about, draw_cell_edit, draw_confirm, draw_conn_pick, draw_environments, draw_error_detail,
     draw_explain_tree, draw_log_pick, draw_notifications, draw_param_prompt, draw_rename_prompt,
     draw_save_query_prompt, draw_saved_queries, draw_sessions, draw_slow_queries,
 };
@@ -233,6 +233,9 @@ fn draw_frame(f: &mut Frame, app: &mut App) {
     }
     if app.mode == Mode::ParamPrompt {
         draw_param_prompt(f, area, app);
+    }
+    if app.mode == Mode::CellEdit {
+        draw_cell_edit(f, area, app);
     }
     if app.mode == Mode::ResultDiff {
         draw_result_diff(f, area, app);
@@ -760,7 +763,7 @@ pub(crate) fn footer_badges_with(
     // listener has seen at least one event this session. F4
     // hint piggybacks on the badge so the operator knows where
     // to look.
-    if app.tap_health.query_count > 0 || app.tap_health.heartbeat_count > 0 {
+    if app.tap_health.any_event_seen() {
         out.push(Span::styled(
             " TAP ",
             Style::default()
@@ -1548,6 +1551,109 @@ pub(crate) fn fit_status(text: &str, width: usize) -> String {
     end_ellipsis(&segments[0], width)
 }
 
+/// The typing prompt the footer's status carries in a mode whose input
+/// is typed there: the fixed head (`filter: /`) and the pattern typed
+/// so far. `None` in every other mode. What [`fit_prompt`] fits and the
+/// terminal cursor follows.
+fn footer_prompt(app: &App) -> Option<(&'static str, &str)> {
+    match app.mode {
+        Mode::GridFilter => app.grid_view.filter.as_deref().map(|p| ("filter: /", p)),
+        Mode::SchemaBrowserFilter => app
+            .schema_browser
+            .filter
+            .as_deref()
+            .map(|p| ("filter: /", p)),
+        Mode::HelpFilter => app.help.filter.as_deref().map(|p| ("filter: /", p)),
+        Mode::GridFind => app.grid_find.needle.as_deref().map(|p| ("find: ", p)),
+        Mode::HistorySearch => app.history_search.as_ref().map(|s| {
+            let head = if s.matched.is_some() {
+                "(reverse-i-search) '"
+            } else {
+                "(failed reverse-i-search) '"
+            };
+            (head, s.query.as_str())
+        }),
+        _ => None,
+    }
+}
+
+/// Fit a footer typing prompt — `head`, then the `pattern` typed so far,
+/// then `rest` (`  · 3 row(s) · enter accept · esc clear`) — into
+/// `width` columns, and say at which column the cursor goes (just after
+/// the pattern). [`fit_status`] treats the head as one more segment to
+/// shrink and then drop, so a long pattern lost `filter: /` and the
+/// cursor fell off the end of the line.
+///
+/// While [`fit_status`] of the whole line keeps the head and the pattern
+/// intact, that is the answer. Otherwise the head is kept whole, and the
+/// pattern too while it and a cell for the cursor fit, with `rest` given
+/// what the pattern leaves (fitted by [`fit_status`], and dropped rather
+/// than shown as a cut last hint); past that the pattern's *tail* is
+/// shown after a `…` — the end is where the typing is — and `rest`
+/// goes. On a footer too narrow for the head and two cells, the whole
+/// line is fitted by [`fit_status`] and there is no cursor. The text is
+/// never wider than `width`. Pure.
+pub(crate) fn fit_prompt(
+    head: &str,
+    pattern: &str,
+    rest: &str,
+    width: usize,
+) -> (String, Option<usize>) {
+    let head_w = display_width(head);
+    let pat_w = display_width(pattern);
+    if head_w + 2 > width {
+        return (fit_status(&format!("{head}{pattern}{rest}"), width), None);
+    }
+    if head_w + pat_w < width {
+        // What every other status gets, while it keeps the prompt and
+        // the cursor's cell: it drops a count before a key hint.
+        let whole = fit_status(&format!("{head}{pattern}{rest}"), width);
+        if whole
+            .strip_prefix(head)
+            .is_some_and(|r| r.starts_with(pattern))
+        {
+            return (whole, Some(head_w + pat_w));
+        }
+        let room = width - head_w - pat_w;
+        let tail = fit_prompt_rest(rest, room);
+        return (format!("{head}{pattern}{tail}"), Some(head_w + pat_w));
+    }
+    // `…` and the cursor's cell come out of what the pattern gets.
+    let budget = width - head_w - 2;
+    let mut kept: Vec<char> = Vec::new();
+    let mut kept_w = 0;
+    for c in pattern.chars().rev() {
+        let cw = char_width(c);
+        if kept_w + cw > budget {
+            break;
+        }
+        kept_w += cw;
+        kept.push(c);
+    }
+    let tail: String = kept.into_iter().rev().collect();
+    (format!("{head}…{tail}"), Some(head_w + 1 + kept_w))
+}
+
+/// What of a prompt's `rest` fits in `room` columns: all of it, or its
+/// leading separator and [`fit_status`] of the segments after it — or
+/// nothing when not even its last segment (the keys that leave the
+/// prompt) fits whole. Pure.
+fn fit_prompt_rest(rest: &str, room: usize) -> String {
+    if display_width(rest) <= room {
+        return rest.to_string();
+    }
+    let body = rest.trim_start_matches([' ', '·']);
+    let lead = &rest[..rest.len() - body.len()];
+    let Some(budget) = room.checked_sub(display_width(lead)) else {
+        return String::new();
+    };
+    let last = body.rsplit(" · ").next().unwrap_or(body);
+    if body.is_empty() || display_width(last) > budget {
+        return String::new();
+    }
+    format!("{lead}{}", fit_status(body, budget))
+}
+
 fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     let theme = &app.theme;
     // TxDecision is its own prominent prompt — it pre-empts the normal
@@ -1595,6 +1701,11 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .filter(|_| app.mode == Mode::CommandBar);
     // Rows under the first, for an error wrapped over a taller footer.
     let mut extra_rows: Vec<Line<'static>> = Vec::new();
+    // Where the terminal cursor goes in a typing prompt the status
+    // carries, as a column from the footer's left edge: set only when
+    // the status branch drew the prompt, so an error in its place gets
+    // no cursor parked somewhere in its text.
+    let mut prompt_cursor: Option<u16> = None;
     let line = if let Some(bar) = bar {
         let mut spans = vec![
             Span::styled(" :", Style::default().fg(theme.accent)),
@@ -1682,7 +1793,23 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .width
             .saturating_sub(badge_width)
             .saturating_sub(display_width(&prefix) as u16) as usize;
-        let fitted = fit_status(&footer_text(status), available);
+        let text = footer_text(status);
+        let prompt = footer_prompt(app).and_then(|(head, pattern)| {
+            let pattern = footer_text(pattern);
+            let rest = text.strip_prefix(head)?.strip_prefix(pattern.as_str())?;
+            Some(fit_prompt(head, &pattern, rest, available))
+        });
+        let fitted = match prompt {
+            Some((fitted, cursor)) => {
+                prompt_cursor = cursor.map(|c| {
+                    (badge_width as usize + display_width(&prefix) + c)
+                        .try_into()
+                        .unwrap_or(u16::MAX)
+                });
+                fitted
+            }
+            None => fit_status(&text, available),
+        };
         Line::from(Span::styled(
             format!("{prefix}{fitted}"),
             Style::default().fg(theme.health_green),
@@ -1742,7 +1869,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 }
                 Mode::LogPick => "↑↓ / j/k navigate · enter load · c toggle clusters · esc cancel",
                 Mode::ConnPick => "↑↓ / j/k navigate · enter connect · q quit · E envs",
-            Mode::RowDetail => "J / K next / prev row · j / k field · y yank · esc close",
+            Mode::RowDetail => "J / K next / prev row · j / k field · y yank · u edit · esc close",
             Mode::CellDetail => {
                 if app.cell_detail.json_rows.is_empty() {
                     "↑↓ / j/k scroll · y yank · g/G top/bottom · esc / enter back"
@@ -1766,16 +1893,23 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                     "j/k navigate · space choose · s save · p scope · d again · q / esc back"
                 }
                 Mode::Environments => "j/k navigate · enter connect · d discover · r refresh · q / esc close",
-                Mode::SchemaLint => "j/k navigate · y yank suggestion · r refresh · q / esc close",
+                Mode::SchemaLint => "j/k navigate · y yank suggestion · e yank evidence query · r refresh · q / esc close",
                 Mode::ErrorDetail => "esc / q / ! close",
                 Mode::ConfirmTerminate => "y confirm terminate · n / esc cancel",
                 Mode::Notifications => "j/k navigate · y yank payload · c clear · q / esc close",
+                Mode::TapMonitor if app.tap_nav.event_detail.is_some() => {
+                    "j/k scroll · g/G top/bottom · esc / enter back"
+                }
+                Mode::TapMonitor if app.tap_nav.view == crate::app::TapView::List => {
+                    "j/k navigate · v cycle 7 views · enter detail · Shift-B baseline · c clear · q close"
+                }
                 Mode::TapMonitor => "j/k navigate · v cycle 7 views · Shift-B baseline · s sort · c clear · q close",
                 Mode::SavedQueries => "j/k navigate · enter load · r rename · d delete · / search · q close",
                 Mode::SavedQueriesFilter => "type to narrow · enter accept · esc clear",
                 Mode::RenameQueryPrompt => "edit name · enter save · esc cancel",
                 Mode::SaveQueryPrompt => "type a name · enter persist · esc cancel",
                 Mode::ParamPrompt => "type value · enter next · esc cancel",
+                Mode::CellEdit => "type the value · enter save · ctrl-n NULL · esc cancel",
                 Mode::ResultDiff => "j/k navigate · r re-pin B as A · c clear pin · q / esc close",
                 // Unreachable in practice: the command-bar branch at
                 // the head of this chain owns the footer while the bar
@@ -1826,6 +1960,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
                 | Mode::SavedQueriesFilter
                 | Mode::RenameQueryPrompt
                 | Mode::CommandBar
+                | Mode::CellEdit
         ) || tunnel_prompt
             || failed_normal
             || connecting_normal
@@ -1874,61 +2009,24 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // Real terminal cursor for the typing modes whose input is
-    // surfaced through the footer (GridFilter, HistorySearch,
-    // SchemaBrowserFilter). The status text always renders into a
-    // single line at `area`; the leading " " prefix from the
-    // status branch above is accounted for via `LEADING_SPACE`,
-    // and any active `[RO]` / `[TX]` badges add their own width on
-    // top.
-    let cursor_offset: Option<u16> = match app.mode {
+    // surfaced through the footer: the `:` bar, and the prompts the
+    // status carries (GridFilter, HistorySearch, SchemaBrowserFilter,
+    // HelpFilter, GridFind) — placed where `fit_prompt` put the end of
+    // the pattern. `line`'s leading " " is `LEADING_SPACE`, and any
+    // `[RO]` / `[TX]` badges add their own width on top.
+    let cursor_col: Option<u16> = match app.mode {
         // The bar renders as ":<typed>"; the cursor sits inside the
         // typed text at the widget's own column.
         Mode::CommandBar => app.command_bar.as_ref().map(|bar| {
             const PREFIX_CHARS: u16 = 1; // the ':'
-            PREFIX_CHARS + bar.input.cursor_col() as u16
+            LEADING_SPACE
+                .saturating_add(badge_width)
+                .saturating_add(PREFIX_CHARS + bar.input.cursor_col() as u16)
         }),
-        Mode::GridFilter => app.grid_view.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …"; cursor sits just
-            // after the typed pattern.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::HistorySearch => app.history_search.as_ref().map(|s| {
-            // Two flavours, picked by `matched`:
-            //   "(reverse-i-search) '<q>'"
-            //   "(failed reverse-i-search) '<q>'"
-            let prefix: u16 = if s.matched.is_some() {
-                "(reverse-i-search) '".chars().count() as u16
-            } else {
-                "(failed reverse-i-search) '".chars().count() as u16
-            };
-            prefix + display_width(&s.query) as u16
-        }),
-        Mode::SchemaBrowserFilter => app.schema_browser.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …" — same shape as
-            // GridFilter.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::HelpFilter => app.help.filter.as_ref().map(|f| {
-            // Status reads "filter: /<pat>  · …" — same shape as the
-            // schema browser's.
-            const PREFIX_CHARS: u16 = "filter: /".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        Mode::GridFind => app.grid_find.needle.as_ref().map(|f| {
-            // Status reads "find: <pat>  · …".
-            const PREFIX_CHARS: u16 = "find: ".len() as u16;
-            PREFIX_CHARS + display_width(f) as u16
-        }),
-        _ => None,
+        _ => prompt_cursor,
     };
-    if let Some(offset) = cursor_offset {
-        let x = area
-            .x
-            .saturating_add(LEADING_SPACE)
-            .saturating_add(badge_width)
-            .saturating_add(offset);
+    if let Some(col) = cursor_col {
+        let x = area.x.saturating_add(col);
         if x < area.x.saturating_add(area.width) {
             f.set_cursor_position((x, area.y));
         }
@@ -2229,6 +2327,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
     ("conn pick", "the connection picker"),
     ("row detail", "one row, field by field (enter on the grid)"),
     ("cell detail", "one value, as text or as a JSON tree"),
+    ("cell edit", "change one value of a table row (u)"),
     (
         "schema browser",
         "schemas, tables, columns, constraints (S)",
@@ -2259,10 +2358,7 @@ pub(crate) const HELP_SECTIONS: &[(&str, &str)] = &[
         "your app's statements, live from the JDBC tap (F4)",
     ),
     ("result diff", "compare two results, A against B (D)"),
-    (
-        "schema wizard",
-        "schema lint: missing keys, unused indexes (W)",
-    ),
+    ("schema wizard", "schema lint and config advisor (W)"),
     ("help", "this overlay's own keys"),
 ];
 
@@ -2402,6 +2498,14 @@ pub(crate) fn help_body(
     );
     push(
         row("    I             yank focused row as INSERT (single-table SELECTs)"),
+        &mut lines,
+    );
+    push(
+        row("    M             fetch the next 1000 rows of a partial result"),
+        &mut lines,
+    );
+    push(
+        row("    u             edit the focused cell → one-row UPDATE (see cell edit)"),
         &mut lines,
     );
     push(
@@ -2601,6 +2705,10 @@ pub(crate) fn help_body(
         row("    y             yank focused field value to clipboard"),
         &mut lines,
     );
+    push(
+        row("    u             edit the focused field (see cell edit)"),
+        &mut lines,
+    );
     push(row("    esc / q       close"), &mut lines);
     push(Line::from(""), &mut lines);
 
@@ -2627,6 +2735,26 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(row("    esc / q       back to row detail"), &mut lines);
+    push(Line::from(""), &mut lines);
+
+    heading("cell edit", &mut lines, &mut anchors);
+    push(
+        row("  u on a cell of a SELECT from one table whose primary key is in the result"),
+        &mut lines,
+    );
+    push(
+        row("    enter         save: UPDATE … WHERE <primary key> through the safety guard"),
+        &mut lines,
+    );
+    push(
+        row("    ctrl-n        NULL ↔ empty string (typing ends a NULL)"),
+        &mut lines,
+    );
+    push(row("    esc           cancel"), &mut lines);
+    push(
+        row("  one row or nothing: any other count is rolled back"),
+        &mut lines,
+    );
     push(Line::from(""), &mut lines);
 
     heading("schema browser", &mut lines, &mut anchors);
@@ -2987,6 +3115,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    enter         list view: open the whole event (causes, caller stack, conn)"),
+        &mut lines,
+    );
+    push(
         row("    s             cycle sort (hotspots / callers views)"),
         &mut lines,
     );
@@ -3032,6 +3164,10 @@ pub(crate) fn help_body(
         &mut lines,
     );
     push(
+        row("    e             yank an ADV finding's evidence query, to run in the editor"),
+        &mut lines,
+    );
+    push(
         row("    r             refresh (re-runs every check)"),
         &mut lines,
     );
@@ -3047,6 +3183,18 @@ pub(crate) fn help_body(
     );
     push(
         row("                  · 104 bloat · 105 no comment · 106 mixed ts/tstz · 107 serial not unique"),
+        &mut lines,
+    );
+    push(
+        row("    config advisor (read-only, from the server's statistics): ADV001 cache hit ratio"),
+        &mut lines,
+    );
+    push(
+        row("                  · 002 temp spills · 003 autovacuum behind · 004 lock waits · 005 checkpoints"),
+        &mut lines,
+    );
+    push(
+        row("                  each with its evidence, a setting, and the RDS / Aurora parameter"),
         &mut lines,
     );
     push(Line::from(""), &mut lines);

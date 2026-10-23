@@ -48,14 +48,14 @@ once a query has run share one key map.
 
 | Key | Action |
 |---|---|
-| `q` | Quit (`Ctrl-C` twice also quits, except from the editor, where it cancels a running query) |
+| `q` | Quit (`Ctrl-C` twice also quits, except from the editor — and from the results while a query or `M` fetch runs — where it cancels the running query) |
 | `?` / `F1` | Toggle help (both work from every non-typing mode) |
 | `:` | Open the command bar — see [Command bar](#command-bar-) |
 | `A` | About pgman |
 | `e` / `i` / `Tab` | Focus editor |
 | `c` | Change connection (opens the picker mid-session) |
 | `S` | Schema browser |
-| `W` | Schema wizard / lint |
+| `W` | Schema wizard: lint and config advisor |
 | `Q` | Saved queries |
 | `T` | Slow queries (`pg_stat_statements`) |
 | `L` | Active sessions + locks |
@@ -147,14 +147,33 @@ other key closes the popup and leaves the buffer as it is.
 Sort, filter, find, yank, FK-follow and diff are dispatched from Normal
 mode on the grid; row/cell detail and the diff view are their own modes.
 
-The grid holds at most **1000 rows** of a result. When a query returns
-more, pgman stops reading there, and both the grid's title and the
-footer say `capped at 1000`. Sort, filter, find, `Y` and the diff all
-work on those 1000 rows, not the whole result. The TUI has no way to
-fetch past the cap. To see other rows, narrow the query (`WHERE`,
-`ORDER BY … LIMIT … OFFSET …`). For every row, run it outside the TUI
-with `pgman query 'SQL' --json` (or `--batch --format json`), which
-isn't capped; see [commands](commands.md).
+A result arrives **1000 rows** at a time. A plain `SELECT` run from the
+editor reads through a server-side cursor: when it has more rows, the
+title says `partial · M fetches more`, and `M` appends the next 1000
+(through to the end of the result, or pgman's ceiling of 100 000 rows
+held). Sort, filter, find, the row detail, `Y`, `I`, `:fixture` and the
+diff work on the rows fetched so far; `Y` and `:fixture` say `fetched
+rows only` when there are more. A fetched page keeps the active sort
+and filter. `Ctrl-C` cancels a fetch that is taking too long, keeping
+the rows already there.
+
+The cursor holds a read transaction open on the server, so pgman closes
+it after 60 s without a fetch, or 10 min after the query ran (sooner
+when the server's `idle_in_transaction_session_timeout` or
+`transaction_timeout` is shorter), and as soon as anything else talks
+to the database: the next query, a panel such as `L` or `T`, a
+reconnect, closing the tab. The title then says `cursor closed · M
+re-runs`, and `M` runs the query again for the rows already held plus
+1000 more, as a fresh snapshot.
+
+Everything else stops at 1000 rows with `capped at 1000 · more rows not
+fetched` in the title: `EXPLAIN`, scripts of several statements,
+`\watch`, `SELECT … FOR UPDATE` / `FOR SHARE` (a cursor would hold the
+locks), and a `SELECT` run while a transaction is open (`in a
+transaction, so no paging`). For every row, run it outside the TUI with
+`pgman query 'SQL' --json` (or `--batch --format json`), which isn't
+capped; see [commands](commands.md). How the cursor works is in
+[docs/backlog/paging.md](backlog/paging.md).
 
 A NULL is drawn as a dimmed, italic `NULL` (`theme.null_cell`) and an
 empty string as nothing, so the two never look alike; row and cell
@@ -172,6 +191,8 @@ whole word `null` (any case), so `/null` finds them; `/nu` does not.
 | `F` | Follow the FK on the focused cell → new tab, `SELECT * FROM parent WHERE pk=value` (a NULL references nothing: no tab) |
 | `Y` | Copy the (filtered) grid to clipboard as CSV (NULL an empty field, an empty string `""`) |
 | `I` | Yank the focused row as an `INSERT` (single-table SELECTs only): NULL as `NULL`, every value quoted, `''` included |
+| `M` | Fetch the next 1000 rows of a partial result; once its cursor has closed, re-run the query for them (see above) |
+| `u` | Edit the focused cell — a one-row `UPDATE` through the safety guard; see [Cell edit](#cell-edit-u) |
 | `D` | Pin the current result as baseline A; press again after running another query to diff B against A |
 | `Enter` | Open row detail |
 
@@ -192,6 +213,7 @@ typing a find, `n` and `N` are letters of the pattern; `↓`/`↑` (or
 | `g` / `G` | First / last field |
 | `Enter` | Zoom into the focused field (cell detail) |
 | `y` | Yank the focused field value (a NULL yanks nothing, and says so) |
+| `u` | Edit the focused field — see [Cell edit](#cell-edit-u) |
 | `Esc` / `q` | Close |
 
 ### Cell detail (`Enter` on a field)
@@ -215,7 +237,42 @@ JSON cells (value parses as an object/array):
 | `y` | Yank the jq-style path (`.foo[0].bar`) |
 | `Esc` / `q` | Back to row detail |
 
+### Cell edit (`u`)
+
+`u` on a cell in the grid (or on a field in row detail) opens a one-line
+editor holding its value. It works on a result the editor ran from **one
+table** whose **primary key is in the result**; anything else says why
+not (a join, a view, no primary key, the key column not selected, a
+computed column such as `upper(name)`, a read-only session, a
+transaction awaiting commit or rollback). A column is the table's only if
+Postgres says so, so `SELECT id + 1 AS id …` is not keyed on `id`.
+
+| Key | Action |
+|---|---|
+| `Enter` | Save: `UPDATE schema.table SET col = <value> WHERE <key> = … RETURNING col`, through the safety guard as any editor statement — confirmed (the modal shows the statement), allowed or blocked per database |
+| `Ctrl-N` | NULL ↔ empty string: a NULL shows as the grid's dimmed `NULL`; `Ctrl-N` on it makes `''`, and typing starts a text value |
+| `Esc` | Cancel |
+
+Text editing is the single-line prompt's: `←` / `→`, `Home` / `End`
+(`Ctrl-A` / `Ctrl-E`), `Backspace`, `Delete`, `Ctrl-W`, paste. A value
+with a newline or another control character can't be edited here (nor
+pasted in); write that UPDATE in the editor.
+
+The UPDATE changes **one row or nothing**: any other count (the row
+was deleted since the query ran; an inheritance child shares the key)
+is rolled back and the footer says so. Inside a transaction you opened
+with `BEGIN`, only the edit is undone, under a savepoint. On success
+the cell shows the value as the server stored it (`1.5` into a
+`numeric(10,2)` reads `1.50`); with `auto_tx` on, the commit / rollback
+prompt follows, and a rollback puts the old value back. The UPDATE goes
+into the history.
+
 ### Result diff (`D` twice)
+
+When A and B are the same columns read from the same table, and its
+primary key is in both, rows are matched on the primary key (the title
+says `key: id (primary key)`); otherwise on the leftmost column unique
+in both, then on the whole row.
 
 | Key | Action |
 |---|---|
@@ -255,12 +312,36 @@ word, mixed naming) run over the cached schema; live checks (LINT101–107: FK
 without index, unused index, duplicate indexes, bloat, no comment, mixed
 timestamp/timestamptz, a serial or identity column nothing keeps unique) query the database.
 
+The **config advisor** findings (ADV…) join the same list. They come from the
+server's statistics, read-only, and each carries the numbers that triggered it
+and how long they have accumulated (since `stats_reset`, or "at least since the
+server started"), the query that produced them, a conservative setting to change
+and why, and what that setting is called in an RDS / Aurora parameter group —
+static (applies at reboot) or dynamic, and how Aurora differs. On RDS and Aurora
+the suggestion is the `aws rds modify-db-(cluster-)parameter-group` command;
+self-hosted, `ALTER SYSTEM`. pgman never runs it.
+
+| Code | Finding | Read from |
+|---|---|---|
+| ADV000 | The advisor itself is limited: statistics under an hour old (the ratio checks wait), or a standby | — |
+| ADV001 | Buffer cache hit ratio under 0.99 (MED under 0.95), with ≥ 100 000 block requests → `shared_buffers` | `pg_stat_database` |
+| ADV002 | ≥ 64 MiB spilled to temp files (MED from 256 MiB an hour) → `work_mem` for the spilling role, with the statements when `pg_stat_statements` is installed | `pg_stat_database`, `pg_stat_statements` |
+| ADV003 | Dead tuples ≥ 10 % of live on a table of ≥ 10 000 rows, blamed on autovacuum being off, behind, or its scale factor → `autovacuum_vacuum_scale_factor` on the table | `pg_stat_user_tables` |
+| ADV004 | Sessions waiting ≥ 5 s on a lock (HIGH from 60 s or 5 waiters), with the blocking chain → `idle_in_transaction_session_timeout` / `lock_timeout` | `pg_stat_activity`, `pg_blocking_pids` |
+| ADV005 | Over 20 % of checkpoints requested rather than timed (not on Aurora) → `max_wal_size` | `pg_stat_bgwriter`, `pg_stat_checkpointer` from PG17 |
+
+Thresholds and their reasoning: `docs/backlog/config-advisor.md`. Without
+`pg_read_all_stats` (in `pg_monitor`) other sessions' state and queries are
+hidden, and ADV004 says so; without `pg_stat_statements`, ADV002 says how to
+install it.
+
 | Key | Action |
 |---|---|
 | `j` / `k` / `↓` / `↑` | Navigate findings (sorted HIGH → MED → LOW) |
 | `g` / `G` | First / last |
 | `PageUp` / `PageDown` | Jump 10 rows |
 | `y` | Yank the focused finding's SQL suggestion (if any) |
+| `e` | Yank an ADV finding's evidence query, to run in the editor |
 | `r` | Refresh (re-runs every check) |
 | `Esc` / `q` | Close |
 
@@ -368,7 +449,7 @@ per tab: switching tabs restores each tab's own layout.
 Opened with `F4` from any mode. Seven views, cycled with `v`: **List**
 (recency-ordered event stream, default; the focused query's bound
 parameters show beneath it, labelled `params (some redacted)` when the
-producer masked any) → **Hotspots** (by SQL fingerprint)
+producer masked any; `Enter` opens the whole event, as the strip's rule says) → **Hotspots** (by SQL fingerprint)
 → **Callers** (by innermost caller frame) → **Transactions** (by synthetic
 txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 → **Baseline** (diff vs. a captured snapshot) → back to List.
@@ -380,9 +461,24 @@ txn id) → **Pools** (by connection-pool name) → **N+1** (live N+1 detector)
 | `j` / `k` / `↓` / `↑` | Navigate the current view's rows |
 | `g` / `G` | First / last |
 | `PageUp` / `PageDown` | Page |
+| `Enter` | List view: open the focused event (below) |
 | `s` | Cycle sort — Hotspots and Callers views only (Total time / Call count / P95 latency) |
 | `c` | Clear the event ring |
 | `Esc` / `q` | Close |
+
+`Enter` on a List row opens the whole event over the list: its kind and
+start time (UTC), duration and rows, `app` / `pool` / `conn` / `txn`, the
+full SQL, every bound parameter one per line, the error's cause chain
+(`error`, then `caused by`, the last one `root cause`) and the caller
+stack, innermost frame first. A field the producer didn't send reads `—`.
+It shows the event as it was when opened; new arrivals don't change it.
+
+| Key | Action |
+|---|---|
+| `j` / `k` / `↓` / `↑` | Scroll a line |
+| `PageUp` / `PageDown` | Scroll 10 lines |
+| `g` / `G` | Top / bottom |
+| `Esc` / `q` / `Enter` | Back to the list |
 
 ## Command bar (`:`)
 

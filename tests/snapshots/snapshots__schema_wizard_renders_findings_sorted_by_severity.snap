@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 705
+assertion_line: 707
 expression: dump(&buf)
 ---
 ╭ pgman X.X.X · YYYY-MM-DD ──────────────────────────────────────────╮╭──────────────────────────────────────╮
@@ -26,4 +26,4 @@ expression: dump(&buf)
 │   ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯    │
 │                                                                                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
- RO   j/k navigate · y yank suggestion · r refresh · q / esc close · ? help
+ RO   j/k navigate · y yank suggestion · e yank evidence query · r refresh · q / esc close · ? help

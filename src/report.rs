@@ -754,6 +754,7 @@ mod tests {
             object: "public.orders".into(),
             detail: String::new(),
             suggestion: None,
+            advice: None,
         });
         let md = render_markdown(&s);
         assert!(md.contains("| High | LINT001 | public.orders | missing primary key |"));
@@ -816,6 +817,7 @@ mod tests {
             object: "\"foo\"".into(),
             detail: String::new(),
             suggestion: None,
+            advice: None,
         });
         let html = render_html(&s);
         assert!(
@@ -1144,6 +1146,7 @@ mod tests {
             object: "obj".into(),
             detail: String::new(),
             suggestion: None,
+            advice: None,
         });
         let md = render_markdown(&s);
         assert!(

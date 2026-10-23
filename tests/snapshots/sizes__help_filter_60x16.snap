@@ -7,7 +7,7 @@ expression: dump(&buf)
  1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
 ╭[ ◆ help · filter ◆ ]─────────────────────────────────────╮
 │ pgman — keys (? / F1 help · : commands · ! / F2 error d… │
-│   8 rows in 6 sections match 'yank'                      │
+│   9 rows in 6 sections match 'yank'                      │
 │                                                          │
 │   grid                                                   │
 │     I             yank focused row as INSERT             │
@@ -16,6 +16,6 @@ expression: dump(&buf)
 │   row detail                                             │
 │     y             yank focused field value to clipboard  │
 │                                                          │
-│ ↓ 15 more below                                          │
+│ ↓ 17 more below                                          │
 ╰──────────────────────────────────────────────────────────╯
  RO   TAP   N+1 ×1   filter: /yank  · enter keep · esc clear

@@ -1,0 +1,21 @@
+---
+source: tests/sizes.rs
+assertion_line: 250
+expression: dump(&buf)
+---
+ pgman X.X.X · YYYY-MM-DD │ ledger  connected · pg 16.4
+ 1 SELECT number, cu…        [ ] prev/next tab · ctrl-t new
+╭[ ◆ editor (e to focus) ◆ ]───────────────────────────────╮
+│ ╭[ ◆ JDBC tap ◆ ] 12 queries · 0 heartbeats · … ──────╮  │
+│ │╭[ ◆ event ◆ ] j/k scroll · esc back · … ───────────╮│  │
+│ ││  kind        query · failed                       ││  │
+╰─││  started     2026-09-21T14:14:02.118204Z          ││──╯
+╭[││  duration    2.3ms                                ││──╮
+│n││  rows        —                                    ││  │
+│I││  app         billing-service                      ││  │
+│I││  pool        primary                              ││  │
+│I│╰───────────────────────────────────────────────────╯│  │
+│I╰─────────────────────────────────────────────────────╯  │
+│INV-004831  2111         open    GBP       298.80         │
+╰──────────────────────────────────────────────────────────╯
+ RO   TAP   j/k scroll · g/G top/bottom · ? +2 more

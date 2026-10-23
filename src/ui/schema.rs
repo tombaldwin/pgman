@@ -508,14 +508,26 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
+    // Detail strip for the focused finding: 7 rows for a lint finding;
+    // an advisor finding's evidence and setting get what they need, up
+    // to all but the list's 5.
+    let focused = &app.schema_lint.findings[app
+        .schema_lint
+        .cursor
+        .min(app.schema_lint.findings.len() - 1)];
+    let detail_lines = lint_detail_lines(focused, inner.width.saturating_sub(4) as usize, theme);
+    let detail_h = (detail_lines.len() as u16)
+        .max(7)
+        .min(inner.height.saturating_sub(5).max(7));
     let split = Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(7)])
+        .constraints([Constraint::Min(5), Constraint::Length(detail_h)])
         .split(inner);
     let top = split[0];
     let detail = split[1];
 
-    let visible_h = top.height as usize;
+    // Rows under the header row.
+    let visible_h = (top.height as usize).saturating_sub(1);
     let scroll = scroll_offset(app.schema_lint.cursor, visible_h);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -533,7 +545,7 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .skip(scroll)
-        .take(visible_h.saturating_sub(1))
+        .take(visible_h)
     {
         let is_focus = i == app.schema_lint.cursor;
         let sev_color = match finding.severity {
@@ -573,33 +585,81 @@ pub(super) fn draw_schema_lint(f: &mut Frame, area: Rect, app: &App) {
     }
     f.render_widget(Paragraph::new(Text::from(lines)), top);
 
-    // Detail strip for the focused finding.
-    let focused = &app.schema_lint.findings[app
-        .schema_lint
-        .cursor
-        .min(app.schema_lint.findings.len() - 1)];
-    let mut detail_lines: Vec<Line> = Vec::new();
-    detail_lines.push(Line::from(Span::styled(
-        format!("  {} · {}", focused.code, focused.title),
+    f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+}
+
+/// The wizard's detail strip for `finding`, `width` columns of text.
+/// A lint finding: title, object, detail, suggestion. An advisor
+/// finding puts what to do first, so it shows on a small terminal —
+/// the setting and the suggestion — then the evidence behind it (the
+/// window and the numbers), the reasoning, the RDS / Aurora line, and
+/// the prose. Its object is already in the list row. Pure.
+pub(crate) fn lint_detail_lines(
+    finding: &crate::query::lint::Finding,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let styled = |text: String, style: Style| Line::from(Span::styled(text, style));
+    let text = Style::default().fg(theme.text);
+    let muted = Style::default().fg(theme.muted);
+    let accent = Style::default().fg(theme.accent);
+    out.push(styled(
+        format!("  {} · {}", finding.code, finding.title),
         Style::default()
             .fg(theme.title)
             .add_modifier(Modifier::BOLD),
-    )));
-    detail_lines.push(Line::from(Span::styled(
-        format!("  object: {}", focused.object),
-        Style::default().fg(theme.muted),
-    )));
-    for chunk in wrap_value(&focused.detail, detail.width.saturating_sub(4) as usize) {
-        detail_lines.push(Line::from(Span::styled(
-            format!("  {chunk}"),
-            Style::default().fg(theme.text),
-        )));
+    ));
+    let Some(advice) = finding.advice.as_deref() else {
+        out.push(styled(format!("  object: {}", finding.object), muted));
+        for chunk in wrap_value(&finding.detail, width) {
+            out.push(styled(format!("  {chunk}"), text));
+        }
+        if let Some(s) = &finding.suggestion {
+            out.push(styled(format!("  suggest: {s}"), accent));
+        }
+        return out;
+    };
+    // Hanging indent: the first row carries the label, the rest line
+    // up under the text.
+    let wrapped = |label: &str, body: &str, style: Style, out: &mut Vec<Line<'static>>| {
+        let pad = " ".repeat(2 + label.chars().count());
+        for (i, row) in wrap_words(body, width.saturating_sub(label.chars().count()))
+            .into_iter()
+            .enumerate()
+        {
+            let lead = if i == 0 {
+                format!("  {label}")
+            } else {
+                pad.clone()
+            };
+            out.push(styled(format!("{lead}{row}"), style));
+        }
+    };
+    if let Some(ch) = &advice.change {
+        let restart = if ch.restart {
+            "needs a restart"
+        } else {
+            "no restart"
+        };
+        wrapped(
+            "setting:  ",
+            &format!("{} {} → {} ({restart})", ch.name, ch.current, ch.suggested),
+            text,
+            &mut out,
+        );
     }
-    if let Some(s) = &focused.suggestion {
-        detail_lines.push(Line::from(Span::styled(
-            format!("  suggest: {s}"),
-            Style::default().fg(theme.accent),
-        )));
+    if let Some(s) = &finding.suggestion {
+        wrapped("suggest:  ", s, accent, &mut out);
     }
-    f.render_widget(Paragraph::new(Text::from(detail_lines)), detail);
+    wrapped("evidence: ", &advice.window, muted, &mut out);
+    for e in &advice.evidence {
+        wrapped("  ", e, text, &mut out);
+    }
+    if let Some(ch) = &advice.change {
+        wrapped("because:  ", &ch.reasoning, text, &mut out);
+        wrapped("RDS:      ", &ch.rds, muted, &mut out);
+    }
+    wrapped("why:      ", &finding.detail, text, &mut out);
+    out
 }

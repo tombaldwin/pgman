@@ -1777,3 +1777,28 @@ itself is done.
 - Postgres-log FATAL / PANIC + STATEMENT pairs are reconstructed like
   ERROR ones; csvlog, jsonlog, p6spy and datasource-proxy logs are read.
 
+### 0.1.2 backlog run (2026-10-23)
+
+- Tap List: Enter opens the whole focused event (kind, timing, pool /
+  conn / txn, full SQL, every parameter, cause chain, caller stack) as
+  a scrollable overlay (`docs/backlog/tap-event-detail.md`).
+- Tap status counts commits/rollbacks, so a boundary-only stream no
+  longer reads "no events yet"; the `TAP` badge lights on any event.
+- `docs/tap.md`: the JDBC tap for pgman users — ways in, the v1 field
+  table, limits, the two drop counts, record/replay, redaction.
+- A long typed footer pattern keeps its prompt head and the cursor,
+  showing the pattern's tail.
+- Config advisor: ADV001–005 (cache hit ratio, temp spills, dead
+  tuples with their autovacuum cause, lock-wait chains, forced
+  checkpoints) in the schema wizard, each with evidence, the stats
+  window, current → suggested setting, restart need and the RDS /
+  Aurora parameter-group key; `e` yanks the evidence query.
+- Paging past `MAX_ROWS`: `M` fetches the next 1000 rows of a plain
+  SELECT through a server-side cursor, closed on idle / other work /
+  the end (`docs/backlog/paging.md`).
+- Cell editing: `u` edits the focused cell as a one-row UPDATE keyed
+  on the table's primary key, with the column found from the server's
+  RowDescription origin, routed through `safety.rs` and rolled back
+  unless exactly one row changed (`docs/backlog/cell-editing.md`).
+- Result diff keys on the table's real primary key when both sides
+  come from the same columns of one table.

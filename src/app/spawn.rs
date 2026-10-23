@@ -1,5 +1,32 @@
 use super::*;
 
+/// Whether `spawn_run` sends `sql` to the pager, to run behind the
+/// result cursor so `M` can fetch past the first page
+/// (docs/backlog/paging.md): a plain `Run` of one statement
+/// `safety::is_pageable_select` accepts, outside any auto-tx. Not a
+/// `\watch` re-run: one every 2 s would hold a transaction open between
+/// runs for no reader. Pure.
+pub(crate) fn runs_behind_cursor(
+    kind: RunKind,
+    is_batch: bool,
+    wrap_in_tx: bool,
+    watching: bool,
+    sql: &str,
+) -> bool {
+    matches!(kind, RunKind::Run)
+        && !is_batch
+        && !wrap_in_tx
+        && !watching
+        && crate::safety::is_pageable_select(sql)
+}
+
+/// Where `spawn_run` sends a statement: through the queue like any
+/// database work, or to the pager to run behind a cursor.
+enum RunRoute {
+    Db(crate::query::paging::Db),
+    Pager(tokio::sync::oneshot::Receiver<Result<crate::query::paging::Opened, conn::QueryErr>>),
+}
+
 impl App {
     /// Spawn the connect + bootstrap-query task. The result returns as an
     /// `AppMsg` tagged with the current generation.
@@ -35,6 +62,10 @@ impl App {
         // connection. This is the single choke point for all reconnects.
         self.query_running = false;
         self.query_started = None;
+        // The cursor lives on the session being left: close it there
+        // (the old pager queues the COMMIT) rather than leave it idle in
+        // transaction until the old connection drops.
+        self.close_cursor();
         // Same for anything a decision modal was holding: an open
         // transaction belongs to the connection being dropped (the
         // server rolls it back), a guarded run was classified against
@@ -42,7 +73,11 @@ impl App {
         // Left set, `tx_open` refused `\watch` for the rest of the
         // session and `pending_run` could fire against the wrong DB.
         self.tx_open = false;
+        if let Some(edit) = self.edit_awaiting_tx.take() {
+            self.revert_cell_edit(&edit);
+        }
         self.pending_run = None;
+        self.cell_edit = None;
         self.pending_terminate = None;
         self.conn_state = ConnState::Connecting;
         self.in_recovery = None;
@@ -123,6 +158,9 @@ impl App {
             .tap_nav
             .events_cursor
             .min(self.tap_events.len().saturating_sub(1));
+        // The overlay is a layer of one visit: reopened, the monitor
+        // starts on its list.
+        self.tap_nav.event_detail = None;
         self.last_status = Some(self.tap_health.monitor_status(&self.tap_listeners));
         self.mode = Mode::TapMonitor;
     }
@@ -133,7 +171,7 @@ impl App {
     /// error pipeline. Routes around the safety guard because
     /// the operator just confirmed in the modal.
     pub(super) fn spawn_terminate_session(&mut self, pid: i32) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -141,6 +179,7 @@ impl App {
         let generation = self.generation;
         self.last_status = Some(format!("terminating pid {pid}…"));
         tokio::spawn(async move {
+            let client = db.ready().await;
             match conn::terminate_backend(&client, pid).await {
                 Ok(()) => {
                     // Re-fetch sessions so the panel reflects the
@@ -336,7 +375,7 @@ impl App {
     /// `AppMsg::CostPreviewLoaded`. The handler decides whether to
     /// confirm or proceed based on the row estimate vs threshold.
     pub(super) fn spawn_cost_preview(&mut self, sql: String, decision: Decision, threshold: u64) {
-        let Some(client) = self.client.clone() else {
+        let Some(db) = self.db() else {
             self.last_error = Some(self.not_connected_message());
             return;
         };
@@ -353,6 +392,7 @@ impl App {
         // or opening the Confirm modal.
         self.query_running = true;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let estimated = crate::query::explain::run_cost_explain(&client, &explain_sql).await;
             let _ = tx.send(AppMsg::CostPreviewLoaded {
                 sql,
@@ -364,6 +404,20 @@ impl App {
         });
     }
 
+    /// Push a statement that is about to run onto the history ring:
+    /// consecutive duplicates skipped, capped at `HISTORY_CAP` entries
+    /// (shared with the persistence side so the in-memory and on-disk
+    /// rings can never drift), and any history browsing reset.
+    pub(super) fn remember_in_history(&mut self, sql: &str) {
+        if self.history.last().map(String::as_str) != Some(sql) {
+            self.history.push(sql.to_string());
+            if self.history.len() > HISTORY_CAP {
+                self.history.remove(0);
+            }
+        }
+        self.history_pos = None;
+    }
+
     pub(super) fn spawn_run(
         &mut self,
         sql: String,
@@ -371,20 +425,29 @@ impl App {
         decision: Decision,
         is_batch: bool,
     ) {
-        let Some(client) = self.client.clone() else {
+        if self.client.is_none() {
             self.last_error = Some(self.not_connected_message());
             return;
-        };
-        // Push to history (skip consecutive duplicates, cap at
-        // HISTORY_CAP entries — shared with the persistence side
-        // so the in-memory + on-disk rings can never drift).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
         }
-        self.history_pos = None;
+        let paged = runs_behind_cursor(
+            kind,
+            is_batch,
+            decision.wrap_in_tx,
+            self.watch.is_some(),
+            &sql,
+        );
+        let route = match self.pager.clone().filter(|_| paged) {
+            Some(pager) => {
+                // The pager closes the old cursor before it opens this one.
+                self.cursor = None;
+                RunRoute::Pager(pager.open(sql.clone(), crate::query::paging::PAGE_ROWS))
+            }
+            None => match self.db() {
+                Some(db) => RunRoute::Db(db),
+                None => return,
+            },
+        };
+        self.remember_in_history(&sql);
         // Track the SQL of the most recent plain-Run so the
         // QueryOk handler can re-parse it for the source table.
         // EXPLAIN-wrapped runs hand back a JSON cell whose FROM is
@@ -410,16 +473,41 @@ impl App {
         self.last_error = None;
         self.last_status = Some(running_status(kind));
         tokio::spawn(async move {
-            let result = execute(&client, &sql, kind, &decision, is_batch).await;
+            let (result, paging) = match route {
+                RunRoute::Db(db) => {
+                    let client = db.ready().await;
+                    (
+                        execute_with_origins(&client, &sql, kind, &decision, is_batch).await,
+                        None,
+                    )
+                }
+                RunRoute::Pager(rx) => match rx.await {
+                    Ok(Ok(opened)) => (
+                        Ok((opened.grid, opened.origins)),
+                        Some(RunPaging {
+                            sql,
+                            cursor: opened.cursor,
+                            in_transaction: opened.in_transaction,
+                        }),
+                    ),
+                    Ok(Err(e)) => (Err(e), None),
+                    Err(_) => (
+                        Err(conn::QueryErr::msg("the connection's pager stopped")),
+                        None,
+                    ),
+                },
+            };
             // Run + wrap_in_tx leaves the transaction open on success — the
             // caller will need to commit or rollback.
             let tx_open_after = is_run && wrap_in_tx && result.is_ok();
             let msg = match result {
-                Ok(grid) => AppMsg::QueryOk {
+                Ok((grid, origins)) => AppMsg::QueryOk {
                     generation,
                     grid,
+                    origins,
                     kind_label: kind.label().to_string(),
                     tx_open_after,
+                    paging,
                 },
                 Err(err) => AppMsg::QueryFailed {
                     generation,
@@ -445,15 +533,7 @@ impl App {
     /// DELETE without WHERE hits `Guard::Block` same as it would
     /// live and never gets here.
     pub(super) fn spawn_run_demo(&mut self, sql: String, kind: RunKind) {
-        // Same history bookkeeping as `spawn_run` (skip consecutive
-        // duplicates, cap at HISTORY_CAP).
-        if self.history.last() != Some(&sql) {
-            self.history.push(sql.clone());
-            if self.history.len() > HISTORY_CAP {
-                self.history.remove(0);
-            }
-        }
-        self.history_pos = None;
+        self.remember_in_history(&sql);
         self.last_run_sql = if matches!(kind, RunKind::Run) {
             Some(sql.clone())
         } else {
@@ -487,10 +567,13 @@ impl App {
         let msg = AppMsg::QueryOk {
             generation: self.generation,
             grid,
+            // A canned answer was read from no table.
+            origins: Vec::new(),
             kind_label: kind.label().to_string(),
             // Demo never actually opens a transaction — there's no
             // connection for a COMMIT/ROLLBACK to run against.
             tx_open_after: false,
+            paging: None,
         };
         let _ = self.msg_tx.send(msg);
     }
@@ -512,6 +595,7 @@ impl App {
         // the old database. QueryOk re-infers source immediately after this on
         // the query path, so behaviour there is unchanged.
         self.grid_view.source = None;
+        self.grid_view.origins.clear();
         // A new grid landed — bookmarks keyed by the old grid's row indices
         // would resolve against unrelated rows, so drop them. (Per-tab
         // bookmarks are snapshotted/restored separately on tab switch.)
@@ -522,13 +606,14 @@ impl App {
     /// Re-fetch the schema cache in the background after a DDL run and
     /// deliver it as `AppMsg::SchemaRefreshed`. Keeps completion, the schema
     /// browser, lint, and FK-nav current without forcing a full reconnect.
-    pub(super) fn spawn_schema_refresh(&self) {
-        let Some(client) = self.client.clone() else {
+    pub(super) fn spawn_schema_refresh(&mut self) {
+        let Some(db) = self.db() else {
             return;
         };
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let schema_cache = crate::query::schema::fetch(&client).await;
             let _ = tx.send(AppMsg::SchemaRefreshed {
                 generation,
@@ -537,10 +622,11 @@ impl App {
         });
     }
 
-    pub(super) fn spawn_slow_queries_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+    pub(super) fn spawn_slow_queries_load(&self, db: crate::query::paging::Db) {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = match conn::run_query(&client, crate::query::slow_queries::PANEL_SQL).await
             {
                 Ok(grid) => Ok(crate::query::slow_queries::parse(&grid)),
@@ -590,10 +676,11 @@ impl App {
         true
     }
 
-    pub(super) fn spawn_sessions_load(&self, client: std::sync::Arc<tokio_postgres::Client>) {
+    pub(super) fn spawn_sessions_load(&self, db: crate::query::paging::Db) {
         let tx = self.msg_tx.clone();
         let generation = self.generation;
         tokio::spawn(async move {
+            let client = db.ready().await;
             let result = match conn::run_query(&client, crate::query::sessions::PANEL_SQL).await {
                 Ok(grid) => Ok(crate::query::sessions::parse(&grid)),
                 Err(e) => Err(e),

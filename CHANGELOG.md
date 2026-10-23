@@ -8,12 +8,47 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Added
 
+- `docs/tap.md`: the JDBC tap for pgman users — the OpenTelemetry, TCP
+  and UDP ways in, the v1 event fields, the limits and drop counts,
+  `--tap-record` / `--tap-replay`, redaction and security.
+- Config advisor in the schema wizard (`W`): read-only findings from the
+  server's statistics — buffer cache hit ratio, temp-file spills (with the
+  spilling statements from `pg_stat_statements`), dead tuples and the
+  autovacuum setting behind them, lock-wait chains, and checkpoints forced
+  by WAL volume (`pg_stat_checkpointer` from PG17). Each shows its
+  evidence, how long the counters have accumulated, a conservative
+  setting, and its RDS / Aurora parameter-group name, static or dynamic.
+  `e` yanks a finding's evidence query.
+- `M` in the results fetches past the first 1000 rows. A plain `SELECT`
+  from the editor now reads through a server-side cursor; while it has
+  more, the title says `partial · M fetches more`, and each `M` appends
+  1000 rows (up to 100 000 held), keeping the sort and filter. pgman
+  closes the cursor — never leaving the session idle in transaction —
+  after 60 s without a fetch or 10 min open (sooner if the server's own
+  timeouts are), and before any other database work; `M` then re-runs
+  the query. `EXPLAIN`, scripts, `\watch`, locking `SELECT`s and a
+  `SELECT` inside an open transaction stay capped at 1000 as before.
+- Cell editing: `u` on a cell in the grid (or a field in row detail)
+  edits it in place. Enter writes a one-row `UPDATE … WHERE <primary
+  key>` and sends it through the safety guard like any editor statement,
+  the statement shown in the confirm; `Ctrl-N` sets NULL (and NULL ↔ the
+  empty string). It works on a SELECT from one table with its primary
+  key in the result, and otherwise says why not (a join, a view, no
+  primary key, the key not selected, a computed column, read-only). The
+  UPDATE changes exactly one row or is rolled back, and the cell then
+  shows the value as the server stored it.
+
 - `sslrootcert=<file>` in a connection string pins the trusted CAs, as
   in libpq (and `require` with a CA file checks the chain). It used to
   be ignored, with the default trust store used instead. `sslcrl` and
   `sslcrldir` are refused rather than ignored.
 - `Tab` after `:help ` completes the help section names, as it completes
   command names.
+- `Enter` on a JDBC tap List row opens the whole event: the full SQL,
+  `pool` / `conn` / `txn`, every bound parameter, the error's cause chain
+  down to the root cause, and the caller stack. A failed row used to be
+  only coloured red, and only the innermost caller frame reached the
+  Callers view.
 - The JDBC tap's List view shows the focused statement's bound
   parameters beneath the list, labelled `params (some redacted)` when
   the producer masked a value and `params (withheld by source)` for
@@ -30,6 +65,16 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
   picker.
 
 ### Changed
+
+- `Ctrl-C` in the results cancels a running query, as it does in the
+  editor, instead of arming quit; with nothing running it still asks
+  for a second press.
+- `Y` and `:fixture` say `fetched rows only` when the result has more
+  rows than pgman holds.
+- The result diff (`D`) matches rows on the table's real primary key
+  when A and B are the same columns from one table and the key is in
+  both (`key: id (primary key)` in the title), instead of the leftmost
+  column that happens to be unique; otherwise it infers as before.
 
 - Help is a list of sections and one section at a time instead of one
   ~275-row page: from 110 columns the list sits beside the section, and
@@ -64,6 +109,20 @@ to follow [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
 ### Fixed
 
+- A long pattern typed into a footer prompt (the schema browser's and
+  help's `/` filter, the grid's `/` filter and `f` find, `ctrl-r`
+  history search) no longer loses its `filter: /` / `find:` head or the
+  cursor: the head stays, the pattern shows its end after a `…`, and
+  the cursor sits after it. The key hints go first.
+- The JDBC tap monitor read "no events yet", and the footer showed no
+  `TAP` badge, while only commits / rollbacks had arrived; the status
+  now counts them (`2 commits/rollbacks`).
+- The schema wizard, slow queries, sessions and notifications panels
+  scrolled as if their header row were a list row, so moving the cursor
+  past the bottom left the focused row one below the panel's edge.
+- After `SELECT … FROM ONLY t`, `I` yanked an `INSERT INTO public.only`:
+  `ONLY` was read as the table's name. It is now skipped; a quoted
+  `"only"` or a schema `only.t` is still a name.
 - Dependencies: `ctutils` 0.4.5 (RUSTSEC-2026-0385, non-constant-time
   comparisons in the SCRAM path's digest crates) and `clipboard-win`
   5.4.3 (5.4.1 was yanked).

@@ -26,4 +26,4 @@ expression: dump(&buf)
 │  ╰───────────────────────────────────────────────────────────────────────╯   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- RO   TAP   N+1 ×1   tip · … first) · y yanks SQL suggestion · ? full keys
+ RO   TAP   N+1 ×1   tip · y yanks SQL suggestion · ? full keys
