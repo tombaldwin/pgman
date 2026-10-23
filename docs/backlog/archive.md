@@ -1768,3 +1768,12 @@ The lifts themselves are in [Open → Reuse from ebman]; the survey
 itself is done.
 - Adopt ebman's splash *rendering* but NOT its 3s minimum duration —
   overlap with connect, keep instantly dismissable.
+
+### 0.1.1 review panel (2026-10-23)
+
+- The help overlay is a section list plus one section, with a `/`
+  filter across sections, `:help <topic>` Tab completion and `:help
+  all` for the old flat page (`docs/backlog/help-overlay.md`).
+- Postgres-log FATAL / PANIC + STATEMENT pairs are reconstructed like
+  ERROR ones; csvlog, jsonlog, p6spy and datasource-proxy logs are read.
+

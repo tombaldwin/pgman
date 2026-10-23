@@ -81,9 +81,7 @@ small-UX, correctness and environments findings landed on branch
   day text — flip both together.
 
 ### From the release panel (2026-09-03) — post-release
-- **From the Fable panel, tolerated for 0.1.0**: the help overlay is
-  300+ lines at 80 columns (needs sections that collapse or a topic
-  picker — `:help <topic>` jumps, but the overlay is still one page);
+- **From the Fable panel, tolerated for 0.1.0**:
   `--tap-listen` auto-enable is loopback-only but a ~500 MB retained
   ceiling under a deliberate flood is the honest number.
 - **ebman parity, deferred**: a `--read-write` opt-in flag mirroring
@@ -112,6 +110,17 @@ small-UX, correctness and environments findings landed on branch
 - **Tests under `tests/` build the library without `cfg(test)`**, so a
   yank reached from a journey or render test would hit the real
   clipboard. None does today; a runtime seam would make it impossible.
+- **A long filter pattern loses its `filter: /` prompt in the footer**
+  (schema browser, help, other filter modes): `fit_status` shrinks and
+  then drops the leading segment, so the prompt and the cursor go
+  missing. A typing prompt should keep its head and show the pattern's
+  tail.
+- **Digits `1`–`9` switch editor tabs behind the open help overlay.**
+- **Log formats not yet read**: Log4j's bracketed logger (`DEBUG
+  [org.hibernate.SQL] select …`); p6spy's multi-line Spring Boot
+  starter format; Hibernate 5 ARRAY binds (only Hibernate 6's form is
+  converted). datasource-proxy values containing `,` are ambiguous in
+  its default format and split there (documented).
 - **Tap: 64 silent connections lock a real client out for up to 30 s**
   (documented trade-off of the connection cap). A per-connection idle
   timeout shorter than 30 s, or evicting the oldest idle connection.
